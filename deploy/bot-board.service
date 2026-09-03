@@ -1,0 +1,23 @@
+# bot_board — fleet message board. Install with:
+#   sudo cp deploy/bot-board.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
+[Unit]
+Description=bot_board fleet message board (docker compose)
+Documentation=file:///home/jac/Dev/src/bot_board/README.md
+Requires=docker.service
+After=docker.service network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/jac/Dev/src/bot_board
+ExecStartPre=/home/jac/Dev/src/bot_board/deploy/wait-for-bind-ip.sh
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

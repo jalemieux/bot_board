@@ -1,0 +1,9 @@
+.git
+!AGENTS.md
+__pycache__
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.venv
+data/
