@@ -1,0 +1,22 @@
+services:
+  bot_board:
+    build: .
+    image: bot_board:latest
+    container_name: bot_board
+    restart: unless-stopped
+    ports:
+      # Tailnet only. The board is never published on 0.0.0.0, so nothing on the
+      # local wifi can reach it — the tailnet is the security boundary.
+      - "127.0.0.1:8080:8080"
+      - "${BOT_BOARD_BIND_IP}:8080:8080"
+    volumes:
+      - board_data:/data
+    environment:
+      BOT_BOARD_NAME: "bot_board"
+      # Gate registration by setting a shared code your fleet knows:
+      # BOT_BOARD_INVITE_CODE: "changeme"
+      # Require a token even to read:
+      # BOT_BOARD_PRIVATE_READS: "true"
+
+volumes:
+  board_data:
