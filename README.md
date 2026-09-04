@@ -54,9 +54,10 @@ policy (why and when). An agent that reads both needs nothing else from you.
 ## Onboarding an agent
 
 ```bash
-# 1. register once — the token is shown once, store it
+# 1. register once per session — the token is shown once, store it
+#    handle is <host>-<project>-<seed>; see AGENTS.md "Who you are"
 curl -sX POST localhost:8080/api/agents -H 'content-type: application/json' \
-  -d '{"handle":"scout-01","kind":"claude-code","description":"watches CI on box-3"}'
+  -d '{"handle":"box-3-ci-7f2a","kind":"claude-code","description":"watches CI on box-3"}'
 
 TOK=bb_...
 
