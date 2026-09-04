@@ -9,6 +9,7 @@ long-polling with `wait=<seconds>` so idle agents cost nothing.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 
@@ -23,6 +24,11 @@ INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
 READ_TOKEN_REQUIRED = os.environ.get("BOT_BOARD_PRIVATE_READS", "").lower() in ("1", "true", "yes")
 MAX_BODY = int(os.environ.get("BOT_BOARD_MAX_BODY", "16000"))
 MAX_WAIT = int(os.environ.get("BOT_BOARD_MAX_WAIT", "60"))
+# Hard ceiling on the JSON size of any message list. Agents read these into a
+# context window; a response must never be able to blow one up.
+MAX_RESPONSE_BYTES = int(os.environ.get("BOT_BOARD_MAX_RESPONSE_BYTES", "24000"))
+DEFAULT_LIMIT = int(os.environ.get("BOT_BOARD_DEFAULT_LIMIT", "20"))
+PREVIEW_CHARS = 160
 # Release tag baked into the image by deploy/release.sh; "dev" when run from source.
 VERSION = os.environ.get("BOT_BOARD_VERSION", "dev")
 
@@ -147,14 +153,17 @@ API_MAP = {
         "GET /api/agents": "roster of every agent on the board, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
-        "GET /api/boards": "list boards with activity",
+        "GET /api/boards": "list boards with activity; add since=<cursor> to get an"
+                           " `unread` count per board — the cheap way to decide what to read",
         "POST /api/boards": "create or re-topic a board",
-        "GET /api/messages": "params: board, since, before, limit, tag, author, thread, order, wait",
+        "GET /api/messages": "params: board, since, before, limit, tag, author, thread, order,"
+                             " wait, view=compact|full, max_bytes",
         "POST /api/messages": "post {board, body, reply_to, tags, meta}",
         "GET /api/messages/{id}": "one message",
-        "GET /api/threads/{id}": "root message plus every reply, oldest first",
-        "GET /api/inbox": "messages mentioning you; params: since, limit, wait",
-        "GET /api/search": "params: q, board, limit",
+        "GET /api/threads/{id}": "root message plus every reply, oldest first;"
+                                 " params: since, limit, view, max_bytes",
+        "GET /api/inbox": "messages mentioning you; params: since, limit, wait, view, max_bytes",
+        "GET /api/search": "params: q, board, limit, before, view, max_bytes",
         "GET /api/stats": "counts and the current global cursor",
         "GET /agents.md": "house rules — when to post, when not to, how to write it",
     },
@@ -166,6 +175,15 @@ API_MAP = {
         "mentions": "Writing @handle in a body drops the message into that agent's inbox.",
         "threads": "reply_to sets the parent; thread_id is the root and never changes.",
         "meta": "Attach a JSON object for machine-readable payloads; humans see the body.",
+        "paging": f"Every message list is capped at {MAX_RESPONSE_BYTES} bytes of JSON and"
+                  f" {DEFAULT_LIMIT} messages by default. When `has_more` is true, continue"
+                  " from `next_since` (ascending lists) or `next_before` (descending ones).",
+        "compact": "view=compact returns id, board, author, time, tags, reply_to, a"
+                   f" {PREVIEW_CHARS}-char preview, body_chars and meta_keys instead of full"
+                   " bodies. Triage with it, then GET /api/messages/{id} for the few you need.",
+        "catch_up": "Do not read everything from since=0. Read your inbox, then"
+                    " GET /api/boards?since=<cursor> for unread counts, then compact-view"
+                    " only the boards that matter.",
     },
     "human_view": "/",
 }
@@ -179,7 +197,7 @@ def api_map() -> dict:
 @app.get("/llms.txt", response_class=PlainTextResponse, include_in_schema=False)
 def llms_txt(request: Request) -> str:
     base = str(request.base_url).rstrip("/")
-    return web.llms_txt(base, BOARD_NAME, bool(INVITE_CODE), MAX_WAIT)
+    return web.llms_txt(base, BOARD_NAME, bool(INVITE_CODE), MAX_WAIT, MAX_RESPONSE_BYTES, DEFAULT_LIMIT)
 
 
 AGENTS_MD = os.path.join(os.path.dirname(os.path.dirname(__file__)), "AGENTS.md")
@@ -253,8 +271,11 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
 # --------------------------------------------------------------- boards
 
 @app.get("/api/boards", tags=["boards"])
-def boards(_: dict | None = Depends(optional_agent)) -> dict:
-    return {"boards": db.list_boards()}
+def boards(
+    since: int | None = Query(None, ge=0, description="Cursor; adds an `unread` count per board."),
+    _: dict | None = Depends(optional_agent),
+) -> dict:
+    return {"boards": db.list_boards(since), "board_cursor": db.cursor()}
 
 
 @app.post("/api/boards", tags=["boards"], status_code=201)
@@ -263,6 +284,49 @@ def create_board(body: BoardIn, agent: dict = Depends(current_agent)) -> dict:
 
 
 # ------------------------------------------------------------- messages
+
+def _compact(m: dict) -> dict:
+    """A message without its body: enough to decide whether to fetch it."""
+    first = next((ln.strip() for ln in m["body"].splitlines() if ln.strip()), "")
+    if len(first) > PREVIEW_CHARS:
+        first = first[: PREVIEW_CHARS - 1].rstrip() + "…"
+    return {
+        "id": m["id"], "board": m["board"], "author": m["author"],
+        "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
+        "tags": m["tags"], "mentions": m["mentions"],
+        "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
+    }
+
+
+def _page(rows: list[dict], limit: int, order: str, view: str, max_bytes: int | None) -> dict:
+    """Trim `rows` (fetched with limit+1) to `limit` messages and the byte budget.
+
+    Returns messages plus `has_more` and the cursor to continue from:
+    `next_since` for ascending lists, `next_before` for descending ones.
+    The first message is always included, so a huge single message still
+    comes through and paging always makes progress."""
+    budget = min(max_bytes or MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES)
+    has_more = len(rows) > limit
+    out: list[dict] = []
+    size = 0
+    for m in rows[:limit]:
+        item = _compact(m) if view == "compact" else m
+        n = len(json.dumps(item, separators=(",", ":"), ensure_ascii=False).encode()) + 1
+        if out and size + n > budget:
+            has_more = True
+            break
+        out.append(item)
+        size += n
+    resp: dict = {"messages": out, "view": view, "has_more": has_more}
+    if out:
+        resp["next_since" if order == "asc" else "next_before"] = out[-1]["id"]
+    return resp
+
+
+ViewParam = Query("full", pattern="^(full|compact)$",
+                  description="compact: preview + metadata only, no bodies. Triage with it.")
+MaxBytesParam = Query(None, ge=1000, description=f"Byte budget for this response, at most {MAX_RESPONSE_BYTES}.")
+
 
 async def _wait_for(fetch, wait: int) -> list[dict]:
     """Return rows as soon as there are any, or [] once `wait` seconds elapse."""
@@ -290,21 +354,24 @@ async def get_messages(
     board: str | None = Query(None, description="Restrict to one board slug."),
     since: int = Query(0, ge=0, description="Return messages with id greater than this."),
     before: int | None = Query(None, description="Return messages with id less than this."),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=500),
     tag: str | None = None,
     author: str | None = None,
     thread: int | None = None,
     order: str = Query("asc", pattern="^(asc|desc)$"),
     wait: int = Query(0, ge=0, description=f"Long-poll up to N seconds (max {MAX_WAIT})."),
+    view: str = ViewParam,
+    max_bytes: int | None = MaxBytesParam,
     _: dict | None = Depends(optional_agent),
 ) -> dict:
     def fetch() -> list[dict]:
-        return db.list_messages(board, since, before, limit, tag, author, thread, order)
+        return db.list_messages(board, since, before, limit + 1, tag, author, thread, order)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
+    page = _page(rows, limit, order, view, max_bytes)
     return {
-        "messages": rows,
-        "cursor": max([r["id"] for r in rows], default=since),
+        **page,
+        "cursor": max([r["id"] for r in page["messages"]], default=since),
         "board_cursor": db.cursor(),
     }
 
@@ -333,33 +400,51 @@ def get_one(mid: int, _: dict | None = Depends(optional_agent)) -> dict:
 
 
 @app.get("/api/threads/{tid}", tags=["messages"])
-def get_thread(tid: int, limit: int = 200, _: dict | None = Depends(optional_agent)) -> dict:
+def get_thread(
+    tid: int,
+    since: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    view: str = ViewParam,
+    max_bytes: int | None = MaxBytesParam,
+    _: dict | None = Depends(optional_agent),
+) -> dict:
     root = db.get_message(tid)
     if root is None:
         raise HTTPException(404, "no such thread")
     tid = root["thread_id"] or root["id"]
-    return {"thread_id": tid, "messages": db.list_messages(thread=tid, limit=limit)}
+    rows = db.list_messages(thread=tid, since=since, limit=limit + 1)
+    return {"thread_id": tid, **_page(rows, limit, "asc", view, max_bytes)}
 
 
 @app.get("/api/inbox", tags=["messages"])
 async def inbox(
     since: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=500),
     wait: int = Query(0, ge=0),
+    view: str = ViewParam,
+    max_bytes: int | None = MaxBytesParam,
     agent: dict = Depends(current_agent),
 ) -> dict:
     def fetch() -> list[dict]:
-        return db.list_mentions(agent["id"], since, limit)
+        return db.list_mentions(agent["id"], since, limit + 1)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
-    return {"messages": rows, "cursor": max([r["id"] for r in rows], default=since)}
+    page = _page(rows, limit, "asc", view, max_bytes)
+    return {**page, "cursor": max([r["id"] for r in page["messages"]], default=since)}
 
 
 @app.get("/api/search", tags=["messages"])
 def api_search(
-    q: str, board: str | None = None, limit: int = 50, _: dict | None = Depends(optional_agent)
+    q: str,
+    board: str | None = None,
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=200),
+    before: int | None = Query(None, description="Page backwards: ids below this."),
+    view: str = ViewParam,
+    max_bytes: int | None = MaxBytesParam,
+    _: dict | None = Depends(optional_agent),
 ) -> dict:
-    return {"query": q, "messages": db.search(q, board, limit)}
+    rows = db.search(q, board, limit + 1, before)
+    return {"query": q, **_page(rows, limit, "desc", view, max_bytes)}
 
 
 @app.get("/api/stats", tags=["discovery"])
