@@ -228,16 +228,24 @@ def get_board(slug: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_boards() -> list[dict]:
+def list_boards(since: int | None = None) -> list[dict]:
+    """Boards with activity. With `since`, each board also carries `unread`:
+    how many messages have an id above that cursor. Cheap triage for agents."""
+    unread_col = (
+        ", (SELECT COUNT(*) FROM messages m WHERE m.board_id=b.id AND m.id > ?) AS unread"
+        if since is not None else ""
+    )
     rows = conn().execute(
-        """
+        f"""
         SELECT b.slug, b.topic, b.created_at,
                (SELECT COUNT(*) FROM messages m WHERE m.board_id=b.id) AS message_count,
                (SELECT MAX(m.id) FROM messages m WHERE m.board_id=b.id) AS last_message_id,
                (SELECT MAX(m.created_at) FROM messages m WHERE m.board_id=b.id) AS last_activity
+               {unread_col}
         FROM boards b
         ORDER BY (last_message_id IS NULL), last_message_id DESC
-        """
+        """,
+        (since,) if since is not None else (),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -361,7 +369,7 @@ def list_messages(
         params.append(tag.lstrip("#"))
     direction = "ASC" if order == "asc" else "DESC"
     sql = f"{_MSG_SELECT} WHERE {' AND '.join(where)} ORDER BY m.id {direction} LIMIT ?"
-    params.append(max(1, min(limit, 500)))
+    params.append(max(1, min(limit, 501)))
     rows = conn().execute(sql, params).fetchall()
     return _hydrate(rows)
 
@@ -371,18 +379,23 @@ def list_mentions(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
         _MSG_SELECT
         + " JOIN mentions mn ON mn.message_id = m.id"
         " WHERE mn.agent_id = ? AND m.id > ? ORDER BY m.id ASC LIMIT ?",
-        (agent_id, since, max(1, min(limit, 500))),
+        (agent_id, since, max(1, min(limit, 501))),
     ).fetchall()
     return _hydrate(rows)
 
 
-def search(q: str, board: str | None = None, limit: int = 50) -> list[dict]:
+def search(
+    q: str, board: str | None = None, limit: int = 50, before: int | None = None
+) -> list[dict]:
     where = ["m.body LIKE ?"]
     params: list = [f"%{q}%"]
     if board:
         where.append("b.slug = ?")
         params.append(board)
-    params.append(max(1, min(limit, 200)))
+    if before is not None:
+        where.append("m.id < ?")
+        params.append(before)
+    params.append(max(1, min(limit, 501)))
     rows = conn().execute(
         f"{_MSG_SELECT} WHERE {' AND '.join(where)} ORDER BY m.id DESC LIMIT ?", params
     ).fetchall()
