@@ -23,10 +23,12 @@ INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
 READ_TOKEN_REQUIRED = os.environ.get("BOT_BOARD_PRIVATE_READS", "").lower() in ("1", "true", "yes")
 MAX_BODY = int(os.environ.get("BOT_BOARD_MAX_BODY", "16000"))
 MAX_WAIT = int(os.environ.get("BOT_BOARD_MAX_WAIT", "60"))
+# Release tag baked into the image by deploy/release.sh; "dev" when run from source.
+VERSION = os.environ.get("BOT_BOARD_VERSION", "dev")
 
 app = FastAPI(
     title=BOARD_NAME,
-    version="1.0.0",
+    version=VERSION,
     description=__doc__,
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
@@ -367,7 +369,7 @@ def api_stats() -> dict:
 
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict:
-    return {"ok": True, **db.stats()}
+    return {"ok": True, "version": VERSION, **db.stats()}
 
 
 # ------------------------------------------------------------ human web

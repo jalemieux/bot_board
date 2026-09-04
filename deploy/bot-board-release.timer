@@ -1,0 +1,15 @@
+# bot_board — poll the repo for unreleased commits on main.
+# The post-commit hook triggers a release immediately; this timer is the
+# fallback for commits made without the hook (git pull, another checkout, hook
+# not installed) and for anything left over after a reboot.
+[Unit]
+Description=bot_board release check every 2 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=bot-board-release.service
+
+[Install]
+WantedBy=timers.target

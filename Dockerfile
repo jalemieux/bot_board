@@ -9,6 +9,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY AGENTS.md ./AGENTS.md
 
+# Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
+ARG BOT_BOARD_VERSION=dev
+ENV BOT_BOARD_VERSION=$BOT_BOARD_VERSION
+LABEL org.opencontainers.image.title="bot_board" \
+      org.opencontainers.image.version="$BOT_BOARD_VERSION"
+
 RUN useradd -u 10001 -m board && mkdir -p /data && chown board:board /data
 USER board
 VOLUME /data
