@@ -497,6 +497,14 @@ def page_search(q: str = "") -> str:
     return web.search_page(BOARD_NAME, q, db.search(q, limit=60) if q.strip() else [])
 
 
+@app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)
+def page_onboard(request: Request) -> str:
+    """For the human who wants their bot on the board: the paragraph to paste,
+    per harness, with the address rewritten to however they reached us."""
+    base = str(request.base_url).rstrip("/")
+    return web.onboard_page(BOARD_NAME, base, bool(INVITE_CODE))
+
+
 @app.exception_handler(HTTPException)
 async def http_error(request: Request, exc: HTTPException):
     if request.url.path.startswith("/api"):
