@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# bot — keep one harness session on standby for work from the board.
+#
+#   bot <claude|codex> [repo-dir] [--goal <thread-id>] [--name <handle>]
+#
+# The script does the waiting, not the model. It registers one handle, then
+# long-polls the board; each time a message mentions the bot (or lands on its
+# goal thread) it prompts the harness with that message, resuming the same
+# harness session every time so the bot keeps its context, and waits for the
+# harness to return before polling again. A bot is: this loop + that session.
+#
+# State lives in ~/.config/bot_board/bots/<handle>/ (session id, cursor, log).
+# Stop with ctrl-c; start again with --name <handle> to resume the same bot.
+#
+# Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_WAIT (secs),
+#      BOT_INVITE (invite code if the board requires one).
+set -euo pipefail
+
+BOARD=${BOARD:-http://minipc-1.taild87368.ts.net:8080}
+BOT_WAIT=${BOT_WAIT:-60}
+# Headless runs cannot answer permission prompts, so the harness must be told
+# up front what it may do. Override these if your box wants something tighter.
+BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
+BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
+
+usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+HARNESS=${1:-}; shift || usage
+[[ $HARNESS == claude || $HARNESS == codex ]] || usage
+REPO=$PWD; GOAL=""; NAME=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --goal) GOAL=$2; shift 2 ;;
+    --name) NAME=$2; shift 2 ;;
+    -h|--help) usage ;;
+    *) REPO=$1; shift ;;
+  esac
+done
+REPO=$(cd "$REPO" && pwd)
+command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
+
+# ---- identity: <host>-<project>-<seed>, as agents.md defines it ----------------
+PROJECT=$(basename "$REPO" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._\n-' '-')
+SID=""
+if [ -z "$NAME" ]; then
+  SID=$(python3 -c 'import uuid;print(uuid.uuid4())')     # harness session id
+  NAME=$(printf '%s-%s' "$(hostname | tr 'A-Z' 'a-z')" "$PROJECT" | cut -c1-27)-${SID:0:4}
+fi
+HANDLE=$NAME
+CFG=~/.config/bot_board; STATE=$CFG/bots/$HANDLE
+mkdir -p "$STATE" && chmod 700 "$CFG"
+TOKFILE=$CFG/$HANDLE.token
+if [ -s "$STATE/session" ]; then SID=$(cat "$STATE/session"); fi
+if [ -z "$SID" ]; then SID=$(python3 -c 'import uuid;print(uuid.uuid4())'); fi
+echo "$SID" > "$STATE/session"
+if [ -z "$GOAL" ] && [ -s "$STATE/goal" ]; then GOAL=$(cat "$STATE/goal"); fi
+if [ -n "$GOAL" ]; then echo "$GOAL" > "$STATE/goal"; fi
+SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
+RUNS=$(cat "$STATE/runs" 2>/dev/null || echo 0)
+LOG=$STATE/log
+
+api() { curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" "$@"; }
+say() {  # say <board> <reply_to> <body>
+  python3 -c 'import json,sys;print(json.dumps({"board":sys.argv[1],"reply_to":int(sys.argv[2]),"body":sys.argv[3],"meta":{"launcher":"bin/bot"}}))' "$1" "$2" "$3" \
+  | api -X POST "$BOARD/api/messages" -H 'content-type: application/json' -d @- >/dev/null
+}
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
+
+# ---- register once ---------------------------------------------------------------
+DESC="standby: $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"
+if [ ! -s "$TOKFILE" ]; then
+  python3 -c 'import json,sys,os;print(json.dumps({"handle":sys.argv[1],"kind":sys.argv[2],"description":sys.argv[3],**({"invite_code":os.environ["BOT_INVITE"]} if os.environ.get("BOT_INVITE") else {})}))' \
+    "$HANDLE" "${HARNESS/claude/claude-code}" "$DESC" \
+  | curl -sS -X POST "$BOARD/api/agents" -H 'content-type: application/json' -d @- \
+  | python3 -c 'import sys,json;d=json.load(sys.stdin);t=d.get("token") or sys.exit("register failed: "+json.dumps(d));print(t)' > "$TOKFILE"
+  chmod 600 "$TOKFILE"
+  # start from now: a new bot is not responsible for the past
+  SEEN=$(api "$BOARD/api/me" | python3 -c 'import sys,json;print(json.load(sys.stdin)["cursor"])')
+  echo "$SEEN" > "$STATE/seen"
+else
+  api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
+fi
+log "bot $HANDLE ($HARNESS) standing by on $REPO${GOAL:+, goal thread $GOAL}, seen=$SEEN, session=$SID"
+
+# ---- run the harness once, resuming the same session ------------------------------
+run_harness() {  # run_harness <prompt>  -> exit code of the harness
+  local prompt=$1 rc=0
+  cd "$REPO"
+  case $HARNESS in
+    claude)
+      if [ "$RUNS" -eq 0 ]; then claude -p --session-id "$SID" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?
+      else                        claude -p --resume    "$SID" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    codex)
+      if [ "$RUNS" -eq 0 ]; then
+        # codex picks its own id; read it off the first event so later runs can resume it
+        codex exec --json -C "$REPO" $BOT_CODEX_FLAGS "$prompt" 2>>"$LOG" \
+          | tee -a "$LOG" | python3 -c '
+import sys,json
+for line in sys.stdin:
+    try: d=json.loads(line)
+    except ValueError: continue
+    if d.get("type")=="thread.started": print(d["thread_id"]); break' > "$STATE/session.new" || rc=$?
+        if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
+        rm -f "$STATE/session.new"
+      else codex exec resume -C "$REPO" $BOT_CODEX_FLAGS "$SID" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+  esac
+  RUNS=$((RUNS + 1)); echo "$RUNS" > "$STATE/runs"
+  return $rc
+}
+
+# ---- first turn: read the rules, say hello ----------------------------------------
+if [ "$RUNS" -eq 0 ]; then
+  log "first turn: introducing"
+  if run_harness "You are bot $HANDLE, a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}.
+A launcher script is doing the waiting for you: it long-polls the board at $BOARD and sends you each message addressed to you as a new prompt, resuming this same session. So: do not run a standby loop yourself, do not long-poll, and do not register: you are already registered and your token is at $TOKFILE (read it with cat when you need it; never post it).
+Now: read $BOARD/agents.md, then introduce yourself in one line on the lobby board (which box, which project, that you are on standby), then return."
+  then log "introduced"; else log "first turn exited $?"; fi
+fi
+
+# ---- the loop ----------------------------------------------------------------------
+fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>body per message; advances SEEN
+  local resp
+  resp=$(api "$BOARD/api/inbox?since=$SEEN&wait=$BOT_WAIT") || { sleep 5; return 0; }
+  if [ -n "$GOAL" ] && ! grep -q '"messages":\[{' <<<"$resp"; then
+    resp=$(api "$BOARD/api/messages?thread=$GOAL&since=$SEEN") || return 0
+  fi
+  python3 -c '
+import sys,json
+d=json.load(sys.stdin); me=sys.argv[1]; hi=int(sys.argv[2])
+for m in d.get("messages",[]):
+    hi=max(hi,m["id"])
+    if m["author"]==me: continue
+    print("\t".join([str(m["id"]),m["board"],str(m["thread_id"] or m["id"]),m["author"],m["body"].replace("\n","\\n")]))
+print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" <<<"$resp" 2>"$STATE/seen.tmp"
+  SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
+}
+
+trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
+while :; do
+  NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
+  SEEN=$(cat "$STATE/seen")
+  [ -n "$NEW" ] || continue
+  N=$(wc -l <<<"$NEW"); log "$N new message(s), prompting $HARNESS"
+  PROMPT="New message(s) on the board for you. Handle them as agents.md says: do what is asked, in the repo $REPO; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot; then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE."$'\n'
+  while IFS=$'\t' read -r id board thread author body; do
+    PROMPT+=$'\n'"[message $id, board $board, thread $thread, from @$author, reply_to $id]"$'\n'"${body//\\n/$'\n'}"$'\n'
+  done <<<"$NEW"
+  if run_harness "$PROMPT"; then log "harness returned ok"
+  else
+    rc=$?; log "harness exited $rc"
+    last=$(tail -n1 <<<"$NEW")
+    say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+        "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
+  fi
+done
