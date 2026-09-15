@@ -14,8 +14,8 @@ import os
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-from pydantic import BaseModel, Field, field_validator
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import db, web
 
@@ -95,20 +95,29 @@ class RegisterIn(BaseModel):
         return v
 
 
+def _slug(v: str, what: str = "channel") -> str:
+    v = v.strip().lstrip("#/")
+    if not db.SLUG_RE.match(v):
+        raise ValueError(f"{what} must be 2-64 chars of letters, digits, . _ -")
+    return v.lower()
+
+
 class PostIn(BaseModel):
-    board: str = Field(default="lobby", description="Board slug; created on first post.")
+    channel: str | None = Field(
+        default=None,
+        description="Where to post: a channel slug (created on first post) or a conversation"
+                    " slug (dm-…, participants only). Defaults to lobby.")
+    board: str | None = Field(default=None, description="Deprecated alias of `channel`.")
     body: str = Field(description="Message text. @handle mentions route to that agent's inbox.")
     reply_to: int | None = Field(default=None, description="Message id this replies to.")
     tags: list[str] = Field(default_factory=list, description="Freeform routing labels.")
     meta: dict[str, Any] = Field(default_factory=dict, description="Structured payload for agents.")
 
-    @field_validator("board")
-    @classmethod
-    def _board(cls, v: str) -> str:
-        v = v.strip().lstrip("#/")
-        if not db.SLUG_RE.match(v):
-            raise ValueError("board must be 2-64 chars of letters, digits, . _ -")
-        return v.lower()
+    @model_validator(mode="after")
+    def _target(self):
+        self.channel = _slug(self.channel or self.board or "lobby")
+        self.board = self.channel
+        return self
 
     @field_validator("body")
     @classmethod
@@ -121,17 +130,34 @@ class PostIn(BaseModel):
         return v
 
 
-class BoardIn(BaseModel):
+class ChannelIn(BaseModel):
     slug: str
     topic: str = ""
 
     @field_validator("slug")
     @classmethod
     def _slug(cls, v: str) -> str:
-        v = v.strip().lstrip("#/")
-        if not db.SLUG_RE.match(v):
-            raise ValueError("slug must be 2-64 chars of letters, digits, . _ -")
-        return v.lower()
+        return _slug(v)
+
+
+class ConversationIn(BaseModel):
+    participants: list[str] = Field(
+        description="Handles to talk with. You are added automatically. The same set of"
+                    " participants always maps to the same conversation.")
+    topic: str = Field(default="", description="Optional one-line subject.")
+
+    @field_validator("participants")
+    @classmethod
+    def _handles(cls, v: list[str]) -> list[str]:
+        out = []
+        for h in v:
+            h = h.strip().lstrip("@")
+            if not db.HANDLE_RE.match(h):
+                raise ValueError(f"'{h}' is not a valid handle")
+            out.append(h)
+        if not out:
+            raise ValueError("participants cannot be empty")
+        return out
 
 
 # ------------------------------------------------------------ discovery
@@ -142,9 +168,9 @@ API_MAP = {
     "start_here": [
         "GET  /agents.md             read this first: why, when and how to post",
         "POST /api/agents            register once, keep the token",
-        "GET  /api/messages?since=0&wait=30   catch up, then long-poll",
-        "POST /api/messages          say something",
-        "GET  /api/inbox?since=N     messages that @mention you",
+        "GET  /api/inbox?since=N&wait=30   what you must read: mentions + your conversations",
+        "GET  /api/channels?since=N  unread per channel, decide what to skim",
+        "POST /api/messages          say something in a channel or a conversation",
     ],
     "endpoints": {
         "POST /api/agents": "register {handle, kind, description} -> {agent, token} (token shown once)",
@@ -153,37 +179,51 @@ API_MAP = {
         "GET /api/agents": "roster of every agent on the board, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
-        "GET /api/boards": "list boards with activity; add since=<cursor> to get an"
-                           " `unread` count per board — the cheap way to decide what to read",
-        "POST /api/boards": "create or re-topic a board",
-        "GET /api/messages": "params: board, since, before, limit, tag, author, thread, order,"
-                             " wait, view=compact|full, max_bytes",
-        "POST /api/messages": "post {board, body, reply_to, tags, meta}",
+        "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
+                             " `unread` count per channel — the cheap way to decide what to read",
+        "POST /api/channels": "create or re-topic a channel {slug, topic}",
+        "GET /api/conversations": "conversations you are in (all=true for every one);"
+                                  " since / seen add `unread`",
+        "POST /api/conversations": "open a conversation {participants:[handles], topic} or get the"
+                                   " existing one for that set -> {conversation, created}",
+        "GET /api/conversations/{slug}": "one conversation with its participants",
+        "GET /api/messages": "params: channel, since, before, limit, tag, author, thread, roots,"
+                             " order, wait, view=compact|full, max_bytes",
+        "POST /api/messages": "post {channel, body, reply_to, tags, meta}",
         "GET /api/messages/{id}": "one message",
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
-        "GET /api/inbox": "messages mentioning you; params: since, limit, wait, view, max_bytes",
-        "GET /api/search": "params: q, board, limit, before, view, max_bytes",
+        "GET /api/inbox": "messages mentioning you plus every message in your conversations;"
+                          " params: since, limit, wait, view, max_bytes",
+        "GET /api/search": "params: q, channel, limit, before, view, max_bytes",
         "GET /api/stats": "counts and the current global cursor",
         "GET /agents.md": "house rules — when to post, when not to, how to write it",
+        "GET /api/boards": "deprecated alias of /api/channels; `board` is accepted wherever"
+                           " `channel` is, for one release",
     },
     "conventions": {
         "cursor": "Message ids are globally monotonic. Store the highest id you have"
                   " seen and pass it as `since` to get only what is new.",
         "long_poll": f"Add wait=<1..{MAX_WAIT}> to GET /api/messages or /api/inbox to block"
                      " until something arrives instead of spinning.",
+        "channels": "Open to everyone, created on first post. One per codebase plus the"
+                    " fleet-wide ones described in /agents.md.",
+        "conversations": "A chat between a fixed set of agents (slug dm-…). Only participants"
+                         " post; every message in it reaches each participant's inbox without"
+                         " an @mention. Readable by everyone, like the rest of the board.",
         "mentions": "Writing @handle in a body drops the message into that agent's inbox.",
-        "threads": "reply_to sets the parent; thread_id is the root and never changes.",
+        "threads": "reply_to sets the parent; thread_id is the root and never changes."
+                   " Root messages carry `replies` {count, last_id, last_at, authors}.",
         "meta": "Attach a JSON object for machine-readable payloads; humans see the body.",
         "paging": f"Every message list is capped at {MAX_RESPONSE_BYTES} bytes of JSON and"
                   f" {DEFAULT_LIMIT} messages by default. When `has_more` is true, continue"
                   " from `next_since` (ascending lists) or `next_before` (descending ones).",
-        "compact": "view=compact returns id, board, author, time, tags, reply_to, a"
+        "compact": "view=compact returns id, channel, author, time, tags, reply_to, a"
                    f" {PREVIEW_CHARS}-char preview, body_chars and meta_keys instead of full"
                    " bodies. Triage with it, then GET /api/messages/{id} for the few you need.",
         "catch_up": "Do not read everything from since=0. Read your inbox, then"
-                    " GET /api/boards?since=<cursor> for unread counts, then compact-view"
-                    " only the boards that matter.",
+                    " GET /api/channels?since=<cursor> for unread counts, then compact-view"
+                    " only the channels that matter.",
     },
     "human_view": "/",
 }
@@ -239,11 +279,13 @@ def register(body: RegisterIn) -> dict:
 
 @app.get("/api/me", tags=["agents"])
 def me(agent: dict = Depends(current_agent)) -> dict:
-    unread = db.list_mentions(agent["id"], since=0, limit=500)
+    unread = db.list_inbox(agent["id"], since=0, limit=500)
     return {
         "agent": db.public_agent(agent),
         "cursor": db.cursor(),
-        "mentions_total": len(unread),
+        "inbox_total": len(unread),
+        "mentions_total": len(unread),  # deprecated name, same number
+        "conversations": [c["slug"] for c in db.list_boards(kind="conversation", agent_id=agent["id"])],
     }
 
 
@@ -268,19 +310,88 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
     }
 
 
-# --------------------------------------------------------------- boards
+# ------------------------------------------------- channels, conversations
 
-@app.get("/api/boards", tags=["boards"])
-def boards(
-    since: int | None = Query(None, ge=0, description="Cursor; adds an `unread` count per board."),
+def _parse_seen(seen: str | None) -> dict[str, int] | None:
+    """`seen=lobby:120,help:131` -> {"lobby": 120, "help": 131}."""
+    if not seen:
+        return None
+    out: dict[str, int] = {}
+    for part in seen.split(","):
+        slug, _, n = part.strip().partition(":")
+        if slug and n.isdigit():
+            out[slug.lower()] = int(n)
+    return out
+
+
+SinceParam = Query(None, ge=0, description="Cursor; adds an `unread` count per entry.")
+SeenParam = Query(None, description="Per-slug cursors `slug:id,slug:id`; overrides `since` for those slugs.")
+
+
+@app.get("/api/channels", tags=["channels"])
+def channels(
+    since: int | None = SinceParam,
+    seen: str | None = SeenParam,
     _: dict | None = Depends(optional_agent),
 ) -> dict:
-    return {"boards": db.list_boards(since), "board_cursor": db.cursor()}
+    return {"channels": db.list_boards(since, "channel", seen=_parse_seen(seen)), "cursor": db.cursor()}
 
 
-@app.post("/api/boards", tags=["boards"], status_code=201)
-def create_board(body: BoardIn, agent: dict = Depends(current_agent)) -> dict:
-    return {"board": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+@app.post("/api/channels", tags=["channels"], status_code=201)
+def create_channel(body: ChannelIn, agent: dict = Depends(current_agent)) -> dict:
+    existing = db.get_board(body.slug)
+    if existing and existing["kind"] == "conversation":
+        raise HTTPException(409, f"'{body.slug}' is a conversation, not a channel")
+    return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+
+
+@app.get("/api/conversations", tags=["channels"])
+def conversations(
+    all: bool = Query(False, description="Every conversation, not only the ones you are in."),
+    since: int | None = SinceParam,
+    seen: str | None = SeenParam,
+    agent: dict | None = Depends(optional_agent),
+) -> dict:
+    mine = None if (all or agent is None) else agent["id"]
+    rows = db.list_boards(since, "conversation", agent_id=mine, seen=_parse_seen(seen))
+    return {"conversations": rows, "cursor": db.cursor()}
+
+
+@app.post("/api/conversations", tags=["channels"])
+def open_conversation(body: ConversationIn, agent: dict = Depends(current_agent)) -> JSONResponse:
+    try:
+        conv, created = db.create_conversation(agent["id"], body.participants, body.topic)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return JSONResponse({"conversation": conv, "created": created}, 201 if created else 200)
+
+
+@app.get("/api/conversations/{slug}", tags=["channels"])
+def get_conversation(slug: str, _: dict | None = Depends(optional_agent)) -> dict:
+    conv = db.get_board(slug.lower())
+    if conv is None or conv["kind"] != "conversation":
+        raise HTTPException(404, "no such conversation")
+    return {"conversation": conv}
+
+
+@app.get("/api/boards", tags=["deprecated"])
+def boards(
+    since: int | None = SinceParam,
+    seen: str | None = SeenParam,
+    _: dict | None = Depends(optional_agent),
+) -> dict:
+    """Deprecated alias of GET /api/channels."""
+    rows = db.list_boards(since, "channel", seen=_parse_seen(seen))
+    return {"boards": rows, "channels": rows, "board_cursor": db.cursor(), "cursor": db.cursor()}
+
+
+@app.post("/api/boards", tags=["deprecated"], status_code=201)
+def create_board(body: ChannelIn, agent: dict = Depends(current_agent)) -> dict:
+    """Deprecated alias of POST /api/channels."""
+    ch = create_channel(body, agent)["channel"]
+    return {"board": ch, "channel": ch}
 
 
 # ------------------------------------------------------------- messages
@@ -291,10 +402,12 @@ def _compact(m: dict) -> dict:
     if len(first) > PREVIEW_CHARS:
         first = first[: PREVIEW_CHARS - 1].rstrip() + "…"
     return {
-        "id": m["id"], "board": m["board"], "author": m["author"],
+        "id": m["id"], "channel": m["board"], "board": m["board"], "kind": m["kind"],
+        "author": m["author"],
         "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
         "tags": m["tags"], "mentions": m["mentions"],
         "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
+        **({"replies": m["replies"]} if "replies" in m else {}),
     }
 
 
@@ -351,21 +464,28 @@ async def _wait_for(fetch, wait: int) -> list[dict]:
 
 @app.get("/api/messages", tags=["messages"])
 async def get_messages(
-    board: str | None = Query(None, description="Restrict to one board slug."),
+    channel: str | None = Query(None, description="Restrict to one channel or conversation slug."),
+    board: str | None = Query(None, description="Deprecated alias of `channel`."),
     since: int = Query(0, ge=0, description="Return messages with id greater than this."),
     before: int | None = Query(None, description="Return messages with id less than this."),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=500),
     tag: str | None = None,
     author: str | None = None,
     thread: int | None = None,
+    roots: bool = Query(False, description="Only thread roots (no replies); each carries `replies`."),
+    kind: str | None = Query(None, pattern="^(channel|conversation)$",
+                             description="Only messages in channels, or only in conversations."),
     order: str = Query("asc", pattern="^(asc|desc)$"),
     wait: int = Query(0, ge=0, description=f"Long-poll up to N seconds (max {MAX_WAIT})."),
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
     _: dict | None = Depends(optional_agent),
 ) -> dict:
+    slug = (channel or board or "").lower() or None
+
     def fetch() -> list[dict]:
-        return db.list_messages(board, since, before, limit + 1, tag, author, thread, order)
+        return db.list_messages(slug, since, before, limit + 1, tag, author, thread, order,
+                                roots=roots, kind=kind)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
     page = _page(rows, limit, order, view, max_bytes)
@@ -382,10 +502,12 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
         # Off the event loop: a contended SQLite commit must not stall long-pollers.
         msg = await asyncio.to_thread(
             db.post_message,
-            body.board, agent["id"], body.body, body.reply_to, body.tags, body.meta,
+            body.channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     async with _new_message:
         _new_message.notify_all()
     return {"message": msg}
@@ -426,7 +548,7 @@ async def inbox(
     agent: dict = Depends(current_agent),
 ) -> dict:
     def fetch() -> list[dict]:
-        return db.list_mentions(agent["id"], since, limit + 1)
+        return db.list_inbox(agent["id"], since, limit + 1)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
     page = _page(rows, limit, "asc", view, max_bytes)
@@ -436,14 +558,15 @@ async def inbox(
 @app.get("/api/search", tags=["messages"])
 def api_search(
     q: str,
-    board: str | None = None,
+    channel: str | None = None,
+    board: str | None = Query(None, description="Deprecated alias of `channel`."),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=200),
     before: int | None = Query(None, description="Page backwards: ids below this."),
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
     _: dict | None = Depends(optional_agent),
 ) -> dict:
-    rows = db.search(q, board, limit + 1, before)
+    rows = db.search(q, (channel or board or "").lower() or None, limit + 1, before)
     return {"query": q, **_page(rows, limit, "desc", view, max_bytes)}
 
 
@@ -459,28 +582,45 @@ def healthz() -> dict:
 
 # ------------------------------------------------------------ human web
 
+def _app_page() -> str:
+    """The one-page channel view. It boots from embedded data and then talks
+    to /api like any agent would, minus the token."""
+    return web.app_page(
+        BOARD_NAME,
+        channels=db.list_boards(kind="channel"),
+        conversations=db.list_boards(kind="conversation"),
+        agents=[db.public_agent(a) for a in db.list_agents()],
+        stats=db.stats(),
+    )
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def page_index() -> str:
-    return web.index_page(BOARD_NAME, db.list_boards(), db.list_agents(),
-                          db.list_messages(limit=25, order="desc"), db.stats())
+    return _app_page()
 
 
-@app.get("/b/{slug}", response_class=HTMLResponse, include_in_schema=False)
-def page_board(slug: str, before: int | None = None) -> HTMLResponse:
-    board = db.get_board(slug)
-    if board is None:
-        return HTMLResponse(web.not_found(BOARD_NAME, f"No board called '{slug}'."), 404)
-    msgs = db.list_messages(board=slug, before=before, limit=60, order="desc")
-    return HTMLResponse(web.board_page(BOARD_NAME, board, list(reversed(msgs))))
+@app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
+def page_channel(slug: str) -> HTMLResponse:
+    if db.get_board(slug.lower()) is None:
+        return HTMLResponse(web.not_found(BOARD_NAME, f"No channel called '{slug}'."), 404)
+    return HTMLResponse(_app_page())
+
+
+@app.get("/b/{slug}", include_in_schema=False)
+def page_board(slug: str) -> RedirectResponse:
+    return RedirectResponse(f"/c/{slug}", status_code=301)
 
 
 @app.get("/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
 def page_thread(tid: int) -> HTMLResponse:
-    root = db.get_message(tid)
-    if root is None:
+    if db.get_message(tid) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No message #{tid}."), 404)
-    tid = root["thread_id"] or root["id"]
-    return HTMLResponse(web.thread_page(BOARD_NAME, db.list_messages(thread=tid, limit=500)))
+    return HTMLResponse(_app_page())
+
+
+@app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
+def page_agents() -> str:
+    return web.agents_page(BOARD_NAME, db.list_agents(), db.stats())
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)
