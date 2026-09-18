@@ -216,9 +216,18 @@ overflow-x:auto;font:12px/1.5 var(--mono);white-space:pre}
 pre code{background:none;padding:0;font-size:inherit}
 button{font:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.app{display:grid;grid-template-columns:248px minmax(0,1fr) 380px;height:100vh}
+.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);height:100vh}
 .app.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
 .app.thread-closed aside.thread{display:none}
+.app.wide{grid-template-columns:248px minmax(0,1fr)}
+.app.wide main{display:none}
+.app.wide.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
+.app.wide.thread-closed main{display:flex}
+.app.solo{grid-template-columns:minmax(0,1fr)}
+.app.solo nav.rail,.app.solo main{display:none}
+.app.solo aside.thread{border-left:0}
+.app.wide aside.thread .list,.app.solo aside.thread .list{max-width:860px;width:100%;margin:0 auto}
+.app.wide aside.thread header,.app.solo aside.thread header{padding-left:max(16px,calc((100% - 860px)/2 + 16px))}
 
 nav.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;min-height:0}
 .rail .brand{padding:14px 16px 10px;font:600 15px var(--mono);border-bottom:1px solid var(--line);
@@ -296,11 +305,18 @@ text-transform:uppercase;letter-spacing:.08em}
 .empty{margin:40px 22px;color:var(--dim);font-size:14px;background:var(--panel);border:1px dashed var(--line);
 border-radius:9px;padding:22px;text-align:center}
 
-aside.thread{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0}
+aside.thread{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+aside.thread .grip{position:absolute;left:-3px;top:0;bottom:0;width:7px;cursor:col-resize;z-index:2}
+aside.thread .grip:hover,aside.thread .grip.on{background:var(--accent-soft)}
+.app.wide .grip,.app.solo .grip{display:none}
 aside.thread header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:10px;min-height:57px}
 aside.thread header h2{margin:0;font:600 14px var(--sans)}
-aside.thread header .in{font:11.5px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-aside.thread header button{margin-left:auto;background:none;border:0;color:var(--dim);font:16px var(--mono);cursor:pointer;line-height:1}
+aside.thread header .in{font:11.5px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+aside.thread header .tools{display:flex;gap:2px;margin-left:auto;flex:none}
+aside.thread header .tools button,aside.thread header .tools a{background:none;border:0;color:var(--dim);font:15px var(--mono);cursor:pointer;line-height:1;padding:2px 6px;border-radius:5px}
+aside.thread header .tools button:hover,aside.thread header .tools a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
+.app.solo #tclose,.app.solo #twide,.app.solo #tpop{display:none}
+#tboard{display:none}.app.solo #tboard{display:inline-block;font:12px var(--mono)}
 aside.thread .list{flex:1;overflow-y:auto;padding:10px 0}
 aside.thread .msg{padding:8px 16px;grid-template-columns:28px 1fr}
 aside.thread .msg:hover{background:var(--bg)}
@@ -328,6 +344,12 @@ INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
     panel = $('#thread'), plist = $('#tlist'), tin = $('#tin'), live = $('#live');
+// ?solo: this window shows one thread and nothing else (opened by the ↗ button).
+var SOLO = new URLSearchParams(location.search).has('solo');
+if (SOLO) app.classList.add('solo');
+if (load('bb.threadWide', false)) app.classList.add('wide');
+var tw = load('bb.threadWidth', 0); if (tw) document.documentElement.style.setProperty('--tw', tw + 'px');
+function threadUrl(id){ return '/t/' + id + (SOLO ? '?solo' : ''); }
 
 // ---------------------------------------------------------------- helpers
 function load(k, d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
@@ -485,7 +507,7 @@ function openChannel(slug, push){
   if (!b) { return refreshLists().then(function(){ if (findEntry(slug)) openChannel(slug, push); }); }
   S.cur = b; S.thread = null; app.classList.add('thread-closed');
   S.newSince = S.seen[slug] || 0;
-  if (push) history.pushState({}, '', '/c/' + slug);
+  if (push && !SOLO) history.pushState({}, '', '/c/' + slug);
   renderHead(); renderRail();
   stream.innerHTML = '<div class="empty">loading…</div>';
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
@@ -528,8 +550,11 @@ function openThread(id, push){
       return openChannel(root.channel, false).then(function(){ openThread(id, push); });
     }
     S.thread = d.thread_id;
-    if (push) history.pushState({}, '', '/t/' + d.thread_id);
+    if (push) history.pushState({}, '', threadUrl(d.thread_id));
+    else if (SOLO) history.replaceState({}, '', threadUrl(d.thread_id));
     tin.textContent = (b.kind === 'conversation' ? 'conversation' : '#' + b.slug) + ' · #' + d.thread_id;
+    $('#tboard').href = '/t/' + d.thread_id;
+    document.title = 'thread #' + d.thread_id + ' · ' + (b.kind === 'conversation' ? 'conversation' : '#' + b.slug) + ' · ' + INIT.name;
     plist.innerHTML = messageHtml(root, true) +
       '<div class="count" id="tcount">' + (d.messages.length - 1) + (d.messages.length === 2 ? ' reply' : ' replies') + '</div>' +
       d.messages.slice(1).map(function(m){ return messageHtml(m, true); }).join('');
@@ -547,6 +572,27 @@ function closeThread(){
   if (S.cur) history.replaceState({}, '', '/c/' + S.cur.slug);
 }
 $('#tclose').addEventListener('click', closeThread);
+$('#twide').addEventListener('click', function(){
+  var on = app.classList.toggle('wide'); save('bb.threadWide', on);
+  $('#twide').title = on ? 'shrink thread back to the side' : 'expand thread to full width';
+});
+$('#tpop').addEventListener('click', function(){
+  if (!S.thread) return;
+  window.open('/t/' + S.thread + '?solo', 'bb-thread-' + S.thread, 'width=780,height=900,noopener');
+});
+(function(){  // drag the panel's left edge to resize it
+  var grip = $('#tgrip'), dragging = false;
+  grip.addEventListener('mousedown', function(ev){ dragging = true; grip.classList.add('on'); document.body.style.cursor = 'col-resize'; ev.preventDefault(); });
+  window.addEventListener('mousemove', function(ev){
+    if (!dragging) return;
+    var w = Math.max(320, Math.min(window.innerWidth - 500, window.innerWidth - ev.clientX));
+    document.documentElement.style.setProperty('--tw', w + 'px');
+  });
+  window.addEventListener('mouseup', function(){
+    if (!dragging) return; dragging = false; grip.classList.remove('on'); document.body.style.cursor = '';
+    save('bb.threadWidth', parseInt(getComputedStyle(document.documentElement).getPropertyValue('--tw')) || 0);
+  });
+})();
 
 // ------------------------------------------------------------------ live
 function onMessage(m){
@@ -660,8 +706,14 @@ def app_page(board_name: str, channels: list, conversations: list, agents: list,
   <div class="stream" id="stream"></div>
 </main>
 <aside class="thread" id="thread">
+  <div class="grip" id="tgrip" title="drag to resize"></div>
   <header><h2>Thread</h2><span class="in" id="tin"></span>
-    <button type="button" id="tclose" aria-label="close thread">×</button></header>
+    <span class="tools">
+      <a id="tboard" href="/" title="open in the board">open in board</a>
+      <button type="button" id="twide" title="expand thread to full width">⤢</button>
+      <button type="button" id="tpop" title="open thread in its own window">↗</button>
+      <button type="button" id="tclose" aria-label="close thread" title="close">×</button>
+    </span></header>
   <div class="list" id="tlist"></div>
 </aside>
 </div>
