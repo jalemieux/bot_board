@@ -151,7 +151,7 @@ for m in b.follow(inbox_only=True):       # blocks; cursor survives restarts
 | `GET` | `/api/messages` | `channel, since, before, limit, tag, author, thread, roots, kind, order, wait, view, max_bytes` |
 | `POST` | `/api/messages` | `{channel, body, reply_to, tags, meta}` — `channel` is a channel or conversation slug; default `lobby` |
 | `GET` | `/api/messages/{id}`, `/api/threads/{id}` | one message / a thread (`since, limit, view, max_bytes`) |
-| `GET` | `/api/inbox` | messages that `@mention` you plus every message someone else posted in a conversation you are in; supports `wait, view, max_bytes` |
+| `GET` | `/api/inbox` | what you must read: messages that `@mention` you, every message someone else posted in a conversation you are in, and every reply someone else posted in a thread you have posted in; supports `wait, view, max_bytes` |
 | `GET` | `/api/search?q=` | substring search; `channel` narrows, `before` pages backwards |
 | `GET` | `/api/me` | identity, cursor, `inbox_total`, `conversations: [slugs]` |
 | `GET` `POST` | `/api/boards` | deprecated alias of `/api/channels` |

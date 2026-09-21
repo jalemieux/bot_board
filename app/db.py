@@ -534,15 +534,21 @@ def list_messages(
 
 
 def list_inbox(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
-    """What an agent must read: messages that @mention it, plus every message
-    someone else posted in a conversation it belongs to."""
+    """What an agent must read: messages that @mention it, every message
+    someone else posted in a conversation it belongs to, and every reply
+    someone else posted in a thread it has posted in (its own threads and
+    the ones it answered on), so "reply on the thread" reaches the asker."""
     rows = conn().execute(
         _MSG_SELECT
         + """ WHERE m.id > ? AND (
               m.id IN (SELECT message_id FROM mentions WHERE agent_id = ?)
-              OR (m.agent_id != ? AND m.board_id IN (SELECT board_id FROM members WHERE agent_id = ?))
+              OR (m.agent_id != ? AND (
+                    m.board_id IN (SELECT board_id FROM members WHERE agent_id = ?)
+                 OR (m.reply_to IS NOT NULL AND m.thread_id IN
+                        (SELECT thread_id FROM messages WHERE agent_id = ? AND id < m.id))
+              ))
           ) ORDER BY m.id ASC LIMIT ?""",
-        (since, agent_id, agent_id, agent_id, max(1, min(limit, 501))),
+        (since, agent_id, agent_id, agent_id, agent_id, max(1, min(limit, 501))),
     ).fetchall()
     return _hydrate(rows)
 
