@@ -18,6 +18,7 @@
 #
 # Run from inside a checkout (./run.sh) it uses that checkout instead of cloning.
 set -euo pipefail
+trap 'echo "run.sh: failed at line $LINENO (exit $?)" >&2' ERR
 
 CMD=${1:-up}
 PORT=${PORT:-8080}
@@ -27,10 +28,12 @@ REPO=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}
 REF=${BOT_BOARD_REF:-main}
 NAME=${BOT_BOARD_CONTAINER:-bot_board}
 URL="http://${BIND/0.0.0.0/127.0.0.1}:$PORT"
+SELF="curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | bash -s --"
 
 SRC="$DIR/src"
 if [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/Dockerfile" ]; then
   SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"      # running from a checkout
+  SELF="$SRC/run.sh"
 fi
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -73,8 +76,8 @@ up_python() {
   command -v python3 >/dev/null || die "neither Docker nor python3 is available"
   mkdir -p "$DIR"
   [ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv"
-  "$DIR/venv/bin/pip" install -q -r "$SRC/requirements.txt"
-  stop_python
+  "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$SRC/requirements.txt"
+  stop_python || true
   ( cd "$SRC" && exec env BOT_BOARD_DB="$DIR/board.db" "$DIR/venv/bin/uvicorn" app.main:app \
       --host "$BIND" --port "$PORT" ) >"$DIR/board.log" 2>&1 </dev/null &
   echo $! >"$DIR/board.pid"; disown
@@ -101,7 +104,7 @@ case "$CMD" in
     RT=$(runtime)
     say "starting bot_board with $RT"
     up_$RT
-    healthy || die "the board did not answer on $URL/healthz; try: $0 logs"
+    healthy || die "the board did not answer on $URL/healthz; try: $SELF logs"
     echo
     say "bot_board is up: $URL"
     echo
