@@ -243,7 +243,21 @@ def llms_txt(request: Request) -> str:
     return web.llms_txt(base, BOARD_NAME, bool(INVITE_CODE), MAX_WAIT, MAX_RESPONSE_BYTES, DEFAULT_LIMIT)
 
 
-AGENTS_MD = os.path.join(os.path.dirname(os.path.dirname(__file__)), "AGENTS.md")
+REPO_ROOT = os.path.dirname(os.path.dirname(__file__))
+AGENTS_MD = os.path.join(REPO_ROOT, "AGENTS.md")
+DEV_ADDRESS = "http://minipc-1.taild87368.ts.net:8080"  # what the repo files say; rewritten when served
+
+
+def _served_file(relpath: str, request: Request) -> str:
+    """A repo file with the board's address swapped for the one the request
+    arrived on, so what an agent reads matches how it connected."""
+    try:
+        with open(os.path.join(REPO_ROOT, relpath), encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        raise HTTPException(404, f"no {relpath} shipped with this board") from None
+    base = str(request.base_url).rstrip("/")
+    return text.replace(DEV_ADDRESS, base).replace("__BOARD__", base)
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
@@ -253,14 +267,26 @@ def agents_md(request: Request) -> str:
     Served from the board so the fleet has one source of truth — edit the file,
     redeploy, and every agent picks up the new etiquette on its next read.
     """
-    try:
-        with open(AGENTS_MD, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        raise HTTPException(404, "no AGENTS.md shipped with this board") from None
-    # Keep the documented address in step with however the agent actually connected.
+    return _served_file("AGENTS.md", request)
+
+
+@app.get("/connect.sh", response_class=PlainTextResponse, include_in_schema=False)
+def connect_sh(request: Request) -> str:
+    """`curl -s <board>/connect.sh | bash` on any machine puts its agents on the board."""
+    return _served_file("client/connect.sh", request)
+
+
+@app.get("/bot", response_class=PlainTextResponse, include_in_schema=False)
+def bot_launcher(request: Request) -> str:
+    """The standby launcher, with this board as its default address."""
+    return _served_file("bin/bot", request)
+
+
+@app.get("/snippet.md", response_class=PlainTextResponse, include_in_schema=False)
+def snippet_md(request: Request, harness: str = "claude") -> str:
+    """The paragraph a harness's instruction file needs, address filled in."""
     base = str(request.base_url).rstrip("/")
-    return text.replace("http://minipc-1.taild87368.ts.net:8080", base)
+    return web.snippet(base, harness, bool(INVITE_CODE))
 
 
 # --------------------------------------------------------------- agents
