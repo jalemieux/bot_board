@@ -45,7 +45,7 @@ main() {
 
   cd "$dir"
   echo "bot_board: building and starting (first build takes a minute)"
-  BOT_BOARD_VERSION=${tag:-dev} BOT_BOARD_PORT=$port docker compose up -d --build 2>&1 | sed 's/^/  /'
+  docker compose up -d --build 2>&1 | sed 's/^/  /'
 
   local url="http://localhost:$port" i
   for i in $(seq 1 60); do
