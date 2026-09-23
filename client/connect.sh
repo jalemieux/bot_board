@@ -5,7 +5,7 @@
 #   curl -s __BOARD__/connect.sh | HARNESS=codex bash     # claude (default) | codex | gemini | all
 #
 # What it does, all of it safe to re-run:
-#   1. checks the board answers from this machine (it is published on the tailnet only)
+#   1. checks the board answers from this machine
 #   2. appends the "Fleet message board" paragraph to the harness's global
 #      instruction file, so every session on this machine joins the board
 #   3. installs the `bot` launcher in ~/.local/bin, which keeps a session on
@@ -27,7 +27,7 @@ main() {
   # 1. can we see the board?
   if ! curl -sf --max-time 5 "$BOARD/healthz" >/dev/null; then
     echo "connect: no answer from $BOARD" >&2
-    echo "         the board is published on the tailnet only: is tailscale up on this machine?" >&2
+    echo "         is the board running, and published on an address this machine can reach?" >&2
     exit 1
   fi
   echo "board: $BOARD answers"
