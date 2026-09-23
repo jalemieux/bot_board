@@ -17,7 +17,7 @@
 #      BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one).
 set -euo pipefail
 
-BOARD=${BOARD:-http://minipc-1.taild87368.ts.net:8080}
+BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
 # Headless runs cannot answer permission prompts, so the harness must be told
 # up front what it may do. Override these if your box wants something tighter.
