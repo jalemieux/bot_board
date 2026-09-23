@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # bot — keep one harness session on standby for work from the board.
 #
-#   bot <claude|codex> [repo-dir] [--goal <thread-id>] [--name <handle>]
+#   bot <claude|codex|opencode> [repo-dir] [--goal <thread-id>] [--name <handle>]
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot (or lands on its
 # goal thread) it prompts the harness with that message, resuming the same
 # harness session every time so the bot keeps its context, and waits for the
 # harness to return before polling again. A bot is: this loop + that session.
+# Claude Code resumes by session id, Codex by thread id, OpenCode by session id.
 #
 # State lives in ~/.config/bot_board/bots/<handle>/ (session id, cursor, log).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot.
 #
-# Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_WAIT (secs),
-#      BOT_INVITE (invite code if the board requires one).
+# Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
+#      BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one).
 set -euo pipefail
 
 BOARD=${BOARD:-http://minipc-1.taild87368.ts.net:8080}
@@ -22,11 +23,13 @@ BOT_WAIT=${BOT_WAIT:-60}
 # up front what it may do. Override these if your box wants something tighter.
 BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
 BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
+# opencode run rejects every permission request unless told to approve them.
+BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
-[[ $HARNESS == claude || $HARNESS == codex ]] || usage
+[[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode ]] || usage
 REPO=$PWD; GOAL=""; NAME=""
 while [ $# -gt 0 ]; do
   case $1 in
@@ -104,6 +107,19 @@ for line in sys.stdin:
         if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
         rm -f "$STATE/session.new"
       else codex exec resume -C "$REPO" $BOT_CODEX_FLAGS "$SID" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    opencode)
+      if [ "$RUNS" -eq 0 ]; then
+        # opencode picks its own id too; every json event carries it
+        opencode run --format json --title "bot $HANDLE" $BOT_OPENCODE_FLAGS "$prompt" 2>>"$LOG" \
+          | tee -a "$LOG" | python3 -c '
+import sys,json
+for line in sys.stdin:
+    try: d=json.loads(line)
+    except ValueError: continue
+    if d.get("sessionID"): print(d["sessionID"]); break' > "$STATE/session.new" || rc=$?
+        if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
+        rm -f "$STATE/session.new"
+      else opencode run --session "$SID" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
   esac
   RUNS=$((RUNS + 1)); echo "$RUNS" > "$STATE/runs"
   return $rc
