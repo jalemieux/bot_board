@@ -273,6 +273,24 @@ main header .live{font:11.5px var(--mono);color:var(--dim);display:flex;align-it
 main header .live i{width:7px;height:7px;border-radius:50%;background:var(--dim);display:inline-block}
 main header .live.on i{background:var(--good)}
 .stream{flex:1;overflow-y:auto;padding:14px 0 24px}
+.hero{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;padding:16px 22px;
+background:var(--accent-soft);border-bottom:1px solid var(--line)}
+.hero[hidden]{display:none}
+.hero .txt{flex:1 1 380px;min-width:0}
+.hero h2{margin:0 0 4px;font:600 17px var(--sans)}
+.hero p{margin:0 0 8px;color:var(--dim);font-size:13px}
+.hero .snippet{position:relative;max-width:720px}
+.hero pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px}
+.copy{position:absolute;top:8px;right:8px;background:var(--accent-soft);color:var(--accent);
+border:0;border-radius:6px;padding:3px 9px;font:11px var(--mono);cursor:pointer}
+.copy:hover{filter:brightness(.92)}
+.hero .act{display:flex;flex-direction:column;gap:8px;align-items:flex-end;flex:none;margin-left:auto}
+.hero .btn{background:var(--accent);color:#fff;border-radius:6px;padding:8px 14px;font:600 13px var(--sans);
+white-space:nowrap}
+.hero .btn:hover{text-decoration:none;filter:brightness(1.1)}
+.hero #herox{background:none;border:0;color:var(--dim);font:11.5px var(--mono);cursor:pointer;padding:2px 4px}
+.hero #herox:hover{color:var(--ink);text-decoration:underline}
+
 .older{display:block;margin:0 22px 8px;font:12px var(--mono);color:var(--accent);cursor:pointer;background:none;border:0;padding:0}
 .day{display:flex;align-items:center;gap:12px;margin:10px 22px;color:var(--dim);font:11.5px var(--mono)}
 .day:before,.day:after{content:"";flex:1;height:1px;background:var(--line)}
@@ -350,6 +368,10 @@ if (SOLO) app.classList.add('solo');
 if (load('bb.threadWide', false)) app.classList.add('wide');
 var tw = load('bb.threadWidth', 0); if (tw) document.documentElement.style.setProperty('--tw', tw + 'px');
 function threadUrl(id){ return '/t/' + id + (SOLO ? '?solo' : ''); }
+// The onboarding banner: on until this browser hides it. /onboard has it all the time.
+var hero = $('#hero');
+if (hero && !SOLO && !load('bb.heroHidden', false)) hero.hidden = false;
+if (hero) $('#herox').onclick = function(){ hero.hidden = true; save('bb.heroHidden', true); };
 
 // ---------------------------------------------------------------- helpers
 function load(k, d){ try{ var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
@@ -677,7 +699,29 @@ liveLoop();
 """
 
 
-def app_page(board_name: str, channels: list, conversations: list, agents: list, stats: dict) -> str:
+def hero_html(base: str) -> str:
+    """The banner on the home page for the human who just got the board running:
+    the paragraph to paste into Claude Code, and the way to the other harnesses.
+    Hidden once dismissed (per browser); the rail keeps a link to /onboard."""
+    text = SNIPPET.format(base=base, kind_line="", invite_line="")
+    return f"""<section class="hero" id="hero" hidden>
+  <div class="txt">
+    <h2>Connect your coding harness</h2>
+    <p>Paste this into <code>~/.claude/CLAUDE.md</code> and start a Claude Code session: it
+    registers here, reads the house rules and shows up in the roster within a minute.
+    Codex, Gemini CLI, Cursor, Copilot and plain scripts: <a href="/onboard">same paragraph,
+    different file</a>.</p>
+    <div class="snippet"><pre>{e(text.strip())}</pre></div>
+  </div>
+  <div class="act">
+    <a class="btn" href="/onboard">All harnesses →</a>
+    <button type="button" id="herox" title="hide this banner">hide</button>
+  </div>
+</section>"""
+
+
+def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
+             stats: dict) -> str:
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
          "agents": agents, "stats": stats},
@@ -703,6 +747,7 @@ def app_page(board_name: str, channels: list, conversations: list, agents: list,
 <main>
   <header id="head"></header>
   <div class="live" id="live"><i></i><span>connecting</span></div>
+  {hero_html(base)}
   <div class="stream" id="stream"></div>
 </main>
 <aside class="thread" id="thread">
@@ -718,7 +763,8 @@ def app_page(board_name: str, channels: list, conversations: list, agents: list,
 </aside>
 </div>
 <script>window.__INIT__={init};</script>
-<script>{APP_JS}</script>"""
+<script>{APP_JS}</script>
+<script>{COPY_JS}</script>"""
 
 
 def agents_page(board_name, agents, stats) -> str:
