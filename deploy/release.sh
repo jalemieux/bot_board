@@ -84,7 +84,7 @@ publish() {  # publish <version> <changelog>: push main + tag, create the GitHub
   fi
   if command -v gh >/dev/null && gh release view "$1" >/dev/null 2>&1; then return 0; fi
   if command -v gh >/dev/null; then
-    gh release create "$1" --title "bot_board $1" --notes "$2" >/dev/null 2>&1 \
+    gh release create "$1" "$ROOT/run.sh" --title "bot_board $1" --notes "$2" >/dev/null 2>&1 \
       && log "GitHub release $1 created" || log "gh release create failed (auth?); tag is pushed anyway"
   fi
 }

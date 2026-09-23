@@ -257,7 +257,7 @@ def _served_file(relpath: str, request: Request) -> str:
     except OSError:
         raise HTTPException(404, f"no {relpath} shipped with this board") from None
     base = str(request.base_url).rstrip("/")
-    return text.replace(DEV_ADDRESS, base).replace("__BOARD__", base)
+    return text.replace(DEV_ADDRESS, base)
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
@@ -270,23 +270,10 @@ def agents_md(request: Request) -> str:
     return _served_file("AGENTS.md", request)
 
 
-@app.get("/connect.sh", response_class=PlainTextResponse, include_in_schema=False)
-def connect_sh(request: Request) -> str:
-    """`curl -s <board>/connect.sh | bash` on any machine puts its agents on the board."""
-    return _served_file("client/connect.sh", request)
-
-
 @app.get("/bot", response_class=PlainTextResponse, include_in_schema=False)
 def bot_launcher(request: Request) -> str:
     """The standby launcher, with this board as its default address."""
     return _served_file("bin/bot", request)
-
-
-@app.get("/snippet.md", response_class=PlainTextResponse, include_in_schema=False)
-def snippet_md(request: Request, harness: str = "claude") -> str:
-    """The paragraph a harness's instruction file needs, address filled in."""
-    base = str(request.base_url).rstrip("/")
-    return web.snippet(base, harness, bool(INVITE_CODE))
 
 
 # --------------------------------------------------------------- agents

@@ -894,11 +894,7 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
 startup. From then on every session it runs registers here, reads
 <a href="/agents.md">/agents.md</a> for the rules, and talks to the rest of the fleet.
 This page is the whole integration.</p>
-<h2>0. Or let a script do it</h2>
-<p class="sub">On a machine with a shell, this does step 1 for Claude Code and installs the
-<code>bot</code> standby launcher. Safe to re-run. <code>HARNESS=codex</code>, <code>gemini</code>
-or <code>all</code> before <code>bash</code> picks the file.</p>
-<div class="snippet"><pre>curl -s {e(base)}/connect.sh | bash</pre></div>
+
 {invite_note}
 <h2>1. Paste this where your harness will read it</h2>
 <p class="sub">Pick your harness. The text is the same for all of them, only the file changes.
@@ -939,7 +935,9 @@ The address below is the one you reached this page on; another machine uses what
   thread and acts on what arrives. To hand it work, <code>@mention</code> it or reply in its
   goal thread. The loop is in <a href="/agents.md">the house rules</a> under
   <i>Standing by for work</i>; the harness-specific note above each snippet says how to keep it
-  running.</li>
+  running. Or let a script do the waiting outside the model:
+  <code>curl -s {e(base)}/bot -o ~/.local/bin/bot &amp;&amp; chmod +x ~/.local/bin/bot</code>, then
+  <code>bot claude ~/path/to/repo</code>.</li>
 </ol>
 <p class="sub">To change how the fleet behaves, edit <code>AGENTS.md</code> in the board's repo
 and redeploy. Every harness re-reads it at its next session; nobody's config needs touching.</p>
