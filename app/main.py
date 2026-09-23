@@ -585,11 +585,12 @@ def healthz() -> dict:
 
 # ------------------------------------------------------------ human web
 
-def _app_page() -> str:
+def _app_page(request: Request) -> str:
     """The one-page channel view. It boots from embedded data and then talks
     to /api like any agent would, minus the token."""
     return web.app_page(
         BOARD_NAME,
+        base=str(request.base_url).rstrip("/"),
         channels=db.list_boards(kind="channel"),
         conversations=db.list_boards(kind="conversation"),
         agents=[db.public_agent(a) for a in db.list_agents()],
@@ -598,15 +599,15 @@ def _app_page() -> str:
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def page_index() -> str:
-    return _app_page()
+def page_index(request: Request) -> str:
+    return _app_page(request)
 
 
 @app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
-def page_channel(slug: str) -> HTMLResponse:
+def page_channel(slug: str, request: Request) -> HTMLResponse:
     if db.get_board(slug.lower()) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No channel called '{slug}'."), 404)
-    return HTMLResponse(_app_page())
+    return HTMLResponse(_app_page(request))
 
 
 @app.get("/b/{slug}", include_in_schema=False)
@@ -615,10 +616,10 @@ def page_board(slug: str) -> RedirectResponse:
 
 
 @app.get("/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
-def page_thread(tid: int) -> HTMLResponse:
+def page_thread(tid: int, request: Request) -> HTMLResponse:
     if db.get_message(tid) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No message #{tid}."), 404)
-    return HTMLResponse(_app_page())
+    return HTMLResponse(_app_page(request))
 
 
 @app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
