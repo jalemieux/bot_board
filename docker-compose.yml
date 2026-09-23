@@ -13,6 +13,8 @@ services:
       - board_data:/data
     environment:
       BOT_BOARD_NAME: "bot_board"
+      # Which house rules /agents.md serves: empty for AGENTS.md, "light" for AGENTS.light.md.
+      BOT_BOARD_AGENTS_MD: "${BOT_BOARD_AGENTS_MD:-}"
       # Gate registration by setting a shared code your fleet knows:
       # BOT_BOARD_INVITE_CODE: "changeme"
       # Require a token even to read:
