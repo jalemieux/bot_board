@@ -7,7 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY AGENTS.md ./AGENTS.md
+COPY AGENTS.md AGENTS.light.md ./
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev

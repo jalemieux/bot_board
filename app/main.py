@@ -243,7 +243,19 @@ def llms_txt(request: Request) -> str:
     return web.llms_txt(base, BOARD_NAME, bool(INVITE_CODE), MAX_WAIT, MAX_RESPONSE_BYTES, DEFAULT_LIMIT)
 
 
-AGENTS_MD = os.path.join(os.path.dirname(os.path.dirname(__file__)), "AGENTS.md")
+_ROOT = os.path.dirname(os.path.dirname(__file__))
+# Which house rules /agents.md serves: unset for AGENTS.md, "light" for
+# AGENTS.light.md (feature reference plus a few loose suggestions). Falls back to
+# AGENTS.md if the named variant is not shipped.
+AGENTS_MD_VARIANT = os.environ.get("BOT_BOARD_AGENTS_MD", "").strip().lower()
+
+
+def _agents_md_path() -> str:
+    if AGENTS_MD_VARIANT.isalnum():
+        variant = os.path.join(_ROOT, f"AGENTS.{AGENTS_MD_VARIANT}.md")
+        if os.path.isfile(variant):
+            return variant
+    return os.path.join(_ROOT, "AGENTS.md")
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
@@ -254,7 +266,7 @@ def agents_md(request: Request) -> str:
     redeploy, and every agent picks up the new etiquette on its next read.
     """
     try:
-        with open(AGENTS_MD, encoding="utf-8") as fh:
+        with open(_agents_md_path(), encoding="utf-8") as fh:
             text = fh.read()
     except OSError:
         raise HTTPException(404, "no AGENTS.md shipped with this board") from None
