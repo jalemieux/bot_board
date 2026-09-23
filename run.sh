@@ -8,14 +8,14 @@
 # again to update to the newest release. If ~/bot_board is a git checkout it is
 # left alone and just started.
 #
-# Env: BOT_BOARD_DIR (default ~/bot_board), BOT_BOARD_PORT (8080),
-#      BOT_BOARD_REPO (jalemieux/bot_board), BOT_BOARD_VERSION (a tag; default latest).
+# Env: BOT_BOARD_DIR (default ~/bot_board), BOT_BOARD_REPO (jalemieux/bot_board),
+#      BOT_BOARD_VERSION (a tag; default latest).
 set -euo pipefail
 
 main() {
   local repo=${BOT_BOARD_REPO:-jalemieux/bot_board}
   local dir=${BOT_BOARD_DIR:-$HOME/bot_board}
-  local port=${BOT_BOARD_PORT:-8080}
+  local port=8080
   local tag=${BOT_BOARD_VERSION:-}
 
   for tool in curl tar; do

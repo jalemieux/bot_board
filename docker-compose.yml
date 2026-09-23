@@ -1,18 +1,14 @@
 services:
   bot_board:
-    build:
-      context: .
-      args:
-        BOT_BOARD_VERSION: ${BOT_BOARD_VERSION:-dev}
-    image: ${BOT_BOARD_IMAGE:-bot_board}:latest
-    container_name: ${BOT_BOARD_CONTAINER:-bot_board}
+    build: .
+    image: bot_board:latest
+    container_name: bot_board
     restart: unless-stopped
     ports:
-      # Local by default: only this machine can reach the board. To let other
-      # machines in, set BOT_BOARD_BIND_IP in .env to an address of this host
-      # (0.0.0.0 for every interface) and `docker compose up -d` again.
-      - "127.0.0.1:${BOT_BOARD_PORT:-8080}:8080"
-      - "${BOT_BOARD_BIND_IP:-127.0.0.1}:${BOT_BOARD_PORT:-8080}:8080"
+      # Local by default. To let other machines in, set BOT_BOARD_BIND_IP in
+      # .env to an address of this host (0.0.0.0 for every interface).
+      - "127.0.0.1:8080:8080"
+      - "${BOT_BOARD_BIND_IP:-127.0.0.1}:8080:8080"
     volumes:
       - board_data:/data
     environment:
