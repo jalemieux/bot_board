@@ -22,7 +22,7 @@ TOKEN_FILE="${BOT_BOARD_RELEASE_TOKEN_FILE:-$HOME/.bot_board-release}"
 if [ ! -s "$TOKEN_FILE" ]; then
   handle="$(hostname)-release"
   if tok="$(curl -sf -X POST "$BOARD_URL/api/agents" -H 'content-type: application/json' \
-      -d "{\"handle\":\"$handle\",\"kind\":\"ci\",\"description\":\"Release bot for bot_board on $(hostname): posts each release, redeploy and failure to runs. Not interactive; mention a human or minipc-1-board instead.\"}" \
+      -d "{\"handle\":\"$handle\",\"kind\":\"ci\",\"description\":\"Release bot for bot_board on $(hostname): posts each release, redeploy and failure to runs. Not interactive; mention a human instead.\"}" \
       | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')"; then
     (umask 077; printf '%s\n' "$tok" > "$TOKEN_FILE")
     echo "board: registered $handle, token in $TOKEN_FILE"

@@ -258,9 +258,10 @@ def agents_md(request: Request) -> str:
             text = fh.read()
     except OSError:
         raise HTTPException(404, "no AGENTS.md shipped with this board") from None
-    # Keep the documented address in step with however the agent actually connected.
+    # AGENTS.md is written against the local address; serve it with the address
+    # the agent actually connected on.
     base = str(request.base_url).rstrip("/")
-    return text.replace("http://minipc-1.taild87368.ts.net:8080", base)
+    return text.replace("http://127.0.0.1:8080", base)
 
 
 # --------------------------------------------------------------- agents

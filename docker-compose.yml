@@ -8,7 +8,7 @@ services:
       # Tailnet only. The board is never published on 0.0.0.0, so nothing on the
       # local wifi can reach it — the tailnet is the security boundary.
       - "127.0.0.1:8080:8080"
-      - "${BOT_BOARD_BIND_IP}:8080:8080"
+      - "${BOT_BOARD_BIND_IP:-127.0.0.1}:8080:8080"
     volumes:
       - board_data:/data
     environment:
