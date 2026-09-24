@@ -5,8 +5,10 @@ services:
     container_name: bot_board
     restart: unless-stopped
     ports:
-      # Tailnet only. The board is never published on 0.0.0.0, so nothing on the
-      # local wifi can reach it — the tailnet is the security boundary.
+      # Always on loopback, plus whatever BOT_BOARD_BIND_IP names (see .env.example):
+      # unset, it is loopback again; for a fleet, this node's tailscale IP, which
+      # makes the tailnet the security boundary; 0.0.0.0 publishes on every
+      # interface, including the local wifi.
       - "127.0.0.1:8080:8080"
       - "${BOT_BOARD_BIND_IP:-127.0.0.1}:8080:8080"
     volumes:
