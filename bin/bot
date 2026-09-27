@@ -6,8 +6,8 @@
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot, lands on its goal
-# thread, or opens a new thread in a watched channel (default: the project's
-# own channel; --watch '' for none) it prompts the harness with it, resuming the same
+# thread, or is posted in a watched channel (default: the project's own channel;
+# --watch '' for none) it prompts the harness with it, resuming the same
 # harness session every time so the bot keeps its context, and waits for the
 # harness to return before polling again. A bot is: this loop + that session.
 # Claude Code resumes by session id, Codex by thread id, OpenCode by session id.
@@ -32,7 +32,7 @@ BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode ]] || usage
@@ -143,10 +143,11 @@ Now: read $BOARD/agents.md, then introduce yourself in one line on the lobby boa
 fi
 
 # ---- the loop ----------------------------------------------------------------------
-fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>addressed<TAB>body per message; advances SEEN
+fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>body per message; advances SEEN
   # Wait on the whole board, then sort what arrived: what the inbox says is ours
-  # (mentions, conversations, threads we posted in), the goal thread, and new
-  # threads opened in a watched channel, which anyone standing by may take.
+  # (mentions, conversations, threads we posted in) and the goal thread are
+  # "for you"; everything else posted in a watched channel is "channel", and
+  # every bot watching it gets it. The model decides what, if anything, to do.
   api "$BOARD/api/messages?since=$SEEN&limit=200&wait=$BOT_WAIT" >"$STATE/all.json" || { sleep 5; return 0; }
   grep -q '"messages":\[{' "$STATE/all.json" || return 0
   api "$BOARD/api/inbox?since=$SEEN&limit=200" >"$STATE/inbox.json" || return 0
@@ -159,10 +160,10 @@ mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
 for m in msgs:
     if m["author"]==me: continue
     tid=m["thread_id"] or m["id"]
-    addressed=m["id"] in mine or (goal and str(tid)==goal)
-    open_post=m["board"] in watch and not m["reply_to"]
-    if not (addressed or open_post): continue
-    print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],"1" if addressed else "0",m["body"].replace("\n","\\n")]))
+    if m["id"] in mine or (goal and str(tid)==goal): why="for you"
+    elif m["board"] in watch: why="channel"
+    else: continue
+    print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,m["body"].replace("\n","\\n")]))
 print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" 2>"$STATE/seen.tmp"
   SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
 }
@@ -173,16 +174,15 @@ while :; do
   SEEN=$(cat "$STATE/seen")
   [ -n "$NEW" ] || continue
   N=$(wc -l <<<"$NEW")
-  if ! cut -f5 <<<"$NEW" | grep -q 1; then       # nothing addressed to us: let a faster bot claim first
-    J=$((RANDOM % (BOT_JITTER + 1))); log "$N open post(s), pausing ${J}s"; sleep "$J"
+  if ! cut -f5 <<<"$NEW" | grep -qx 'for you'; then   # nothing addressed to us: let a faster bot claim first
+    J=$((RANDOM % (BOT_JITTER + 1))); log "$N channel post(s), pausing ${J}s"; sleep "$J"
   fi
   log "$N new message(s), prompting $HARNESS"
   PROMPT="New message(s) on the board. Handle them as agents.md says, in the repo $REPO, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE."$'\n'
   PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
-  PROMPT+="- Marked 'open': a new post in a channel you watch, not addressed to anyone; every bot standing by saw it too. Most need nothing (heads-ups, status, FYIs): then post nothing. If it asks for work or a question you can answer, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
-  while IFS=$'\t' read -r id board thread author addressed body; do
-    [ "$addressed" = 1 ] && tag="for you" || tag=open
-    PROMPT+=$'\n'"[$tag: message $id, board $board, thread $thread, from @$author, reply_to $id]"$'\n'"${body//\\n/$'\n'}"$'\n'
+  PROMPT+="- Marked 'channel': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
+  while IFS=$'\t' read -r id board thread author why body; do
+    PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id]"$'\n'"${body//\\n/$'\n'}"$'\n'
   done <<<"$NEW"
   if run_harness "$PROMPT"; then log "harness returned ok"
   else
