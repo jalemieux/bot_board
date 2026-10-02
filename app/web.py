@@ -252,6 +252,20 @@ color:var(--dim);font-size:13.5px;line-height:1.3}
 .rail li .conv em{font-style:normal;color:var(--dim);font-weight:400;margin-left:2px}
 .rail li .badge{flex:none;background:var(--accent);color:#fff;border-radius:10px;
 font:600 11px/1 var(--mono);padding:3px 6px;min-width:20px;text-align:center}
+.rail ul.views{margin-top:10px}
+.rail li .sigil.u{opacity:1;color:var(--accent)}
+.ugroup{margin:6px 0 18px}
+.ugroup h3{display:flex;align-items:center;gap:10px;margin:0;padding:6px 22px;font:600 13px var(--mono);
+position:sticky;top:-14px;background:var(--bg);z-index:1;border-bottom:1px solid var(--line)}
+.ugroup h3 a{color:var(--ink)}
+.ugroup h3 .n{color:var(--dim);font-weight:400;font-size:11.5px}
+.ugroup h3 button,.ubar button{margin-left:auto;background:none;border:1px solid var(--line);border-radius:6px;
+color:var(--dim);font:11.5px var(--mono);padding:2px 8px;cursor:pointer}
+.ugroup h3 button:hover,.ubar button:hover{color:var(--ink);background:var(--panel)}
+.ugroup .ctx{display:block;margin:0 0 2px;font:11.5px var(--mono);color:var(--dim);cursor:pointer;background:none;border:0;padding:0}
+.ugroup .ctx:hover{color:var(--accent)}
+.ugroup .more{margin:2px 22px 0 70px;font:12px var(--mono);color:var(--dim)}
+.ubar{display:flex;align-items:center;gap:10px;margin-left:auto}
 .rail .empty{padding:4px 16px;font:12px var(--mono);color:var(--dim)}
 .rail .foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);font:11.5px var(--mono);color:var(--dim)}
 .rail .foot a{display:block;margin-top:3px}
@@ -355,7 +369,8 @@ var S = {
   channels: INIT.channels, convs: INIT.conversations, agents: {},
   unread: {}, seen: load('bb.seen', {}),
   cur: null, thread: null, cursor: INIT.stats.cursor,
-  roots: [], newSince: 0, olderBefore: null, ctrl: null
+  roots: [], newSince: 0, olderBefore: null, ctrl: null,
+  view: null, umsgs: {}, umore: {}
 };
 INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 
@@ -448,8 +463,15 @@ function renderRail(){
   $('#channels').innerHTML = lis(S.channels, false);
   $('#convs').innerHTML = lis(S.convs, true);
   $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.length;
+  var total = totalUnread(), uli = $('#unreadli');
+  uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
+  $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
+}
+function totalUnread(){
+  return S.channels.concat(S.convs).reduce(function(n, b){ return n + (S.unread[b.slug] || 0); }, 0);
 }
 rail.addEventListener('click', function(ev){
+  if (ev.target.closest('#unreadli')) { openUnread(true); return; }
   var li = ev.target.closest('li[data-slug]'); if (!li) return;
   openChannel(li.dataset.slug, true);
 });
@@ -520,14 +542,16 @@ function renderStream(){
 stream.addEventListener('click', function(ev){
   var older = ev.target.closest('#older');
   if (older) { loadOlder(); return; }
-  var r = ev.target.closest('.replies'); if (!r) return;
+  var mr = ev.target.closest('[data-markread]');
+  if (mr) { markRead(mr.dataset.markread ? [mr.dataset.markread] : null); return; }
+  var r = ev.target.closest('.replies,.ctx'); if (!r) return;
   openThread(+r.dataset.thread, true);
 });
 
 function openChannel(slug, push){
   var b = findEntry(slug);
   if (!b) { return refreshLists().then(function(){ if (findEntry(slug)) openChannel(slug, push); }); }
-  S.cur = b; S.thread = null; app.classList.add('thread-closed');
+  S.cur = b; S.view = null; S.thread = null; app.classList.add('thread-closed');
   S.newSince = S.seen[slug] || 0;
   if (push && !SOLO) history.pushState({}, '', '/c/' + slug);
   renderHead(); renderRail();
@@ -561,6 +585,74 @@ function markSeen(){
 }
 document.addEventListener('visibilitychange', markSeen);
 window.addEventListener('focus', markSeen);
+
+// ---------------------------------------------------------------- unread
+// Everything this browser has not read yet, across channels and conversations,
+// grouped by where it was posted. Reading here does not clear it: "mark read"
+// does, and so does opening the channel.
+var UNREAD_LIMIT = 100;
+function boardLabel(b){ return b.kind === 'conversation' ? 'conversation ' + convLabel(b) : '<span class="sigil">#</span>' + esc(b.slug); }
+function openUnread(push){
+  S.view = 'unread'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
+  if (push && !SOLO) history.pushState({}, '', '/unread');
+  if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
+  var signal = S.ctrl.signal;
+  S.umsgs = {}; S.umore = {};
+  renderUnreadHead(); renderRail();
+  stream.innerHTML = '<div class="empty">loading…</div>';
+  var todo = S.channels.concat(S.convs).filter(function(b){ return S.unread[b.slug]; });
+  return Promise.all(todo.map(function(b){
+    return fetch('/api/messages?channel=' + encodeURIComponent(b.slug) + '&since=' + (S.seen[b.slug] || 0) + '&limit=' + UNREAD_LIMIT, {signal: signal})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ S.umsgs[b.slug] = d.messages; S.umore[b.slug] = d.has_more; });
+  })).then(function(){ if (S.view === 'unread') renderUnread(); }).catch(function(){});
+}
+function renderUnreadHead(){
+  var n = totalUnread();
+  head.innerHTML = '<h1>unread</h1><div class="topic">' + (n ? n + ' new message' + (n === 1 ? '' : 's') +
+    ' since you last looked, in this browser' : 'nothing new since you last looked') + '</div>' +
+    '<div class="ubar">' + (n ? '<button type="button" data-markread="" id="markall">mark all read</button>' : '') + '</div>';
+  head.appendChild(live);
+  document.title = (n ? '(' + n + ') ' : '') + 'unread · ' + INIT.name;
+}
+function renderUnread(){
+  var keep = stream.scrollTop;
+  var groups = S.channels.concat(S.convs).filter(function(b){ return (S.umsgs[b.slug] || []).length; });
+  groups.sort(function(a, b){ return (b.last_message_id || 0) - (a.last_message_id || 0); });
+  if (!groups.length) { stream.innerHTML = '<div class="empty">You are all caught up.</div>'; renderUnreadHead(); return; }
+  stream.innerHTML = groups.map(function(b){
+    var ms = S.umsgs[b.slug], n = S.unread[b.slug] || ms.length;
+    return '<section class="ugroup"><h3><a href="/c/' + esc(b.slug) + '" data-open="' + esc(b.slug) + '">' + boardLabel(b) + '</a>' +
+      '<span class="n">' + n + ' new</span>' +
+      '<button type="button" data-markread="' + esc(b.slug) + '">mark read</button></h3>' +
+      ms.map(function(m){
+        var h = messageHtml(m, true);
+        if (m.reply_to) h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.thread_id + '">↳ reply in thread #' + m.thread_id + '</button><div class="body">');
+        else h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.id + '">open thread #' + m.id + '</button><div class="body">');
+        return h;
+      }).join('') +
+      (S.umore[b.slug] ? '<div class="more">and more — <a href="/c/' + esc(b.slug) + '">open the channel</a></div>' : '') +
+      '</section>';
+  }).join('');
+  stream.scrollTop = keep;
+  renderUnreadHead();
+}
+function markRead(slugs){
+  (slugs || Object.keys(S.umsgs)).forEach(function(slug){
+    var b = findEntry(slug), ms = S.umsgs[slug] || [];
+    var top = Math.max(S.seen[slug] || 0, b ? b.last_message_id || 0 : 0, ms.length ? ms[ms.length - 1].id : 0);
+    S.seen[slug] = top; S.unread[slug] = 0; delete S.umsgs[slug];
+  });
+  if (!slugs) S.channels.concat(S.convs).forEach(function(b){
+    S.seen[b.slug] = Math.max(S.seen[b.slug] || 0, b.last_message_id || 0); S.unread[b.slug] = 0;
+  });
+  save('bb.seen', S.seen); renderRail(); renderUnread();
+}
+head.addEventListener('click', function(ev){ if (ev.target.closest('#markall')) markRead(null); });
+stream.addEventListener('click', function(ev){
+  var a = ev.target.closest('a[data-open]'); if (!a || ev.metaKey || ev.ctrlKey) return;
+  ev.preventDefault(); openChannel(a.dataset.open, true);
+});
 
 // ---------------------------------------------------------------- thread
 function openThread(id, push){
@@ -623,7 +715,8 @@ function onMessage(m){
   if (!b) {
     // A channel or conversation opened after the page loaded: everything in it is new.
     S.seen[m.channel] = Math.min(S.seen[m.channel] == null ? m.id - 1 : S.seen[m.channel], m.id - 1);
-    refreshLists(); return;
+    if (S.view === 'unread') (S.umsgs[m.channel] = S.umsgs[m.channel] || []).push(m);
+    refreshLists().then(function(){ if (S.view === 'unread') renderUnread(); }); return;
   }
   b.last_message_id = m.id; b.last_activity = m.created_at; b.message_count = (b.message_count || 0) + 1;
   if (S.cur && S.cur.slug === m.channel) {
@@ -652,6 +745,7 @@ function onMessage(m){
     if (document.visibilityState === 'visible') markSeen(); else S.unread[m.channel] = (S.unread[m.channel] || 0) + 1;
   } else {
     S.unread[m.channel] = (S.unread[m.channel] || 0) + 1;
+    if (S.view === 'unread') { (S.umsgs[m.channel] = S.umsgs[m.channel] || []).push(m); sortLists(); renderRail(); renderUnread(); }
   }
   if (m.author && S.agents[m.author]) { S.agents[m.author].presence = 'active'; }
   sortLists(); renderRail();
@@ -688,6 +782,7 @@ setInterval(function(){
 function route(){
   var m = location.pathname.match(/^\/c\/([^\/]+)/), t = location.pathname.match(/^\/t\/(\d+)/);
   if (m) return openChannel(decodeURIComponent(m[1]), false);
+  if (location.pathname === '/unread') return openUnread(false);
   if (t) return openThread(+t[1], false);
   var first = S.channels.filter(function(b){ return S.unread[b.slug]; })[0] || S.channels[0];
   if (first) openChannel(first.slug, false);
@@ -734,6 +829,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <div class="brand"><a href="/">{e(board_name)}<span>/</span></a>
     <small><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></small></div>
   <form action="/search"><input name="q" placeholder="search…" autocomplete="off"></form>
+  <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
+    <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li></ul>
   <h2>Channels <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2>Conversations <span id="ncv"></span></h2>
