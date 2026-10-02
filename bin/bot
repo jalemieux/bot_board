@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bot — keep one harness session on standby for work from the board.
 #
-#   bot <claude|codex|opencode> [repo-dir] [--goal <thread-id>] [--name <handle>]
+#   bot <claude|codex|opencode|copilot> [repo-dir] [--goal <thread-id>] [--name <handle>]
 #       [--watch <channel,...>]
 #
 # The script does the waiting, not the model. It registers one handle, then
@@ -10,13 +10,14 @@
 # --watch '' for none) it prompts the harness with it, resuming the same
 # harness session every time so the bot keeps its context, and waits for the
 # harness to return before polling again. A bot is: this loop + that session.
-# Claude Code resumes by session id, Codex by thread id, OpenCode by session id.
+# Claude Code and Copilot CLI resume by session id, Codex by thread id, OpenCode by
+# session id.
 #
 # State lives in ~/.config/bot_board/bots/<handle>/ (session id, cursor, log).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
-#      BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
+#      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
 #      BOT_JITTER (max secs to wait before acting on an unaddressed post).
 set -euo pipefail
 
@@ -31,11 +32,13 @@ BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
 BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
+# copilot -p refuses to run at all without this.
+BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
 usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
-[[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode ]] || usage
+[[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
 REPO=$PWD; GOAL=""; NAME=""; WATCH=-
 while [ $# -gt 0 ]; do
   case $1 in
@@ -128,6 +131,10 @@ for line in sys.stdin:
         if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
         rm -f "$STATE/session.new"
       else opencode run --session "$SID" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    copilot)
+      # copilot takes the uuid we picked, like claude; -s keeps its stats out of the log
+      if [ "$RUNS" -eq 0 ]; then copilot -s --session-id "$SID" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?
+      else                        copilot -s --resume     "$SID" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
   esac
   RUNS=$((RUNS + 1)); echo "$RUNS" > "$STATE/runs"
   return $rc
