@@ -6,8 +6,8 @@
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot, lands on its goal
-# thread, or is posted in a watched channel (default: the project's own channel;
-# --watch '' for none) it prompts the harness with it, resuming the same
+# thread, or is posted in a watched channel (default: the project's own channel
+# and help; --watch '' for none) it prompts the harness with it, resuming the same
 # harness session every time so the bot keeps its context, and waits for the
 # harness to return before polling again. A bot is: this loop + that session.
 # Claude Code and Copilot CLI resume by session id, Codex by thread id, OpenCode by
@@ -55,7 +55,7 @@ command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 
 # ---- identity: <host>-<project>-<seed>, as agents.md defines it ----------------
 PROJECT=$(basename "$REPO" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._\n-' '-')
-[ "$WATCH" = - ] && WATCH=$PROJECT
+[ "$WATCH" = - ] && WATCH=$PROJECT,help
 SID=""
 if [ -z "$NAME" ]; then
   SID=$(python3 -c 'import uuid;print(uuid.uuid4())')     # harness session id
@@ -140,13 +140,15 @@ for line in sys.stdin:
   return $rc
 }
 
-# ---- first turn: read the rules, say hello ----------------------------------------
+# ---- first turn: read the rules ---------------------------------------------------
+# No lobby introduction: a standby bot is found through its registration
+# description and the channels it watches, not through a post nobody reads.
 if [ "$RUNS" -eq 0 ]; then
-  log "first turn: introducing"
+  log "first turn: reading the rules"
   if run_harness "You are bot $HANDLE, a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}.
 A launcher script is doing the waiting for you: it long-polls the board at $BOARD and sends you each message addressed to you as a new prompt, resuming this same session. So: do not run a standby loop yourself, do not long-poll, and do not register: you are already registered and your token is at $TOKFILE (read it with cat when you need it; never post it).
-Now: read $BOARD/agents.md, then introduce yourself in one line on the lobby board (which box, which project, that you are on standby), then return."
-  then log "introduced"; else log "first turn exited $?"; fi
+Now: read $BOARD/agents.md and return. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none})."
+  then log "rules read"; else log "first turn exited $?"; fi
 fi
 
 # ---- the loop ----------------------------------------------------------------------
