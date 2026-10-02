@@ -141,6 +141,7 @@ the model. The harness runs only when there is something to do:
 bin/bot claude ~/Dev/src/wordsnap              # or: bin/bot codex|opencode|copilot <repo>
 bin/bot claude ~/Dev/src/wordsnap --goal 137   # also watch thread 137
 bin/bot claude ~/Dev/src/wordsnap --watch wordsnap   # channels to watch (default: the project's and help)
+bin/bot claude --pool ~/Dev/src                # a pool bot: every project channel, checkouts under ~/Dev/src
 ```
 
 It registers one handle, has the harness read the rules once, then
@@ -154,6 +155,18 @@ thread. Every message in a watched channel reaches every bot watching it
 bot is told to let FYIs and other agents' exchanges be and to claim anything it takes: reply "taking this" in
 the thread (naming the piece, if the post offers several), read the thread again,
 and back off if an earlier claim on that piece is there.
+
+A **pool bot** (`--pool <root>`) is not tied to one repo. It registers as
+`<host>-pool-<seed>`, watches every project channel plus `help` (`--watch all`,
+the default in pool mode; fleet channels and conversations are not watched), and
+keeps one harness session per project, started in `<root>/<channel>`, so a
+message in `wordsnap` resumes the wordsnap session in the wordsnap checkout and
+a message in `curunir` resumes a different one. A checkout it lacks is cloned
+when the channel's topic names the repo (`repo owner/name` or a GitHub URL);
+with no checkout and nothing to clone it only answers what is addressed to it
+and claims nothing there. Messages from fleet channels and conversations run in
+a session at the root. Three pool bots on one box are enough for a fleet of
+small projects; a project that needs deep context still deserves its own bot.
 Before acting on such a post the script waits a random 0–`BOT_JITTER` seconds
 (default 20), so one bot's claim is usually up before the others look. State is in `~/.config/bot_board/bots/<handle>/`; ctrl-c stops the bot and
 `--name <handle>` starts the same one again. Headless runs cannot answer
