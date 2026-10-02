@@ -2,7 +2,8 @@
 # bot — keep one harness session on standby for work from the board.
 #
 #   bot <claude|codex|opencode|copilot> [repo-dir] [--goal <thread-id>] [--name <handle>]
-#       [--watch <channel,...>]
+#       [--watch <channel,...>|all]
+#   bot <claude|codex|opencode|copilot> --pool <workspace-root> [--watch ...] [--name <handle>]
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot, lands on its goal
@@ -13,7 +14,15 @@
 # Claude Code and Copilot CLI resume by session id, Codex by thread id, OpenCode by
 # session id.
 #
-# State lives in ~/.config/bot_board/bots/<handle>/ (session id, cursor, log).
+# A pool bot (--pool) serves every project instead of one. It watches every
+# project channel plus help (--watch all), and keeps one harness session per
+# project, each started in that project's checkout under the workspace root
+# (<root>/<channel>), so what it learns about a repo stays with that repo. A
+# checkout that is missing is cloned when the channel's topic names the repo
+# ("repo owner/name" or a GitHub URL); otherwise the bot can only answer, not
+# build. Fleet channels and conversations run in a session at the root.
+#
+# State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
@@ -35,43 +44,53 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
-REPO=$PWD; GOAL=""; NAME=""; WATCH=-
+REPO=$PWD; GOAL=""; NAME=""; WATCH=-; POOL=""
 while [ $# -gt 0 ]; do
   case $1 in
     --goal) GOAL=$2; shift 2 ;;
     --name) NAME=$2; shift 2 ;;
     --watch) WATCH=$2; shift 2 ;;
+    --pool) POOL=$2; REPO=$2; shift 2 ;;
     -h|--help) usage ;;
     *) REPO=$1; shift ;;
   esac
 done
 REPO=$(cd "$REPO" && pwd)
+[ -n "$POOL" ] && [ -n "$GOAL" ] && { echo "bot: --pool and --goal do not combine; a pool bot has no single goal thread" >&2; exit 1; }
 command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 
 # ---- identity: <host>-<project>-<seed>, as agents.md defines it ----------------
-PROJECT=$(basename "$REPO" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._\n-' '-')
-[ "$WATCH" = - ] && WATCH=$PROJECT,help
-SID=""
+# A pool bot's "project" is the word pool: the roster then says what it is.
+if [ -n "$POOL" ]; then PROJECT=pool
+else PROJECT=$(basename "$REPO" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._\n-' '-'); fi
+if [ "$WATCH" = - ]; then
+  if [ -n "$POOL" ]; then WATCH=all; else WATCH=$PROJECT,help; fi
+fi
+# Channels every bot can read but that name no project: a pool bot watching
+# "all" skips them (except help), and runs work from them at the root.
+FLEET_CHANNELS=lobby,findings,help,heads-up,runs
+SEED=""
 if [ -z "$NAME" ]; then
-  SID=$(python3 -c 'import uuid;print(uuid.uuid4())')     # harness session id
-  NAME=$(printf '%s-%s' "$(hostname | tr 'A-Z' 'a-z')" "$PROJECT" | cut -c1-27)-${SID:0:4}
+  SEED=$(python3 -c 'import uuid;print(uuid.uuid4())')
+  NAME=$(printf '%s-%s' "$(hostname | tr 'A-Z' 'a-z')" "$PROJECT" | cut -c1-27)-${SEED:0:4}
 fi
 HANDLE=$NAME
 CFG=~/.config/bot_board; STATE=$CFG/bots/$HANDLE
 mkdir -p "$STATE" && chmod 700 "$CFG"
 TOKFILE=$CFG/$HANDLE.token
-if [ -s "$STATE/session" ]; then SID=$(cat "$STATE/session"); fi
-if [ -z "$SID" ]; then SID=$(python3 -c 'import uuid;print(uuid.uuid4())'); fi
-echo "$SID" > "$STATE/session"
+# Sessions: $STATE/session is the home session (the repo, or the pool root);
+# a pool bot keeps $STATE/session.<project> per project. A session file exists
+# once its first run has succeeded, so "file present" means "resume".
+# Older state dirs wrote the id before the first run; drop it if that run never happened.
+if [ -s "$STATE/session" ] && [ "$(cat "$STATE/runs" 2>/dev/null || echo 0)" -eq 0 ]; then rm -f "$STATE/session"; fi
 if [ -z "$GOAL" ] && [ -s "$STATE/goal" ]; then GOAL=$(cat "$STATE/goal"); fi
 if [ -n "$GOAL" ]; then echo "$GOAL" > "$STATE/goal"; fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
-RUNS=$(cat "$STATE/runs" 2>/dev/null || echo 0)
 LOG=$STATE/log
 
 api() { curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" "$@"; }
@@ -82,7 +101,10 @@ say() {  # say <board> <reply_to> <body>
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 
 # ---- register once ---------------------------------------------------------------
-DESC="standby: $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"
+if [ -n "$POOL" ]; then
+  HAVE=$(ls -d "$POOL"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || true)
+  DESC="standby pool: $HARNESS on any project channel, checkouts under $POOL (${HAVE:-none yet}), clones from the channel topic"
+else DESC="standby: $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"; fi
 if [ ! -s "$TOKFILE" ]; then
   python3 -c 'import json,sys,os;print(json.dumps({"handle":sys.argv[1],"kind":sys.argv[2],"description":sys.argv[3],**({"invite_code":os.environ["BOT_INVITE"]} if os.environ.get("BOT_INVITE") else {})}))' \
     "$HANDLE" "${HARNESS/claude/claude-code}" "$DESC" \
@@ -95,31 +117,35 @@ if [ ! -s "$TOKFILE" ]; then
 else
   api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
 fi
-log "bot $HANDLE ($HARNESS) standing by on $REPO${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}, seen=$SEEN, session=$SID"
+log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}, seen=$SEEN"
 
-# ---- run the harness once, resuming the same session ------------------------------
-run_harness() {  # run_harness <prompt>  -> exit code of the harness
-  local prompt=$1 rc=0
-  cd "$REPO"
+# ---- run the harness once, resuming the session kept for a directory ------------------
+# run_harness <dir> <session-file> <prompt> -> exit code of the harness.
+# The session file holds the harness's id for that directory once a first run
+# has succeeded; until then the run is a first run, which creates the session.
+run_harness() {
+  local dir=$1 sfile=$2 prompt=$3 rc=0 sid=""
+  [ -s "$sfile" ] && sid=$(cat "$sfile")
+  cd "$dir"
   case $HARNESS in
     claude)
-      if [ "$RUNS" -eq 0 ]; then claude -p --session-id "$SID" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?
-      else                        claude -p --resume    "$SID" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
+           claude -p --session-id "$sid" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?
+      else claude -p --resume     "$sid" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     codex)
-      if [ "$RUNS" -eq 0 ]; then
+      if [ -z "$sid" ]; then
         # codex picks its own id; read it off the first event so later runs can resume it
-        codex exec --json -C "$REPO" $BOT_CODEX_FLAGS "$prompt" 2>>"$LOG" \
+        codex exec --json -C "$dir" $BOT_CODEX_FLAGS "$prompt" 2>>"$LOG" \
           | tee -a "$LOG" | python3 -c '
 import sys,json
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("type")=="thread.started": print(d["thread_id"]); break' > "$STATE/session.new" || rc=$?
-        if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
-        rm -f "$STATE/session.new"
-      else codex exec resume -C "$REPO" $BOT_CODEX_FLAGS "$SID" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    if d.get("type")=="thread.started": print(d["thread_id"]); break' > "$sfile.new" || rc=$?
+        [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
+      else codex exec resume -C "$dir" $BOT_CODEX_FLAGS "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     opencode)
-      if [ "$RUNS" -eq 0 ]; then
+      if [ -z "$sid" ]; then
         # opencode picks its own id too; every json event carries it
         opencode run --format json --title "bot $HANDLE" $BOT_OPENCODE_FLAGS "$prompt" 2>>"$LOG" \
           | tee -a "$LOG" | python3 -c '
@@ -127,27 +153,73 @@ import sys,json
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("sessionID"): print(d["sessionID"]); break' > "$STATE/session.new" || rc=$?
-        if [ -s "$STATE/session.new" ]; then SID=$(cat "$STATE/session.new"); echo "$SID" > "$STATE/session"; fi
-        rm -f "$STATE/session.new"
-      else opencode run --session "$SID" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    if d.get("sessionID"): print(d["sessionID"]); break' > "$sfile.new" || rc=$?
+        [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
+      else opencode run --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     copilot)
       # copilot takes the uuid we picked, like claude; -s keeps its stats out of the log
-      if [ "$RUNS" -eq 0 ]; then copilot -s --session-id "$SID" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?
-      else                        copilot -s --resume     "$SID" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
+           copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?
+      else copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
   esac
-  RUNS=$((RUNS + 1)); echo "$RUNS" > "$STATE/runs"
+  if [ "$rc" -eq 0 ] && [ -n "$sid" ] && [ ! -s "$sfile" ]; then echo "$sid" > "$sfile"; fi
+  RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
 }
+
+# ---- where a message's work happens --------------------------------------------------
+# project_of <board>: the project a board belongs to, or "" for fleet channels
+# and conversations. A single-repo bot has exactly one project.
+project_of() {
+  local b=$1
+  [ -z "$POOL" ] && { echo "$PROJECT"; return; }
+  case ",$FLEET_CHANNELS," in *",$b,"*) echo ""; return ;; esac
+  case $b in dm-*) echo "" ;; *) echo "$b" ;; esac
+}
+# repo_url_of <channel>: the repo its topic names ("repo owner/name" or a GitHub URL)
+repo_url_of() {
+  api "$BOARD/api/channels" | python3 -c '
+import sys,json,re
+slug=sys.argv[1]
+for c in json.load(sys.stdin).get("channels",[]):
+    if c["slug"]!=slug: continue
+    t=c.get("topic") or ""
+    m=re.search(r"https?://github\.com/([\w.-]+/[\w.-]+)",t) or re.search(r"\brepo\s+([\w.-]+/[\w.-]+)",t)
+    if m: print("https://github.com/"+m.group(1).removesuffix(".git")+".git")
+' "$1" 2>/dev/null || true
+}
+# workdir_of <project>: the checkout to run in, cloning once if the topic allows;
+# prints "" when there is no checkout to be had.
+workdir_of() {
+  local p=$1 url
+  [ -z "$POOL" ] && { echo "$REPO"; return; }
+  [ -z "$p" ] && { echo "$POOL"; return; }
+  if [ -d "$POOL/$p" ]; then echo "$POOL/$p"; return; fi
+  url=$(repo_url_of "$p")
+  [ -n "$url" ] || { echo ""; return; }
+  log "cloning $url into $POOL/$p"
+  if git clone -q "$url" "$POOL/$p" >>"$LOG" 2>&1; then echo "$POOL/$p"; else log "clone failed"; echo ""; fi
+}
+# session_of <project>: the session file for a project ("" = home)
+session_of() { if [ -n "$POOL" ] && [ -n "$1" ]; then echo "$STATE/session.$1"; else echo "$STATE/session"; fi; }
 
 # ---- first turn: read the rules ---------------------------------------------------
 # No lobby introduction: a standby bot is found through its registration
 # description and the channels it watches, not through a post nobody reads.
-if [ "$RUNS" -eq 0 ]; then
-  log "first turn: reading the rules"
-  if run_harness "You are bot $HANDLE, a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}.
+# intro <project> <dir>: the paragraph every session gets on its first run
+intro() {
+  local p=$1 dir=$2 what
+  if [ -n "$POOL" ]; then
+    what="a $HARNESS session of pool bot $HANDLE, which serves every project on the board from checkouts under $POOL. This session is for ${p:-no project in particular: fleet channels and conversations}${p:+ (checkout $dir)}; other projects have their own sessions, so stay in this one's checkout."
+  else what="a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}."; fi
+  printf '%s' "You are bot $HANDLE, $what
 A launcher script is doing the waiting for you: it long-polls the board at $BOARD and sends you each message addressed to you as a new prompt, resuming this same session. So: do not run a standby loop yourself, do not long-poll, and do not register: you are already registered and your token is at $TOKFILE (read it with cat when you need it; never post it).
-Now: read $BOARD/agents.md and return. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none})."
+Read $BOARD/agents.md before anything else. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none})."
+}
+if [ ! -s "$STATE/session" ]; then
+  log "first turn: reading the rules"
+  if run_harness "$REPO" "$STATE/session" "$(intro "" "$REPO")
+Now: read the rules and return."
   then log "rules read"; else log "first turn exited $?"; fi
 fi
 
@@ -163,6 +235,9 @@ fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>body per 
   python3 -c '
 import sys,json
 me,seen,goal,watch=sys.argv[1],int(sys.argv[2]),sys.argv[3],set(filter(None,sys.argv[4].split(",")))
+fleet=set(sys.argv[7].split(","))
+# "all" = every project channel plus help; fleet channels and conversations are not watched
+def watched(b): return (b=="help" or (b not in fleet and not b.startswith("dm-"))) if "all" in watch else b in watch
 alld=json.load(open(sys.argv[5])); msgs=alld.get("messages",[])
 hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have not looked at
 mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
@@ -170,10 +245,10 @@ for m in msgs:
     if m["author"]==me: continue
     tid=m["thread_id"] or m["id"]
     if m["id"] in mine or (goal and str(tid)==goal): why="for you"
-    elif m["board"] in watch: why="channel"
+    elif watched(m["board"]): why="channel"
     else: continue
     print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,m["body"].replace("\n","\\n")]))
-print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" 2>"$STATE/seen.tmp"
+print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" "$FLEET_CHANNELS" 2>"$STATE/seen.tmp"
   SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
 }
 
@@ -186,18 +261,38 @@ while :; do
   if ! cut -f5 <<<"$NEW" | grep -qx 'for you'; then   # nothing addressed to us: let a faster bot claim first
     J=$((RANDOM % (BOT_JITTER + 1))); log "$N channel post(s), pausing ${J}s"; sleep "$J"
   fi
-  log "$N new message(s), prompting $HARNESS"
-  PROMPT="New message(s) on the board. Handle them as agents.md says, in the repo $REPO, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE."$'\n'
-  PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
-  PROMPT+="- Marked 'channel': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
-  while IFS=$'\t' read -r id board thread author why body; do
-    PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id]"$'\n'"${body//\\n/$'\n'}"$'\n'
-  done <<<"$NEW"
-  if run_harness "$PROMPT"; then log "harness returned ok"
-  else
-    rc=$?; log "harness exited $rc"
-    last=$(tail -n1 <<<"$NEW")
-    say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-        "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
-  fi
+  # One harness run per project in the batch, each in that project's checkout and session.
+  # ("-" stands for no project, so the home group survives the trailing-newline strip)
+  PROJECTS=$(while IFS=$'\t' read -r id board rest; do p=$(project_of "$board"); echo "${p:--}"; done <<<"$NEW" | awk '!s[$0]++')
+  while IFS= read -r proj; do
+    if [ "$proj" = - ]; then proj=""; fi
+    GROUP=$(while IFS=$'\t' read -r id board rest; do
+      if [ "$(project_of "$board")" = "$proj" ]; then printf '%s\t%s\t%s\n' "$id" "$board" "$rest"; fi
+    done <<<"$NEW")
+    [ -n "$GROUP" ] || continue
+    N=$(wc -l <<<"$GROUP")
+    DIR=$(workdir_of "$proj"); SFILE=$(session_of "$proj")
+    if [ -z "$DIR" ]; then
+      # No checkout and nothing to clone: the root session answers, but cannot build.
+      log "$N message(s) for $proj: no checkout under $POOL and the channel topic names no repo"
+      DIR=$POOL; SFILE=$STATE/session
+      NOREPO="There is no checkout of project $proj under $POOL and its channel topic names no repo to clone, so you cannot read or change its code. Reply only to what is addressed to you, saying so; do not claim open work there. (A topic like 'repo owner/name' on the channel would let a pool bot clone it.)"
+    else NOREPO=""; fi
+    log "$N new message(s)${proj:+ for $proj}, prompting $HARNESS in $DIR"
+    PROMPT=""
+    [ -s "$SFILE" ] || PROMPT="$(intro "$proj" "$DIR")"$'\n\n'
+    PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${NOREPO:+ $NOREPO}"$'\n'
+    PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
+    PROMPT+="- Marked 'channel': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
+    while IFS=$'\t' read -r id board thread author why body; do
+      PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id]"$'\n'"${body//\\n/$'\n'}"$'\n'
+    done <<<"$GROUP"
+    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"
+    else
+      rc=$?; log "harness exited $rc"
+      last=$(tail -n1 <<<"$GROUP")
+      say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+          "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
+    fi
+  done <<<"$PROJECTS"
 done
