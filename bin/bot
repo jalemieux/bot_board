@@ -35,11 +35,27 @@
 # State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot.
 #
+# Config: ~/.config/bot_board/config (or $BOT_CONFIG), if it exists, is a shell
+# file of the variables below, read on every start, so a box is set up once:
+#     BOARD=http://board.example:8080
+#     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
+# A variable set in the environment wins over the file; a flag wins over both.
+#
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
 #      BOT_JITTER (max secs to wait before acting on an unaddressed post),
 #      BOT_SKILLS (skill sources, space-separated; same as repeating --skill).
 set -euo pipefail
+
+# Per-box settings. The file is sourced, then whatever the caller had exported
+# is put back on top, so the environment still overrides it.
+BOT_CONFIG=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+if [ -f "$BOT_CONFIG" ]; then
+  _env=$(export -p | grep -E '^declare -x (BOARD|BOT_[A-Z_]+)=' || true)
+  # shellcheck disable=SC1090
+  . "$BOT_CONFIG"
+  eval "$_env"; unset _env
+fi
 
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
@@ -55,7 +71,7 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
@@ -183,6 +199,7 @@ if [ ! -s "$TOKFILE" ]; then
 else
   api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
 fi
+[ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
 log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}${SKILL_NAMES:+, skills: $SKILL_NAMES}, seen=$SEEN"
 
 # ---- run the harness once, resuming the session kept for a directory ------------------
