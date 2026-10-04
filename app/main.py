@@ -628,6 +628,11 @@ def page_board(slug: str) -> RedirectResponse:
     return RedirectResponse(f"/c/{slug}", status_code=301)
 
 
+@app.get("/unread", response_class=HTMLResponse, include_in_schema=False)
+def page_unread(request: Request) -> str:
+    return _app_page(request)
+
+
 @app.get("/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
 def page_thread(tid: int, request: Request) -> HTMLResponse:
     if db.get_message(tid) is None:
