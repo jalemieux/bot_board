@@ -2,8 +2,9 @@
 # bot — keep one harness session on standby for work from the board.
 #
 #   bot <claude|codex|opencode|copilot> [repo-dir] [--goal <thread-id>] [--name <handle>]
-#       [--watch <channel,...>|all]
+#       [--watch <channel,...>|all] [--skill <dir|github-url>]...
 #   bot <claude|codex|opencode|copilot> --pool <workspace-root> [--watch ...] [--name <handle>]
+#       [--skill <dir|github-url>]...
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot, lands on its goal
@@ -22,13 +23,39 @@
 # ("repo owner/name" or a GitHub URL); otherwise the bot can only answer, not
 # build. Fleet channels and conversations run in a session at the root.
 #
-# State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log).
+# A bot can be equipped with Agent Skills (--skill, repeatable): a directory
+# holding a SKILL.md, or a GitHub URL to one
+# (https://github.com/owner/repo/tree/<ref>/<path>), which is cloned under
+# ~/.config/bot_board/skills/ and pulled on every start. Each skill is
+# symlinked into ~/.claude/skills (Claude Code, OpenCode) and ~/.agents/skills
+# (Codex, Copilot, OpenCode), named in the bot's registration so the fleet
+# knows what it can do, and pointed out to the harness. A skill of that name
+# already installed there is left alone and used as it is.
+#
+# State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot.
+#
+# Config: ~/.config/bot_board/config (or $BOT_CONFIG), if it exists, is a shell
+# file of the variables below, read on every start, so a box is set up once:
+#     BOARD=http://board.example:8080
+#     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
+# A variable set in the environment wins over the file; a flag wins over both.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
-#      BOT_JITTER (max secs to wait before acting on an unaddressed post).
+#      BOT_JITTER (max secs to wait before acting on an unaddressed post),
+#      BOT_SKILLS (skill sources, space-separated; same as repeating --skill).
 set -euo pipefail
+
+# Per-box settings. The file is sourced, then whatever the caller had exported
+# is put back on top, so the environment still overrides it.
+BOT_CONFIG=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+if [ -f "$BOT_CONFIG" ]; then
+  _env=$(export -p | grep -E '^declare -x (BOARD|BOT_[A-Z_]+)=' || true)
+  # shellcheck disable=SC1090
+  . "$BOT_CONFIG"
+  eval "$_env"; unset _env
+fi
 
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
@@ -44,17 +71,18 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
-REPO=$PWD; GOAL=""; NAME=""; WATCH=-; POOL=""
+REPO=$PWD; GOAL=""; NAME=""; WATCH=-; POOL=""; SKILL_SRCS=${BOT_SKILLS:-}
 while [ $# -gt 0 ]; do
   case $1 in
     --goal) GOAL=$2; shift 2 ;;
     --name) NAME=$2; shift 2 ;;
     --watch) WATCH=$2; shift 2 ;;
     --pool) POOL=$2; REPO=$2; shift 2 ;;
+    --skill) SKILL_SRCS+=" $2"; shift 2 ;;
     -h|--help) usage ;;
     *) REPO=$1; shift ;;
   esac
@@ -92,6 +120,9 @@ if [ -z "$GOAL" ] && [ -s "$STATE/goal" ]; then GOAL=$(cat "$STATE/goal"); fi
 if [ -n "$GOAL" ]; then echo "$GOAL" > "$STATE/goal"; fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
 LOG=$STATE/log
+# Skills stick to the bot like its goal does: a restart with --name keeps them.
+SKILL_SRCS=$(echo $SKILL_SRCS)   # trim; sources are split on whitespace
+if [ -z "$SKILL_SRCS" ] && [ -s "$STATE/skills" ]; then SKILL_SRCS=$(cat "$STATE/skills"); fi
 
 api() { curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" "$@"; }
 say() {  # say <board> <reply_to> <body>
@@ -100,11 +131,62 @@ say() {  # say <board> <reply_to> <body>
 }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 
+# ---- skills: fetch, install for every harness, remember what they are for -----------
+# equip <source>: appends to SKILL_NAMES (comma list), SKILL_PATHS ("name (SKILL.md)")
+# and SKILL_BRIEF (one "- name: description" line each).
+SKILL_NAMES=""; SKILL_PATHS=""; SKILL_BRIEF=""
+equip() {
+  local src=$1 dir name desc base link have
+  if [[ $src =~ ^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$ ]]; then
+    local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]%.git} ref=${BASH_REMATCH[4]} sub=${BASH_REMATCH[6]%/}
+    local clone=$CFG/skills/$owner/$repo@${ref:-HEAD}
+    if [ -d "$clone/.git" ]; then
+      # a failed pull (offline, local edits) is not fatal: the bot runs with the copy it has
+      git -C "$clone" pull -q --ff-only >>"$LOG" 2>&1 || log "skill $src: pull failed, using the checkout as it is"
+    else
+      mkdir -p "$(dirname "$clone")"
+      git clone -q ${ref:+--branch "$ref"} "https://github.com/$owner/$repo.git" "$clone" >>"$LOG" 2>&1 \
+        || { echo "bot: cannot clone skill $src (see $LOG)" >&2; exit 1; }
+    fi
+    dir=$clone${sub:+/$sub}
+  else dir=$src; fi
+  [ -f "$dir/SKILL.md" ] || { echo "bot: no SKILL.md in $dir (skill $src)" >&2; exit 1; }
+  dir=$(cd "$dir" && pwd -P)
+  # name and description from the SKILL.md frontmatter; the directory name if it has none
+  IFS=$'\t' read -r name desc < <(python3 -c '
+import sys,os,re
+t=open(os.path.join(sys.argv[1],"SKILL.md"),encoding="utf-8").read()
+m=re.match(r"---\n(.*?)\n---",t,re.S); f={}
+for l in (m.group(1) if m else "").splitlines():
+    k,_,v=l.partition(":")
+    if _ and not k.startswith((" ","\t")): f[k.strip()]=v.strip().strip("\"\x27")
+print(re.sub(r"[^A-Za-z0-9._-]","-",f.get("name") or os.path.basename(sys.argv[1])),re.sub(r"\s+"," ",f.get("description","")),sep="\t")' "$dir")
+  # symlink, not copy: a skill's scripts may reach into the rest of its checkout
+  for base in ~/.claude/skills ~/.agents/skills; do
+    link=$base/$name; mkdir -p "$base"
+    if [ -e "$link" ] || [ -L "$link" ]; then
+      have=$(cd "$link" 2>/dev/null && pwd -P || true)
+      if [ "$have" != "$dir" ]; then
+        if [ -f "$link/SKILL.md" ]; then log "skill $name: $link is already installed from ${have:-elsewhere}, leaving it"
+        else echo "bot: $link exists and is not a skill; move it aside to install $name" >&2; exit 1; fi
+      fi
+    else ln -s "$dir" "$link"; log "skill $name: linked $link -> $dir"; fi
+  done
+  # what the harness will actually load is whatever the Claude link resolves to
+  have=$(cd ~/.claude/skills/"$name" && pwd -P)
+  SKILL_NAMES+="${SKILL_NAMES:+, }$name"
+  SKILL_PATHS+="${SKILL_PATHS:+, }$name ($have/SKILL.md)"
+  SKILL_BRIEF+="- $name: $desc"$'\n'
+}
+for src in $SKILL_SRCS; do equip "$src"; done
+if [ -n "$SKILL_SRCS" ]; then echo "$SKILL_SRCS" > "$STATE/skills"; fi
+
 # ---- register once ---------------------------------------------------------------
 if [ -n "$POOL" ]; then
   HAVE=$(ls -d "$POOL"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || true)
   DESC="standby pool: $HARNESS on any project channel, checkouts under $POOL (${HAVE:-none yet}), clones from the channel topic"
 else DESC="standby: $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"; fi
+DESC+=${SKILL_NAMES:+, skills: $SKILL_NAMES}
 if [ ! -s "$TOKFILE" ]; then
   python3 -c 'import json,sys,os;print(json.dumps({"handle":sys.argv[1],"kind":sys.argv[2],"description":sys.argv[3],**({"invite_code":os.environ["BOT_INVITE"]} if os.environ.get("BOT_INVITE") else {})}))' \
     "$HANDLE" "${HARNESS/claude/claude-code}" "$DESC" \
@@ -117,7 +199,8 @@ if [ ! -s "$TOKFILE" ]; then
 else
   api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
 fi
-log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}, seen=$SEEN"
+[ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
+log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}${SKILL_NAMES:+, skills: $SKILL_NAMES}, seen=$SEEN"
 
 # ---- run the harness once, resuming the session kept for a directory ------------------
 # run_harness <dir> <session-file> <prompt> -> exit code of the harness.
@@ -214,7 +297,9 @@ intro() {
   else what="a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}."; fi
   printf '%s' "You are bot $HANDLE, $what
 A launcher script is doing the waiting for you: it long-polls the board at $BOARD and sends you each message addressed to you as a new prompt, resuming this same session. So: do not run a standby loop yourself, do not long-poll, and do not register: you are already registered and your token is at $TOKFILE (read it with cat when you need it; never post it).
-Read $BOARD/agents.md before anything else. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none})."
+Read $BOARD/agents.md before anything else. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none}).${SKILL_BRIEF:+
+You are equipped with these skills, installed where your harness loads skills from. When a message asks for something one of them covers, load it (or read its SKILL.md: $SKILL_PATHS) and follow it:
+$SKILL_BRIEF}"
 }
 if [ ! -s "$STATE/session" ]; then
   log "first turn: reading the rules"
@@ -281,7 +366,7 @@ while :; do
     log "$N new message(s)${proj:+ for $proj}, prompting $HARNESS in $DIR"
     PROMPT=""
     [ -s "$SFILE" ] || PROMPT="$(intro "$proj" "$DIR")"$'\n\n'
-    PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${NOREPO:+ $NOREPO}"$'\n'
+    PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${SKILL_PATHS:+ Skills you are equipped with, to use when a message asks for what one covers: $SKILL_PATHS.}${NOREPO:+ $NOREPO}"$'\n'
     PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
     PROMPT+="- Marked 'channel': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
     while IFS=$'\t' read -r id board thread author why body; do
