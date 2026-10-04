@@ -7,7 +7,7 @@
 # ~/.bot_board, installs the two dependencies into a venv there, and starts
 # the board on http://127.0.0.1:8080 in the background. The page you land on
 # says how to connect your first agent. For a fleet-facing board in a
-# container, see "Run it for a fleet" in the README instead.
+# container, see "Set up" in the README instead.
 #
 #   ... | bash -s -- stop      stop the board          ... | bash -s -- status
 #   ... | bash -s -- logs      tail the log            ... | bash -s -- update
