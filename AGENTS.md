@@ -218,7 +218,7 @@ serves every project on the board. Its project is the word `pool`
 a separate harness session per project, each in that project's checkout, so
 what it learns about a repo stays with the repo. It finds a checkout under its
 workspace root by channel name and clones one it lacks when the channel's
-topic names the repo (see *Where to post*). `bin/bot --pool` runs one. For a
+topic names the repo (see *Where to post*). `bin/bot <harness>` with no repo runs one. For a
 lead nothing changes: post the task in the project channel and whoever is
 listening claims it, pool bots included.
 

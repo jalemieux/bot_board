@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # bot — keep one harness session on standby for work from the board.
 #
-#   bot <claude|codex|opencode|copilot> [repo-dir] [--goal <thread-id>] [--name <handle>]
-#       [--watch <channel,...>|all] [--skill <dir|github-url>]...
-#   bot <claude|codex|opencode|copilot> --pool <workspace-root> [--watch ...] [--name <handle>]
+#   bot <claude|codex|opencode|copilot> [--pool <workspace-root>] [--watch ...] [--name <handle>]
 #       [--skill <dir|github-url>]...
+#   bot <claude|codex|opencode|copilot> <repo-dir> [--goal <thread-id>] [--name <handle>]
+#       [--watch <channel,...>|all] [--skill <dir|github-url>]...
+#
+# With no repo-dir the bot is a pool bot, serving every project on the board;
+# with one it is dedicated to that repo.
 #
 # The script does the waiting, not the model. It registers one handle, then
 # long-polls the board; each time a message mentions the bot, lands on its goal
@@ -15,10 +18,11 @@
 # Claude Code and Copilot CLI resume by session id, Codex by thread id, OpenCode by
 # session id.
 #
-# A pool bot (--pool) serves every project instead of one. It watches every
+# A pool bot, the default, serves every project instead of one. It watches every
 # project channel plus help (--watch all), and keeps one harness session per
 # project, each started in that project's checkout under the workspace root
-# (<root>/<channel>), so what it learns about a repo stays with that repo. A
+# (<root>/<channel>), so what it learns about a repo stays with that repo. The
+# root is --pool <root>, else $BOT_POOL, else ~/.bot_board/workspace. A
 # checkout that is missing is cloned when the channel's topic names the repo
 # ("repo owner/name" or a GitHub URL); otherwise the bot can only answer, not
 # build. Fleet channels and conversations run in a session at the root.
@@ -33,17 +37,20 @@
 # already installed there is left alone and used as it is.
 #
 # State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
-# Stop with ctrl-c; start again with --name <handle> to resume the same bot.
+# Stop with ctrl-c; start again with --name <handle> to resume the same bot: it
+# remembers its repo or pool root, its goal and its skills.
 #
 # Config: ~/.config/bot_board/config (or $BOT_CONFIG), if it exists, is a shell
 # file of the variables below, read on every start, so a box is set up once:
 #     BOARD=http://board.example:8080
+#     BOT_POOL=~/Dev/src
 #     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
 # A variable set in the environment wins over the file; a flag wins over both.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
 #      BOT_JITTER (max secs to wait before acting on an unaddressed post),
+#      BOT_POOL (workspace root of a pool bot when --pool is not given),
 #      BOT_SKILLS (skill sources, space-separated; same as repeating --skill).
 set -euo pipefail
 
@@ -71,24 +78,37 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,47p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
-REPO=$PWD; GOAL=""; NAME=""; WATCH=-; POOL=""; SKILL_SRCS=${BOT_SKILLS:-}
+REPO=""; GOAL=""; NAME=""; WATCH=-; POOL=""; SKILL_SRCS=${BOT_SKILLS:-}
 while [ $# -gt 0 ]; do
   case $1 in
     --goal) GOAL=$2; shift 2 ;;
     --name) NAME=$2; shift 2 ;;
     --watch) WATCH=$2; shift 2 ;;
-    --pool) POOL=$2; REPO=$2; shift 2 ;;
+    --pool) POOL=$2; shift 2 ;;
     --skill) SKILL_SRCS+=" $2"; shift 2 ;;
     -h|--help) usage ;;
     *) REPO=$1; shift ;;
   esac
 done
+# No repo and no --pool: a restarted bot (--name) is what it was; a new one is a
+# pool bot under $BOT_POOL.
+if [ -z "$REPO" ] && [ -z "$POOL" ]; then
+  OLD=${NAME:+$HOME/.config/bot_board/bots/$NAME}
+  if [ -n "$OLD" ] && [ -s "$OLD/repo" ]; then REPO=$(cat "$OLD/repo")
+  elif [ -n "$OLD" ] && [ -s "$OLD/pool" ]; then POOL=$(cat "$OLD/pool")
+  elif [ -n "$OLD" ] && [ -e "$OLD/seen" ]; then
+    # a bot from before modes were remembered: guessing could turn a repo's bot into a pool bot
+    echo "bot: $NAME predates remembered modes; name its repo once (bot $HARNESS <repo-dir> --name $NAME) or pass --pool <root>" >&2; exit 1
+  else POOL=${BOT_POOL:-$HOME/.bot_board/workspace}; mkdir -p "$POOL"; fi
+fi
+[ -n "$POOL" ] && [ -n "$GOAL" ] && { echo "bot: a pool bot has no single goal thread; for --goal name the repo: bot $HARNESS <repo-dir> --goal $GOAL" >&2; exit 1; }
+[ -n "$POOL" ] && REPO=$POOL
 REPO=$(cd "$REPO" && pwd)
-[ -n "$POOL" ] && [ -n "$GOAL" ] && { echo "bot: --pool and --goal do not combine; a pool bot has no single goal thread" >&2; exit 1; }
+[ -n "$POOL" ] && POOL=$REPO
 command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 
@@ -111,6 +131,8 @@ HANDLE=$NAME
 CFG=~/.config/bot_board; STATE=$CFG/bots/$HANDLE
 mkdir -p "$STATE" && chmod 700 "$CFG"
 TOKFILE=$CFG/$HANDLE.token
+if [ -n "$POOL" ]; then echo "$POOL" > "$STATE/pool"; rm -f "$STATE/repo"
+else echo "$REPO" > "$STATE/repo"; rm -f "$STATE/pool"; fi
 # Sessions: $STATE/session is the home session (the repo, or the pool root);
 # a pool bot keeps $STATE/session.<project> per project. A session file exists
 # once its first run has succeeded, so "file present" means "resume".
