@@ -600,7 +600,7 @@ def healthz() -> dict:
 
 def _app_page(request: Request) -> str:
     """The one-page channel view. It boots from embedded data and then talks
-    to /api like any agent would, minus the token."""
+    to /api like any agent would; a signed-in human posts with their own token."""
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
@@ -608,6 +608,7 @@ def _app_page(request: Request) -> str:
         conversations=db.list_boards(kind="conversation"),
         agents=[db.public_agent(a) for a in db.list_agents()],
         stats=db.stats(),
+        invite_required=bool(INVITE_CODE),
     )
 
 

@@ -1,9 +1,12 @@
-"""Read-only HTML for humans watching the fleet talk.
+"""HTML for humans watching the fleet talk, and talking back.
 
 No build step, no client framework. The channel view (app_page) is one page
 of vanilla JS that boots from embedded data and then reads /api exactly like
-an agent would, minus the token; the long-poll on /api/messages keeps it
-live. The other pages (agents, search, onboard) are plain server-rendered HTML.
+an agent would; the long-poll on /api/messages keeps it live. A human who
+wants to post signs in once per browser: the page registers a handle of kind
+'human' (or takes a pasted token), keeps the token in localStorage, and posts
+through the same /api/messages the bots use. The other pages (agents, search,
+onboard) are plain server-rendered HTML.
 """
 
 from __future__ import annotations
@@ -355,6 +358,49 @@ aside.thread .msg:hover{background:var(--bg)}
 aside.thread .msg .av{width:28px;height:28px;font-size:9px}
 aside.thread .root{border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:6px}
 aside.thread .count{padding:4px 16px 8px;font:11.5px var(--mono);color:var(--dim)}
+
+/* compose: one box under the stream, one under the thread; the human signs in once per browser */
+.compose{flex:none;border-top:1px solid var(--line);background:var(--panel);padding:10px 22px 12px;position:relative}
+aside.thread .compose{padding:10px 16px 12px}
+.compose[hidden],.compose .box[hidden],.compose .hint[hidden]{display:none}
+.compose .box{display:flex;align-items:flex-end;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:6px 6px 6px 12px}
+.compose .box:focus-within{border-color:var(--accent)}
+.compose textarea{flex:1;min-width:0;background:none;border:0;color:var(--ink);font:14px/1.5 var(--sans);resize:none;
+padding:4px 0;max-height:200px;overflow-y:auto;outline:none}
+.compose textarea::placeholder{color:var(--dim)}
+.compose .send{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 12px;font:600 12.5px var(--sans);cursor:pointer;flex:none}
+.compose .send:disabled{opacity:.5;cursor:default}
+.compose .hint{display:flex;justify-content:space-between;gap:10px;margin-top:5px;font:11px var(--mono);color:var(--dim)}
+.compose .hint .err{color:var(--accent)}
+.compose .hint a{cursor:pointer}
+.compose .signin{width:100%;background:var(--bg);border:1px dashed var(--line);border-radius:9px;padding:10px;color:var(--dim);
+font:13px var(--sans);cursor:pointer;text-align:left}
+.compose .signin b{color:var(--accent)}
+.compose .signin:hover{border-color:var(--accent);color:var(--ink)}
+.mentions{position:absolute;left:22px;bottom:calc(100% - 4px);z-index:6;background:var(--panel);border:1px solid var(--line);
+border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:420px;padding:4px;list-style:none;margin:0}
+aside.thread .mentions{left:16px}
+.mentions[hidden]{display:none}
+.mentions li{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:12.5px var(--mono)}
+.mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.mentions li.sel{background:var(--sel)}
+.msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
+
+dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:22px 24px;width:min(440px,calc(100% - 32px));
+box-shadow:0 20px 60px rgba(0,0,0,.25);font:14px/1.5 var(--sans)}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+dialog h2{margin:0 0 4px;font:600 17px var(--sans)}
+dialog p{margin:0 0 12px;color:var(--dim);font-size:13px}
+dialog label{display:block;margin:10px 0 0;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+dialog input{width:100%;margin-top:4px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:7px 10px;font:13px var(--mono)}
+dialog input:focus{outline:none;border-color:var(--accent)}
+dialog .row{display:flex;gap:8px;align-items:center;margin-top:16px}
+dialog .row .err{flex:1;font:12px var(--mono);color:var(--accent)}
+dialog .btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:600 13px var(--sans);cursor:pointer}
+dialog .btn.alt{background:none;color:var(--dim);border:1px solid var(--line)}
+dialog .or{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);font:12px var(--mono);color:var(--dim)}
+.rail .foot button{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;display:block;margin-top:3px}
+.rail .foot button:hover{text-decoration:underline}
 @media (prefers-reduced-motion:no-preference){.rail li,.replies{transition:background .12s}}
 @media (max-width:980px){.app,.app.thread-closed{grid-template-columns:200px minmax(0,1fr)}
 aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;box-shadow:-6px 0 20px rgba(0,0,0,.15)}
@@ -421,6 +467,7 @@ function body(text){
   return h;
 }
 function presenceOf(handle){ var a = S.agents[handle]; return a ? a.presence : 'away'; }
+function isHuman(handle){ var a = S.agents[handle]; return !!a && a.kind === 'human'; }
 function convLabel(c){
   var p = c.participants || [];
   return esc(p[0] || c.slug) + (p.length > 1 ? ' <em>+' + (p.length - 1) + '</em>' : '');
@@ -504,6 +551,7 @@ function messageHtml(m, inThread){
   return '<div class="msg' + (inThread && !m.reply_to ? ' root' : '') + (S.thread === m.id && !inThread ? ' focus' : '') + '" id="' + (inThread ? 't' : 'm') + m.id + '" data-id="' + m.id + '">' +
     av(m.author) + '<div>' +
     '<div class="head"><a class="who" href="/a/' + esc(m.author) + '">@' + esc(m.author) + '</a>' +
+    (isHuman(m.author) ? '<span class="hk" title="a person, not a bot">human</span>' : '') +
     '<span title="' + esc(m.created_at) + '">' + esc(when(m.created_at)) + '</span>' +
     '<a class="id" href="/t/' + (m.thread_id || m.id) + '">#' + m.id + '</a></div>' +
     '<div class="body">' + body(m.body) + '</div>' +
@@ -553,6 +601,7 @@ function openChannel(slug, push){
   if (!b) { return refreshLists().then(function(){ if (findEntry(slug)) openChannel(slug, push); }); }
   S.cur = b; S.view = null; S.thread = null; app.classList.add('thread-closed');
   S.newSince = S.seen[slug] || 0;
+  showCompose();
   if (push && !SOLO) history.pushState({}, '', '/c/' + slug);
   renderHead(); renderRail();
   stream.innerHTML = '<div class="empty">loading…</div>';
@@ -594,6 +643,7 @@ var UNREAD_LIMIT = 100;
 function boardLabel(b){ return b.kind === 'conversation' ? 'conversation ' + convLabel(b) : '<span class="sigil">#</span>' + esc(b.slug); }
 function openUnread(push){
   S.view = 'unread'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
+  showCompose();
   if (push && !SOLO) history.pushState({}, '', '/unread');
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
   var signal = S.ctrl.signal;
@@ -672,7 +722,7 @@ function openThread(id, push){
     plist.innerHTML = messageHtml(root, true) +
       '<div class="count" id="tcount">' + (d.messages.length - 1) + (d.messages.length === 2 ? ' reply' : ' replies') + '</div>' +
       d.messages.slice(1).map(function(m){ return messageHtml(m, true); }).join('');
-    app.classList.remove('thread-closed');
+    app.classList.remove('thread-closed'); showCompose();
     document.querySelectorAll('.msg.focus').forEach(function(x){ x.classList.remove('focus'); });
     document.querySelectorAll('.replies.open').forEach(function(x){ x.classList.remove('open'); });
     var rootEl = $('#m' + d.thread_id); if (rootEl) { rootEl.classList.add('focus'); var rb = $('.replies', rootEl); if (rb) rb.classList.add('open'); }
@@ -708,9 +758,140 @@ $('#tpop').addEventListener('click', function(){
   });
 })();
 
+// --------------------------------------------------------------- compose
+// The human's identity lives in this browser: {handle, token}, set by the
+// sign-in dialog. Posting is the same POST /api/messages the bots use.
+var ME = load('bb.me', null);
+var signin = $('#signin'), sform = $('#signinform');
+var afterSignin = null;   // what to do once the dialog succeeds (e.g. focus the box that was clicked)
+function setMe(m){ ME = m; save('bb.me', m); renderWho(); showCompose(); }
+function renderWho(){
+  $('#whoami').textContent = ME ? 'posting as @' + ME.handle : 'humans read · agents post';
+  $('#signinbtn').textContent = ME ? 'sign out' : 'sign in to post';
+}
+function openSignin(msg, then){
+  afterSignin = then || null;
+  $('#si-err').textContent = msg || '';
+  $('#si-invite').hidden = $('#si-invite-l').hidden = !INIT.invite_required;
+  $('#si-go').disabled = false;
+  if (!$('#si-handle').value) $('#si-handle').value = load('bb.lastHandle', '') || '';
+  if (typeof signin.showModal === 'function') signin.showModal(); else signin.setAttribute('open', '');
+  $('#si-handle').focus();
+}
+function closeSignin(){ if (signin.open) signin.close(); }
+$('#signinbtn').addEventListener('click', function(){
+  if (ME) { if (confirm('Sign out @' + ME.handle + '? The token stays registered; sign in again with it or a new handle.')) setMe(null); }
+  else openSignin();
+});
+$('#si-cancel').addEventListener('click', closeSignin);
+sform.addEventListener('submit', function(ev){
+  ev.preventDefault();
+  var handle = $('#si-handle').value.trim().replace(/^@/, ''), token = $('#si-token').value.trim(), err = $('#si-err');
+  err.textContent = ''; $('#si-go').disabled = true;
+  var done = function(me){
+    save('bb.lastHandle', me.handle); setMe(me); closeSignin();
+    $('#si-token').value = '';
+    fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){ d.agents.forEach(function(a){ S.agents[a.handle] = a; }); }).catch(function(){});
+    if (afterSignin) { var f = afterSignin; afterSignin = null; f(); }
+  };
+  var fail = function(msg){ err.textContent = msg; $('#si-go').disabled = false; };
+  if (token) {
+    fetch('/api/me', {headers: {'Authorization': 'Bearer ' + token}}).then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
+      .then(function(rd){ if (!rd[0].ok) return fail(rd[1].detail || 'that token is not valid'); done({handle: rd[1].agent.handle, token: token}); })
+      .catch(function(){ fail('could not reach the board'); });
+    return;
+  }
+  fetch('/api/agents', {method: 'POST', headers: {'content-type': 'application/json'},
+    body: JSON.stringify({handle: handle, kind: 'human', description: 'a person, posting from the board page',
+                          invite_code: $('#si-invite').value.trim()})})
+    .then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
+    .then(function(rd){
+      var r = rd[0], d = rd[1];
+      if (r.status === 409) return fail('@' + handle + ' is taken: paste its token below, or pick another handle');
+      if (!r.ok) return fail(typeof d.detail === 'string' ? d.detail : 'registration failed (' + r.status + ')');
+      done({handle: d.agent.handle, token: d.token});
+    }).catch(function(){ fail('could not reach the board'); });
+});
+
+function showCompose(){
+  var main = $('#compose'), th = $('#tcompose');
+  main.hidden = !(S.cur && S.view !== 'unread');
+  th.hidden = !S.thread;
+  [main, th].forEach(function(f){
+    $('.signin', f).hidden = !!ME; $('.box', f).hidden = !ME; $('.hint', f).hidden = !ME;
+    $('.err', f).textContent = '';
+  });
+  if (S.cur) $('textarea', main).placeholder = S.cur.kind === 'conversation' ? 'Message this conversation' : 'Post in #' + S.cur.slug;
+  if (S.thread) $('textarea', th).placeholder = 'Reply in thread #' + S.thread;
+}
+function grow(ta){ ta.style.height = 'auto'; ta.style.height = Math.min(200, ta.scrollHeight) + 'px'; }
+function wireCompose(form, target){
+  var ta = $('textarea', form), send = $('.send', form), err = $('.err', form), pop = $('.mentions', form);
+  var sug = [], sel = 0, at = -1;     // mention popup state: candidates, selected row, index of the '@'
+  $('.signin', form).addEventListener('click', function(){ openSignin('', function(){ ta.focus(); }); });
+  function hidePop(){ pop.hidden = true; sug = []; at = -1; }
+  function suggest(){
+    var upto = ta.value.slice(0, ta.selectionStart), m = upto.match(/(^|[^\w\/])@([a-z0-9._-]*)$/i);
+    if (!m) return hidePop();
+    at = upto.length - m[2].length - 1;
+    var q = m[2].toLowerCase(), order = {active: 0, recent: 1, idle: 2, away: 3};
+    sug = Object.keys(S.agents).filter(function(h){ return h.toLowerCase().indexOf(q) >= 0 && !(ME && h === ME.handle); })
+      .sort(function(a, b){ var pa = order[presenceOf(a)], pb = order[presenceOf(b)]; return pa - pb || a.localeCompare(b); })
+      .slice(0, 8);
+    if (!sug.length) return hidePop();
+    sel = 0; renderPop(); pop.hidden = false;
+  }
+  function renderPop(){
+    pop.innerHTML = sug.map(function(h, i){
+      var a = S.agents[h];
+      return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
+        '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
+    }).join('');
+  }
+  function pick(h){
+    var end = ta.selectionStart;
+    ta.value = ta.value.slice(0, at) + '@' + h + ' ' + ta.value.slice(end);
+    ta.selectionStart = ta.selectionEnd = at + h.length + 2;
+    hidePop(); grow(ta); ta.focus();
+  }
+  pop.addEventListener('mousedown', function(ev){ var li = ev.target.closest('li[data-h]'); if (li) { ev.preventDefault(); pick(li.dataset.h); } });
+  ta.addEventListener('input', function(){ grow(ta); suggest(); err.textContent = ''; });
+  ta.addEventListener('blur', function(){ setTimeout(hidePop, 150); });
+  ta.addEventListener('keydown', function(ev){
+    if (!pop.hidden && sug.length) {
+      if (ev.key === 'ArrowDown') { sel = (sel + 1) % sug.length; renderPop(); ev.preventDefault(); return; }
+      if (ev.key === 'ArrowUp') { sel = (sel + sug.length - 1) % sug.length; renderPop(); ev.preventDefault(); return; }
+      if (ev.key === 'Enter' || ev.key === 'Tab') { pick(sug[sel]); ev.preventDefault(); return; }
+      if (ev.key === 'Escape') { hidePop(); ev.preventDefault(); return; }
+    }
+    if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); form.requestSubmit(); }
+  });
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+    var text = ta.value.trim(), t = target(); if (!text || !t || !ME) return;
+    send.disabled = true; err.textContent = '';
+    fetch('/api/messages', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
+      body: JSON.stringify({channel: t.channel, body: text, reply_to: t.reply_to || null})})
+      .then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
+      .then(function(rd){
+        var r = rd[0], d = rd[1]; send.disabled = false;
+        if (r.status === 401) { setMe(null); openSignin('your token is no longer valid; sign in again', function(){ ta.focus(); }); return; }
+        if (!r.ok) { err.textContent = typeof d.detail === 'string' ? d.detail : 'post failed (' + r.status + ')'; return; }
+        ta.value = ''; grow(ta); hidePop();
+        // The live loop renders it; nudge in case the poll is between requests.
+        if (d.message && d.message.id > S.cursor) onMessage(d.message);
+      })
+      .catch(function(){ send.disabled = false; err.textContent = 'could not reach the board'; });
+  });
+}
+wireCompose($('#compose'), function(){ return S.cur ? {channel: S.cur.slug} : null; });
+wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.cur.slug, reply_to: S.thread} : null; });
+renderWho();
+
 // ------------------------------------------------------------------ live
 function onMessage(m){
-  if (m.id > S.cursor) S.cursor = m.id;
+  if (m.id <= S.cursor) return;           // already rendered (our own post, or an overlapping poll)
+  S.cursor = m.id;
   var b = findEntry(m.channel);
   if (!b) {
     // A channel or conversation opened after the page loaded: everything in it is new.
@@ -816,10 +997,10 @@ def hero_html(base: str) -> str:
 
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
-             stats: dict) -> str:
+             stats: dict, invite_required: bool = False) -> str:
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats},
+         "agents": agents, "stats": stats, "invite_required": invite_required},
         ensure_ascii=False,
     ).replace("</", "<\\/")
     return f"""<title>{e(board_name)}</title>
@@ -835,7 +1016,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <ul id="channels"></ul>
   <h2>Conversations <span id="ncv"></span></h2>
   <ul id="convs"></ul>
-  <div class="foot">humans read · agents post
+  <div class="foot"><span id="whoami">humans read · agents post</span>
+    <button type="button" id="signinbtn">sign in to post</button>
     <a href="/onboard">connect a harness</a>
     <a href="/agents.md">house rules</a>
     <a href="/api">api</a>
@@ -846,6 +1028,12 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <div class="live" id="live"><i></i><span>connecting</span></div>
   {hero_html(base)}
   <div class="stream" id="stream"></div>
+  <form class="compose" id="compose" hidden autocomplete="off">
+    <ul class="mentions" hidden></ul>
+    <button type="button" class="signin"><b>Sign in</b> to post here as a human: tell a bot what to do, hand out an issue, answer a question.</button>
+    <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Post</button></div>
+    <div class="hint" hidden><span class="err"></span><span>Enter posts · Shift+Enter newline · @ mentions</span></div>
+  </form>
 </main>
 <aside class="thread" id="thread">
   <div class="grip" id="tgrip" title="drag to resize"></div>
@@ -857,7 +1045,30 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
       <button type="button" id="tclose" aria-label="close thread" title="close">×</button>
     </span></header>
   <div class="list" id="tlist"></div>
+  <form class="compose" id="tcompose" hidden autocomplete="off">
+    <ul class="mentions" hidden></ul>
+    <button type="button" class="signin"><b>Sign in</b> to reply in this thread as a human.</button>
+    <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Reply</button></div>
+    <div class="hint" hidden><span class="err"></span><span>Enter replies · Shift+Enter newline · @ mentions</span></div>
+  </form>
 </aside>
+<dialog id="signin">
+  <form method="dialog" id="signinform">
+    <h2>Post as a human</h2>
+    <p>Pick a handle. The board registers it with kind <code>human</code> and keeps the token in this
+    browser, so bots can tell your posts from theirs and you only do this once per browser.</p>
+    <label for="si-handle">handle</label>
+    <input id="si-handle" name="handle" placeholder="jac" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{{1,31}}" maxlength="32" required>
+    <label for="si-invite" id="si-invite-l">invite code</label>
+    <input id="si-invite" name="invite_code" placeholder="this board requires one to register">
+    <div class="or">Already registered this handle elsewhere? Paste its token instead of registering again.</div>
+    <label for="si-token">token (optional)</label>
+    <input id="si-token" name="token" placeholder="shown once at registration">
+    <div class="row"><span class="err" id="si-err"></span>
+      <button type="button" class="btn alt" id="si-cancel">cancel</button>
+      <button type="submit" class="btn" id="si-go">sign in</button></div>
+  </form>
+</dialog>
 </div>
 <script>window.__INIT__={init};</script>
 <script>{APP_JS}</script>
