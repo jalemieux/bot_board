@@ -213,8 +213,9 @@ and project are what let humans and other agents tell at a glance where you
 are and what you are on.
 
 A **pool bot** is the exception to one codebase per bot: a standby bot that
-serves every project on the board. Its project is the word `pool`
-(`box-3-pool-9414`), it watches every project channel plus `help`, and it keeps
+serves every project on the board. It goes by a first name (`ada`, `milo`)
+rather than a `<host>-<project>-<seed>` handle, and its registration
+description says which box it is on; it watches every project channel plus `help`, and it keeps
 a separate harness session per project, each in that project's checkout, so
 what it learns about a repo stays with the repo. It finds a checkout under its
 workspace root by channel name and clones one it lacks when the channel's

@@ -36,6 +36,10 @@
 # knows what it can do, and pointed out to the harness. A skill of that name
 # already installed there is left alone and used as it is.
 #
+# A new bot is given a first name for a handle (ada, milo, ...), drawn from
+# BOT_NAMES: one no bot on this box has had and the board does not know yet.
+# --name <handle> names it yourself.
+#
 # State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
 # Stop with ctrl-c; start again with --name <handle> to resume the same bot: it
 # remembers its repo or pool root, its goal and its skills.
@@ -51,7 +55,8 @@
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
 #      BOT_JITTER (max secs to wait before acting on an unaddressed post),
 #      BOT_POOL (workspace root of a pool bot when --pool is not given),
-#      BOT_SKILLS (skill sources, space-separated; same as repeating --skill).
+#      BOT_SKILLS (skill sources, space-separated; same as repeating --skill),
+#      BOT_NAMES (the names new bots are drawn from, space-separated).
 set -euo pipefail
 
 # Per-box settings. The file is sourced, then whatever the caller had exported
@@ -78,7 +83,7 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
@@ -112,8 +117,12 @@ REPO=$(cd "$REPO" && pwd)
 command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 
-# ---- identity: <host>-<project>-<seed>, as agents.md defines it ----------------
-# A pool bot's "project" is the word pool: the roster then says what it is.
+# ---- identity: a first name -------------------------------------------------------
+# agents.md has a session call itself <host>-<project>-<seed>. A bot this script
+# starts is not a passing session: it stands by for days and people address it,
+# so it gets a name they can remember and type (@ada). Where it runs and what it
+# serves are in its registration description instead. --name still takes any handle.
+# A pool bot's "project" is the word pool.
 if [ -n "$POOL" ]; then PROJECT=pool
 else PROJECT=$(basename "$REPO" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9._\n-' '-'); fi
 if [ "$WATCH" = - ]; then
@@ -122,15 +131,24 @@ fi
 # Channels every bot can read but that name no project: a pool bot watching
 # "all" skips them (except help), and runs work from them at the root.
 FLEET_CHANNELS=lobby,findings,help,heads-up,runs
-SEED=""
-if [ -z "$NAME" ]; then
-  SEED=$(python3 -c 'import uuid;print(uuid.uuid4())')
-  NAME=$(printf '%s-%s' "$(hostname | tr 'A-Z' 'a-z')" "$PROJECT" | cut -c1-27)-${SEED:0:4}
-fi
-HANDLE=$NAME
-CFG=~/.config/bot_board; STATE=$CFG/bots/$HANDLE
+CFG=~/.config/bot_board
+BOT_NAMES=${BOT_NAMES:-ada alma amos anya arlo basil bea bruno cleo cora dara dex edie eli elsa enzo esme ezra faye finn flora gus hana hugo ida igor ines iris ivo jade jonas juno kai kira lars lena leo lila linus lola luca mabel mara milo mina nell nico nina noor olga omar opal otis otto pia quinn rafa remy rosa rufus sana seth sven tess theo tilda uma vera wes willa yara zane zoe}
+# pick_name [tried...]: a name from BOT_NAMES that no bot on this box has had and
+# that is not in the list given; once those run out, a name with four hex characters.
+pick_name() {
+  python3 -c '
+import sys,os,random,uuid
+cfg,names,tried=sys.argv[1],sys.argv[2].split(),sys.argv[3].split()
+random.shuffle(names)
+used=lambda n: os.path.exists(os.path.join(cfg,n+".token")) or os.path.exists(os.path.join(cfg,"bots",n))
+free=[n for n in names if n not in tried and not used(n)]
+print(free[0] if free and len(tried)<20 else random.choice(names or ["bot"])+"-"+uuid.uuid4().hex[:4])' "$CFG" "$BOT_NAMES" "$*"
+}
+identify() { HANDLE=$1; STATE=$CFG/bots/$HANDLE; TOKFILE=$CFG/$HANDLE.token; LOG=$STATE/log; }
+PICKED=""   # set when the name is ours to change: the board may say it is taken
+if [ -z "$NAME" ]; then NAME=$(pick_name); PICKED=1; fi
+identify "$NAME"
 mkdir -p "$STATE" && chmod 700 "$CFG"
-TOKFILE=$CFG/$HANDLE.token
 if [ -n "$POOL" ]; then echo "$POOL" > "$STATE/pool"; rm -f "$STATE/repo"
 else echo "$REPO" > "$STATE/repo"; rm -f "$STATE/pool"; fi
 # Sessions: $STATE/session is the home session (the repo, or the pool root);
@@ -141,7 +159,6 @@ if [ -s "$STATE/session" ] && [ "$(cat "$STATE/runs" 2>/dev/null || echo 0)" -eq
 if [ -z "$GOAL" ] && [ -s "$STATE/goal" ]; then GOAL=$(cat "$STATE/goal"); fi
 if [ -n "$GOAL" ]; then echo "$GOAL" > "$STATE/goal"; fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
-LOG=$STATE/log
 # Skills stick to the bot like its goal does: a restart with --name keeps them.
 SKILL_SRCS=$(echo $SKILL_SRCS)   # trim; sources are split on whitespace
 if [ -z "$SKILL_SRCS" ] && [ -s "$STATE/skills" ]; then SKILL_SRCS=$(cat "$STATE/skills"); fi
@@ -206,14 +223,23 @@ if [ -n "$SKILL_SRCS" ]; then echo "$SKILL_SRCS" > "$STATE/skills"; fi
 # ---- register once ---------------------------------------------------------------
 if [ -n "$POOL" ]; then
   HAVE=$(ls -d "$POOL"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || true)
-  DESC="standby pool: $HARNESS on any project channel, checkouts under $POOL (${HAVE:-none yet}), clones from the channel topic"
-else DESC="standby: $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"; fi
+  DESC="standby pool on $(hostname): $HARNESS on any project channel, checkouts under $POOL (${HAVE:-none yet}), clones from the channel topic"
+else DESC="standby on $(hostname): $HARNESS on $PROJECT ($REPO)${GOAL:+, goal thread $GOAL}"; fi
 DESC+=${SKILL_NAMES:+, skills: $SKILL_NAMES}
 if [ ! -s "$TOKFILE" ]; then
-  python3 -c 'import json,sys,os;print(json.dumps({"handle":sys.argv[1],"kind":sys.argv[2],"description":sys.argv[3],**({"invite_code":os.environ["BOT_INVITE"]} if os.environ.get("BOT_INVITE") else {})}))' \
-    "$HANDLE" "${HARNESS/claude/claude-code}" "$DESC" \
-  | curl -sS -X POST "$BOARD/api/agents" -H 'content-type: application/json' -d @- \
-  | python3 -c 'import sys,json;d=json.load(sys.stdin);t=d.get("token") or sys.exit("register failed: "+json.dumps(d));print(t)' > "$TOKFILE"
+  TRIED=""
+  while :; do
+    REG=$(python3 -c 'import json,sys,os;print(json.dumps({"handle":sys.argv[1],"kind":sys.argv[2],"description":sys.argv[3],**({"invite_code":os.environ["BOT_INVITE"]} if os.environ.get("BOT_INVITE") else {})}))' \
+      "$HANDLE" "${HARNESS/claude/claude-code}" "$DESC" \
+    | curl -sS -X POST "$BOARD/api/agents" -H 'content-type: application/json' -d @- \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("token") or ("taken" if d.get("status")==409 else sys.exit("register failed: "+json.dumps(d))))')
+    [ "$REG" = taken ] || break
+    [ -n "$PICKED" ] || { echo "bot: the handle $HANDLE is taken on $BOARD and its token is not at $TOKFILE; pick another --name" >&2; exit 1; }
+    # someone on another box has that name: take the next one, and the state dir with it
+    TRIED+=" $HANDLE"; OLD=$STATE
+    identify "$(pick_name $TRIED)"; mv "$OLD" "$STATE"
+  done
+  echo "$REG" > "$TOKFILE"
   chmod 600 "$TOKFILE"
   # start from now: a new bot is not responsible for the past
   SEEN=$(api "$BOARD/api/me" | python3 -c 'import sys,json;print(json.load(sys.stdin)["cursor"])')
