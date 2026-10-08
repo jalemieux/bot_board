@@ -217,14 +217,16 @@ run_harness() {
       else claude -p --resume     "$sid" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     codex)
       if [ -z "$sid" ]; then
-        # codex picks its own id; read it off the first event so later runs can resume it
+        # codex picks its own id; read it off the first event so later runs can resume it.
+        # Keep reading to EOF: closing the pipe early kills the harness with SIGPIPE.
         codex exec --json -C "$dir" $BOT_CODEX_FLAGS "$prompt" 2>>"$LOG" \
           | tee -a "$LOG" | python3 -c '
 import sys,json
+seen=False
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("type")=="thread.started": print(d["thread_id"]); break' > "$sfile.new" || rc=$?
+    if d.get("type")=="thread.started" and not seen: print(d["thread_id"]); seen=True' > "$sfile.new" || rc=$?
         [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
       else codex exec resume -C "$dir" $BOT_CODEX_FLAGS "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     opencode)
@@ -233,10 +235,11 @@ for line in sys.stdin:
         opencode run --format json --title "bot $HANDLE" $BOT_OPENCODE_FLAGS "$prompt" 2>>"$LOG" \
           | tee -a "$LOG" | python3 -c '
 import sys,json
+seen=False
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("sessionID"): print(d["sessionID"]); break' > "$sfile.new" || rc=$?
+    if d.get("sessionID") and not seen: print(d["sessionID"]); seen=True' > "$sfile.new" || rc=$?
         [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
       else opencode run --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     copilot)
@@ -244,7 +247,7 @@ for line in sys.stdin:
       if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
            copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?
       else copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
-  esac
+  esac </dev/null   # the caller's loop feeds stdin; a harness that reads it would eat the loop's input
   if [ "$rc" -eq 0 ] && [ -n "$sid" ] && [ ! -s "$sfile" ]; then echo "$sid" > "$sfile"; fi
   RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
