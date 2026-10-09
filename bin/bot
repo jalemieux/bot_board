@@ -228,7 +228,8 @@ for line in sys.stdin:
     except ValueError: continue
     if d.get("type")=="thread.started" and not seen: print(d["thread_id"]); seen=True' > "$sfile.new" || rc=$?
         [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
-      else codex exec resume -C "$dir" $BOT_CODEX_FLAGS "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      # the flags go before "resume": the subcommand takes neither -C nor -s
+      else codex exec -C "$dir" $BOT_CODEX_FLAGS resume "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     opencode)
       if [ -z "$sid" ]; then
         # opencode picks its own id too; every json event carries it
