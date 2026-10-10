@@ -5,6 +5,8 @@
 #       [--skill <dir|github-url>]...
 #   bot <claude|codex|opencode|copilot> <repo-dir> [--goal <thread-id>] [--name <handle>]
 #       [--watch <channel,...>|all] [--skill <dir|github-url>]...
+#   bot skill add <dir|github-url>... | remove <source|name>... | list
+#       the skills in BOT_SKILLS in the config, which every bot on this box gets
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -50,6 +52,7 @@
 #     BOT_POOL=~/Dev/src
 #     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
 # A variable set in the environment wins over the file; a flag wins over both.
+# `bot skill add|remove|list` edits BOT_SKILLS there for you; bots pick it up on their next start.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
@@ -83,7 +86,91 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,59p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+# A skill source that is a GitHub URL: owner, repo, ref and path are groups 1, 2, 4 and 6.
+GH_SKILL='^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$'
+
+# ---- bot skill add|remove|list: BOT_SKILLS in the config ---------------------------
+# This edits the file; the bots fetch and link the skills when they next start.
+# A directory is written as its absolute path; a GitHub URL is checked with
+# ls-remote, not cloned. remove also takes away the links a bot made for the skill.
+if [ "${1:-}" = skill ]; then
+  ACT=${2:-}; shift; shift || usage
+  # what the file sets, not what the environment says
+  HAVE=$(unset BOT_SKILLS; if [ -f "$BOT_CONFIG" ]; then . "$BOT_CONFIG"; fi; echo ${BOT_SKILLS:-})
+  # set_skills <sources>: one plain BOT_SKILLS="..." line is rewritten in place;
+  # anything cleverer is left as written and overridden by a line at the end.
+  set_skills() {
+    mkdir -p "$(dirname "$BOT_CONFIG")"; touch "$BOT_CONFIG"
+    python3 - "$BOT_CONFIG" "$1" <<'PY'
+import sys,re
+path,want=sys.argv[1:]
+lines=open(path,encoding="utf-8").read().splitlines()
+hits=[i for i,l in enumerate(lines) if re.match(r"\s*(export\s+)?BOT_SKILLS\+?=",l)]
+plain=r'''BOT_SKILLS=("[^"$`\\]*"|'[^']*'|[^\s"'$`\\;&|#]*)\s*$'''
+new='BOT_SKILLS="%s"'%want
+if len(hits)==1 and re.match(plain,lines[hits[0]]): lines[hits[0]]=new
+else:
+    lines.append(new)
+    if hits: print("bot: left the BOT_SKILLS lines in %s as written; the one added at the end overrides them"%path)
+open(path,"w",encoding="utf-8").write("\n".join(lines)+"\n")
+PY
+  }
+  case $ACT in
+    list|ls)
+      [ -n "$HAVE" ] || { echo "bot: no skills in $BOT_CONFIG" >&2; exit 0; }
+      printf '%s\n' $HAVE ;;
+    add)
+      [ $# -gt 0 ] || usage
+      ADD=""
+      for src in "$@"; do
+        if [[ $src =~ $GH_SKILL ]]; then
+          git ls-remote --exit-code "https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}.git" ${BASH_REMATCH[4]:+"${BASH_REMATCH[4]}"} >/dev/null \
+            || { echo "bot: cannot find the repo or ref of $src" >&2; exit 1; }
+        else
+          [ -f "$src/SKILL.md" ] || { echo "bot: no SKILL.md in $src" >&2; exit 1; }
+          src=$(cd "$src" && pwd)
+        fi
+        # BOT_SKILLS is split on whitespace and written inside double quotes
+        case $src in *[[:space:]\"\'\$\`\\]*) echo "bot: BOT_SKILLS cannot hold a source with spaces or quotes: $src" >&2; exit 1 ;; esac
+        case " $HAVE $ADD " in *" $src "*) echo "bot: $src is already in BOT_SKILLS"; continue ;; esac
+        ADD+="${ADD:+ }$src"
+      done
+      [ -n "$ADD" ] || exit 0
+      set_skills "$HAVE${HAVE:+ }$ADD"
+      echo "bot: added to BOT_SKILLS in $BOT_CONFIG: $ADD" ;;
+    remove|rm)
+      # a skill is named by its source as listed, its directory, or the last part of either
+      [ $# -gt 0 ] || usage
+      KEEP=$HAVE; GONE=""
+      for arg in "$@"; do
+        abs=$(cd "$arg" 2>/dev/null && pwd || true); left=""; hit=""
+        for src in $KEEP; do
+          if [ "$src" = "${arg%/}" ] || [ "$src" = "$abs" ] || [ "${src##*/}" = "$arg" ]; then hit=1; GONE+="${GONE:+ }$src"
+          else left+="${left:+ }$src"; fi
+        done
+        [ -n "$hit" ] || { echo "bot: $arg is not in BOT_SKILLS in $BOT_CONFIG (bot skill list shows what is)" >&2; exit 1; }
+        KEEP=$left
+      done
+      set_skills "$KEEP"
+      echo "bot: removed from BOT_SKILLS in $BOT_CONFIG: $GONE"
+      # the links are global to the box: only symlinks that resolve to this skill go
+      for src in $GONE; do
+        if [[ $src =~ $GH_SKILL ]]; then
+          sub=${BASH_REMATCH[6]%/}
+          dir=~/.config/bot_board/skills/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}@${BASH_REMATCH[4]:-HEAD}${sub:+/$sub}
+        else dir=$src; fi
+        dir=$(cd "$dir" 2>/dev/null && pwd -P || true); [ -n "$dir" ] || continue
+        for link in ~/.claude/skills/* ~/.agents/skills/*; do
+          if [ -L "$link" ] && [ "$(cd "$link" 2>/dev/null && pwd -P || true)" = "$dir" ]; then rm "$link"; echo "bot: unlinked $link"; fi
+        done
+      done ;;
+    *) usage ;;
+  esac
+  [ "$ACT" = list ] || [ "$ACT" = ls ] || echo "bot: restart the bots on this box for this to take effect"
+  exit 0
+fi
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
@@ -159,9 +246,11 @@ if [ -s "$STATE/session" ] && [ "$(cat "$STATE/runs" 2>/dev/null || echo 0)" -eq
 if [ -z "$GOAL" ] && [ -s "$STATE/goal" ]; then GOAL=$(cat "$STATE/goal"); fi
 if [ -n "$GOAL" ]; then echo "$GOAL" > "$STATE/goal"; fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
-# Skills stick to the bot like its goal does: a restart with --name keeps them.
+# Skills stick to the bot like its goal does: a restart with --name keeps them,
+# unless BOT_SKILLS is set and empty, which is how `bot skill remove` says none.
 SKILL_SRCS=$(echo $SKILL_SRCS)   # trim; sources are split on whitespace
-if [ -z "$SKILL_SRCS" ] && [ -s "$STATE/skills" ]; then SKILL_SRCS=$(cat "$STATE/skills"); fi
+if [ -z "$SKILL_SRCS" ] && [ -z "${BOT_SKILLS+set}" ] && [ -s "$STATE/skills" ]; then SKILL_SRCS=$(cat "$STATE/skills"); fi
+if [ -z "$SKILL_SRCS" ]; then rm -f "$STATE/skills"; fi
 
 api() { curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" "$@"; }
 say() {  # say <board> <reply_to> <body>
@@ -176,7 +265,7 @@ log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 SKILL_NAMES=""; SKILL_PATHS=""; SKILL_BRIEF=""
 equip() {
   local src=$1 dir name desc base link have
-  if [[ $src =~ ^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$ ]]; then
+  if [[ $src =~ $GH_SKILL ]]; then
     local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]%.git} ref=${BASH_REMATCH[4]} sub=${BASH_REMATCH[6]%/}
     local clone=$CFG/skills/$owner/$repo@${ref:-HEAD}
     if [ -d "$clone/.git" ]; then
