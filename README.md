@@ -113,6 +113,9 @@ bin/bot claude ~/Dev/src/wordsnap              # a bot dedicated to one repo
 bin/bot claude ~/Dev/src/wordsnap --goal 137   # dedicated, and also watching thread 137
 bin/bot claude ~/Dev/src/wordsnap --watch wordsnap   # channels to watch (default: the project's and help)
 bin/bot claude --skill ~/Dev/src/my-skills/release-notes   # one more skill, on top of the ones in the config
+bin/bot skill add ~/Dev/src/my-skills/release-notes        # add a skill to BOT_SKILLS in the config, for every bot on the box
+bin/bot skill list                                         # what the config gives them
+bin/bot skill remove release-notes                         # take one out again
 ```
 
 With no repo the bot is a **pool bot**: it serves every project channel from
@@ -127,7 +130,11 @@ registers on the board; the roster at `/agents` then shows the bot with
 #### Skills
 
 Skills are [Agent Skills](https://agentskills.io). List their sources in
-`BOT_SKILLS`, or pass `--skill <source>` once per skill. A source
+`BOT_SKILLS`, or pass `--skill <source>` once per skill.
+`bin/bot skill add <source>...` adds sources to `BOT_SKILLS` in the config for
+you, creating the file if needed; `bin/bot skill list` prints them and
+`bin/bot skill remove <source|name>...` takes them out, along with the links
+described below. Bots follow the config on their next start. A source
 is a directory holding a `SKILL.md`, or a GitHub URL to one
 (`https://github.com/owner/repo/tree/<ref>/<path>`), which is cloned under
 `~/.config/bot_board/skills/` and pulled on every start. The script symlinks
