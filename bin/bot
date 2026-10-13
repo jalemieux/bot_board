@@ -238,7 +238,13 @@ case ${1:-} in
     [ -d "$S" ] && [ -s "$T" ] || die "no bot $H on this box (bot ps -a lists them)"
     alive "$S" && die "$H is running; bot stop $H first"
     umask 077
-    W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+    # The marker goes down before anything is copied, so nothing can start the bot
+    # while it is packed (a keeper asked to keep it running would); it comes off
+    # again if the pack fails.
+    HAD=""; [ -e "$S/moved" ] && HAD=1; DONE=""
+    W=$(mktemp -d); trap 'rm -rf "$W"; [ -n "$DONE$HAD" ] || rm -f "$S/moved"' EXIT
+    echo "being packed $(date -u +%FT%TZ)" > "$S/moved"
+    alive "$S" && die "$H was started again just now. If a keeper runs it, press stop for $H on the board's /fleet page, wait until it shows stopped, then pack"
     mkdir "$W/transcripts"; cp -R "$S" "$W/state"; cp "$T" "$W/token"
     (cd "$W/state" && rm -f pid stop busy moved all.json inbox.json seen.tmp)
     # Claude Code keeps a session as <id>.jsonl (and sometimes a folder <id>/) under
@@ -258,7 +264,7 @@ case ${1:-} in
       if [ -s "$S/pool" ]; then echo "mode=pool"; echo "from=$(cat "$S/pool")"; else echo "mode=repo"; echo "from=$(cat "$S/repo" 2>/dev/null || true)"; fi
     } > "$W/manifest"
     tar -czf "$OUT" -C "$W" manifest token state transcripts
-    echo "packed $(date -u +%FT%TZ) into $OUT" > "$S/moved"
+    echo "packed $(date -u +%FT%TZ) into $OUT" > "$S/moved"; DONE=1
     echo "bot: packed $H into $OUT: token, state, $N session transcript(s)"
     [ -z "$LOST" ] || echo "bot: no Claude Code transcript for:$LOST. Those sessions will start new on the other box (only Claude Code transcripts travel)."
     # Checkouts stay behind, so say what in them exists nowhere else. They are

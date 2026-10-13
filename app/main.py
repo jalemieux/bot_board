@@ -186,6 +186,7 @@ API_MAP = {
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
                                         " the box's keeper carries it out",
+        "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
@@ -350,6 +351,8 @@ class FleetReportIn(BaseModel):
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+    operators: list[str] = Field(default_factory=list, max_length=50, description="The keeper's KEEPER_OPERATORS:"
+                                 " the board takes requests for this box from these handles only. Empty: any human.")
     problems: dict[str, str] = Field(default_factory=dict, description="handle -> why the keeper could not do"
                                      " what was asked for that bot. Sent in full each time; absent means none.")
 
@@ -385,11 +388,23 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     A handle the box does not know is a new bot, started there under that name."""
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human starts or stops a bot from the board")
-    if not db.HANDLE_RE.match(handle):
+    if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"])
     if why:
         raise HTTPException(409, why)
+    return {"ok": True}
+
+
+@app.delete("/api/fleet/bots/{handle}", tags=["fleet"])
+def fleet_unwant(handle: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human takes back what was asked for a bot. Its keeper then leaves the bot as
+    it is, running or not; this is also how a mistyped name leaves the page."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    why = fleet.unwant(handle, agent["handle"])
+    if why is not None:
+        raise HTTPException(409 if why else 404, why or f"nothing is asked for {handle}")
     return {"ok": True}
 
 

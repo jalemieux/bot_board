@@ -78,12 +78,21 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str
     boxes = {h["name"].lower(): h for h in hosts()}
     if host.lower() not in boxes:
         return f"no box named {host} has reported"
-    for name, h in boxes.items():
-        seen = next((b for b in h["bots"] if b["handle"].lower() == handle.lower()), None)
-        if seen and name != host.lower() and seen["status"].startswith(UP):
-            return f"{handle} is running on {name}; stop it there first"
-        if seen and name == host.lower():
-            harness = harness or seen.get("harness")
+    why = not_operator(boxes[host.lower()], by)
+    if why:
+        return why
+    find = lambda h: next((b for b in h["bots"] if b["handle"].lower() == handle.lower()), None)
+    here = find(boxes[host.lower()])
+    harness = harness or (here or {}).get("harness")
+    # Only a start is held back, only by a box that is reporting now, and not when the
+    # bot is already up on the box asked for: a stop is never refused, a box that went
+    # dark does not hold its bots for ever, and another box's word cannot lock a bot
+    # where it really runs.
+    if run and not (here and here["status"].startswith(UP)):
+        for name, h in boxes.items():
+            seen = find(h)
+            if seen and name != host.lower() and h["reporting"] and seen["status"].startswith(UP):
+                return f"{handle} is running on {name}; stop it there first"
     with db._write_lock:
         row = c.execute("SELECT harness FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
         harness = harness or (row["harness"] if row else None)
@@ -95,6 +104,31 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str
             " set_by=excluded.set_by, set_at=excluded.set_at, problem=''",
             (handle, host.lower(), harness, int(run), by, db.now()),
         )
+        c.commit()
+    return None
+
+
+def not_operator(box: dict, by: str) -> str | None:
+    """Why this human's requests are not for this box, when its keeper named its operators."""
+    ops = [o.lower() for o in box.get("operators") or []]
+    if ops and by.lower() not in ops:
+        return f"@{by} is not an operator of {box['name']} (its KEEPER_OPERATORS)"
+    return None
+
+
+def unwant(handle: str, by: str) -> str | None:
+    """Drop what was asked for a bot: its box's keeper leaves it as it is from then on.
+    Returns None, or why not."""
+    c = db.conn()
+    row = c.execute("SELECT host FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    if row is None:
+        return ""
+    box = next((h for h in hosts() if h["name"].lower() == row["host"].lower()), None)
+    why = box and not_operator(box, by)
+    if why:
+        return why
+    with db._write_lock:
+        c.execute("DELETE FROM fleet_bots WHERE handle=?", (handle,))
         c.commit()
     return None
 
