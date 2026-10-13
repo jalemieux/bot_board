@@ -9,7 +9,8 @@
                [--thread ID] [--as HANDLE]
                                    post a routine to the admin channel, paused (--thread: a new version of that one)
   routines check <thread-id> | --file FILE [--watermark JSON] [--as HANDLE]
-                                   dry run: what the check finds now; posts nothing
+                                   dry run: what the check finds now; posts nothing. It runs the
+                                   script here, as you: read a thread's check before you run it
 
 --as HANDLE acts as a bot whose token is on this box (a bot adding a routine
 posts under its own name); without it, as the runner.
@@ -21,9 +22,15 @@ message go to the routine's project channel, the prompt plus what the check
 found, for a standby bot to claim like any other work.
 
 The thread is the switch and the history. A routine is created paused; it runs
-once a human replies `enable` in its thread, and stops on `pause`. A new version
-is a reply carrying a new `meta.routine`, and needs a new `enable`. The runner
-posts there only when something went wrong, and then waits for `enable` again.
+once a human replies `enable <code>` in its thread, and stops on `pause`. The
+code is in the routine's message and stands for exactly that text, so an
+`enable` starts what the human read and nothing posted since. A new version is
+a reply carrying a new `meta.routine`, with a new code. The runner posts there
+only when something went wrong, and then waits for `enable <code>` again.
+
+A human reads the message, the runner runs `meta.routine`: a definition whose
+message is not exactly what `routines add` writes for it is invalid and never
+runs, and so is one with a setting missing or of the wrong kind.
 
 The check prints one JSON object:
     {"work": true, "found": "text or a list of lines for the bot", "watermark": <anything>}
@@ -33,21 +40,23 @@ is found again. {"work": false} means nothing to do.
 
 A fired job is followed until it is done. No claim within claim_timeout, or a
 claim with no result within done_timeout: it is sent again in the same thread,
-`resends` times, then reported as failed. A job is done when a bot replies in
+`resends` times, then reported as failed. Any reply from the bot on it, a note
+of progress say, starts done_timeout again. A job is done when a bot replies in
 its thread with meta {"done": true}. One job per routine is open at a time, so
 however fast the check runs, a routine costs at most one bot run at a time.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
-(default routines). The runner's token is ~/.config/bot_board/<handle>.token and what it
+(default routines), ROUTINES_OPERATORS (the handles whose `enable` and `pause` count;
+default any agent of kind human, which is whatever an agent called itself when it
+registered, so name the operators on a board bots can register on). The runner's token is ~/.config/bot_board/<handle>.token and what it
 remembers between passes is ~/.config/bot_board/routines/state.json; without that
 file each routine with work fires once more.
 """
-import argparse, json, os, re, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import argparse, hashlib, json, os, re, signal, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from datetime import datetime
 
 CFG = os.path.expanduser("~/.config/bot_board")
 ADMIN = "admin"
-SWITCH = {"enable": True, "pause": False}
 DEFAULTS = {"every": 120, "claim_timeout": 300, "done_timeout": 1800, "resends": 3}
 CHECK_TIMEOUT = 120
 
@@ -72,6 +81,7 @@ def setting(name, default=""):
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 ME = setting("ROUTINES_HANDLE", "routines")
+OPERATORS = setting("ROUTINES_OPERATORS").replace(",", " ").split()
 
 
 def call(method, path, body=None, token=None):
@@ -111,6 +121,39 @@ def token_of(handle, register=False):
     return got["token"]
 
 
+def code_of(routine):
+    """Six characters that stand for one definition: what a human types to enable it."""
+    return hashlib.sha256(json.dumps(routine, sort_keys=True).encode()).hexdigest()[:6]
+
+
+def body_of(routine, new_version=False):
+    """The message a human reads for a definition. The runner runs nothing whose message differs."""
+    r = routine
+    return (f"**Routine `{r['name']}`**{' (new version)' if new_version else ''}: {r.get('about') or 'no description given'}\n\n"
+            f"- Fires in #{r['channel']} when the check finds work; the check runs every {mins(r['every'])}.\n"
+            f"- Sent again if unclaimed for {mins(r['claim_timeout'])} or unfinished for {mins(r['done_timeout'])}, "
+            f"{r['resends']} times, then reported as failed.\n"
+            f"- **Paused.** A human replies `enable {code_of(r)}` in this thread to start it, `pause` to stop it.\n\n"
+            f"The prompt a bot gets:\n\n{chr(10).join('> ' + line for line in r['prompt'].splitlines())}\n\n"
+            f"The check (runs on the runner's box, costs no tokens):\n\n```\n{r['check'].rstrip()}\n```")
+
+
+def problem_with(routine, body, new_version):
+    """Why a definition cannot run, or ''."""
+    for key in ("name", "channel", "check", "prompt"):
+        if not isinstance(routine.get(key), str) or not routine[key].strip():
+            return f"`{key}` is missing or not text"
+    for key in DEFAULTS:
+        if type(routine.get(key)) is not int or routine[key] < (key == "every"):
+            return f"`{key}` must be a whole number of {'times' if key == 'resends' else 'seconds'}"
+    for key in ("about", "skill"):
+        if not isinstance(routine.get(key, ""), str):
+            return f"`{key}` is not text"
+    if body != body_of(routine, new_version):
+        return "its message is not what `routines add` writes for its `meta.routine`, so a human would approve text that is not what runs"
+    return ""
+
+
 class Board:
     def __init__(self, handle=None):
         """As a bot on this box (its token file), else as the runner, registering it on first use."""
@@ -140,13 +183,21 @@ class Board:
                 continue
             last = lambda keep: max((m["id"] for m in msgs if keep(m)), default=0)
             defn = max((m for m in msgs if isinstance(m["meta"].get("routine"), dict)), key=lambda m: m["id"])
-            words = {m["id"]: m["body"].strip(" \t\n.!").lower() for m in msgs if m["author_kind"] == "human"}
-            switch = last(lambda m: words.get(m["id"]) in SWITCH)
+            routine = defn["meta"]["routine"]
+            # A human's `pause`, or `enable` with this definition's code; any other reply is talk.
+            words = {m["id"]: m["body"].strip(" \t\n.!`").lower().split() for m in msgs
+                     if m["author_kind"] == "human" and (not OPERATORS or m["author"] in OPERATORS)}
+            switch = last(lambda m: words.get(m["id"]) in (["pause"], ["enable", code_of(routine)]))
             failed = last(lambda m: m["author"] == ME and m["meta"].get("routine_failed"))
-            r = {**DEFAULTS, **defn["meta"]["routine"], "thread": tid, "version": defn["id"]}
-            if failed > max(switch, defn["id"]):
+            r = {**routine, "thread": tid, "version": defn["id"], "code": code_of(routine),
+                 "problem": problem_with(routine, defn["body"], defn["id"] != tid)}
+            if r["problem"]:
+                r["state"] = "invalid"
+                if not isinstance(r.get("name"), str) or not r["name"].strip():
+                    r["name"] = f"thread-{tid}"
+            elif failed > max(switch, defn["id"]):
                 r["state"] = "failed"
-            elif switch > defn["id"] and SWITCH[words[switch]]:
+            elif switch > defn["id"] and words[switch][0] == "enable":
                 r["state"] = "enabled"
             else:
                 r["state"] = "paused"
@@ -179,21 +230,25 @@ def run_check(script, name="", watermark=None):
         env = {**os.environ, "ROUTINE_NAME": name,
                "ROUTINE_WATERMARK": "" if watermark is None else json.dumps(watermark)}
         try:
-            p = subprocess.run([path] if script.startswith("#!") else ["bash", path], cwd=tmp, env=env,
-                               capture_output=True, text=True, timeout=CHECK_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            raise CheckError(f"the check ran longer than {CHECK_TIMEOUT}s") from None
+            p = subprocess.Popen([path] if script.startswith("#!") else ["bash", path], cwd=tmp, env=env,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         except OSError as e:
             raise CheckError(f"the check could not start: {e}") from None
+        try:
+            stdout, stderr = p.communicate(timeout=CHECK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)    # the check and whatever it started
+            p.communicate()
+            raise CheckError(f"the check ran longer than {CHECK_TIMEOUT}s") from None
     if p.returncode:
-        raise CheckError(f"the check exited {p.returncode}: {(p.stderr or p.stdout).strip()[-600:]}")
+        raise CheckError(f"the check exited {p.returncode}: {(stderr or stdout).strip()[-600:]}")
     try:
-        out = json.loads(p.stdout)
+        out = json.loads(stdout)
         if not isinstance(out, dict) or not isinstance(out.get("work"), bool):
             raise ValueError
     except ValueError:
         raise CheckError('the check must print one JSON object with "work": true or false; '
-                         f"it printed: {p.stdout.strip()[:300]}") from None
+                         f"it printed: {stdout.strip()[:300]}") from None
     return out
 
 
@@ -230,7 +285,7 @@ class Runner:
     def fail(self, r, st, why):
         """Say so once where the routine lives, and stop until a human enables it again."""
         self.board.post(ADMIN, f"Routine `{r['name']}` stopped: {why}\n\nIt will not run again until a human "
-                        "replies `enable` in this thread.", reply_to=r["thread"], meta={"routine_failed": True})
+                        f"replies `enable {r['code']}` in this thread.", reply_to=r["thread"], meta={"routine_failed": True})
         self.board.post("heads-up", f"Routine `{r['name']}` stopped: {why} Details and the switch are in "
                         f"#{ADMIN} thread {r['thread']}.", meta={"routine": r["thread"]})
         st.pop("job", None)
@@ -239,20 +294,28 @@ class Runner:
     def tick(self):
         for r in self.board.routines():
             st = self.state.setdefault(str(r["thread"]), {})
-            if r["state"] != "enabled":
-                st.pop("job", None)     # paused or replaced mid-job: the next enable starts clean
-                continue
-            if st.get("version") != r["version"]:
-                st.update(version=r["version"], checked_at=0)
-                st.pop("job", None)
             try:
+                if r["state"] != "enabled":
+                    st.pop("job", None)     # paused or replaced mid-job: the next enable starts clean
+                    if r["state"] == "invalid" and st.get("refused") != r["version"]:
+                        self.board.post(ADMIN, f"This definition (message {r['version']}) cannot run: {r['problem']}. "
+                                        "Post it again with `routines add --thread`.", reply_to=r["thread"])
+                        st["refused"] = r["version"]
+                        self.log(r, f"invalid: {r['problem']}")
+                    continue
+                if st.get("version") != r["version"]:
+                    st.update(version=r["version"], checked_at=0)
+                    st.pop("job", None)
                 if "job" in st:
                     self.follow(r, st)
                 elif time.time() - st.get("checked_at", 0) >= r["every"]:
                     self.check(r, st)
             except ConnectionError as e:
                 self.log(r, f"board call failed, will retry: {e}")
-            self.save()
+            except Exception as e:      # one routine going wrong must not stop the others
+                self.log(r, f"skipped this pass: {type(e).__name__}: {e}")
+            finally:
+                self.save()
 
     def check(self, r, st):
         st["checked_at"] = time.time()
@@ -283,11 +346,11 @@ class Runner:
             st["watermark"] = job["watermark"]
             del st["job"]
             return self.log(r, f"done by {done['author']} (message {done['id']})")
-        claim = next((m for m in replies if m["id"] > job["sent"]), None)
+        claim = next((m for m in reversed(replies) if m["id"] > job["sent"]), None)   # the latest word from a bot
         if claim:
             if time.time() - when(claim["created_at"]) < r["done_timeout"]:
                 return
-            why = f"@{claim['author']} took this and posted no result in {mins(r['done_timeout'])}"
+            why = f"@{claim['author']} is on this and has posted nothing for {mins(r['done_timeout'])}"
         elif time.time() - job["sent_at"] >= r["claim_timeout"]:
             why = f"nobody took this in {mins(r['claim_timeout'])}"
         else:
@@ -311,9 +374,14 @@ def cmd_ls(a):
         state = {}
     rows = [("NAME", "THREAD", "FIRES IN", "EVERY", "STATE")]
     for r in Board(a.as_handle).routines():
-        job = state.get(str(r["thread"]), {}).get("job")
+        st = state.get(str(r["thread"]), {})
+        job = st.get("job") if st.get("version") == r["version"] else None
+        if r["state"] == "invalid":
+            rows.append((r["name"], str(r["thread"]), "-", "-", f"invalid: {r['problem']}"))
+            continue
         rows.append((r["name"], str(r["thread"]), "#" + r["channel"], mins(r["every"]),
-                     r["state"] + (f", job open: message {job['msg']}, sent {job['sends']}x" if job and r["state"] == "enabled" else "")))
+                     r["state"] + (f", job open: message {job['msg']}, sent {job['sends']}x" if job and r["state"] == "enabled" else "")
+                     + (f" (to start: enable {r['code']})" if r["state"] != "enabled" else "")))
     if len(rows) == 1:
         return print(f"routines: none in #{ADMIN} on {BOARD}", file=sys.stderr)
     for row in rows:
@@ -325,6 +393,8 @@ def cmd_check(a):
         script, name, mark = open(a.file, encoding="utf-8").read(), os.path.basename(a.file), None
     elif a.thread:
         r = next((r for r in Board(a.as_handle).routines() if r["thread"] == a.thread), None) or die(f"no routine in thread {a.thread}")
+        if r["state"] == "invalid":
+            die(f"the routine in thread {a.thread} is invalid: {r['problem']}")
         script, name = r["check"], r["name"]
         try:
             mark = json.load(open(os.path.join(CFG, "routines", "state.json"))).get(str(a.thread), {}).get("watermark")
@@ -349,23 +419,22 @@ def cmd_add(a):
     prompt = open(a.prompt, encoding="utf-8").read().strip()
     r = {"name": a.name, "channel": a.channel, "check": check, "prompt": prompt, "every": duration(a.every),
          "claim_timeout": duration(a.claim_timeout), "done_timeout": duration(a.done_timeout), "resends": a.resends}
+    if a.about:
+        r["about"] = a.about
     if a.skill:
         r["skill"] = a.skill
+    body = body_of(r, bool(a.thread))
+    if problem_with(r, body, bool(a.thread)):
+        die(f"not posted: {problem_with(r, body, bool(a.thread))}")
     if not a.no_dry_run:
         run_check(check, a.name)    # a check that does not run is not worth a human's look
-    body = (f"**Routine `{a.name}`**{' (new version)' if a.thread else ''}: {a.about or 'no description given'}\n\n"
-            f"- Fires in #{a.channel} when the check finds work; the check runs every {mins(r['every'])}.\n"
-            f"- Sent again if unclaimed for {mins(r['claim_timeout'])} or unfinished for {mins(r['done_timeout'])}, "
-            f"{a.resends} times, then reported as failed.\n"
-            "- **Paused.** A human replies `enable` in this thread to start it, `pause` to stop it.\n\n"
-            f"The prompt a bot gets:\n\n{chr(10).join('> ' + line for line in prompt.splitlines())}\n\n"
-            f"The check (runs on the runner's box, costs no tokens):\n\n```\n{check.rstrip()}\n```")
     board = Board(a.as_handle)
     if not a.thread:
         call("POST", "/api/channels", {"slug": ADMIN, "topic": "Fleet administration: one thread per routine "
-             "(recurring work); reply enable or pause in a routine's thread. Not a project."}, board.token)
+             "(recurring work); a human replies enable <code> or pause in a routine's thread. Not a project."}, board.token)
     m = board.post(ADMIN, body, reply_to=a.thread, meta={"routine": r})
-    print(f"routines: posted {a.name} as message {m['id']} in #{ADMIN} (thread {m['thread_id'] or m['id']}), paused")
+    print(f"routines: posted {a.name} as message {m['id']} in #{ADMIN} (thread {m['thread_id'] or m['id']}), paused; "
+          f"a human starts it with: enable {code_of(r)}")
 
 
 def main():
