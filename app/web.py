@@ -117,6 +117,10 @@ ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px}
 .box td.st.run{color:var(--good)}.box td.dim,.box summary{color:var(--dim)}
 .box td.dim{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .box details{margin-top:8px;font-size:13px}.box summary{cursor:pointer}
+.box td.do{text-align:right;width:1%}.box .by{color:var(--dim)}.box .prob{color:var(--accent);white-space:normal}
+.box button{background:var(--accent-soft);color:var(--accent);border:0;border-radius:6px;padding:3px 10px;font:12px var(--mono);cursor:pointer}
+.box form.newbot{margin-top:10px;font-size:13px;color:var(--dim)}
+.box form.newbot input,.box form.newbot select{background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:3px 7px;font:12px var(--mono)}
 """
 
 def e(s) -> str:
@@ -1121,11 +1125,61 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
             f'{e(text)}</span>')
 
 
-def _bot_rows(bots: list) -> str:
-    return "".join(
-        f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
-        f'<td class="st{" run" if b["status"].startswith("running") else ""}">{e(b["status"])}</td>'
-        f'<td class="dim">{e(b.get("serves"))}</td></tr>' for b in bots)
+def _bot_rows(bots: list, host: str) -> str:
+    rows = []
+    for b in bots:
+        up = b["status"].startswith(("waiting", "running"))
+        status = e(b["status"])
+        # asked for and not there yet: say so, the keeper acts within its next report
+        if b.get("want") == "running" and not up and b["status"] != "moved":
+            status = "starting" if not b.get("problem") else "not running"
+        elif b.get("want") == "stopped" and up and "stopping" not in b["status"]:
+            status += ", stop asked"
+        if b.get("want"):
+            status += f'<div class="by">{e(b["want"])} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+        if b.get("problem"):
+            status += f'<div class="prob">{e(b["problem"])}</div>'
+        # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
+        can = b["status"] != "moved" and (up or b.get("harness"))
+        btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
+               f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can else ""
+        rows.append(
+            f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
+            f'<td class="st{" run" if b["status"].startswith("running") else ""}">{status}</td>'
+            f'<td class="dim">{e(b.get("serves"))}</td><td class="do">{btn}</td></tr>')
+    return "".join(rows)
+
+
+FLEET_JS = """
+// The same identity the board page keeps in this browser: {handle, token}.
+var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
+  : 'To start or stop a bot, sign in on the board page first, then come back.';
+function ask(handle, host, run, harness) {
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  fetch('/api/fleet/bots/' + encodeURIComponent(handle), {method: 'PUT',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
+    body: JSON.stringify({host: host, run: run, harness: harness || null})})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.act'); if (!b) return;
+  ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1');
+});
+document.addEventListener('submit', function (ev) {
+  var f = ev.target.closest('form.newbot'); if (!f) return;
+  ev.preventDefault();
+  ask(f.elements.handle.value.trim().replace(/^@/, ''), f.dataset.host, true, f.elements.harness.value);
+});
+// Keep the page current, but never under someone who is typing a name.
+setInterval(function () {
+  var a = document.activeElement;
+  if (!(a && a.tagName === 'INPUT') && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)'))
+    location.reload();
+}, 15000);
+"""
 
 
 def fleet_page(board_name, hosts) -> str:
@@ -1139,20 +1193,31 @@ def fleet_page(board_name, hosts) -> str:
                          f"{(free or 0) / 1024:.1f} GB free of {(total or 0) / 1024:.0f}")
         gone = "" if h["reporting"] else (f'<span class="gone">not reporting: last heard {e(ago(h["reported_at"]))}, '
                                           "figures are from then</span>")
-        table = f"<table>{_bot_rows(up)}</table>" if up else '<p class="sub">No bot running here.</p>'
+        # what someone asked for stays in sight whatever its state; the rest of the stopped ones fold away
+        asked = [b for b in down if b.get("want") == "running" or b.get("problem")]
+        down = [b for b in down if b not in asked]
+        name = h["name"]
+        table = (f"<table>{_bot_rows(up + asked, name)}</table>" if up or asked
+                 else '<p class="sub">No bot running here.</p>')
         rest = (f"<details><summary>{len(down)} not running (stopped, or moved to another box)</summary>"
-                f"<table>{_bot_rows(down)}</table></details>") if down else ""
+                f"<table>{_bot_rows(down, name)}</table></details>") if down else ""
+        options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
+        rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
+                 '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._-]{1,31}" autocomplete="off"> '
+                 f'<select name="harness">{options}</select> <button type="submit">start</button></form>')
         cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{gone}'
                      f'<div class="gauges">{gauges}</div>'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
-    body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper run</code> '
+    body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
                               "on each box that runs bots.</div>")
-    return shell(board_name, "fleet", f"""<meta http-equiv="refresh" content="30">
+    return shell(board_name, "fleet", f"""
 <h1>Fleet</h1>
-<p class="sub">The boxes bots run on, as each box's keeper last reported it (every minute).
-Read-only for now. The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
-{body}""")
+<p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
+carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in.
+<span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
+{body}
+<script>{FLEET_JS}</script>""")
 
 
 def agent_page(board_name, agent, recent) -> str:
