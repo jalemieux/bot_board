@@ -104,8 +104,14 @@ BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 usage() { sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
 CFG=~/.config/bot_board
-# alive <state-dir>: its launcher is running
-alive() { [ -s "$1/pid" ] && kill -0 "$(cat "$1/pid")" 2>/dev/null; }
+# alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
+# reboot and its pid goes to another process, so the process must be this script.
+alive() {
+  local p a b
+  [ -s "$1/pid" ] && p=$(cat "$1/pid") && kill -0 "$p" 2>/dev/null || return 1
+  read -r a b _ <<<"$(ps -o command= -p "$p" 2>/dev/null)"
+  [ "${a##*/}" = "${0##*/}" ] || [ "${b##*/}" = "${0##*/}" ]
+}
 
 # A skill source that is a GitHub URL: owner, repo, ref and path are groups 1, 2, 4 and 6.
 GH_SKILL='^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$'

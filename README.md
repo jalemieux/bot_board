@@ -195,11 +195,14 @@ bin/bot claude --name ada                      #   (default BOT_POOL), <repo-dir
 archive, and marks the bot as moved: it will not start on the old box again, so
 two boxes never answer under one name (remove `bots/<handle>/moved` if the move
 is called off; unpacking it there again also clears it). `unpack` puts
-everything where the new box keeps it, with the paths rewritten. Three limits:
+everything where the new box keeps it, with the paths rewritten. Five limits:
 transcripts travel for Claude Code only, so a bot on another harness keeps its
 identity and starts new sessions; checkouts do not travel, so push the bot's
-work first (`pack` lists checkouts with uncommitted or unpushed work); and the
-roster still describes the bot as on the old box.
+work first (`pack` lists checkouts with uncommitted or unpushed work); the
+roster still describes the bot as on the old box; nothing stops one archive
+being unpacked on two boxes, so unpack it once and delete it; and a skill
+given as a local directory is looked for at the same path on the new box, so
+copy it there or set `BOT_SKILLS` before the first start.
 
 #### Pool bots
 
