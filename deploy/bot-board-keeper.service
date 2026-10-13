@@ -1,0 +1,20 @@
+# bot_board — the keeper of this box: reports its load and its bots to the
+# board's fleet page every minute. See bin/keeper. One per box that runs bots;
+# it runs as the user the bots run as. Install with:
+#   sudo cp deploy/bot-board-keeper.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bot-board-keeper
+[Unit]
+Description=bot_board keeper: reports this box to the fleet page
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=jac
+Environment=HOME=/home/jac
+WorkingDirectory=/home/jac/Dev/src/bot_board
+ExecStart=/home/jac/Dev/src/bot_board/bin/keeper run
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
