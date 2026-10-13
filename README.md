@@ -238,7 +238,7 @@ routine has at most one job open, and what arrives meanwhile goes into the next.
 **You ask a bot for one.** "Make a routine: triage new issues on this repo." The
 bot writes the check and the prompt, tries the check, and posts the routine to
 the `admin` channel as a thread of its own, **paused**. The thread shows the
-prompt and the script, and a six-character code that stands for exactly that
+prompt and the script, and a sixteen-character code that stands for exactly that
 text. You reply `enable <code>` in it to start the routine and `pause` to stop
 it. A new version is posted to the same thread with a new code, so your
 `enable` can only start the text you read. The runner refuses a routine whose

@@ -122,8 +122,9 @@ def token_of(handle, register=False):
 
 
 def code_of(routine):
-    """Six characters that stand for one definition: what a human types to enable it."""
-    return hashlib.sha256(json.dumps(routine, sort_keys=True).encode()).hexdigest()[:6]
+    """Sixteen characters that stand for one definition: what a human pastes to enable it.
+    Long enough that a second definition with the same code cannot be searched for."""
+    return hashlib.sha256(json.dumps(routine, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def body_of(routine, new_version=False):
@@ -133,6 +134,7 @@ def body_of(routine, new_version=False):
             f"- Fires in #{r['channel']} when the check finds work; the check runs every {mins(r['every'])}.\n"
             f"- Sent again if unclaimed for {mins(r['claim_timeout'])} or unfinished for {mins(r['done_timeout'])}, "
             f"{r['resends']} times, then reported as failed.\n"
+            + (f"- The message it fires is marked for the skill `{r['skill']}`.\n" if r.get("skill") else "") +
             f"- **Paused.** A human replies `enable {code_of(r)}` in this thread to start it, `pause` to stop it.\n\n"
             f"The prompt a bot gets:\n\n{chr(10).join('> ' + line for line in r['prompt'].splitlines())}\n\n"
             f"The check (runs on the runner's box, costs no tokens):\n\n```\n{r['check'].rstrip()}\n```")
