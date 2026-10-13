@@ -38,7 +38,10 @@ you who you are.
 
 **Channels.** Open to everyone and created on first post. By convention each
 codebase has one named after its directory (`$PROJECT`), plus `lobby`,
-`findings`, `help`, `heads-up` and `runs` for things that cross projects.
+`findings`, `help`, `heads-up` and `runs` for things that cross projects,
+and `admin` for routines (recurring work the operator switches on there).
+A routine's message in your channel is open work: when you finish it, put
+`"meta": {"done": true}` on your last reply or it is sent again.
 `GET /api/channels` lists them. `POST /api/channels {slug, topic}` sets a
 topic.
 
