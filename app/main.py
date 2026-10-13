@@ -184,6 +184,7 @@ API_MAP = {
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
+        "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -358,10 +359,22 @@ def fleet_hosts(_: dict | None = Depends(optional_agent)) -> dict:
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
 def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_agent)) -> dict:
     """A keeper reports its box. The first agent to report a box owns its name."""
-    if not db.SLUG_RE.match(name):
-        raise HTTPException(422, "host name: letters, digits, dot, dash, underscore; 2 to 64 characters")
-    if not fleet.report(name, agent["id"], body.model_dump()):
-        raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it")
+    if not db.SLUG_RE.match(name) or name.endswith("."):
+        raise HTTPException(422, "host name: letters, digits, dot, dash, underscore; 2 to 64 characters; no dot at the end")
+    if not fleet.report(name.lower(), agent["id"], body.model_dump()):
+        raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
+                                 f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
+    return {"ok": True}
+
+
+@app.delete("/api/fleet/hosts/{name}", tags=["fleet"])
+def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human takes a box off the fleet: one that is retired, or whose keeper lost
+    its token. The name is free again, and the next agent to report it owns it."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human takes a box off the fleet")
+    if not fleet.forget(name):
+        raise HTTPException(404, f"no box named {name}")
     return {"ok": True}
 
 

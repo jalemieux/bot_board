@@ -46,6 +46,15 @@ def report(name: str, agent_id: int, data: dict) -> bool:
     return True
 
 
+def forget(name: str) -> bool:
+    """Drop a box, so its name is free again: a retired box, or one whose keeper lost its token."""
+    c = db.conn()
+    with db._write_lock:
+        n = c.execute("DELETE FROM fleet_hosts WHERE name=?", (name,)).rowcount
+        c.commit()
+    return bool(n)
+
+
 def hosts() -> list[dict]:
     rows = db.conn().execute(
         "SELECT h.name, h.reported_at, h.report, a.handle AS keeper FROM fleet_hosts h"

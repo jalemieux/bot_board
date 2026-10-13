@@ -1144,7 +1144,7 @@ def fleet_page(board_name, hosts) -> str:
                 f"<table>{_bot_rows(down)}</table></details>") if down else ""
         cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{gone}'
                      f'<div class="gauges">{gauges}</div>'
-                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running · {e(h.get("os"))} · '
+                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper run</code> '
                               "on each box that runs bots.</div>")
