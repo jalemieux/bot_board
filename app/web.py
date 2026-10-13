@@ -1203,7 +1203,7 @@ def fleet_page(board_name, hosts) -> str:
                 f"<table>{_bot_rows(down, name)}</table></details>") if down else ""
         options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
         rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
-                 '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._-]{1,31}" autocomplete="off"> '
+                 '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
                  f'<select name="harness">{options}</select> <button type="submit">start</button></form>')
         cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{gone}'
                      f'<div class="gauges">{gauges}</div>'

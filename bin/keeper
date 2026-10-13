@@ -130,6 +130,7 @@ class Hands:
     def __init__(self):
         self.started = {}       # handle -> (when we last started it, the set_at of the request)
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
+        self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
 
     def reconcile(self, want, seen):
         """want: the board's rows for this box. seen: bin/bot ps. Returns handle -> problem."""
@@ -145,19 +146,26 @@ class Hands:
                 if h.lower() in up and "stopping" not in up[h.lower()]:
                     self.spawn(h, [BOT, "stop", h])
                     print(f"keeper: stopping {h}, asked by @{w['set_by']}", flush=True)
-            elif h.lower() not in up:
+            elif h.lower() in up:
+                self.gave_up.pop(h, None)   # it came up after all: if it dies later, that is a new story
+            else:
                 when, asked = self.started.get(h, (0, None))
-                if self.gave_up.get(h, ("",))[0] == w["set_at"]:
+                proc = self.procs.get(h)
+                if proc and proc.poll() is None:
+                    # Our bin/bot is alive and not in `bot ps` yet: it is equipping skills or
+                    # registering. Never start a second one beside it.
+                    if time.time() - when > QUICK:
+                        problems[h] = f"still starting after {int(time.time() - when) // 60} min: {self.last_words(h)}"
+                elif self.gave_up.get(h, ("",))[0] == w["set_at"]:
                     problems[h] = self.gave_up[h][1]
                 elif asked == w["set_at"] and time.time() - when < QUICK:
-                    if time.time() - when > 10:     # give a start a moment to show
-                        why = f"started and did not stay up: {self.last_words(h)}"
-                        self.gave_up[h] = (w["set_at"], why)
-                        problems[h] = why
-                        print(f"keeper: {h} {why}", flush=True)
+                    why = f"started and did not stay up: {self.last_words(h)}"
+                    self.gave_up[h] = (w["set_at"], why)
+                    problems[h] = why
+                    print(f"keeper: {h} {why}", flush=True)
                 else:   # a new request, or a bot that ran a while and died: start it
                     self.started[h] = (time.time(), w["set_at"])
-                    self.spawn(h, [BOT, w["harness"], "--name", h])
+                    self.procs[h] = self.spawn(h, [BOT, w["harness"], "--name", h])
                     print(f"keeper: starting {h} ({w['harness']}), asked by @{w['set_by']}", flush=True)
         return problems
 
@@ -168,7 +176,7 @@ class Hands:
         """Detached, so the bot outlives this keeper; its output goes beside its state."""
         os.makedirs(os.path.dirname(self.out_path(handle)), mode=0o700, exist_ok=True)
         with open(self.out_path(handle), "ab") as fh:
-            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True)
+            return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True)
 
     def last_words(self, handle):
         try:
@@ -308,7 +316,7 @@ def main():
     while True:
         try:
             snap = snapshot()
-            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems}, token)
+            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS}, token)
             if code == 403:
                 die(f"{host} is already reported by another keeper. If another box has this name, set KEEPER_HOST "
                     "to this box's own. If it was this box (a reinstall, a lost token), a human takes the old one "
