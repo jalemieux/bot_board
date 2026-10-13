@@ -7,6 +7,10 @@
 #       [--watch <channel,...>|all] [--skill <dir|github-url>]...
 #   bot skill add <dir|github-url>... | remove <source|name>... | list
 #       the skills in BOT_SKILLS in the config, which every bot on this box gets
+#   bot ps [-a]                     the bots running on this box (-a: stopped and moved ones too)
+#   bot stop <handle>               let the bot finish what it is doing, then exit
+#   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
+#   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -43,8 +47,19 @@
 # --name <handle> names it yourself.
 #
 # State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
-# Stop with ctrl-c; start again with --name <handle> to resume the same bot: it
+# Stop with `bot stop <handle>`, which waits for the run in progress (ctrl-c
+# cuts it short); start again with --name <handle> to resume the same bot: it
 # remembers its repo or pool root, its goal and its skills.
+#
+# A bot can move to another box and stay who it is: same handle, same token,
+# same cursor, same harness sessions. `bot stop`, then `bot pack` writes its
+# token, its state and its harness transcripts to one archive (it holds the
+# token: copy it over ssh, never post it); `bot unpack` on the other box puts
+# them where that box keeps them, and `bot <harness> --name <handle>` carries
+# on there. A packed bot will not start on the box it left, so two boxes never
+# answer under one name. Transcripts travel for Claude Code only; a bot on
+# another harness keeps its identity and starts new sessions. Checkouts do not
+# travel: push what the bot was working on first (pack says what is unpushed).
 #
 # Config: ~/.config/bot_board/config (or $BOT_CONFIG), if it exists, is a shell
 # file of the variables below, read on every start, so a box is set up once:
@@ -86,7 +101,11 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+die() { echo "bot: $*" >&2; exit 1; }
+CFG=~/.config/bot_board
+# alive <state-dir>: its launcher is running
+alive() { [ -s "$1/pid" ] && kill -0 "$(cat "$1/pid")" 2>/dev/null; }
 
 # A skill source that is a GitHub URL: owner, repo, ref and path are groups 1, 2, 4 and 6.
 GH_SKILL='^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$'
@@ -172,6 +191,132 @@ PY
   exit 0
 fi
 
+# ---- bot ps|stop|pack|unpack: the bots on this box, and moving one to another -------
+case ${1:-} in
+  ps|ls)
+    ALL=""; [ "${2:-}" = -a ] && ALL=1
+    ROWS=""
+    for d in "$CFG"/bots/*/; do
+      [ -d "$d" ] || continue
+      d=${d%/}
+      if alive "$d"; then
+        st=waiting; [ -s "$d/busy" ] && st="running $(cat "$d/busy")"
+        [ -e "$d/stop" ] && st+=", stopping"
+      elif [ -e "$d/moved" ]; then st=moved
+      else st=stopped; fi
+      [ -n "$ALL" ] || alive "$d" || continue
+      ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"$'\n'
+    done
+    if [ -z "$ROWS" ]; then
+      if [ -n "$ALL" ]; then echo "bot: no bots on this box" >&2; else echo "bot: no bots running on this box (bot ps -a lists the stopped ones)" >&2; fi
+      exit 0
+    fi
+    printf 'HANDLE\tHARNESS\tSTATUS\tPID\tSEEN\tSERVES\n%s' "$ROWS" | column -t -s $'\t'
+    exit 0 ;;
+  stop)
+    H=${2:-}; [ -n "$H" ] || usage
+    S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
+    alive "$S" || { echo "bot: $H is not running"; exit 0; }
+    touch "$S/stop"
+    if [ -s "$S/busy" ]; then echo "bot: $H will stop when its run in $(cat "$S/busy") returns; waiting"
+    else echo "bot: $H will stop at its next poll, within ${BOT_WAIT:-60}s; waiting"; fi
+    while alive "$S"; do sleep 2; done
+    echo "bot: $H stopped"
+    exit 0 ;;
+  pack)
+    H=${2:-}; [ -n "$H" ] || usage
+    OUT=${3:-$PWD/$H.botpack.tgz}
+    S=$CFG/bots/$H; T=$CFG/$H.token
+    [ -d "$S" ] && [ -s "$T" ] || die "no bot $H on this box (bot ps -a lists them)"
+    alive "$S" && die "$H is running; bot stop $H first"
+    umask 077
+    W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+    mkdir "$W/transcripts"; cp -R "$S" "$W/state"; cp "$T" "$W/token"
+    (cd "$W/state" && rm -f pid stop busy moved all.json inbox.json seen.tmp)
+    # Claude Code keeps a session as <id>.jsonl (and sometimes a folder <id>/) under
+    # ~/.claude/projects/<the directory it ran in>/; the id is all that is needed to find it.
+    N=0; LOST=""
+    for f in "$S"/session "$S"/session.*; do
+      [ -s "$f" ] || continue
+      sid=$(cat "$f"); src=$(ls ~/.claude/projects/*/"$sid".jsonl 2>/dev/null | head -n1 || true)
+      if [ -n "$src" ]; then
+        cp "$src" "$W/transcripts/"; N=$((N+1))
+        if [ -d "${src%.jsonl}" ]; then cp -R "${src%.jsonl}" "$W/transcripts/"; fi
+      else LOST+=" ${f##*/}"; fi
+    done
+    {
+      echo "handle=$H"; echo "harness=$(cat "$S/harness" 2>/dev/null || true)"; echo "host=$(hostname)"
+      echo "board=$BOARD"; echo "packed=$(date -u +%FT%TZ)"
+      if [ -s "$S/pool" ]; then echo "mode=pool"; echo "from=$(cat "$S/pool")"; else echo "mode=repo"; echo "from=$(cat "$S/repo" 2>/dev/null || true)"; fi
+    } > "$W/manifest"
+    tar -czf "$OUT" -C "$W" manifest token state transcripts
+    echo "packed $(date -u +%FT%TZ) into $OUT" > "$S/moved"
+    echo "bot: packed $H into $OUT: token, state, $N session transcript(s)"
+    [ -z "$LOST" ] || echo "bot: no Claude Code transcript for:$LOST. Those sessions will start new on the other box (only Claude Code transcripts travel)."
+    # Checkouts stay behind, so say what in them exists nowhere else. They are
+    # shared by the bots on this box: the work may be another bot's.
+    for f in "$S"/session "$S"/session.*; do
+      [ -e "$f" ] || continue
+      p=${f##*/session}; p=${p#.}
+      if [ -s "$S/pool" ]; then dir=$(cat "$S/pool")${p:+/$p}; else dir=$(cat "$S/repo" 2>/dev/null || true); fi
+      git -C "$dir" rev-parse --show-toplevel >/dev/null 2>&1 || continue
+      [ "$(cd "$dir" && pwd -P)" = "$(git -C "$dir" rev-parse --show-toplevel)" ] || continue   # the pool root inside someone else's repo
+      [ -z "$(git -C "$dir" status --porcelain | head -n1)" ] || echo "bot: $dir has uncommitted changes; they stay on this box"
+      [ -z "$(git -C "$dir" log --branches --not --remotes --oneline 2>/dev/null | head -n1)" ] || echo "bot: $dir has commits that are on no remote; push them or they stay on this box"
+    done
+    echo "bot: the archive holds $H's token: copy it over ssh (scp $OUT <host>:), then on that box: bot unpack ${OUT##*/}"
+    echo "bot: $H will not start on this box again unless you remove $S/moved"
+    exit 0 ;;
+  unpack)
+    A=${2:-}; [ -f "$A" ] || usage
+    shift 2; TO_POOL=""; TO_REPO=""
+    while [ $# -gt 0 ]; do
+      case $1 in --pool) TO_POOL=${2:-}; shift 2 || usage ;; -*) usage ;; *) TO_REPO=$1; shift ;; esac
+    done
+    umask 077
+    W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+    tar -xzf "$A" -C "$W"
+    mf() { sed -n "s/^$1=//p" "$W/manifest" | head -n1; }
+    H=$(mf handle); [ -n "$H" ] && [ -s "$W/token" ] && [ -d "$W/state" ] || die "$A is not a bot pack archive"
+    case $H in */*|.*) die "$A names a handle that is not one: $H" ;; esac
+    S=$CFG/bots/$H; T=$CFG/$H.token
+    alive "$S" && die "$H is running on this box"
+    # A bot of that name here is only replaced if it is the one that left: coming home.
+    if [ -e "$S" ] || [ -e "$T" ]; then
+      [ -e "$S/moved" ] || die "a bot named $H already exists on this box and was never packed; unpacking would overwrite it"
+    fi
+    if [ "$(mf mode)" = pool ]; then
+      [ -z "$TO_REPO" ] || die "$H is a pool bot; name its workspace root with --pool <root>"
+      DEST=${TO_POOL:-${BOT_POOL:-$HOME/.bot_board/workspace}}; mkdir -p "$DEST"
+    else
+      [ -n "$TO_REPO" ] || die "$H is dedicated to one repo (it was $(mf from) on $(mf host)); name the checkout here: bot unpack $A <repo-dir>"
+      DEST=$TO_REPO
+    fi
+    DEST=$(cd "$DEST" && pwd)
+    [ "$(mf board)" = "$BOARD" ] || echo "bot: $H was packed for the board $(mf board); this box is set to $BOARD"
+    mkdir -p "$CFG/bots"; chmod 700 "$CFG"
+    rm -rf "$S"; cp -R "$W/state" "$S"; cp "$W/token" "$T"; chmod 600 "$T"
+    if [ "$(mf mode)" = pool ]; then echo "$DEST" > "$S/pool"; else echo "$DEST" > "$S/repo"; fi
+    # Each transcript goes where Claude Code looks for the directory its session will
+    # run in here; a session whose transcript did not travel starts new.
+    N=0
+    for f in "$S"/session "$S"/session.*; do
+      [ -s "$f" ] || continue
+      sid=$(cat "$f"); p=${f##*/session}; p=${p#.}
+      if [ -f "$W/transcripts/$sid.jsonl" ]; then
+        if [ "$(mf mode)" = pool ] && [ -n "$p" ]; then dir=$DEST/$p; else dir=$DEST; fi
+        proj=~/.claude/projects/$(printf '%s' "$(cd "$DEST" && pwd -P)${dir#"$DEST"}" | sed 's/[^A-Za-z0-9]/-/g')
+        mkdir -p "$proj"; cp "$W/transcripts/$sid.jsonl" "$proj/"; N=$((N+1))
+        if [ -d "$W/transcripts/$sid" ]; then cp -R "$W/transcripts/$sid" "$proj/"; fi
+      else rm -f "$f"; fi
+    done
+    HN=$(mf harness)
+    echo "bot: $H from $(mf host) is on this box now: token, state, $N session transcript(s), serving $DEST"
+    echo "bot: start it with: bot ${HN:-<harness>} --name $H"
+    echo "bot: the roster on the board still describes it as on $(mf host); nothing updates that yet"
+    exit 0 ;;
+esac
+
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
 REPO=""; GOAL=""; NAME=""; WATCH=-; POOL=""; SKILL_SRCS=${BOT_SKILLS:-}
@@ -218,7 +363,6 @@ fi
 # Channels every bot can read but that name no project: a pool bot watching
 # "all" skips them (except help), and runs work from them at the root.
 FLEET_CHANNELS=lobby,findings,help,heads-up,runs
-CFG=~/.config/bot_board
 BOT_NAMES=${BOT_NAMES:-ada alma amos anya arlo basil bea bruno cleo cora dara dex edie eli elsa enzo esme ezra faye finn flora gus hana hugo ida igor ines iris ivo jade jonas juno kai kira lars lena leo lila linus lola luca mabel mara milo mina nell nico nina noor olga omar opal otis otto pia quinn rafa remy rosa rufus sana seth sven tess theo tilda uma vera wes willa yara zane zoe}
 # pick_name [tried...]: a name from BOT_NAMES that no bot on this box has had and
 # that is not in the list given; once those run out, a name with four hex characters.
@@ -235,7 +379,10 @@ identify() { HANDLE=$1; STATE=$CFG/bots/$HANDLE; TOKFILE=$CFG/$HANDLE.token; LOG
 PICKED=""   # set when the name is ours to change: the board may say it is taken
 if [ -z "$NAME" ]; then NAME=$(pick_name); PICKED=1; fi
 identify "$NAME"
+[ -e "$STATE/moved" ] && die "$HANDLE left this box ($(cat "$STATE/moved")). Started here too, two boxes would answer as $HANDLE. If the move was called off, remove $STATE/moved"
+alive "$STATE" && die "$HANDLE is already running on this box (pid $(cat "$STATE/pid")); bot stop $HANDLE first"
 mkdir -p "$STATE" && chmod 700 "$CFG"
+echo "$HARNESS" > "$STATE/harness"
 if [ -n "$POOL" ]; then echo "$POOL" > "$STATE/pool"; rm -f "$STATE/repo"
 else echo "$REPO" > "$STATE/repo"; rm -f "$STATE/pool"; fi
 # Sessions: $STATE/session is the home session (the repo, or the pool root);
@@ -336,6 +483,9 @@ if [ ! -s "$TOKFILE" ]; then
 else
   api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
 fi
+# From here on the bot is running: bot ps lists it, bot stop asks it to leave.
+rm -f "$STATE/stop" "$STATE/busy"; echo $$ > "$STATE/pid"
+trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy"' EXIT
 [ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
 log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}${SKILL_NAMES:+, skills: $SKILL_NAMES}, seen=$SEEN"
 
@@ -347,6 +497,7 @@ run_harness() {
   local dir=$1 sfile=$2 prompt=$3 rc=0 sid=""
   [ -s "$sfile" ] && sid=$(cat "$sfile")
   cd "$dir"
+  echo "${dir##*/}" > "$STATE/busy"
   case $HARNESS in
     claude)
       if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
@@ -387,6 +538,7 @@ for line in sys.stdin:
       else copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
   esac </dev/null   # the caller's loop feeds stdin; a harness that reads it would eat the loop's input
   if [ "$rc" -eq 0 ] && [ -n "$sid" ] && [ ! -s "$sfile" ]; then echo "$sid" > "$sfile"; fi
+  rm -f "$STATE/busy"
   RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
 }
@@ -480,6 +632,7 @@ print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" 
 
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
+  if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
   NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
   SEEN=$(cat "$STATE/seen")
   [ -n "$NEW" ] || continue
