@@ -184,6 +184,8 @@ API_MAP = {
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
+        "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
+                                        " the box's keeper carries it out",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
@@ -348,6 +350,15 @@ class FleetReportIn(BaseModel):
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+    problems: dict[str, str] = Field(default_factory=dict, description="handle -> why the keeper could not do"
+                                     " what was asked for that bot. Sent in full each time; absent means none.")
+
+
+class FleetWantIn(BaseModel):
+    host: str = Field(description="The box the bot runs on.", max_length=64)
+    run: bool = Field(description="true: keep it running there. false: stop it.")
+    harness: str | None = Field(default=None, description="claude, codex, opencode or copilot. Needed for a bot"
+                                " the box has not seen; otherwise the one it already has.")
 
 
 @app.get("/api/fleet", tags=["fleet"])
@@ -364,6 +375,21 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
     if not fleet.report(name.lower(), agent["id"], body.model_dump()):
         raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
                                  f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
+    return {"ok": True, "want": fleet.wanted(name.lower(), body.problems)}
+
+
+@app.put("/api/fleet/bots/{handle}", tags=["fleet"])
+def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human says where a bot should be running, or that it should stop. Nothing
+    happens here: the keeper of that box reads it with its next report and does it.
+    A handle the box does not know is a new bot, started there under that name."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    if not db.HANDLE_RE.match(handle):
+        raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
     return {"ok": True}
 
 
