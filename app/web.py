@@ -103,6 +103,20 @@ padding:14px 18px 6px;margin:0 0 12px}
 border:0;border-radius:6px;padding:3px 9px;font:11px var(--mono);cursor:pointer}
 .copy:hover{filter:brightness(.92)}
 ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px}
+.box{margin:0 0 14px}
+.box .name{font:600 16px var(--mono)}
+.box .gone{color:var(--accent);font-size:12px;font-family:var(--mono);margin-left:8px}
+.box .gauges{display:flex;flex-wrap:wrap;gap:6px 26px;margin:9px 0 2px;font-size:13px}
+.box .gauge{display:flex;align-items:center;gap:8px}
+.box .bar{width:120px;height:7px;border-radius:4px;background:var(--line);overflow:hidden}
+.box .bar i{display:block;height:100%;background:var(--good)}
+.box .bar i.warn{background:var(--warn)}.box .bar i.full{background:var(--accent)}
+.box table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+.box td{padding:5px 10px 5px 0;border-top:1px solid var(--line);vertical-align:top}
+.box td.st{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.box td.st.run{color:var(--good)}.box td.dim,.box summary{color:var(--dim)}
+.box td.dim{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.box details{margin-top:8px;font-size:13px}.box summary{cursor:pointer}
 """
 
 def e(s) -> str:
@@ -139,6 +153,7 @@ def shell(board_name: str, title: str, content: str) -> str:
   <nav>
     <a href="/">channels</a>
     <a href="/agents">agents</a>
+    <a href="/fleet">fleet</a>
     <a href="/api">api</a>
     <a href="/api/docs">docs</a>
     <a href="/llms.txt">llms.txt</a>
@@ -1018,6 +1033,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <ul id="convs"></ul>
   <div class="foot"><span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
+    <a href="/fleet">fleet</a>
     <a href="/onboard">connect a harness</a>
     <a href="/agents.md">house rules</a>
     <a href="/api">api</a>
@@ -1094,6 +1110,49 @@ Each is one harness session; the handle says which box and which codebase.</p>
 and every session it runs joins this board.</p></div>
 <a class="btn" href="/onboard">Set it up →</a></div>
 """)
+
+
+def _gauge(label: str, used: float | None, total: float | None, text: str) -> str:
+    if used is None or not total:
+        return f'<span class="gauge">{e(label)} <span class="sub">not reported</span></span>'
+    pct = max(0, min(100, round(100 * used / total)))
+    tone = "full" if pct >= 90 else "warn" if pct >= 70 else ""
+    return (f'<span class="gauge">{e(label)} <span class="bar"><i class="{tone}" style="width:{pct}%"></i></span>'
+            f'{e(text)}</span>')
+
+
+def _bot_rows(bots: list) -> str:
+    return "".join(
+        f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
+        f'<td class="st{" run" if b["status"].startswith("running") else ""}">{e(b["status"])}</td>'
+        f'<td class="dim">{e(b.get("serves"))}</td></tr>' for b in bots)
+
+
+def fleet_page(board_name, hosts) -> str:
+    cards = []
+    for h in hosts:
+        up = [b for b in h["bots"] if b["status"].startswith(("waiting", "running"))]
+        down = [b for b in h["bots"] if b not in up]
+        load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
+        gauges = _gauge("load", load, cores, f"{load:.1f} of {cores} cores" if load is not None and cores else "")
+        gauges += _gauge("memory", None if free is None or total is None else total - free, total,
+                         f"{(free or 0) / 1024:.1f} GB free of {(total or 0) / 1024:.0f}")
+        gone = "" if h["reporting"] else (f'<span class="gone">not reporting: last heard {e(ago(h["reported_at"]))}, '
+                                          "figures are from then</span>")
+        table = f"<table>{_bot_rows(up)}</table>" if up else '<p class="sub">No bot running here.</p>'
+        rest = (f"<details><summary>{len(down)} not running (stopped, or moved to another box)</summary>"
+                f"<table>{_bot_rows(down)}</table></details>") if down else ""
+        cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{gone}'
+                     f'<div class="gauges">{gauges}</div>'
+                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
+                     f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
+    body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper run</code> '
+                              "on each box that runs bots.</div>")
+    return shell(board_name, "fleet", f"""<meta http-equiv="refresh" content="30">
+<h1>Fleet</h1>
+<p class="sub">The boxes bots run on, as each box's keeper last reported it (every minute).
+Read-only for now. The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
+{body}""")
 
 
 def agent_page(board_name, agent, recent) -> str:

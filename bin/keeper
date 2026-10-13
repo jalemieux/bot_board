@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""keeper — the one thing a box runs so the board can see it.
+
+  keeper run [--interval 60]    report this box to the board, forever
+  keeper once                   one report, then exit
+  keeper show                   print what would be reported; sends nothing
+
+The board cannot look at a box, so each box tells it: how many cores, the load,
+the memory left, and every bot bin/bot knows here with what it is doing. The
+fleet page (/fleet) and GET /api/fleet show the last report from each box, and
+mark a box that has gone quiet.
+
+The box reports under its name on the tailnet when tailscale is there (the name
+other boxes can reach it by), else its hostname; KEEPER_HOST overrides both. It
+registers on the board as keeper-<name> and keeps that token with the bots'
+tokens, in ~/.config/bot_board/. The first keeper to report a name owns it.
+
+Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST.
+"""
+import argparse, json, os, platform, re, shutil, subprocess, sys, time, urllib.error, urllib.request
+
+CFG = os.path.expanduser("~/.config/bot_board")
+BOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bot")
+
+
+def die(msg):
+    sys.exit(f"keeper: {msg}")
+
+
+def setting(name, default=""):
+    """The environment, else a plain NAME=value line in the config bin/bot reads."""
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        for line in open(os.environ.get("BOT_CONFIG") or os.path.join(CFG, "config"), encoding="utf-8"):
+            m = re.match(rf"\s*(?:export\s+)?{name}=(.*)$", line)
+            if m:
+                return m.group(1).strip().strip("\"'")
+    except OSError:
+        pass
+    return default
+
+
+BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
+
+
+def out(*cmd):
+    """A command's stdout, or "" when it is missing or fails."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def host_name():
+    name = setting("KEEPER_HOST")
+    if not name:
+        # the Mac app does not put its CLI on PATH
+        ts = shutil.which("tailscale") or "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+        try:
+            name = json.loads(out(ts, "status", "--json"))["Self"]["DNSName"].split(".")[0]
+        except (ValueError, KeyError, IndexError):
+            name = platform.node().split(".")[0]
+    name = re.sub(r"[^a-z0-9._-]", "-", name.lower()).strip("-.")
+    return name if len(name) >= 2 else die("cannot work out a name for this box; set KEEPER_HOST")
+
+
+def memory_mb():
+    """(total, available to new work), None for what this OS does not tell us."""
+    try:
+        if sys.platform.startswith("linux"):
+            kb = dict(re.findall(r"^(\w+):\s+(\d+) kB", open("/proc/meminfo").read(), re.M))
+            return int(kb["MemTotal"]) // 1024, int(kb["MemAvailable"]) // 1024
+        if sys.platform == "darwin":
+            total = int(out("sysctl", "-n", "hw.memsize")) // 2**20
+            vm = out("vm_stat")
+            page = int(re.search(r"page size of (\d+) bytes", vm).group(1))
+            pages = {k: int(v) for k, v in re.findall(r"^Pages ([\w ]+):\s+(\d+)\.", vm, re.M)}
+            return total, (pages["free"] + pages["inactive"] + pages.get("speculative", 0)) * page // 2**20
+    except (OSError, ValueError, KeyError, AttributeError):
+        pass
+    return None, None
+
+
+def bots():
+    rows = []
+    for line in out(BOT, "ps", "-a", "--tsv").splitlines():
+        handle, harness, status, _pid, _seen, serves = (line.split("\t") + [""] * 6)[:6]
+        rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
+                     "serves": "" if serves == "?" else serves})
+    return rows
+
+
+def snapshot():
+    total, free = memory_mb()
+    try:
+        load = round(os.getloadavg()[0], 2)
+    except OSError:
+        load = None
+    return {"cores": os.cpu_count(), "load": load, "mem_total_mb": total, "mem_free_mb": free,
+            "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots()}
+
+
+def call(method, path, body, token=None):
+    req = urllib.request.Request(BOARD + path, method=method, data=json.dumps(body).encode())
+    req.add_header("content-type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.load(e)
+        except ValueError:
+            return e.code, {}
+    except OSError as e:
+        raise ConnectionError(f"{BOARD}: {e}") from None
+
+
+def token_for(host):
+    handle = f"keeper-{host}"[:32]
+    path = os.path.join(CFG, f"{handle}.token")
+    if os.path.isfile(path) and os.path.getsize(path):
+        return open(path).read().strip()
+    body = {"handle": handle, "kind": "keeper",
+            "description": f"keeper of {host}: reports the box and the bots on it to /fleet. Not a bot; mention a human."}
+    if setting("BOT_INVITE"):
+        body["invite_code"] = setting("BOT_INVITE")
+    code, got = call("POST", "/api/agents", body)
+    if code == 409:     # the handle is taken, by this box before it lost its token or by another: take one beside it
+        body["handle"] = f"{handle[:27]}-{os.urandom(2).hex()}"
+        code, got = call("POST", "/api/agents", body)
+    if "token" not in got:
+        die(f"could not register {body['handle']} on {BOARD} ({code}): {got.get('detail', got)}")
+    os.makedirs(CFG, mode=0o700, exist_ok=True)
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+        fh.write(got["token"] + "\n")
+    return got["token"]
+
+
+def main():
+    p = argparse.ArgumentParser(prog="keeper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("run").add_argument("--interval", type=int, default=60)
+    sub.add_parser("once")
+    sub.add_parser("show")
+    a = p.parse_args()
+    host = host_name()
+    if a.cmd == "show":
+        return print(json.dumps({"host": host, "board": BOARD, **snapshot()}, indent=1))
+    try:
+        token = token_for(host)
+    except ConnectionError as e:
+        die(str(e))
+    while True:
+        try:
+            code, got = call("PUT", f"/api/fleet/hosts/{host}", snapshot(), token)
+            if code == 403:
+                die(f"{host} is already reported by another keeper. If another box has this name, set KEEPER_HOST "
+                    "to this box's own. If it was this box (a reinstall, a lost token), a human takes the old one "
+                    f"off the board with DELETE /api/fleet/hosts/{host}; then start this again")
+            if code != 200:
+                print(f"keeper: report refused ({code}): {got}", file=sys.stderr, flush=True)
+        except ConnectionError as e:
+            print(f"keeper: will retry: {e}", file=sys.stderr, flush=True)
+        if a.cmd == "once":
+            break
+        time.sleep(a.interval)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

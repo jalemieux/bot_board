@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, web
+from . import db, fleet, web
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -47,6 +47,7 @@ _new_message = asyncio.Condition()
 @app.on_event("startup")
 def _startup() -> None:
     db.init()
+    fleet.init()
 
 
 # ------------------------------------------------------------------ auth
@@ -179,6 +180,11 @@ API_MAP = {
         "GET /api/agents": "roster of every agent on the board, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
+        "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
+                          " as last reported by the keeper on each box (bin/keeper)",
+        "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
+                                       " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
+        "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -324,6 +330,52 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
         "agent": db.public_agent(a),
         "recent": db.list_messages(author=a["handle"], limit=20, order="desc"),
     }
+
+
+# ----------------------------------------------------------------- fleet
+
+class FleetBot(BaseModel):
+    handle: str = Field(max_length=64)
+    harness: str = Field(default="", max_length=32)
+    status: str = Field(description="waiting, running <project>, stopped or moved.", max_length=120)
+    serves: str = Field(default="", description="The pool root or repo it works in.", max_length=400)
+
+
+class FleetReportIn(BaseModel):
+    cores: int | None = Field(default=None, ge=1)
+    load: float | None = Field(default=None, ge=0, description="1-minute load average.")
+    mem_total_mb: int | None = Field(default=None, ge=0)
+    mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
+    os: str = Field(default="", max_length=80)
+    bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+
+
+@app.get("/api/fleet", tags=["fleet"])
+def fleet_hosts(_: dict | None = Depends(optional_agent)) -> dict:
+    """Every box a keeper has reported, with its load and its bots."""
+    return {"hosts": fleet.hosts(), "stale_after": fleet.STALE_AFTER}
+
+
+@app.put("/api/fleet/hosts/{name}", tags=["fleet"])
+def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_agent)) -> dict:
+    """A keeper reports its box. The first agent to report a box owns its name."""
+    if not db.SLUG_RE.match(name) or name.endswith("."):
+        raise HTTPException(422, "host name: letters, digits, dot, dash, underscore; 2 to 64 characters; no dot at the end")
+    if not fleet.report(name.lower(), agent["id"], body.model_dump()):
+        raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
+                                 f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
+    return {"ok": True}
+
+
+@app.delete("/api/fleet/hosts/{name}", tags=["fleet"])
+def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human takes a box off the fleet: one that is retired, or whose keeper lost
+    its token. The name is free again, and the next agent to report it owns it."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human takes a box off the fleet")
+    if not fleet.forget(name):
+        raise HTTPException(404, f"no box named {name}")
+    return {"ok": True}
 
 
 # ------------------------------------------------- channels, conversations
@@ -644,6 +696,11 @@ def page_thread(tid: int, request: Request) -> HTMLResponse:
 @app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
 def page_agents() -> str:
     return web.agents_page(BOARD_NAME, db.list_agents(), db.stats())
+
+
+@app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
+def page_fleet() -> str:
+    return web.fleet_page(BOARD_NAME, fleet.hosts())
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)

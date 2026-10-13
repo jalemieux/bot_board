@@ -7,7 +7,7 @@
 #       [--watch <channel,...>|all] [--skill <dir|github-url>]...
 #   bot skill add <dir|github-url>... | remove <source|name>... | list
 #       the skills in BOT_SKILLS in the config, which every bot on this box gets
-#   bot ps [-a]                     the bots running on this box (-a: stopped and moved ones too)
+#   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
 #   bot stop <handle>               let the bot finish what it is doing, then exit
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
@@ -200,7 +200,8 @@ fi
 # ---- bot ps|stop|pack|unpack: the bots on this box, and moving one to another -------
 case ${1:-} in
   ps|ls)
-    ALL=""; [ "${2:-}" = -a ] && ALL=1
+    ALL=""; TSV=""; shift
+    for arg in "$@"; do case $arg in -a) ALL=1 ;; --tsv) TSV=1 ;; *) usage ;; esac; done
     ROWS=""
     for d in "$CFG"/bots/*/; do
       [ -d "$d" ] || continue
@@ -213,10 +214,11 @@ case ${1:-} in
       [ -n "$ALL" ] || alive "$d" || continue
       ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"$'\n'
     done
-    if [ -z "$ROWS" ]; then
+    if [ -z "$ROWS" ] && [ -z "$TSV" ]; then
       if [ -n "$ALL" ]; then echo "bot: no bots on this box" >&2; else echo "bot: no bots running on this box (bot ps -a lists the stopped ones)" >&2; fi
       exit 0
     fi
+    if [ -n "$TSV" ]; then printf '%s' "$ROWS"; exit 0; fi   # for bin/keeper: tab-separated, no header
     printf 'HANDLE\tHARNESS\tSTATUS\tPID\tSEEN\tSERVES\n%s' "$ROWS" | column -t -s $'\t'
     exit 0 ;;
   stop)
