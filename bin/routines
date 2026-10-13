@@ -52,7 +52,7 @@ registered, so name the operators on a board bots can register on). The runner's
 remembers between passes is ~/.config/bot_board/routines/state.json; without that
 file each routine with work fires once more.
 """
-import argparse, hashlib, json, os, re, signal, subprocess, sys, tempfile, time, urllib.error, urllib.request
+import argparse, hashlib, json, os, re, signal, shlex, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from datetime import datetime
 
 CFG = os.path.expanduser("~/.config/bot_board")
@@ -73,7 +73,7 @@ def setting(name, default=""):
         for line in open(os.environ.get("BOT_CONFIG") or os.path.join(CFG, "config"), encoding="utf-8"):
             m = re.match(rf"\s*(?:export\s+)?{name}=(.*)$", line)
             if m:
-                return m.group(1).strip().strip("\"'")
+                return "".join(shlex.split(m.group(1), comments=True)[:1])   # a shell file: quotes, trailing comment
     except OSError:
         pass
     return default
