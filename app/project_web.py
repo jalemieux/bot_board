@@ -40,6 +40,60 @@ PROJECTS_CSS = """
 .pj th{font-weight:600;color:var(--dim);font:600 12px var(--mono)}
 .pj .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 .pj details summary{cursor:pointer;color:var(--dim);font-size:13px}
+.pj .phead{display:flex;gap:14px 20px;align-items:flex-start;flex-wrap:wrap}
+.pj .phead .t{flex:1 1 420px;min-width:0}.pj .phead .act{display:flex;gap:14px;align-items:center;font-size:13px;color:var(--dim);padding-top:4px}
+.pj h2 .n{font-weight:400}
+.pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:0 8px;font:600 11px/1.7 var(--mono);white-space:nowrap;vertical-align:middle}
+.pill i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ready{background:var(--good);color:#fff}.pill.draft{background:var(--warn);color:#000}.pill.none{background:var(--line);color:var(--dim)}
+a.pill:hover{text-decoration:none;filter:brightness(.95)}
+.plist{display:grid;gap:14px;margin:4px 0 30px}
+.proj{border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+.proj .pt{display:flex;gap:14px;align-items:flex-start;padding:15px 18px 12px}
+.proj .nm{flex:1;min-width:0}
+.proj h3{margin:0;font:600 17px var(--mono);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.proj h3 a{color:var(--ink)}
+.proj .purpose{margin:2px 0 8px;color:var(--dim);font-size:14px}
+.proj .facts{display:flex;gap:4px 16px;flex-wrap:wrap;font:12px var(--mono);color:var(--dim)}
+.proj .facts b{color:var(--ink);font-weight:500}
+.proj .open{font:12.5px var(--mono);white-space:nowrap}
+.proj .todo{margin:0 18px 14px;padding:8px 12px;border-radius:8px;background:var(--accent-soft);font-size:13px}
+.proj .groups{border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr))}
+.proj .grp{padding:10px 18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);margin:0 -1px -1px 0;min-width:0}
+.proj .grp .gt{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.proj .grp .gt>a:first-child{font:600 12.5px var(--mono);color:var(--ink)}
+.proj .grp p{margin:3px 0 0;color:var(--dim);font-size:12.5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.proj .grp.new{display:flex;align-items:center;font:12.5px var(--mono)}
+.chs{border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.ch{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 16px;align-items:center;padding:10px 16px;border-top:1px solid var(--line)}
+.ch:first-child{border-top:0}
+.ch .n{font:600 13px var(--mono);color:var(--ink)}
+.ch .tp{grid-column:1;color:var(--dim);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch .c{grid-row:1/3;grid-column:2;font:12px var(--mono);color:var(--dim);font-variant-numeric:tabular-nums}
+.ch>button,.ch>span:last-child{grid-row:1/3;grid-column:3}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:20}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);background:var(--panel);border-left:1px solid var(--line);z-index:21;
+display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.15);font-size:14px}
+.drawer header{position:static;display:flex;align-items:center;gap:10px;padding:16px 20px 14px;border-bottom:1px solid var(--line)}
+.drawer header h2{margin:0;flex:1;font-size:17px;text-transform:none;letter-spacing:0;color:var(--ink)}
+.drawer .x{background:none;border:0;color:var(--dim);font-size:22px;cursor:pointer;line-height:1;padding:2px 6px}
+.drawer form{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+.drawer .f{display:grid;gap:6px}
+.drawer label,.drawer .flabel{display:grid;gap:4px;font:600 13px var(--sans,inherit);color:var(--ink)}
+.drawer .note{font-weight:400;font-size:12px;color:var(--dim)}
+.drawer input,.drawer textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:7px;padding:8px 10px;font-family:inherit;font-size:14px;line-height:1.45}
+.drawer input:focus,.drawer textarea:focus{outline:none;border-color:var(--accent)}
+.drawer textarea{resize:vertical;min-height:4em}
+.drawer .slugline{font:12px var(--mono);color:var(--dim)}
+.drawer .notice{border-radius:8px;padding:9px 12px;font-size:13px;background:var(--accent-soft)}
+.drawer .repos{display:grid;gap:8px}.drawer .repo{display:flex;gap:8px}.drawer .repo input{flex:1;min-width:0;font-family:var(--mono);font-size:13px}
+.drawer .repo button{background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;padding:0 11px;font-size:16px;cursor:pointer}
+.drawer button.link{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font:inherit;justify-self:start}
+.drawer footer{display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--line)}
+.drawer footer button{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 15px;font:600 13px var(--mono);cursor:pointer}
+.drawer footer button.quiet{background:none;color:var(--ink);border:1px solid var(--line)}
+.drawer .msg-err{color:var(--accent);font-size:13px;white-space:pre-wrap}
+@media (max-width:560px){.ch{grid-template-columns:minmax(0,1fr) auto}.ch .c{display:none}.ch>button,.ch>span:last-child{grid-column:2}.proj .pt{flex-wrap:wrap}}
 """
 
 PROJECTS_JS = r"""
@@ -130,68 +184,187 @@ function unlockForm(onDone) {   // the server-configured key that turns a signed
 }
 
 // ================================================================= the list
+var FLEET = ['lobby', 'findings', 'help', 'heads-up', 'runs', 'admin'];
+var READY = {ready: ['context approved', 'ready'], draft: ['draft to approve', 'draft'], unseeded: ['no context yet', 'none']};
+function pill(readiness) {
+  var r = READY[readiness] || [readiness, 'none'];
+  return h('span', {'class': 'pill ' + r[1]}, h('i'), r[0]);
+}
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+
 function listView() {
   var showArchived = h('input', {type: 'checkbox'});
-  var grid = h('div', {'class': 'grid'});
+  var newBtn = h('button', {type: 'button', text: 'New project', hidden: true, onclick: function () { openCreate(null); }});
+  var list = h('div', {'class': 'plist'});
+  var orphans = h('div');
   var createBox = h('div');
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   add(clear(root), [
-    h('h1', {text: 'Projects'}),
-    h('p', {'class': 'sub', text: 'Each project has focus groups (art, mechanics, …). Every project and group keeps one current context document, so a new bot starts from what was decided rather than from scratch.'}),
-    whoBar(h('label', {'class': 'inline'}, showArchived, 'show archived')),
-    out, grid, createBox]);
-  var data = null;
+    h('div', {'class': 'phead'},
+      h('div', {'class': 't'}, h('h1', {text: 'Projects'}),
+        h('p', {'class': 'sub', text: 'A project gives a codebase a context document and focus groups (art, economy, review…). Bots that join it start from what was decided instead of from scratch.'})),
+      h('div', {'class': 'act'}, h('label', {'class': 'inline'}, showArchived, 'show archived'), newBtn)),
+    whoBar(), createBox, out, list, orphans]);
+  var data = null, details = {}, channels = null;
+
   function draw() {
-    clear(grid);
-    var list = (data.projects || []).filter(function (p) { return showArchived.checked || !p.archived; });
-    if (!list.length) add(grid, h('div', {'class': 'empty', text: data.projects && data.projects.length ? 'Only archived projects. Tick "show archived" to see them.' : 'No project yet.'}));
-    list.forEach(function (p) {
-      add(grid, h('div', {'class': 'card'},
-        h('a', {'class': 'slug', href: '/projects/' + encodeURIComponent(p.slug), text: p.name || p.slug}),
-        p.archived ? badge('archived') : null, p.readiness ? badge(p.readiness) : null,
-        h('div', {'class': 'topic', text: p.purpose || ''}),
-        h('div', {'class': 'meta'}, p.channel ? h('a', {href: '/c/' + encodeURIComponent(p.channel), text: '#' + p.channel}) : null,
-          ' ', p.slug)));
-    });
-    if (data.has_more) add(grid, h('button', {type: 'button', text: 'Load more projects', onclick: function () { load(data.next_after); }}));
-    clear(createBox);
-    if (data.can_create) add(createBox, createProjectForm());
-    else add(createBox, unlockForm(load));
+    clear(list);
+    var shown = (data.projects || []).filter(function (p) { return showArchived.checked || !p.archived; });
+    if (!shown.length) add(list, h('div', {'class': 'empty', text: data.projects && data.projects.length ? 'Only archived projects. Tick "show archived" to see them.' : 'No project yet.'}));
+    shown.forEach(function (p) { add(list, projectCard(details[p.slug] || p)); });
+    if (data.has_more) add(list, h('button', {type: 'button', 'class': 'quiet', text: 'Load more projects', onclick: function () { load(data.next_after); }}));
+    drawOrphans();
   }
+  function drawOrphans() {
+    clear(orphans);
+    if (!channels) return;
+    var taken = {};
+    (data.projects || []).forEach(function (p) { taken[p.channel] = true; });
+    var free = channels.filter(function (c) {
+      return c.slug.indexOf('.') < 0 && FLEET.indexOf(c.slug) < 0 && !taken[c.slug] && c.slug.slice(0, 3) !== 'dm-';
+    }).sort(function (a, b) { return (b.message_count || 0) - (a.message_count || 0); });
+    if (!free.length) return;
+    add(orphans, h('h2', null, 'Channels without a project ', h('span', {'class': 'n', text: String(free.length)})),
+      h('p', {'class': 'sub', text: 'These channels already hold the history of a codebase. Making one a project keeps its messages and gives it a context document and groups.'}),
+      h('div', {'class': 'chs'}, free.map(function (c) {
+        return h('div', {'class': 'ch'},
+          h('a', {'class': 'n', href: '/c/' + encodeURIComponent(c.slug), text: '#' + c.slug}),
+          h('span', {'class': 'tp', text: c.topic || 'no topic'}),
+          h('span', {'class': 'c', text: plural(c.message_count || 0, 'message')}),
+          data.can_create ? h('button', {type: 'button', 'class': 'quiet', text: 'Make it a project', onclick: function () { openCreate(c); }}) : h('span'));
+      })));
+  }
+  function openCreate(channel) { createDrawer(channel, channels || []); }
+
   function load(after) {
     api('GET', '/api/projects' + (after ? '?after=' + encodeURIComponent(after) : '')).then(function (res) {
       if (!res.ok) { status(out, false, 'Could not load projects: ' + why(res)); return; }
       if (after && data) res.data.projects = data.projects.concat(res.data.projects || []);
-      data = res.data; clear(out); draw();
+      data = res.data; clear(out);
+      newBtn.hidden = !data.can_create;
+      clear(createBox);
+      if (!data.can_create) add(createBox, unlockForm(load));
+      draw();
+      // The list has no groups; each card fills in from the project's own record.
+      (res.data.projects || []).forEach(function (p) {
+        if (details[p.slug]) return;
+        api('GET', P(p.slug)).then(function (r) { if (r.ok) { details[p.slug] = r.data.project; draw(); } });
+      });
     });
+    if (!channels) api('GET', '/api/channels').then(function (r) { if (r.ok) { channels = r.data.channels || []; if (data) drawOrphans(); } });
   }
   showArchived.addEventListener('change', function () { if (data) draw(); });
   load();
 }
 
-function createProjectForm() {
-  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._\\-]{1,63}', autocomplete: 'off'});
-  var name = h('input', {type: 'text', required: true});
-  var purpose = h('textarea', {required: true});
-  var repos = h('textarea', {placeholder: 'game https://github.com/owner/game'});
-  var adopt = h('input', {type: 'checkbox'});
+function projectCard(p) {
+  var href = '/projects/' + encodeURIComponent(p.slug);
+  var groups = (p.groups || []).filter(function (g) { return !g.archived; });
+  var facts = h('div', {'class': 'facts'},
+    p.channel ? h('a', {href: '/c/' + encodeURIComponent(p.channel), text: '#' + p.channel}) : null);
+  if (p.repositories) add(facts, h('span', null, p.repositories.length ? plural(p.repositories.length, 'repo') + ': ' : 'repo ',
+    p.repositories.length ? p.repositories.map(function (r, i) { return [i ? ', ' : '', h('a', {href: r.url, text: r.name})]; }) : h('b', {text: 'not set'})));
+  if (p.bot_pool) add(facts, h('span', null, 'bots ', h('b', {text: p.bot_pool.configured ? plural(p.bot_pool.bots.length, 'chosen pool bot') : 'any pool bot'})));
+  if (p.groups) add(facts, h('span', {text: plural(groups.length, 'group')}));
+
+  var card = h('article', {'class': 'proj'},
+    h('div', {'class': 'pt'}, h('div', {'class': 'nm'},
+      h('h3', null, h('a', {href: href, text: p.name || p.slug}), p.archived ? badge('archived') : null, p.readiness ? pill(p.readiness) : null),
+      p.purpose ? h('p', {'class': 'purpose', text: p.purpose}) : null, facts),
+      h('a', {'class': 'open', href: href, text: p.can_manage ? 'Manage →' : 'Open →'})));
+  if (!p.groups) return card;
+
+  var drafts = groups.filter(function (g) { return g.readiness === 'draft'; });
+  var waiting = groups.filter(function (g) { return g.readiness === 'unseeded' && g.seed_thread_id; });
+  var unasked = groups.filter(function (g) { return g.readiness === 'unseeded' && !g.seed_thread_id; });
+  var todo = [];
+  if (p.readiness === 'draft') todo.push('The project context has a draft to approve.');
+  if (drafts.length) todo.push(plural(drafts.length, 'group has', 'groups have') + ' a draft to approve.');
+  if (unasked.length) todo.push(plural(unasked.length, 'group has', 'groups have') + ' no context and no seeding request yet.');
+  if (waiting.length) todo.push(plural(waiting.length, 'group is', 'groups are') + ' waiting for a bot to draft its context.');
+  if (todo.length) add(card, h('div', {'class': 'todo', text: todo.join(' ')}));
+
+  if (groups.length || p.can_manage) add(card, h('div', {'class': 'groups'},
+    groups.map(function (g) {
+      var state = g.readiness === 'unseeded' && g.seed_thread_id ? h('a', {'class': 'pill none', href: '/t/' + g.seed_thread_id, title: 'the seeding thread'}, h('i'), 'seeding asked') : pill(g.readiness);
+      return h('div', {'class': 'grp'}, h('div', {'class': 'gt'}, h('a', {href: href + '#group=' + encodeURIComponent(g.slug), text: g.name || g.slug}), state),
+        g.purpose ? h('p', {text: g.purpose}) : null);
+    }),
+    p.can_manage ? h('div', {'class': 'grp new'}, h('a', {href: href, text: '+ add a group'})) : null));
+  return card;
+}
+
+// ---- create: a drawer, opened empty or from a channel that becomes a project ------
+function slugify(s) { return String(s).toLowerCase().trim().replace(/[^a-z0-9._-]+/g, '_').replace(/^[^a-z0-9]+|[_.-]+$/g, '').slice(0, 64); }
+function repoFromInput(v) {
+  v = v.trim().replace(/\/+$/, '').replace(/\.git$/, '');
+  if (/^[\w.-]+\/[\w.-]+$/.test(v)) v = 'https://github.com/' + v;
+  var name = slugify(v.replace(/^.*\//, '')).replace(/^[._-]+/, '');
+  return {name: name.length < 2 ? name + '_repo' : name.slice(0, 48), url: v};
+}
+function createDrawer(channel, channels) {
+  var old = document.getElementById('pdrawer'); if (old) old.remove();
+  var scrim = h('div', {'class': 'scrim'});
+  var name = h('input', {type: 'text', required: true, placeholder: 'Space Game', value: channel ? channel.slug : ''});
+  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._\\-]{1,63}', autocomplete: 'off', hidden: true, 'aria-label': 'link name'});
+  var slugShow = h('code');
+  var slugEdit = h('button', {type: 'button', 'class': 'link', text: 'change', onclick: function () { slug.hidden = false; slug.focus(); }});
+  var adopt = h('div', {'class': 'notice', hidden: true});
+  var purpose = h('textarea', {required: true, rows: 2, placeholder: 'A Godot 4 space sandbox: trade, factions, ship combat.',
+    value: channel && channel.topic ? channel.topic.replace(/,?\s*repo\s.*$/i, '') : ''});
+  var repos = h('div', {'class': 'repos'});
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
-  return h('section', null, h('h3', {text: 'Create project'}),
-    h('form', {onsubmit: function (ev) {
-      ev.preventDefault();
-      var repositories = lines(repos.value).map(function (l) {
-        var m = l.split(/\s+/); return m.length > 1 ? {name: m[0], url: m.slice(1).join(' ')} : {name: m[0].replace(/^.*\//, ''), url: m[0]};
+  var touched = false, existing = null;
+  function repoRow(v) {
+    var input = h('input', {type: 'text', placeholder: 'https://github.com/owner/repo  or  owner/repo', 'aria-label': 'repository', value: v || ''});
+    var row = h('div', {'class': 'repo'}, input, h('button', {type: 'button', 'class': 'quiet', 'aria-label': 'remove repository', text: '×', onclick: function () {
+      if (repos.children.length > 1) row.remove(); else input.value = '';
+    }}));
+    add(repos, row);
+  }
+  function sync() {
+    if (!touched) slug.value = slugify(name.value);
+    var s = slug.value;
+    slugShow.textContent = s ? '/projects/' + s + '  ·  #' + s : '…';
+    existing = channels.filter(function (c) { return c.slug === s; })[0] || null;
+    adopt.hidden = !existing;
+    if (existing) adopt.textContent = '#' + existing.slug + ' already exists with ' + plural(existing.message_count || 0, 'message') + '. The project will use that channel and keep its history.';
+  }
+  function close() { scrim.remove(); drawer.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(ev) { if (ev.key === 'Escape') close(); }
+  var m = channel && channel.topic && /repo\s+(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)/i.exec(channel.topic);
+  repoRow(m ? 'https://github.com/' + m[1].replace(/\.git$|[.,)]+$/g, '') : '');
+  var form = h('form', {id: 'pform', onsubmit: function (ev) {
+    ev.preventDefault();
+    var repositories = Array.prototype.map.call(repos.querySelectorAll('input'), function (i) { return i.value; })
+      .filter(function (v) { return v.trim(); }).map(repoFromInput);
+    api('POST', '/api/projects', {slug: slug.value.trim(), name: name.value.trim(), purpose: purpose.value.trim(),
+                                  repositories: repositories, adopt_channel: !!existing})
+      .then(function (res) {
+        if (res.ok) location.href = '/projects/' + encodeURIComponent(slug.value.trim());
+        else status(out, false, why(res));   // the form keeps what was typed
       });
-      api('POST', '/api/projects', {slug: slug.value.trim(), name: name.value.trim(), purpose: purpose.value.trim(), repositories: repositories, adopt_channel: adopt.checked})
-        .then(function (res) {
-          if (res.ok) location.href = '/projects/' + encodeURIComponent(slug.value.trim());
-          else status(out, false, why(res));   // the form keeps what was typed
-        });
-    }},
-      field('Slug (stable id, used in links)', slug), field('Name', name), field('Purpose', purpose),
-      field('Repositories, one per line: name url', repos),
-      h('label', {'class': 'inline'}, adopt, 'Use the existing channel with this slug (preserves earlier discussions)'),
-      h('button', {type: 'submit', text: 'Create project'}), out));
+  }},
+    h('div', {'class': 'f'}, field('Name', name), h('div', {'class': 'slugline'}, 'link ', slugShow, ' ', slugEdit), slug),
+    adopt,
+    h('div', {'class': 'f'}, field('What is it for?', purpose, 'One or two sentences. Every bot that joins reads this first.')),
+    h('div', {'class': 'f'}, h('span', {'class': 'flabel', text: 'Repositories'}), repos,
+      h('button', {type: 'button', 'class': 'link', text: '+ add another repository', onclick: function () { repoRow(''); }}),
+      h('span', {'class': 'note', text: 'GitHub URLs. Pool bots clone from here.'})),
+    out);
+  var drawer = h('aside', {'class': 'drawer', id: 'pdrawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'new project'},
+    h('header', null, h('h2', {text: channel ? 'Make #' + channel.slug + ' a project' : 'New project'}),
+      h('button', {type: 'button', 'class': 'x', 'aria-label': 'close', text: '×', onclick: close})),
+    form,
+    h('footer', null, h('button', {type: 'button', 'class': 'quiet', text: 'Cancel', onclick: close}),
+      h('button', {type: 'submit', form: 'pform', text: 'Create project'})));
+  name.addEventListener('input', sync);
+  slug.addEventListener('input', function () { touched = true; sync(); });
+  scrim.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(scrim); document.body.appendChild(drawer);
+  sync();
+  (channel ? purpose : name).focus();
 }
 
 // ================================================================= a project

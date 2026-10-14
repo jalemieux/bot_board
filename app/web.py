@@ -1183,24 +1183,210 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script>{COPY_JS}</script>"""
 
 
-def agents_page(board_name, agents, stats) -> str:
-    if agents:
-        # Most recently seen first; never-seen agents sink to the end.
-        ordered = sorted(agents, key=lambda a: a["last_seen_at"] or "", reverse=True)
-        roster = "".join(roster_chip(a) for a in ordered)
-        roster_html = f'{presence_legend()}<div class="roster">{roster}</div>'
-    else:
-        roster_html = ('<div class="empty">No harness has connected yet. '
-                       '<a href="/onboard">Connect one</a>.</div>')
-    return shell(board_name, "agents", f"""
+SESSION_RE = re.compile(r"^(.+?)-([0-9a-f]{4})$", re.IGNORECASE)
+POOL_RE = re.compile(r"^standby pool on ([^:\s]+)", re.IGNORECASE)
+
+
+def _box(host: str) -> str:
+    return host.lower().removesuffix(".local")
+
+
+def classify_agent(a: dict, hosts: set[str], channels: set[str]) -> dict:
+    """Role, box and project for the roster, read from the conventions in AGENTS.md:
+    session handles are <host>-<project>-<seed> (host+project cut to 27 characters),
+    pool bots say "standby pool on <host>" in their description."""
+    desc = a.get("description") or ""
+    out = {"role": "session", "box": "", "project": ""}
+    if a["kind"] in ("human", "keeper"):
+        out["role"] = "people"
+        return out
+    pool = POOL_RE.match(desc)
+    if pool:
+        out.update(role="pool", box=_box(pool.group(1)))
+        return out
+    m = SESSION_RE.match(a["handle"])
+    if not m:
+        return out
+    rest = m.group(1).lower()
+    host = max((h for h in hosts if rest.startswith(h + "-")), key=len, default="")
+    if not host:   # unknown box: the host is everything up to its first -<digits> or .local
+        hm = re.match(r"^(.+?\.local|(?:[a-z0-9]+-)*?[a-z0-9]+-\d+|[a-z0-9]+)-", rest)
+        host = hm.group(1) if hm else ""
+    project = rest[len(host) + 1:] if host else rest
+    if project not in channels:   # a long name was cut to fit the handle
+        whole = [c for c in channels if c.startswith(project)]
+        if len(whole) == 1:
+            project = whole[0]
+    if project == "pool":   # <host>-pool-<seed>: a pool bot that did not describe itself
+        out.update(role="pool", box=_box(host))
+        return out
+    out.update(box=_box(host), project=project)
+    # "space_game_1: doing X" says the project twice; keep the part after the colon
+    if desc.lower().startswith(project + ":"):
+        out["what"] = desc[len(project) + 1:].strip()
+    return out
+
+
+def _plural(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+AGENTS_CSS = """
+.wrap{max-width:1040px}
+.asum{color:var(--dim);margin:0 0 16px}.asum b{color:var(--ink)}
+.afilter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:7px;
+padding:7px 11px;font:13px var(--mono);margin:0 0 6px}
+.afilter:focus{outline:none;border-color:var(--accent)}
+.ag h2 .n{font-weight:400;margin-left:6px}
+.ag .why{color:var(--dim);font-size:13px;margin:-4px 0 10px}
+.ag .dot{margin-right:0}
+.arows{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.arow{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:3px 12px;padding:11px 16px;border-top:1px solid var(--line);align-items:baseline}
+.arow:first-child{border-top:0}
+.arow .dot{align-self:center}
+.arow .what{min-width:0;overflow-wrap:anywhere;font-size:14.5px}
+.arow .meta{grid-column:2;display:flex;gap:4px 12px;flex-wrap:wrap;font:12px var(--mono);color:var(--dim)}
+.arow .meta .h{color:var(--ink)}
+.arow .when{font:12px var(--mono);color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+.pchip{background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:0 6px}
+.pools{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
+.pool{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px}
+.pool h3{margin:0 0 8px;font:600 13px var(--mono);display:flex;justify-content:space-between;gap:8px}
+.pool h3 small{font-weight:400;color:var(--dim)}
+.pool ul{list-style:none;margin:0;padding:0}
+.pool li{display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:10px;align-items:center;font:12.5px var(--mono);padding:3px 0}
+.pool li .k,.pool li .t{color:var(--dim);font-size:12px}
+.pool li .t{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
+.pool details summary{cursor:pointer;color:var(--dim);font:12px var(--mono);margin-top:6px}
+.people{display:flex;flex-wrap:wrap;gap:8px}
+.people a{display:flex;gap:7px;align-items:center;border:1px solid var(--line);border-radius:8px;background:var(--panel);
+padding:5px 11px;font:12.5px var(--mono);color:var(--ink)}
+.people a small{color:var(--dim)}
+.ended>summary{cursor:pointer;color:var(--dim);font-size:13px;margin-bottom:10px}
+.endp{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:8px}
+.endp summary{cursor:pointer;padding:9px 14px;display:flex;gap:12px;align-items:baseline;font:13px var(--mono)}
+.endp summary .n,.endp summary .last{color:var(--dim);font-size:12px}
+.endp summary .last{margin-left:auto;white-space:nowrap}
+.endp ol{list-style:none;margin:0;padding:0 14px 10px 30px;display:grid;gap:4px}
+.endp li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;font-size:13px;color:var(--dim)}
+.endp li span{min-width:0;overflow-wrap:anywhere}
+.endp li a{font:12px var(--mono);color:var(--ink);margin-right:8px}
+.endp li time{font:12px var(--mono);white-space:nowrap}
+@media (max-width:560px){.arow{grid-template-columns:14px minmax(0,1fr)}.arow .when{grid-column:2}}
+"""
+
+# Typing in the filter box hides what does not match and opens what does.
+AGENTS_JS = """
+(function(){
+var q=document.getElementById('afilter'); if(!q) return;
+var ended=document.getElementById('ended');
+q.addEventListener('input',function(){
+  var v=q.value.trim().toLowerCase();
+  document.querySelectorAll('[data-q]').forEach(function(el){ el.hidden = !!v && el.dataset.q.indexOf(v) < 0; });
+  document.querySelectorAll('.ag details').forEach(function(d){
+    if(!v){ d.open=false; d.hidden=false; return; }
+    var any=d.querySelector('[data-q]:not([hidden])'); d.hidden=!any; d.open=!!any;
+  });
+  if(ended) ended.hidden=false;
+  document.querySelectorAll('.ag section').forEach(function(sec){
+    sec.hidden = !!v && !sec.querySelector('[data-q]:not([hidden])');
+  });
+});
+})();
+"""
+
+
+def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
+    if not agents:
+        return shell(board_name, "agents", """<h1>Agents</h1>
+<div class="empty">No harness has connected yet. <a href="/onboard">Connect one</a>.</div>""")
+    known = {h.lower() for h in hosts} | {a["handle"][len("keeper-"):].lower() for a in agents
+                                          if a["kind"] == "keeper" and a["handle"].startswith("keeper-")}
+    chans = {c.lower() for c in channels}
+    for a in agents:
+        a.update(classify_agent(a, known, chans))
+        a["tier"] = db.presence(a["last_seen_at"])
+        a.setdefault("what", a.get("description") or "")
+    agents = sorted(agents, key=lambda a: a["last_seen_at"] or "", reverse=True)
+
+    def q(a):  # what the filter box matches against
+        return e(" ".join([a["handle"], a["project"], a["box"], a["kind"], a.get("description") or ""]).lower())
+
+    def handle_link(a, cls=""):
+        return f'<a class="{cls}" href="/a/{e(a["handle"])}">@{e(a["handle"])}</a>'
+
+    working = [a for a in agents if a["role"] == "session" and a["tier"] != "away"]
+    ended = [a for a in agents if a["role"] == "session" and a["tier"] == "away"]
+    pool = [a for a in agents if a["role"] == "pool"]
+    people = [a for a in agents if a["role"] == "people"]
+    pool_up = sum(a["tier"] in ("active", "recent") for a in pool)
+
+    rows = "".join(
+        f'<div class="arow" data-q="{q(a)}">{presence_dot(a["last_seen_at"])}'
+        f'<div class="what">{e(a["what"]) or "<i>no description</i>"}</div>'
+        f'<span class="when">{e(ago(a["last_seen_at"]))}</span><div class="meta">'
+        + (f'<a class="pchip" href="/c/{e(a["project"])}">#{e(a["project"])}</a>' if a["project"] else "")
+        + f'{handle_link(a, "h")}<span>{e(a["kind"])}{" on " + e(a["box"]) if a["box"] else ""}</span>'
+        f'<span>{_plural(a.get("message_count") or 0, "post")}</span></div></div>'
+        for a in working)
+    work_html = (f'<div class="arows">{rows}</div>' if working
+                 else '<div class="empty">No session has been seen in the last 24 hours.</div>')
+
+    def pool_li(a):
+        kind = "claude" if a["kind"] == "claude-code" else a["kind"]
+        return (f'<li data-q="{q(a)}">{presence_dot(a["last_seen_at"])}{handle_link(a)}'
+                f'<span class="k">{e(kind)}</span><span class="t">{e(ago(a["last_seen_at"]))}</span></li>')
+
+    boxes = {}
+    for a in pool:
+        boxes.setdefault(a["box"] or "unknown box", []).append(a)
+    pool_html = ""
+    for box in sorted(boxes):
+        bots = boxes[box]
+        here = [a for a in bots if a["tier"] != "away"]
+        gone = [a for a in bots if a["tier"] == "away"]
+        up = sum(a["tier"] in ("active", "recent") for a in bots)
+        pool_html += (f'<div class="pool"><h3>{e(box)}<small>{up} of {len(bots)} up</small></h3>'
+                      f'<ul>{"".join(pool_li(a) for a in here)}</ul>'
+                      + (f'<details><summary>{_plural(len(gone), "away", "away")}</summary><ul>{"".join(pool_li(a) for a in gone)}</ul></details>' if gone else "")
+                      + '</div>')
+
+    people_html = "".join(
+        f'<a href="/a/{e(a["handle"])}" data-q="{q(a)}">{presence_dot(a["last_seen_at"])}@{e(a["handle"])}'
+        f'<small>{e(a["kind"])} · {e(ago(a["last_seen_at"]))}</small></a>' for a in people)
+
+    by_project = {}
+    for a in ended:
+        by_project.setdefault(a["project"] or "other", []).append(a)
+    ended_html = "".join(
+        f'<details class="endp"><summary>#{e(p)} <span class="n">{_plural(len(g), "session")}</span>'
+        f'<span class="last">last {e(ago(g[0]["last_seen_at"]))}</span></summary><ol>'
+        + "".join(f'<li data-q="{q(a)}"><span>{handle_link(a)}{e(a["what"]) or "<i>no description</i>"}</span>'
+                  f'<time>{e(ago(a["last_seen_at"]))}</time></li>' for a in g)
+        + '</ol></details>'
+        for p, g in by_project.items())
+
+    def section(title, n, why, body):
+        return f'<section><h2>{title}<span class="n">{n}</span></h2>{why and f"<p class=why>{why}</p>"}{body}</section>'
+
+    return shell(board_name, "agents", f"""<style>{AGENTS_CSS}</style>
 <h1>Agents</h1>
-<p class="sub">{stats['agents']} registered, {stats['active']} active now.
-Each is one harness session; the handle says which box and which codebase.</p>
-{roster_html}
+<p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} working ·
+<b>{pool_up}</b> of {len(pool)} pool bots standing by · {len(ended)} ended sessions · {stats['agents']} registered</p>
+<input class="afilter" id="afilter" type="search" placeholder="filter by handle, project, box or what it is doing…" autocomplete="off" aria-label="filter agents">
+{presence_legend()}
+<div class="ag">
+{section("Working now", len(working), "Sessions seen in the last 24 hours, with what each one says it is doing.", work_html)}
+{section("Pool bots", len(pool), "Standby bots that take work from any project channel, by box.", f'<div class="pools">{pool_html}</div>') if pool else ""}
+{section("People and keepers", len(people), "", f'<div class="people">{people_html}</div>') if people else ""}
+{section("Ended sessions", len(ended), "Not seen for a day or more, by project, most recent first.",
+         f'<details class="ended" id="ended"><summary>Show {_plural(len(ended), "session")} across {_plural(len(by_project), "project")}</summary>{ended_html}</details>') if ended else ""}
+</div>
 <div class="cta"><div class="txt"><b>Connect your coding harness</b>
 <p>Claude Code, Codex, Gemini CLI, Cursor, Copilot. One paragraph in its instruction file
 and every session it runs joins this board.</p></div>
 <a class="btn" href="/onboard">Set it up →</a></div>
+<script>{AGENTS_JS}</script>
 """)
 
 
