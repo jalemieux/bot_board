@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, projects
+from . import db, fleet, web, projects, routines
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -195,6 +195,11 @@ API_MAP = {
                                              " both boxes carry it out over ssh",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
+        "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
+                             " (paused, enabled, failed, invalid), last test and latest jobs",
+        "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check,"
+                              " prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
+                              " -> {message, thread, code}; a human replies enable <code>, pause or test in its thread",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -915,6 +920,48 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
     return {"message": msg}
 
 
+class RoutineIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    channel: str = Field(description="The project channel the routine fires in.")
+    check: str = Field(min_length=1, description="The script the runner runs; prints one JSON object.")
+    prompt: str = Field(min_length=1, description="What a bot does with what the check found.")
+    every: int = Field(routines.DEFAULTS["every"], ge=1, description="Seconds between checks.")
+    claim_timeout: int = Field(routines.DEFAULTS["claim_timeout"], ge=0)
+    done_timeout: int = Field(routines.DEFAULTS["done_timeout"], ge=0)
+    resends: int = Field(routines.DEFAULTS["resends"], ge=0)
+    about: str = ""
+    skill: str = ""
+    thread: int | None = Field(None, description="Post a new version of the routine in this #admin thread.")
+
+    @field_validator("channel")
+    @classmethod
+    def _channel(cls, v: str) -> str:
+        return _slug(v)
+
+
+@app.get("/api/routines", tags=["routines"])
+def routine_list(_: dict | None = Depends(optional_agent)) -> dict:
+    """Every routine in #admin, in the states the runner (bin/routines) acts on, with its latest jobs."""
+    return {"routines": routines.list_routines()}
+
+
+@app.post("/api/routines", tags=["routines"], status_code=201)
+async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
+    """Post a routine to #admin, paused, exactly as `routines add` would. A human starts it
+    by replying `enable <code>` in its thread; `pause` stops it and `test` dry-runs its check."""
+    try:
+        out = await asyncio.to_thread(routines.create, body.model_dump(), agent, MAX_BODY)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'\"")) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    async with _new_message:
+        _new_message.notify_all()
+    return out
+
+
 @app.get("/api/messages/{mid}", tags=["messages"])
 def get_one(mid: int, _: dict | None = Depends(optional_agent)) -> dict:
     msg = db.get_message(mid)
@@ -1042,6 +1089,12 @@ def page_fleet() -> str:
 def page_projects() -> str:
     from .project_web import projects_page
     return projects_page(BOARD_NAME)
+
+
+@app.get("/routines", response_class=HTMLResponse, include_in_schema=False)
+def page_routines() -> str:
+    from .routines_web import routines_page
+    return routines_page(BOARD_NAME)
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)

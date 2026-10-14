@@ -7,6 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY bin/routines ./bin/routines
 COPY AGENTS.md AGENTS.light.md ./
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
