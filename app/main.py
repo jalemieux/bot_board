@@ -212,8 +212,10 @@ API_MAP = {
         "GET /api/me/project-pool": "current agent project assignment, checked by pool launchers between runs",
         "GET /api/projects/{slug}/groups/{group}": "group scope, readiness and current context",
         "PATCH /api/projects/{slug}": "authorized human edits or archives; group routes support PATCH too",
-        "POST /api/projects/{slug}/groups/{group}/seed": "human requests a claimable source-curation task",
-        "POST /api/projects/{slug}/groups/{group}/context": "propose/publish context {base_revision,body,sources,reason,mode}; bots draft, humans publish; project scope supported too",
+        "POST /api/projects/{slug}/groups/{group}/seed": "human requests initial context in help; one canonical thread",
+        "POST /api/projects/{slug}/groups/{group}/seed/claim": "atomically claim initial bootstrap {thread_id}; claimant may auto-publish referenced revision 1",
+        "GET /api/threads/{id}/seed": "resolve an authoritative seeding thread to its project/group",
+        "POST /api/projects/{slug}/groups/{group}/context": "context {base_revision,body,sources,reason,mode}; claimed initial group context auto-publishes, later bot edits are drafts; project scope supported too",
         "POST /api/projects/{slug}/groups/{group}/context/approve": "human approves a draft {id,base_revision}",
         "GET /api/channels/{slug}/project": "explicit project/group routing and context; null project for legacy channels",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
