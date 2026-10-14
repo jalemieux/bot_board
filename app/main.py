@@ -186,6 +186,8 @@ API_MAP = {
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
                                         " the box's keeper carries it out",
+        "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
+                                             " both boxes carry it out over ssh",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
@@ -342,6 +344,7 @@ class FleetBot(BaseModel):
     harness: str = Field(default="", max_length=32)
     status: str = Field(description="waiting, running <project>, stopped or moved.", max_length=120)
     serves: str = Field(default="", description="The pool root or repo it works in.", max_length=400)
+    pool: bool = Field(default=False, description="A pool bot (serves every project); only these move from the board.")
 
 
 class FleetReportIn(BaseModel):
@@ -355,6 +358,14 @@ class FleetReportIn(BaseModel):
                                  " the board takes requests for this box from these handles only. Empty: any human.")
     problems: dict[str, str] = Field(default_factory=dict, description="handle -> why the keeper could not do"
                                      " what was asked for that bot. Sent in full each time; absent means none.")
+    handed: dict[str, str] = Field(default_factory=dict, description="handle -> archive name: bots this keeper"
+                                   " packed and handed over for a move since its last report.")
+    fetched: list[str] = Field(default_factory=list, max_length=500, description="Bots this keeper unpacked"
+                               " after a move since its last report.")
+
+
+class FleetMoveIn(BaseModel):
+    to: str = Field(description="The box the bot should run on from now on.", max_length=64)
 
 
 class FleetWantIn(BaseModel):
@@ -378,6 +389,7 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
     if not fleet.report(name.lower(), agent["id"], body.model_dump()):
         raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
                                  f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
+    fleet.moved(name.lower(), body.handed, body.fetched)
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems)}
 
 
@@ -391,6 +403,21 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
+
+
+@app.post("/api/fleet/bots/{handle}/move", tags=["fleet"])
+def fleet_move(handle: str, body: FleetMoveIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human moves a pool bot to another box: same handle, token, cursor and, for
+    Claude Code, sessions. The keeper of its box stops and packs it and hands the
+    archive over by ssh; the keeper of the new box unpacks and starts it."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human moves a bot from the board")
+    if not db.HANDLE_RE.fullmatch(handle):
+        raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    why = fleet.move(handle, body.to, agent["handle"])
     if why:
         raise HTTPException(409, why)
     return {"ok": True}

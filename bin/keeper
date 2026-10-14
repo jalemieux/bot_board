@@ -21,6 +21,16 @@ things it does, and the harness and handle are checked before either. A bot that
 will not stay up is reported with the reason and left alone until someone asks
 again. Bots nobody asked about on the board are reported and never touched.
 
+A human can also move a pool bot to another box from the page. Its keeper stops
+it, packs it (bin/bot pack: token, state, Claude Code sessions) and copies the
+archive to KEEPER_HANDOVER, a private directory on one box every box reaches by
+ssh, written host:dir (dir under that box's home) and set the same on every box;
+on that box itself it is a plain directory. The board then points the bot at
+the new box, whose keeper copies the archive back, unpacks it into its own
+BOT_POOL, deletes the copy, and starts the bot under the same handle. The
+archive holds the bot's token, which is why it goes over ssh and never through
+the board. A move needs ssh without a password from both boxes to that one.
+
 Bots are started with the keeper's environment, so `claude` (or the harness you
 use) must be on the PATH the keeper has; `keeper install` records the PATH of
 the shell it is run from. What a started bot prints goes to
@@ -33,7 +43,8 @@ tokens, in ~/.config/bot_board/. The first keeper to report a name owns it.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST,
 KEEPER_OPERATORS (handles, space or comma separated: only what they asked is carried
-out; unset, anyone the board accepted as a human).
+out; unset, anyone the board accepted as a human), KEEPER_HANDOVER (where archives of
+moving bots wait: host:dir, e.g. minipc-1:.config/bot_board/handover).
 """
 import argparse, fcntl, json, os, platform, re, shlex, shutil, subprocess, sys, time, urllib.error, urllib.request
 
@@ -64,6 +75,8 @@ OPERATORS = setting("KEEPER_OPERATORS").replace(",", " ").split()
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 HANDLE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}", re.I)
 QUICK = 120     # a bot that dies this soon after we start it has a problem; later, it is restarted
+HANDOVER = setting("KEEPER_HANDOVER")
+SSH = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
 
 
 def out(*cmd):
@@ -109,7 +122,8 @@ def bots():
     for line in out(BOT, "ps", "-a", "--tsv").splitlines():
         handle, harness, status, _pid, _seen, serves = (line.split("\t") + [""] * 6)[:6]
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
-                     "serves": "" if serves == "?" else serves})
+                     "serves": "" if serves == "?" else serves,
+                     "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool"))})
     return rows
 
 
@@ -123,11 +137,56 @@ def snapshot():
             "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots()}
 
 
+class Handover:
+    """KEEPER_HANDOVER: host:dir reached by ssh, or a directory here when the host is this box."""
+
+    def __init__(self, me):
+        m = re.match(r"([^/:]+):(.*)$", HANDOVER)
+        self.host, path = (m.group(1), m.group(2)) if m else ("", HANDOVER)
+        if self.host and self.host.split("@")[-1].split(".")[0].lower() == me:
+            self.host = ""      # the hand-over box is this one: no ssh to ourselves
+        self.dir = path.rstrip("/") or ".config/bot_board/handover"
+        if not self.host:
+            self.dir = os.path.join(os.path.expanduser("~"), os.path.expanduser(self.dir))
+
+    def run(self, *cmd):
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+        if r.returncode:
+            lines = (r.stderr or r.stdout).strip().splitlines()
+            raise RuntimeError(lines[-1] if lines else f"{cmd[0]} exited {r.returncode}")
+
+    def put(self, local, name):
+        if self.host:
+            self.run("ssh", *SSH, self.host, f"mkdir -p -m 700 {shlex.quote(self.dir)}")
+            self.run("scp", "-q", *SSH, local, f"{self.host}:{self.dir}/{name}")
+        else:
+            os.makedirs(self.dir, mode=0o700, exist_ok=True)
+            shutil.copy(local, os.path.join(self.dir, name))
+
+    def get(self, name, local):
+        if self.host:
+            self.run("scp", "-q", *SSH, f"{self.host}:{self.dir}/{name}", local)
+        else:
+            shutil.copy(os.path.join(self.dir, name), local)
+
+    def drop(self, name):
+        if self.host:
+            self.run("ssh", *SSH, self.host, f"rm -f {shlex.quote(self.dir + '/' + name)}")
+        else:
+            try:
+                os.remove(os.path.join(self.dir, name))
+            except FileNotFoundError:
+                pass
+
+
 class Hands:
     """Makes the box match what the board asks. Remembers, for this run of the keeper,
     when it started each bot and which requests it gave up on."""
 
-    def __init__(self):
+    def __init__(self, me=""):
+        self.me = me
+        self.handed = {}        # handle -> archive: packed and handed over, for the next report
+        self.fetched = []       # unpacked after a move, for the next report
         self.started = {}       # handle -> (when we last started it, the set_at of the request)
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
@@ -142,6 +201,14 @@ class Hands:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
             elif OPERATORS and w["set_by"] not in OPERATORS:
                 problems[h] = f"not carried out: @{w['set_by']} is not an operator of this box (KEEPER_OPERATORS)"
+            elif w.get("move_to"):
+                why = self.leave(w, up, seen)
+                if why:
+                    problems[h] = why
+            elif w.get("fetch") and not any(b["handle"].lower() == h.lower() and b["status"] != "moved" for b in seen):
+                why = self.arrive(w)    # started on the next round, like any bot asked to run
+                if why:
+                    problems[h] = why
             elif not w["run"]:
                 if h.lower() in up and "stopping" not in up[h.lower()]:
                     self.spawn(h, [BOT, "stop", h])
@@ -168,6 +235,61 @@ class Hands:
                     self.procs[h] = self.spawn(h, [BOT, w["harness"], "--name", h])
                     print(f"keeper: starting {h} ({w['harness']}), asked by @{w['set_by']}", flush=True)
         return problems
+
+    def leave(self, w, up, seen):
+        """A bot asked to move away: stop it, then pack it and hand the archive over.
+        Returns None while that goes well, else why not."""
+        h = w["handle"]
+        if h in self.handed:
+            return None         # done; the board learns it with this report
+        if not HANDOVER:
+            return f"not moved: set KEEPER_HANDOVER on this box (where archives wait, e.g. minipc-1:.config/bot_board/handover)"
+        if h.lower() in up:
+            if "stopping" not in up[h.lower()]:
+                self.spawn(h, [BOT, "stop", h])
+                print(f"keeper: stopping {h} to move it to {w['move_to']}, asked by @{w['set_by']}", flush=True)
+            return None
+        if not os.path.exists(os.path.join(CFG, "bots", h, "pool")):
+            return "not moved: only pool bots move from the board"
+        name = f"{h}-{os.urandom(4).hex()}.botpack.tgz"
+        tmp = os.path.join(CFG, "bots", h + ".botpack.tgz")
+        try:
+            r = subprocess.run([BOT, "pack", h, tmp], capture_output=True, text=True, timeout=900)
+            if r.returncode:
+                return f"not moved: bin/bot pack failed: {(r.stderr or r.stdout).strip()[-300:]}"
+            Handover(self.me).put(tmp, name)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+            return f"not moved: could not hand the archive over to {HANDOVER}: {e}"
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        self.handed[h] = name
+        print(f"keeper: packed {h} and handed it over for {w['move_to']} as {name}", flush=True)
+        return None
+
+    def arrive(self, w):
+        """A bot moved here: fetch its archive, unpack it, delete the hand-over copy."""
+        h, name = w["handle"], w["fetch"]
+        if not HANDOVER:
+            return f"not unpacked: set KEEPER_HANDOVER on this box (where archives wait, e.g. minipc-1:.config/bot_board/handover)"
+        if not re.fullmatch(r"[A-Za-z0-9._-]+\.botpack\.tgz", name):
+            return "not unpacked: the board named an archive that is not one"
+        ho, tmp = Handover(self.me), os.path.join(CFG, name)
+        try:
+            ho.get(name, tmp)
+            os.chmod(tmp, 0o600)
+            r = subprocess.run([BOT, "unpack", tmp], capture_output=True, text=True, timeout=900)
+            if r.returncode:
+                return f"not unpacked: {(r.stderr or r.stdout).strip()[-300:]}"
+            ho.drop(name)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+            return f"not unpacked: could not fetch {name} from {HANDOVER}: {e}"
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        self.fetched.append(h)
+        print(f"keeper: unpacked {h}, moved here by @{w['set_by']}", flush=True)
+        return None
 
     def out_path(self, handle):
         return os.path.join(CFG, "bots", handle, "keeper.out")
@@ -312,11 +434,17 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         die("a keeper is already running on this box for this user")
-    hands, problems = Hands(), {}
+    hands, problems = Hands(host), {}
     while True:
         try:
             snap = snapshot()
-            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS}, token)
+            moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
+            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
+                                                                  **moves}, token)
+            if code == 200:     # the board has them now
+                for h in moves["handed"]:
+                    hands.handed.pop(h, None)
+                hands.fetched = [h for h in hands.fetched if h not in moves["fetched"]]
             if code == 403:
                 die(f"{host} is already reported by another keeper. If another box has this name, set KEEPER_HOST "
                     "to this box's own. If it was this box (a reinstall, a lost token), a human takes the old one "
