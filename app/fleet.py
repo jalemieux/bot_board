@@ -156,7 +156,8 @@ def move(handle: str, to: str, by: str) -> str | None:
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
             " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL",
-            (handle, src, harness, 1, by, db.now(), to),
+            # a bot that was stopped stays stopped on the new box
+            (handle, src, harness, int(seen["status"].startswith(UP) or bool(row and row["run"])), by, db.now(), to),
         )
         c.commit()
     return None
