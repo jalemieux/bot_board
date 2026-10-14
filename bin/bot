@@ -422,7 +422,10 @@ case ${1:-} in
       elif [ -e "$d/moved" ]; then st=moved
       else st=stopped; fi
       [ -n "$ALL" ] || alive "$d" || continue
-      ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"$'\n'
+      ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"
+      # health: why its last run failed, or that its harness is logged out; only while it runs
+      if [ -n "$TSV" ] && alive "$d" && [ -s "$d/health" ]; then ROWS+=$'\t'"$(tr '\t\n' '  ' <"$d/health" | cut -c1-300)"; fi
+      ROWS+=$'\n'
     done
     if [ -z "$ROWS" ] && [ -z "$TSV" ]; then
       if [ -n "$ALL" ]; then echo "bot: no bots on this box" >&2; else echo "bot: no bots running on this box (bot ps -a lists the stopped ones)" >&2; fi
@@ -986,9 +989,32 @@ print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" 
   SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
 }
 
+# ---- health: what the keeper shows on /fleet beside the bot's status ---------------
+# $STATE/health holds one line while something is wrong: the last run failed, or the
+# harness is logged out. A logged-out harness fails every run and would lose each
+# batch, so the launcher stops prompting it, keeps what arrived, and tries again
+# once the login is back.
+logged_out() {  # true when the harness says it has no login; unknown counts as logged in
+  case $HARNESS in
+    claude) timeout 30 claude auth status 2>/dev/null | python3 -c 'import sys,json;sys.exit(0 if json.load(sys.stdin).get("loggedIn") is False else 1)' 2>/dev/null ;;
+    codex) ! timeout 30 codex login status >/dev/null 2>&1 ;;
+    *) return 1 ;;
+  esac
+}
+login_hint() {
+  case $HARNESS in claude) echo "run claude, then /login, as $(id -un) on $(hostname)" ;; codex) echo "run codex login as $(id -un) on $(hostname)" ;; *) echo "log $HARNESS in on $(hostname)" ;; esac
+}
+OUTAGE=""        # set while the harness is logged out: the time it was found so
+if [ -s "$STATE/health" ] && grep -q '^logged out' "$STATE/health"; then OUTAGE=$(date -u +%FT%TZ); fi
+
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  if [ -n "$OUTAGE" ]; then
+    # nothing is fetched while logged out: the board keeps the messages, the cursor stays
+    if logged_out; then sleep 60; continue; fi
+    log "$HARNESS is logged in again; carrying on"; rm -f "$STATE/health"; OUTAGE=""
+  fi
   NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
   SEEN=$(cat "$STATE/seen")
   if [ -s "$STATE/held" ]; then      # held last time: their channel's project could not be looked up
@@ -996,6 +1022,7 @@ while :; do
   fi
   [ -n "$NEW" ] || continue
   # project<TAB>id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>note<TAB>body, only what to act on
+  RAW=$NEW; DONE_IDS=""   # as fetched, and the ids already handed to a harness: what a logged-out harness keeps
   NEW=$(route_batch <<<"$NEW" 2>"$STATE/route.log")
   while IFS= read -r line; do log "$line"; done <"$STATE/route.log"
   [ -n "$NEW" ] || continue
@@ -1034,10 +1061,26 @@ while :; do
       if [ "$note" = - ]; then note=""; fi
       PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id${kind:+, kind $kind}]${note:+ Note: $note.}"$'\n'"${body//\\n/$'\n'}"$'\n'
     done <<<"$GROUP"
-    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"
+    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"
+      DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
     else
       rc=$?; log "harness exited $rc"
       last=$(tail -n1 <<<"$GROUP")
+      if logged_out; then
+        # keep this group's messages, and those of the groups not run yet, for when the login is back
+        awk -F'\t' 'NR==FNR{done[$1]=1; next} !($1 in done)' <(tr ' ' '\n' <<<"$DONE_IDS") <(printf '%s\n' "$RAW") >>"$STATE/held"
+        awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"   # routing may have held some already
+        echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
+        log "$HARNESS is logged out; holding $(wc -l <<<"$GROUP") message(s) and waiting for a login"
+        if [ -z "$OUTAGE" ]; then
+          say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+              "@$(cut -f4 <<<"$last") my harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping your message and will pick it up then." || true
+        fi
+        OUTAGE=$(date -u +%FT%TZ)
+        break     # the rest of the batch waits too: the next round sees OUTAGE before prompting again
+      fi
+      DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
+      echo "last run failed (exit $rc) at $(date -u +%FT%TZ): $(grep -v '^[0-9]\{4\}-..-..T' "$LOG" | tail -n1 | cut -c1-200)" >"$STATE/health"
       say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
           "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
     fi

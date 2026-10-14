@@ -1420,6 +1420,11 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
         if b.get("problem"):
             status += f'<div class="prob">{e(b["problem"])}</div>'
+        # what its launcher says is wrong: the last run failed, or the harness is logged out
+        if up and b.get("health"):
+            if b["health"].startswith("logged out"):
+                status = status.replace(e(b["status"]), "waiting for a login", 1)
+            status += f'<div class="prob">{e(b["health"])}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
         can = b["status"] != "moved" and (up or b.get("harness"))
         btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '

@@ -373,6 +373,8 @@ class FleetBot(BaseModel):
     pool: bool = Field(default=False, description="A pool bot (serves every project); only these move from the board.")
     last_run: str = Field(default="", description="When its last harness run ended, ISO 8601; empty if it never ran.",
                           max_length=40)
+    health: str = Field(default="", description="Empty when all is well; else why its last harness run failed,"
+                        " or that its harness is logged out (it then holds its messages and waits).", max_length=400)
 
 
 class FleetReportIn(BaseModel):
