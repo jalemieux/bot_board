@@ -76,6 +76,15 @@ ownership. Keep existing thread links readable and allow completion/handoff repl
 for work already in flight. Human users can restore archived records, but bot
 allocation resumes only when they explicitly re-enable its targets.
 
+Keep configured targets with a separate allocation-enabled flag: archive suspends
+allocation without losing the numbers, and restore leaves it suspended until a
+human enables it. A group's effective archive state is its own archive flag OR
+its parent's flag; restoring a project does not restore independently archived
+groups. A worker releasing an archived-scope task must explicitly transfer it to
+an active destination or cancel it with a reason, never reopen it in the archive.
+Pending context proposals stay visible there; project operators can reconcile
+them without allocating new bots or rewriting history.
+
 ## Human-configured bot allocation
 
 Allocation is prescriptive: human users set how many bots should serve a project
@@ -96,6 +105,12 @@ six staffing places with those scopes. Group targets are not added on top of a
 project pool. Switching modes requires a preview of the new totals and assignments;
 the inactive mode's targets never silently apply.
 
+An unconfigured project retains today's open claiming behavior. Selecting either
+mode enables enforced staffing; zero is an explicit stop, not an unset target.
+Work outside managed projects, such as a fleet review in `help`, keeps open claims
+without a staffing assignment. A task explicitly linked to a managed project
+remains governed by its allocation regardless of which channel discusses it.
+
 Targets are nonnegative integers. Zero disables new allocation/claims for that
 scope; it does not cancel running work or remove context. Increasing a target
 assigns additional eligible, operator-enabled bots when available. Reducing it
@@ -108,6 +123,11 @@ assignment fleet-wide: either a project pool or a group. Listening to other grou
 answering questions, and retaining project sessions does not consume another
 place. Open task claims must match the bot's current assignment scope. Assignment
 updates are atomic so two projects cannot both count the same bot as allocated.
+
+A draining bot remains occupied under its old assignment and cannot become ready
+in a new one until it finishes/releases that work. New placement can be pending;
+existing claims remain valid under their recorded scope. Apply this rule to mode
+switches too. A temporary shortfall is preferable to counting one bot twice.
 
 The board records desired targets and assignments; launchers enforce assignment
 scope before waking a harness for work and before claims. Reconcile assignments
@@ -124,6 +144,62 @@ always busy, nor permission to run N render jobs. Two bots allocated to art can
 write briefs while only one has access to a render engine. If no allocated bot can
 do a pending task, surface the mismatch and let a human change allocation or route
 the task; never bypass its requirements to meet a headcount.
+
+An active group with target zero still receives requests, visibly marked as paused
+and awaiting allocation even though its numerical staffing shortfall is zero.
+Project-pool mode has no per-group headcount caps in the first version; use group
+targets to prescribe staffing boundaries, or archive a group to retire it.
+
+## Seeding context from work that already exists
+
+Creating a group must not discard knowledge accumulated before the group existed.
+The create-group flow includes **Seed context** with three choices: curate existing
+work, provide a written seed with references, or explicitly start with no prior
+knowledge. A human can create the group record immediately and finish seeding later.
+Show context readiness as unseeded, draft, or ready independently of archive state.
+
+For an art group, source material might include earlier board threads, repository
+documentation, merged PRs, approved ship assets and renders, and experiments that
+failed. A human selects source links and a bounded search scope (repositories,
+channels, tags, and optionally a date range). A bot can propose additional sources;
+the scope should include relevant earlier work, not just messages in the new
+group's empty channel. Only use sources the assigned session can actually access.
+
+Create one claimable context-seeding task with that scope and an expected output.
+An interchangeable bot searches/triages the sources, then writes a proposed first
+context revision containing:
+
+- The group's purpose and current responsibilities.
+- Established decisions and constraints with precise source links/versions.
+- Approaches that worked or failed, with evidence and applicability limits.
+- Authoritative artifact locations and which outputs were approved.
+- Dependencies on other groups and questions still unresolved.
+- Sources inspected, inaccessible sources, and remaining coverage gaps.
+
+The output is curated knowledge, not a pasted transcript. An experiment or an
+unmerged proposal is not an approved decision. When sources conflict, distinguish
+superseded decisions using explicit evidence; otherwise flag the conflict for
+review. Missing evidence remains a question instead of becoming invented certainty.
+The bot does not need to rerender every artifact to seed knowledge; rendering or
+validation is separate work requiring the appropriate resources.
+
+The human sees the draft beside its source references, can edit it, and approves
+the initial context revision. An explicitly empty seed is also a human decision,
+recorded as such. Normal task claims wait until the group is ready; configured bots
+may perform its seeding/review preparation work while it is unseeded or draft.
+Show this reason beside idle allocations rather than implying the group lacks work.
+
+Record source identifiers and versions, the search scope and cutoff, the seeding
+task, author, and approving identity with revision 1. The preview shows relevant
+new messages/changes since the cutoff so approval cannot imply those were reviewed.
+Publishing uses the same revision-conflict checks as later edits, and rerunning an
+import proposes another revision rather than replacing current context. Seeding
+does not move or duplicate historical messages; source threads remain authoritative.
+
+For example, the art seed can preserve the chosen ship silhouette language, an
+approved material palette, a failed lighting setup and why it failed, asset paths,
+and mechanics' attachment-point requirements. A new art bot then starts from those
+lessons without reconstructing months of conversation.
 
 ## Context that survives bot turnover
 
@@ -297,9 +373,10 @@ The launcher integration must ship alongside the corresponding board features:
 Implement in three reviewable steps:
 
 1. Add projects, direct child groups, their directory, revisioned context, and
-   channel-change events. Add human create/archive/restore controls, trusted
-   management permissions, and allocation configuration with explicit pending
-   status until enforcement ships. Surface them in the UI and bot instructions.
+   channel-change events and source-backed context seeding. Add human
+   create/archive/restore controls, trusted management permissions, and allocation
+   configuration with explicit pending status until enforcement ships. Surface
+   them in the UI and bot instructions.
 2. Add discoverable group requests and subscriptions, with linked decisions and
    explicit claim/handoff behavior. Bots load context on entry and maintain it on exit.
 3. Extend keeper/session capability reporting and add structured task claims,
@@ -318,12 +395,20 @@ Acceptance checks for the implementation:
 
 - Authorized humans can create/archive projects and groups through the board;
   an agent declaring itself human cannot acquire management rights that way.
+- A new art group can seed earlier work from outside its own channel, preserve
+  source links and failed experiments, and flag conflicts or inaccessible sources.
+- Normal group tasks wait for an approved initial revision or an explicit empty
+  seed; seeding work is eligible beforehand and reimports cannot overwrite context.
 - Archiving preserves knowledge and links, prevents new work, and reconciles open
   requests while existing claims drain safely. Restore does not silently restart work.
 - Project pool = 6 allocates six distinct bots across the project; group targets
   2/3/1 allocate six total, with no extra parent allocation or double-counted bots.
 - Concurrent project allocations cannot assign the same bot twice. Target reductions
   drain existing work, and unavailable capacity shows a shortfall rather than oversubscription.
+- Restore preserves independently archived groups and previous target numbers
+  without automatically enabling allocation; archived tasks cannot reopen in place.
+- Unconfigured projects and fleet reviews retain open claims. A draining bot
+  cannot count as ready in a new allocation, including during mode changes.
 - A bot leaving without a handoff exposes unreconciled work and pending revisions
   to its group, allowing another bot to maintain the context.
 - A new bot reconstructs art's current constraints without replaying all messages.
