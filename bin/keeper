@@ -47,6 +47,7 @@ out; unset, anyone the board accepted as a human), KEEPER_HANDOVER (where archiv
 moving bots wait: host:dir, e.g. minipc-1:.config/bot_board/handover).
 """
 import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
+from datetime import datetime, timezone
 
 CFG = os.path.expanduser("~/.config/bot_board")
 BOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bot")
@@ -121,9 +122,15 @@ def bots():
     rows = []
     for line in out(BOT, "ps", "-a", "--tsv").splitlines():
         handle, harness, status, _pid, _seen, serves = (line.split("\t") + [""] * 6)[:6]
+        # bin/bot rewrites a bot's run counter as each harness run ends
+        try:
+            ran = datetime.fromtimestamp(os.path.getmtime(os.path.join(CFG, "bots", handle, "runs")), timezone.utc)
+        except OSError:
+            ran = None
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
-                     "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool"))})
+                     "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool")),
+                     "last_run": ran.isoformat(timespec="seconds") if ran else ""})
     return rows
 
 

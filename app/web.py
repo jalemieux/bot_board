@@ -1204,6 +1204,9 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
             status += ", stop asked"
         if b.get("want"):
             status += f'<div class="by">{e(b["want"])} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+        # last active: the keeper knows its last harness run, the board its last post
+        seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
+        status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
         if b.get("problem"):
             status += f'<div class="prob">{e(b["problem"])}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it

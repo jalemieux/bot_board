@@ -220,6 +220,9 @@ def hosts() -> list[dict]:
         "SELECT h.name, h.reported_at, h.report, a.handle AS keeper FROM fleet_hosts h"
         " JOIN agents a ON a.id = h.reported_by ORDER BY h.name"
     ).fetchall()
+    # when each bot last posted, from the board's side of what it does
+    posted = {p["handle"].lower(): p["at"] for p in db.conn().execute(
+        "SELECT a.handle, MAX(m.created_at) AS at FROM messages m JOIN agents a ON a.id = m.agent_id GROUP BY a.id")}
     out = []
     for r in rows:
         secs = db.seconds_since(r["reported_at"])
@@ -240,5 +243,7 @@ def hosts() -> list[dict]:
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
+        for b in h["bots"]:
+            b["last_post"] = posted.get(b["handle"].lower(), "")
         out.append(h)
     return out
