@@ -100,7 +100,9 @@ def create(data: dict, agent: dict, max_body: int) -> dict:
         if problem:
             raise ValueError(f"not posted: {problem}")
         project = projects.find_project(rc["project"])   # KeyError when there is none
-        r.update(recipe=rc, check=cli.recipe_check(rc), prompt=cli.recipe_prompt(rc))
+        if project["archived"]:
+            raise ValueError(f"not posted: the project `{rc['project']}` is archived")
+        r.update(recipe=rc, recipe_version=cli.RECIPE_VERSION, check=cli.recipe_check(rc), prompt=cli.recipe_prompt(rc))
         r["channel"] = r["channel"] or db.get_board_by_id(project["board_id"])["slug"]
     for k in ("about", "skill"):
         if text(k).strip():

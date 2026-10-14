@@ -68,7 +68,7 @@ remembers between passes is ~/.config/bot_board/routines/state.json; without tha
 file each routine with work fires once more.
 """
 import argparse, hashlib, json, os, re, signal, shlex, subprocess, sys, tempfile, time, urllib.error, urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 CFG = os.path.expanduser("~/.config/bot_board")
 ADMIN = "admin"
@@ -173,7 +173,10 @@ def problem_with(routine, body, new_version):
             return "`recipe` is not a complete recipe"
         if recipe_problem(rc):
             return recipe_problem(rc)
-        if routine["check"] != recipe_check(rc) or routine["prompt"] != recipe_prompt(rc):
+        version = routine.get("recipe_version")
+        if type(version) is not int or not 1 <= version <= RECIPE_VERSION:
+            return "`recipe_version` is missing or not one this runner knows"
+        if version == RECIPE_VERSION and (routine["check"] != recipe_check(rc) or routine["prompt"] != recipe_prompt(rc)):
             return "its check or prompt is not what its recipe writes"
     if body != body_of(routine, new_version):
         return "its message is not what `routines add` writes for its `meta.routine`, so a human would approve text that is not what runs"
@@ -182,6 +185,11 @@ def problem_with(routine, body, new_version):
 
 # ---------------------------------------------------------------- recipes
 
+# Bump when recipe_check or recipe_prompt changes what they write. A definition keeps
+# the version it was written with: what a human approved is its stored check and
+# prompt (the message shows them), so an older one keeps running after a release
+# instead of turning invalid; it is checked against the writer only while current.
+RECIPE_VERSION = 1
 RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
                    "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -192,6 +200,14 @@ def recipe_of(data):
     """A recipe with every setting present: what is stored and what the code is taken from."""
     rc = {"type": data.get("type"), "repo": data.get("repo"), "project": data.get("project")}
     rc.update({k: data.get(k, v) for k, v in RECIPE_DEFAULTS.items()})
+    if isinstance(rc["after"], str) and rc["after"]:
+        # The check compares it with gh's createdAt as text, which is always UTC with a Z.
+        try:
+            t = datetime.fromisoformat(rc["after"].replace("Z", "+00:00"))
+            if t.tzinfo:
+                rc["after"] = t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            pass    # recipe_problem says what is wrong with it
     return rc
 
 
@@ -211,8 +227,8 @@ def recipe_problem(rc):
     for key, low, high in (("batch", 1, 50), ("remind_after", 60, 30 * 86400), ("reminds", 0, 20)):
         if type(rc.get(key)) is not int or not low <= rc[key] <= high:
             return f"the recipe `{key}` must be a whole number from {low} to {high}"
-    if not isinstance(rc.get("after"), str) or (rc["after"] and not re.fullmatch(r"\d{4}-\d\d-\d\dT[\d:.]+(Z|[+-]\d\d:\d\d)", rc["after"])):
-        return "the recipe `after` must be empty or an ISO time with its zone"
+    if not isinstance(rc.get("after"), str) or (rc["after"] and not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rc["after"])):
+        return "the recipe `after` must be empty or an ISO time in UTC (2026-10-14T21:00:00Z)"
     if not isinstance(rc.get("escalate"), str) or (rc["escalate"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", rc["escalate"])):
         return "the recipe `escalate` must be empty or a handle"
     rules = rc.get("rules")
@@ -364,6 +380,10 @@ class CheckError(Exception):
     pass
 
 
+class ProjectGone(Exception):
+    pass
+
+
 def run_check(script, name="", watermark=None):
     """Run a routine's check; returns its JSON object."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -454,7 +474,10 @@ class Runner:
                     st.update(version=r["version"], checked_at=0)
                     st.pop("job", None)
                 if r.get("recipe"):
-                    self.chase(r, st)
+                    try:
+                        self.chase(r, st)
+                    except Exception as e:      # reminders wait; the routine's own work goes on
+                        self.log(r, f"chasing skipped this pass: {type(e).__name__}: {e}")
                 if "job" in st:
                     self.follow(r, st)
                 elif time.time() - st.get("checked_at", 0) >= r["every"]:
@@ -499,7 +522,10 @@ class Runner:
             return
         items = out.get("items") if r.get("recipe") and isinstance(out.get("items"), list) else None
         if items and all(i.get("group") for i in items):   # every one placed by a label rule: no bot needed
-            self.announce(r, st, items, {})
+            try:
+                self.announce(r, st, items, {})
+            except ProjectGone as e:
+                return self.fail(r, st, f"{e}; nothing was announced.")
             st["watermark"] = out.get("watermark")
             return
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
@@ -525,7 +551,10 @@ class Runner:
             if job.get("items"):
                 routes = done["meta"].get("routes")
                 routes = {x.get("number"): x for x in routes if isinstance(x, dict)} if isinstance(routes, list) else {}
-                self.announce(r, st, job["items"], routes)
+                try:
+                    self.announce(r, st, job["items"], routes)
+                except ProjectGone as e:
+                    return self.fail(r, st, f"{e}; nothing was announced.")
             st["watermark"] = job["watermark"]
             del st["job"]
             return self.log(r, f"done by {done['author']} (message {done['id']})")
@@ -551,7 +580,14 @@ class Runner:
     # ---- recipes: announce each item once, then chase it until a bot takes it
 
     def project(self, slug):
-        p = call("GET", f"/api/projects/{slug}", token=self.board.token)["project"]
+        try:
+            p = call("GET", f"/api/projects/{slug}", token=self.board.token)["project"]
+        except ConnectionError as e:
+            if ": 404 " in str(e):
+                raise ProjectGone(f"the project `{slug}` this routine routes to does not exist") from None
+            raise
+        if p.get("archived"):
+            raise ProjectGone(f"the project `{slug}` this routine routes to is archived")
         return p["channel"], {g["slug"]: g["channel"] for g in p.get("groups", []) if not g.get("archived")}
 
     def announce(self, r, st, items, routes):
@@ -690,13 +726,15 @@ def cmd_add(a):
     if a.skill:
         r["skill"] = a.skill
     if recipe:
-        r["recipe"] = recipe
+        r.update(recipe=recipe, recipe_version=RECIPE_VERSION)
     body = body_of(r, bool(a.thread))
     if problem_with(r, body, bool(a.thread)):
         die(f"not posted: {problem_with(r, body, bool(a.thread))}")
     if not a.no_dry_run:
         run_check(check, a.name)    # a check that does not run is not worth a human's look
     board = Board(a.as_handle)
+    if recipe:   # a 404 here stops it: a routine that routes to no project would only fail later
+        call("GET", f"/api/projects/{recipe['project']}", token=board.token)
     if not a.thread:
         call("POST", "/api/channels", {"slug": ADMIN, "topic": "Fleet administration: one thread per routine "
              "(recurring work); a human replies enable <code> or pause in a routine's thread. Not a project."}, board.token)

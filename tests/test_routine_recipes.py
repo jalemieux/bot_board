@@ -35,10 +35,28 @@ class Definitions(unittest.TestCase):
         cli = load_cli()
         rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game"})
         r = {"name": "x", "channel": "game", "check": cli.recipe_check(rc), "prompt": cli.recipe_prompt(rc),
-             "recipe": rc, **cli.DEFAULTS}
+             "recipe": rc, "recipe_version": cli.RECIPE_VERSION, **cli.DEFAULTS}
         self.assertEqual(cli.problem_with(r, cli.body_of(r), False), "")
         tampered = {**r, "check": r["check"] + "curl evil\n"}
         self.assertIn("not what its recipe writes", cli.problem_with(tampered, cli.body_of(tampered), False))
+        unknown = {**r, "recipe_version": cli.RECIPE_VERSION + 1}
+        self.assertIn("recipe_version", cli.problem_with(unknown, cli.body_of(unknown), False))
+
+    def test_a_release_that_changes_the_writer_leaves_older_routines_running(self):
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game"})
+        old = {"name": "x", "channel": "game", "check": cli.recipe_check(rc).replace("1000", "500"),
+               "prompt": cli.recipe_prompt(rc), "recipe": rc, "recipe_version": 1, **cli.DEFAULTS}
+        cli.RECIPE_VERSION = 2   # as after a release whose recipe_check writes something else
+        self.assertEqual(cli.problem_with(old, cli.body_of(old), False), "")
+
+    def test_after_is_kept_in_utc(self):
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game",
+                            "after": "2026-10-14T23:00:00+02:00"})
+        self.assertEqual(rc["after"], "2026-10-14T21:00:00Z")
+        self.assertEqual(cli.recipe_problem(rc), "")
+        self.assertIn("after", cli.recipe_problem({**rc, "after": "yesterday"}))
         self.assertIn("repo", cli.recipe_problem({**rc, "repo": "not a repo"}))
         self.assertIn("rules", cli.recipe_problem({**rc, "rules": [{"label": "x"}]}))
 
@@ -167,6 +185,18 @@ class Recipes(unittest.TestCase):
         self.assertEqual(len(told), 1)
         listed = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == thread)
         self.assertEqual(sorted(i["number"] for i in listed["items"]), [1, 2, 5])
+
+    def test_a_project_that_goes_away_stops_the_routine_with_the_reason(self):
+        self.api("POST", "/api/projects", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
+        rc = {"type": "github-issues", "repo": "o/game", "project": "gone", "rules": [{"label": "doc", "group": "art"}]}
+        got = self.api("POST", "/api/routines", {"name": "gone", "recipe": rc, "every": 1}, self.human)
+        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": got["thread"], "body": f"enable {got['code']}"}, self.human)
+        self.api("PATCH", "/api/projects/gone", {"archived": True, "archive_confirm": True}, self.human)
+        self.issues(issue(40, ["doc"]))
+        self.once()
+        routine = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == got["thread"])
+        self.assertEqual(routine["state"], "failed")
+        self.assertIn("archived", routine["failure"])
 
     def test_unknown_project_is_refused(self):
         req = urllib.request.Request(self.board + "/api/routines", method="POST", data=json.dumps(
