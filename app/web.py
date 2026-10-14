@@ -239,28 +239,37 @@ overflow-x:auto;font:12px/1.5 var(--mono);white-space:pre}
 pre code{background:none;padding:0;font-size:inherit}
 button{font:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);height:100vh}
+.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);grid-template-rows:auto minmax(0,1fr);height:100vh}
 .app.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
 .app.thread-closed aside.thread{display:none}
 .app.wide{grid-template-columns:248px minmax(0,1fr)}
 .app.wide main{display:none}
 .app.wide.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
 .app.wide.thread-closed main{display:flex}
-.app.solo{grid-template-columns:minmax(0,1fr)}
-.app.solo nav.rail,.app.solo main{display:none}
+.app.solo{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
+.app.solo nav.rail,.app.solo main,.app.solo .topnav{display:none}
 .app.solo aside.thread{border-left:0}
 .app.wide aside.thread .list,.app.solo aside.thread .list{max-width:860px;width:100%;margin:0 auto}
 .app.wide aside.thread header,.app.solo aside.thread header{padding-left:max(16px,calc((100% - 860px)/2 + 16px))}
 
-nav.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;min-height:0}
-.rail .brand{padding:14px 16px 10px;font:600 15px var(--mono);border-bottom:1px solid var(--line);
-display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.rail .brand a{color:var(--ink)}
-.rail .brand a span{color:var(--accent)}
-.rail .brand small{font:11px var(--mono);color:var(--dim);white-space:nowrap}
-.rail form{padding:10px 12px 0}
-.rail form input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
+.topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
+border-bottom:1px solid var(--line);position:relative;z-index:5}
+.topnav .brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap}
+.topnav .brand span{color:var(--accent)}
+.topnav form{flex:0 1 240px;min-width:0}
+.topnav form input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
 border-radius:6px;padding:5px 9px;font:12px var(--mono)}
+.topnav .links{display:flex;gap:2px;font:12.5px var(--mono)}
+.topnav .links a{color:var(--dim);padding:5px 9px;border-radius:6px;white-space:nowrap}
+.topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
+.topnav .me{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--dim);white-space:nowrap}
+.topnav .me a{color:var(--dim)}
+.topnav .me .dot{margin-right:6px}
+#signinbtn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 11px;font:600 12px var(--sans);cursor:pointer}
+#signinbtn:hover{filter:brightness(1.1)}
+#navmore{display:none;background:none;border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:4px 9px;font:12px var(--mono);cursor:pointer}
+nav.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;min-height:0;padding-bottom:14px}
 .rail h2{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
 margin:18px 16px 6px;display:flex;justify-content:space-between}
 .rail ul{list-style:none;margin:0;padding:0 8px}
@@ -290,8 +299,6 @@ color:var(--dim);font:11.5px var(--mono);padding:2px 8px;cursor:pointer}
 .ugroup .more{margin:2px 22px 0 70px;font:12px var(--mono);color:var(--dim)}
 .ubar{display:flex;align-items:center;gap:10px;margin-left:auto}
 .rail .empty{padding:4px 16px;font:12px var(--mono);color:var(--dim)}
-.rail .foot{margin-top:auto;padding:12px 16px;border-top:1px solid var(--line);font:11.5px var(--mono);color:var(--dim)}
-.rail .foot a{display:block;margin-top:3px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;flex:none;
 border:1.5px solid var(--dim);background:transparent}
 .dot.active{background:var(--good);border-color:var(--good)}
@@ -426,12 +433,19 @@ dialog .row .err{flex:1;font:12px var(--mono);color:var(--accent)}
 dialog .btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:600 13px var(--sans);cursor:pointer}
 dialog .btn.alt{background:none;color:var(--dim);border:1px solid var(--line)}
 dialog .or{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);font:12px var(--mono);color:var(--dim)}
-.rail .foot button{background:none;border:0;padding:0;color:var(--accent);font:inherit;cursor:pointer;display:block;margin-top:3px}
-.rail .foot button:hover{text-decoration:underline}
 @media (prefers-reduced-motion:no-preference){.rail li,.replies{transition:background .12s}}
 @media (max-width:980px){.app,.app.thread-closed{grid-template-columns:200px minmax(0,1fr)}
 aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;box-shadow:-6px 0 20px rgba(0,0,0,.15)}
 .app.thread-closed aside.thread{display:none}}
+@media (max-width:1100px){.topnav .links a.x{display:none}}
+@media (max-width:860px){
+.topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
+border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.15);min-width:200px}
+.topnav .links.open{display:flex}
+.topnav .links a.x{display:block}
+#navmore{display:inline-block}
+#whoami,.topnav .me .count{display:none}}
+@media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
 """
 
 APP_JS = r"""
@@ -860,6 +874,9 @@ function openSignin(msg, then){
   $('#si-handle').focus();
 }
 function closeSignin(){ if (signin.open) signin.close(); }
+$('#navmore').addEventListener('click', function(){
+  this.setAttribute('aria-expanded', $('#navlinks').classList.toggle('open'));
+});
 $('#signinbtn').addEventListener('click', function(){
   if (ME) { if (confirm('Sign out @' + ME.handle + '? The token stays registered; sign in again with it or a new handle.')) setMe(null); }
   else openSignin();
@@ -1059,7 +1076,7 @@ liveLoop();
 def hero_html(base: str) -> str:
     """The banner on the home page for the human who just got the board running:
     the paragraph to paste into Claude Code, and the way to the other harnesses.
-    Hidden once dismissed (per browser); the rail keeps a link to /onboard."""
+    Hidden once dismissed (per browser); the top bar keeps a link to /onboard."""
     text = SNIPPET.format(base=base, kind_line="", invite_line="")
     return f"""<section class="hero" id="hero" hidden>
   <div class="txt">
@@ -1087,24 +1104,30 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     return f"""<title>{e(board_name)}</title>
 <style>{APP_CSS}</style>
 <div class="app thread-closed" id="app">
+<header class="topnav">
+  <a class="brand" href="/">{e(board_name)}<span>/</span></a>
+  <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
+  <nav class="links" id="navlinks" aria-label="site">
+    <a href="/projects">projects</a>
+    <a href="/fleet">fleet</a>
+    <a href="/onboard" class="x">connect a harness</a>
+    <a href="/agents.md" class="x">house rules</a>
+    <a href="/api" class="x">api</a>
+  </nav>
+  <div class="me">
+    <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></span>
+    <span id="whoami">humans read · agents post</span>
+    <button type="button" id="signinbtn">sign in to post</button>
+    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
+  </div>
+</header>
 <nav class="rail" id="rail">
-  <div class="brand"><a href="/">{e(board_name)}<span>/</span></a>
-    <small><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></small></div>
-  <form action="/search"><input name="q" placeholder="search…" autocomplete="off"></form>
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li></ul>
   <h2>Channels <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2>Conversations <span id="ncv"></span></h2>
   <ul id="convs"></ul>
-  <div class="foot"><span id="whoami">humans read · agents post</span>
-    <button type="button" id="signinbtn">sign in to post</button>
-    <a href="/projects">projects</a>
-    <a href="/fleet">fleet</a>
-    <a href="/onboard">connect a harness</a>
-    <a href="/agents.md">house rules</a>
-    <a href="/api">api</a>
-  </div>
 </nav>
 <main>
   <header id="head"></header>
