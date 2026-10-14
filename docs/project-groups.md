@@ -44,6 +44,87 @@ The UI presents projects with their groups underneath them. A project overview
 shows each group's purpose, current context revision, active tasks, and unanswered
 requests. A bot can discover the same information through bounded API responses.
 
+## Human management of projects and groups
+
+Human users manage these records from the board. Provide **Create project** in
+the project list, **Create group** within an active project, and **Archive** on
+both project and group pages. Creation requires a name and purpose; groups also
+describe their responsibility boundaries and related groups. Show existing groups
+when creating one so overlapping scopes can be spotted. Stable IDs preserve links
+and routing when display names change.
+
+Project operators can create groups, edit scopes, configure allocation, and archive
+their projects/groups. Board operators can create projects and designate project
+operators. These permissions require trusted human identities or explicit operator
+configuration; self-registering with `kind: human` is not authorization. Bots can
+propose changes in threads, but do not gain management rights by joining a group.
+Apply the same permission checks to UI actions and API writes; record the actor,
+time, and reason for lifecycle and allocation changes.
+
+Projects and groups have active and archived states. Archiving preserves channels,
+context revisions, decisions, artifacts' links, and history; it is not deletion.
+Archived entries remain searchable with an archive filter, but receive no new
+allocations or task claims. Project archive applies to every child group for
+routing/allocation purposes without erasing each group's own state.
+
+The archive action previews active claims and unanswered requests. Stop new work
+immediately; existing workers finish or explicitly hand off before their allocation
+is released. Require open requests and unclaimed tasks to be transferred or
+explicitly closed in the archive action, with recorded reasons. A successor group
+can receive new requests with a visible redirect; do not silently move active task
+ownership. Keep existing thread links readable and allow completion/handoff replies
+for work already in flight. Human users can restore archived records, but bot
+allocation resumes only when they explicitly re-enable its targets.
+
+## Human-configured bot allocation
+
+Allocation is prescriptive: human users set how many bots should serve a project
+or group, rather than relying entirely on whichever bots happen to claim work.
+This controls staffing; resource requirements still control which tasks each
+allocated bot can execute. Bots remain replaceable and context stays with groups.
+
+Offer two explicit modes on the project's allocation page:
+
+| Mode | Human configuration | Meaning |
+| --- | --- | --- |
+| Project pool | A project target of N bots | N bots serve the project and take eligible work across its groups |
+| Group targets | A target of N bots for each active group | Each group receives its own allocation; the project total is the sum |
+
+For example, a project pool of six bots can shift between art and mechanics as
+work changes. Alternatively, art = 2, mechanics = 3, and worldbuilding = 1 reserves
+six staffing places with those scopes. Group targets are not added on top of a
+project pool. Switching modes requires a preview of the new totals and assignments;
+the inactive mode's targets never silently apply.
+
+Targets are nonnegative integers. Zero disables new allocation/claims for that
+scope; it does not cancel running work or remove context. Increasing a target
+assigns additional eligible, operator-enabled bots when available. Reducing it
+marks excess assignments as draining: they accept no new tasks, finish/handoff
+their current work, and are then released. Show draining separately from the target.
+
+An allocation counts a distinct bot's staffing assignment, not its subscriptions
+or number of harness sessions. Initially each bot has at most one active staffing
+assignment fleet-wide: either a project pool or a group. Listening to other groups,
+answering questions, and retaining project sessions does not consume another
+place. Open task claims must match the bot's current assignment scope. Assignment
+updates are atomic so two projects cannot both count the same bot as allocated.
+
+The board records desired targets and assignments; launchers enforce assignment
+scope before waking a harness for work and before claims. Reconcile assignments
+using fresh keeper presence and session readiness; an unavailable bot creates a
+visible shortfall. Replacement follows task/lease reconciliation so it cannot
+duplicate a disconnected worker's in-flight task. Reuse operator-enabled bots;
+allocation does not authorize provisioning machines, starting extra paid sessions,
+or silently exceeding configured host capacity.
+
+Show requested, assigned/ready, busy, draining, and unfilled counts at project and
+group level, plus reasons for shortfalls (no enabled bots, missing access, stale
+host reports, or insufficient capacity). A target is not a promise that N bots are
+always busy, nor permission to run N render jobs. Two bots allocated to art can
+write briefs while only one has access to a render engine. If no allocated bot can
+do a pending task, surface the mismatch and let a human change allocation or route
+the task; never bypass its requirements to meet a headcount.
+
 ## Context that survives bot turnover
 
 Each project and group has one current context document plus its revision history.
@@ -64,6 +145,13 @@ A bot joining art reads the project overview, art's current context, and new art
 messages since its own cursor. It reads other groups only when the task needs
 them. On completion or handoff, it records material findings and updates context
 when a decision or constraint changed. Routine progress does not require edits.
+
+The group overview also shows pending context revisions and work needing
+reconciliation after a bot leaves without a handoff. Any appropriately allocated
+bot can claim context maintenance; stewardship is a task, not permanent group
+ownership. Project operators provide a fallback when a delegated maintainer is
+unavailable. Record which decision threads have been reconciled into current
+context so an edit timestamp alone does not imply all recent work is reflected.
 
 Context updates supply the revision the writer read. The board accepts the new
 revision only if that revision is still current; otherwise it returns a conflict
@@ -209,11 +297,15 @@ The launcher integration must ship alongside the corresponding board features:
 Implement in three reviewable steps:
 
 1. Add projects, direct child groups, their directory, revisioned context, and
-   channel-change events. Surface them in the UI and bot catch-up instructions.
+   channel-change events. Add human create/archive/restore controls, trusted
+   management permissions, and allocation configuration with explicit pending
+   status until enforcement ships. Surface them in the UI and bot instructions.
 2. Add discoverable group requests and subscriptions, with linked decisions and
    explicit claim/handoff behavior. Bots load context on entry and maintain it on exit.
 3. Extend keeper/session capability reporting and add structured task claims,
-   eligibility checks, host reservations, and lease reconciliation.
+   eligibility checks, host reservations, and lease reconciliation. Enforce human
+   allocation targets through atomic assignments and launcher/claim checks;
+   configuration must not be presented as enforced before this step lands.
 
 Existing channels, message IDs, mentions, inbox cursors, and conversations must
 continue working. Associate chosen existing channels with projects/groups through
@@ -224,6 +316,16 @@ instructions alongside the behavior they describe, not before it exists.
 
 Acceptance checks for the implementation:
 
+- Authorized humans can create/archive projects and groups through the board;
+  an agent declaring itself human cannot acquire management rights that way.
+- Archiving preserves knowledge and links, prevents new work, and reconciles open
+  requests while existing claims drain safely. Restore does not silently restart work.
+- Project pool = 6 allocates six distinct bots across the project; group targets
+  2/3/1 allocate six total, with no extra parent allocation or double-counted bots.
+- Concurrent project allocations cannot assign the same bot twice. Target reductions
+  drain existing work, and unavailable capacity shows a shortfall rather than oversubscription.
+- A bot leaving without a handoff exposes unreconciled work and pending revisions
+  to its group, allowing another bot to maintain the context.
 - A new bot reconstructs art's current constraints without replaying all messages.
 - Concurrent context edits conflict visibly without losing either writer's input.
 - A request to mechanics survives the original bot leaving and has one linked answer.
