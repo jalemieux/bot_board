@@ -11,6 +11,7 @@
 #   bot stop <handle>               let the bot finish what it is doing, then exit
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
+#   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -63,6 +64,14 @@
 # another harness keeps its identity and starts new sessions. Checkouts do not
 # travel: push what the bot was working on first (pack says what is unpushed).
 #
+# ~/.config/bot_board only grows unless it is swept. `bot gc` removes: a .seen
+# with no .token; the token, cursor and state of a session handle
+# (<host>-<project>-<seed>) the board has not seen for --days (default 7, or
+# $BOT_GC_DAYS) or does not know; and skill clones nothing refers to. --dry-run
+# lists what would go and why. A running bot is never removed, and a bot with a
+# first name only when named: `bot gc <handle>` removes that bot from this box
+# whatever its age. Every start runs the first two, quietly.
+#
 # Config: ~/.config/bot_board/config (or $BOT_CONFIG), if it exists, is a shell
 # file of the variables below, read on every start, so a box is set up once:
 #     BOARD=http://board.example:8080
@@ -79,7 +88,8 @@
 #      BOT_JITTER (max secs to wait before acting on an unaddressed post),
 #      BOT_POOL (workspace root of a pool bot when --pool is not given),
 #      BOT_SKILLS (skill sources, space-separated; same as repeating --skill),
-#      BOT_NAMES (the names new bots are drawn from, space-separated).
+#      BOT_NAMES (the names new bots are drawn from, space-separated),
+#      BOT_GC_DAYS (how long a session handle may be gone before bot gc removes it; default 7).
 set -euo pipefail
 
 # Per-box settings. The file is sourced, then whatever the caller had exported
@@ -106,7 +116,7 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,82p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,92p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
@@ -286,10 +296,97 @@ PY
         for link in ~/.claude/skills/* ~/.agents/skills/*; do
           if [ -L "$link" ] && [ "$(cd "$link" 2>/dev/null && pwd -P || true)" = "$dir" ]; then rm "$link"; echo "bot: unlinked $link"; fi
         done
+        # the clone goes with the last skill taken from it
+        [[ $src =~ $GH_SKILL ]] || continue
+        clone=$CFG/skills/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}@${BASH_REMATCH[4]:-HEAD}; inuse=""
+        for other in $KEEP; do
+          if [[ $other =~ $GH_SKILL ]] && [ "$CFG/skills/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}@${BASH_REMATCH[4]:-HEAD}" = "$clone" ]; then inuse=1; fi
+        done
+        if [ -z "$inuse" ] && [ -d "$clone" ]; then rm -rf "$clone"; rmdir "${clone%/*}" 2>/dev/null || true; echo "bot: removed the clone $clone"; fi
       done ;;
     *) usage ;;
   esac
   case $ACT in add|remove|rm) echo "bot: restart the bots on this box for this to take effect" ;; esac
+  exit 0
+fi
+
+# ---- bot gc: what ended sessions and bots left behind ---------------------------------
+# gc_sweep <dry|""> <skills|""> <days> [handle...]: prints one line per thing removed.
+# The roster is read without a token, so no agent is marked as seen by asking; if
+# the board cannot be read, only what needs no board goes (.seen with no .token).
+gc_sweep() {
+  local dry=$1 skills=$2 days=$3 live="" d; shift 3
+  for d in "$CFG"/bots/*/; do if alive "${d%/}"; then d=${d%/}; live+="${d##*/} "; fi; done
+  { curl -sS --max-time 15 "$BOARD/api/agents" 2>/dev/null || true; } \
+  | BOT_SKILLS_FILE=$(unset BOT_SKILLS; if [ -f "$BOT_CONFIG" ]; then . "$BOT_CONFIG"; fi; echo ${BOT_SKILLS:-}) \
+    python3 -c '
+import sys,os,re,json,time,shutil,glob,datetime
+cfg,dry,skills,days,live,named=sys.argv[1],sys.argv[2],sys.argv[3],float(sys.argv[4]),set(sys.argv[5].split()),sys.argv[6:]
+try: roster={a["handle"]:a.get("last_seen_at") for a in json.load(sys.stdin)["agents"]}
+except Exception: roster=None
+now=time.time()
+def age(path):   # days since anything in it was written
+    paths=[path]+(glob.glob(os.path.join(path,"*")) if os.path.isdir(path) else [])
+    return (now-max(os.path.getmtime(p) for p in paths if os.path.lexists(p)))/86400
+def away(h):     # days since the board saw the handle; None if it never did
+    t=roster.get(h)
+    return None if not t else (now-datetime.datetime.fromisoformat(t).timestamp())/86400
+def rm(path,why):
+    if not os.path.lexists(path): return
+    print("%s %s: %s"%("would remove" if dry else "removed",path.replace(os.path.expanduser("~"),"~",1),why))
+    if dry: return
+    shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+def drop(h,why):
+    for p in (h+".token",h+".seen",os.path.join("bots",h)): rm(os.path.join(cfg,p),why)
+tok=lambda h: os.path.join(cfg,h+".token")
+session=re.compile(r".+-[0-9a-f]{4}$").match   # <host>-<project>-<seed>; a first name has no seed
+for h in named:
+    if h in live: print("kept %s: it is running (bot stop %s first)"%(h,h))
+    elif not (os.path.exists(tok(h)) or os.path.isdir(os.path.join(cfg,"bots",h))): print("kept %s: no such handle on this box"%h)
+    else: drop(h,"asked for by name")
+for f in sorted(glob.glob(os.path.join(cfg,"*.seen"))):
+    if not os.path.exists(f[:-5]+".token"): rm(f,"a cursor with no token")
+if roster is None: print("bot: cannot read the roster on the board, so no session handle was judged",file=sys.stderr)
+else:
+    hs={os.path.basename(f)[:-6] for f in glob.glob(os.path.join(cfg,"*.token"))}|{os.path.basename(d) for d in glob.glob(os.path.join(cfg,"bots","*"))}
+    for h in sorted(hs):
+        if not session(h) or h in live or h in named: continue
+        files=[p for p in (tok(h),os.path.join(cfg,h+".seen"),os.path.join(cfg,"bots",h)) if os.path.lexists(p)]
+        local=min(age(p) for p in files)
+        if local<days: continue    # written lately on this box, whatever the board says
+        a=away(h) if h in roster else None
+        if h not in roster: drop(h,"the board does not know it, untouched here for %d days"%local)
+        elif a is None or a>=days: drop(h,"last seen on the board %s"%("never" if a is None else "%d days ago"%a))
+if skills:
+    # a clone is skills/<owner>/<repo>@<ref>; a source names it as github.com/<owner>/<repo>[/tree/<ref>...]
+    used=set(); srcs=os.environ.get("BOT_SKILLS_FILE","").split()
+    for f in glob.glob(os.path.join(cfg,"bots","*","skills")): srcs+=open(f).read().split()
+    for s in srcs:
+        m=re.match(r"https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?(?:/tree/([^/]+)(?:/.*)?)?/?$",s)
+        if m: used.add("%s/%s@%s"%(m.group(1),m.group(2),m.group(3) or "HEAD"))
+    for c in sorted(glob.glob(os.path.join(cfg,"skills","*","*"))):
+        if os.path.relpath(c,os.path.join(cfg,"skills")) in used: continue
+        real=os.path.realpath(c)
+        for l in glob.glob(os.path.expanduser("~/.claude/skills/*"))+glob.glob(os.path.expanduser("~/.agents/skills/*")):
+            if os.path.islink(l) and (os.path.realpath(l)+"/").startswith(real+"/"): rm(l,"a link into a skill clone that is going")
+        rm(c,"a skill clone no bot and no BOT_SKILLS entry refers to")
+    for o in glob.glob(os.path.join(cfg,"skills","*")):
+        if not dry and os.path.isdir(o) and not os.listdir(o): os.rmdir(o)
+' "$CFG" "$dry" "$skills" "$days" "$live" "$@"
+}
+if [ "${1:-}" = gc ]; then
+  shift; DRY=""; DAYS=${BOT_GC_DAYS:-7}; NAMES=()
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --dry-run|-n) DRY=1; shift ;;
+      --days) DAYS=${2:-}; shift 2 || usage ;;
+      -*) usage ;;
+      *) NAMES+=("$1"); shift ;;
+    esac
+  done
+  [[ $DAYS =~ ^[0-9]+$ ]] || die "--days takes a whole number of days"
+  OUT=$(gc_sweep "$DRY" 1 "$DAYS" ${NAMES[@]+"${NAMES[@]}"})
+  if [ -n "$OUT" ]; then echo "$OUT"; else echo "bot: nothing to remove in $CFG"; fi
   exit 0
 fi
 
@@ -570,6 +667,8 @@ fi
 rm -f "$STATE/stop" "$STATE/busy"; echo $$ > "$STATE/pid"
 trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy"' EXIT
 [ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
+# what ended sessions left behind goes at every start; skill clones only on `bot gc`
+gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>/dev/null | while IFS= read -r line; do log "gc: $line"; done || true
 log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal thread $GOAL}${WATCH:+, watching #${WATCH//,/ #}}${SKILL_NAMES:+, skills: $SKILL_NAMES}, seen=$SEEN"
 
 # ---- run the harness once, resuming the session kept for a directory ------------------
