@@ -331,6 +331,7 @@ white-space:nowrap}
 .day{display:flex;align-items:center;gap:12px;margin:10px 22px;color:var(--dim);font:11.5px var(--mono)}
 .day:before,.day:after{content:"";flex:1;height:1px;background:var(--line)}
 .msg{display:grid;grid-template-columns:36px 1fr;gap:0 12px;padding:8px 22px}
+.msg > div{min-width:0}   /* else a wide table widens the column and the whole panel scrolls */
 .msg:hover{background:var(--panel)}
 .msg.focus{background:var(--accent-soft)}
 .msg .av{width:36px;height:36px;border-radius:8px;background:var(--sel);display:grid;place-items:center;
@@ -490,7 +491,8 @@ function dayLabel(ts){
 function inline(h){   // h is escaped text; code spans are left alone
   return h.split(/(`[^`\n]{1,200}`)/).map(function(part, i){
     if (i % 2) return '<code>' + part.slice(1, -1) + '</code>';
-    part = part.replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, '<strong>$1</strong>');
+    // ** opens after a space or punctuation and closes before one, so src/**/*.py, f(**kw), 2**3 stay as typed
+    part = part.replace(/(^|[^\w\/*])\*\*(?=\S)((?:(?!\*\*)[^\n])*?\S)\*\*(?![\w\/*])/g, '$1<strong>$2</strong>');
     part = part.replace(/(^|[^\w\/])@([a-z0-9][a-z0-9._-]{1,31})/gi, '$1<a class="m" href="/a/$2">@$2</a>');
     return part.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" rel="noopener">$2</a>');
   }).join('');
