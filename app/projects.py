@@ -53,6 +53,14 @@ CREATE TABLE IF NOT EXISTS project_audit (
     actor_id INTEGER NOT NULL REFERENCES agents(id),
     action TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_pools (
+    project_id INTEGER PRIMARY KEY REFERENCES projects(id),
+    configured INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS project_pool_bots (
+    agent_id INTEGER PRIMARY KEY REFERENCES agents(id),
+    project_id INTEGER NOT NULL REFERENCES projects(id)
+);
 """
 
 
@@ -143,6 +151,7 @@ def describe_project(project, agent=None, full=True):
         out.update(repositories=json.loads(project['repositories']),
                    operators=[db.get_agent_by_id(a)['handle'] for a in json.loads(project['operators'])],
                    context=context(project['board_id']))
+        out['bot_pool'] = pool_settings(project)
         groups = db.conn().execute('SELECT * FROM project_groups WHERE project_id=? ORDER BY id',
                                    (project['id'],)).fetchall()
         out['groups'] = [describe_group(project, dict(g), agent, full=False) for g in groups]
@@ -258,6 +267,9 @@ def update_scope(slug, group_slug, data, agent):
             if key in ('repositories', 'operators', 'related_groups'):
                 value = json.dumps(value)
             c.execute(f'UPDATE {table} SET {key}=?, updated_at=? WHERE id=?', (value, db.now(), scope['id']))
+        if not group_slug and data.get('archived'):
+            c.execute('DELETE FROM project_pool_bots WHERE project_id=?', (project['id'],))
+            c.execute('UPDATE project_pools SET revision=revision+1 WHERE project_id=?', (project['id'],))
         _audit(c, scope['board_id'], agent, 'archive' if data.get('archived') else 'update', data)
         _event(c, scope['board_id'], agent, 'Project settings changed.' if not group_slug else 'Group settings changed.',
                {'action': 'settings_changed'})
@@ -402,3 +414,86 @@ def is_archived(board_id):
     return db.conn().execute('SELECT 1 FROM projects p LEFT JOIN project_groups g ON g.project_id=p.id'
         ' WHERE (p.board_id=? AND p.archived=1) OR (g.board_id=? AND (p.archived=1 OR g.archived=1)) LIMIT 1',
         (board_id, board_id)).fetchone() is not None
+
+
+def pool_settings(project):
+    row = db.conn().execute('SELECT configured,revision FROM project_pools WHERE project_id=?',
+                            (project['id'],)).fetchone()
+    bots = [r['handle'] for r in db.conn().execute(
+        'SELECT a.handle FROM project_pool_bots pb JOIN agents a ON a.id=pb.agent_id'
+        ' WHERE pb.project_id=? ORDER BY a.handle COLLATE NOCASE', (project['id'],))]
+    return {'configured': bool(row['configured']) if row else False,
+            'revision': row['revision'] if row else 0, 'bots': bots}
+
+
+def assigned_project(agent):
+    row = db.conn().execute('SELECT p.slug FROM project_pool_bots pb JOIN projects p ON p.id=pb.project_id'
+        ' WHERE pb.agent_id=? AND p.archived=0', (agent['id'],)).fetchone()
+    return row['slug'] if row else None
+
+
+def _pool_candidates():
+    from . import fleet
+    assigned = {r['handle'].lower(): r['slug'] for r in db.conn().execute(
+        'SELECT a.handle,p.slug FROM project_pool_bots pb JOIN agents a ON a.id=pb.agent_id'
+        ' JOIN projects p ON p.id=pb.project_id WHERE p.archived=0')}
+    candidates = {}
+    for host in fleet.hosts():
+        for bot in host['bots']:
+            if not bot.get('pool') or not db.get_agent_by_handle(bot['handle']):
+                continue
+            key = bot['handle'].lower()
+            available = bool(host['reporting'] and bot['status'].startswith(fleet.UP) and not bot.get('move_to'))
+            item = {'handle': bot['handle'], 'host': host['name'], 'status': bot['status'],
+                    'available': available, 'assigned_project': assigned.get(key)}
+            if key not in candidates or available:
+                candidates[key] = item
+    return candidates
+
+
+def describe_pool(slug, agent, after='', limit=50):
+    project = find_project(slug)
+    settings = pool_settings(project)
+    candidates = _pool_candidates()
+    for handle in settings['bots']:
+        candidates.setdefault(handle.lower(), {'handle': handle, 'host': '', 'status': 'not reporting',
+            'available': False, 'assigned_project': slug})
+    keys = sorted(k for k in candidates if k > after.lower())
+    return {**settings, 'can_manage': can_manage(project, agent),
+            'candidates': [candidates[k] for k in keys[:limit]], 'has_more': len(keys) > limit,
+            'next_after': keys[limit - 1] if len(keys) > limit else None}
+
+
+def set_pool(slug, handles, configured, expected, agent):
+    with db._write_lock, db.conn() as c:
+        project = find_project(slug)
+        require_manage(project, agent)
+        active_scope(project, project)
+        previous = pool_settings(project)
+        if previous['revision'] != expected:
+            raise Conflict('Project pool changed; reload before saving your selection.')
+        if handles and not configured:
+            raise ValueError('Shared-pool mode cannot have dedicated bots selected.')
+        candidates = _pool_candidates()
+        previous_handles = {h.lower() for h in previous['bots']}
+        ids = []
+        for handle in handles:
+            bot = db.get_agent_by_handle(handle)
+            if not bot or (handle.lower() not in candidates and handle.lower() not in previous_handles):
+                raise ValueError(f'{handle} is not a keeper-reported pool bot.')
+            assigned = assigned_project(bot)
+            if assigned and assigned != slug:
+                raise Conflict(f'{handle} is already dedicated to {assigned}; release it there first.')
+            ids.append(bot['id'])
+        c.execute('INSERT INTO project_pools(project_id,configured,revision) VALUES (?,?,?)'
+            ' ON CONFLICT(project_id) DO UPDATE SET configured=excluded.configured,revision=excluded.revision',
+            (project['id'], configured, expected + 1))
+        c.execute('DELETE FROM project_pool_bots WHERE project_id=?', (project['id'],))
+        c.executemany('INSERT INTO project_pool_bots(agent_id,project_id) VALUES (?,?)',
+                      [(aid, project['id']) for aid in ids])
+        _audit(c, project['board_id'], agent, 'set_bot_pool', {'configured': configured, 'bots': handles})
+        _event(c, project['board_id'], agent,
+            'Project bot pool changed. Allocated bots: review current project/group context and open threads for'
+            ' unclaimed work before taking a task. Existing work is not cancelled.',
+            {'kind': 'project_pool', 'configured': configured, 'bots': handles})
+    return describe_pool(slug, agent)

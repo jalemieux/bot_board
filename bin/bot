@@ -797,13 +797,27 @@ session_of() { if [ -n "$POOL" ] && [ -n "$1" ]; then echo "$STATE/session.$1"; 
 route_batch() {
   python3 -c '
 import sys,os,re,json,urllib.request,urllib.error,urllib.parse
-board,tokfile,pool,fleet,legacy,state,repo=sys.argv[1:8]
+board,tokfile,pool,fleet,legacy,state,repo,handle,watch=sys.argv[1:10]
+watch=set(filter(None,watch.split(",")))
 fleet=set(fleet.split(","))
 rdir=os.path.join(state,"route"); os.makedirs(rdir,exist_ok=True)
 for f in os.listdir(rdir): os.remove(os.path.join(rdir,f))
 SLUG=re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$"); NAME=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 def say(t): print(t,file=sys.stderr)
 tok=open(tokfile).read().strip(); cache={}
+assigned=None; assignment_error=None
+if pool:
+    req=urllib.request.Request(board+"/api/me/project-pool",headers={"Authorization":"Bearer "+tok})
+    try:
+        policy=json.load(urllib.request.urlopen(req,timeout=20))
+        if not isinstance(policy,dict) or "project" not in policy: raise ValueError("invalid assignment response")
+        assigned=policy["project"]
+        if assigned is not None and (not isinstance(assigned,str) or not SLUG.fullmatch(assigned)):
+            raise ValueError("invalid assigned project")
+    except urllib.error.HTTPError as e:
+        if e.code!=404: assignment_error="HTTP %d"%e.code
+    except (OSError,ValueError) as e:
+        assignment_error=str(e)[:200]
 def lookup(ch):   # ("legacy"|"managed"|"hold", detail)
     if ch in fleet or ch.startswith("dm-"): return ("legacy",None)
     if ch not in cache:
@@ -834,16 +848,30 @@ for line in sys.stdin.read().splitlines():
     mid,ch,thread,author,why,kind,body=f
     if kind=="context_update":
         say("message %s in #%s is a context update: nothing to run"%(mid,ch)); continue
+    if pool and not assigned and not assignment_error and why=="channel" and "all" not in watch and ch not in watch:
+        continue
+    if pool and assignment_error and ch not in fleet and not ch.startswith("dm-"):
+        held.append(line); say("message %s held: pool assignment lookup failed (%s)"%(mid,assignment_error)); continue
     st,d=lookup(ch)
     if st=="hold":
         held.append(line); say("message %s in #%s held: project lookup failed (%s)"%(mid,ch,d)); continue
     note=""
-    if st=="legacy": key=legacy_key(ch)
+    if st=="legacy":
+        key=legacy_key(ch)
+        if pool and assigned and key!="-" and key!=assigned:
+            say("message %s skipped: dedicated to project %s"%(mid,assigned)); continue
+        if pool and assigned and key=="-":
+            note="You are dedicated to project %s. Answer fleet coordination, but do not claim unrelated project work."%assigned
     else:
         p,g=d["project"],d.get("group")
         key=p.get("slug") or ""
         if not SLUG.match(key):
             held.append(line); say("message %s in #%s held: the board gave project slug %r"%(mid,ch,key)); continue
+        if pool:
+            selection=p.get("bot_pool") or {}
+            members={str(h).lower() for h in selection.get("bots",[])}
+            if (assigned and assigned!=key) or (selection.get("configured") and handle.lower() not in members):
+                say("message %s in #%s skipped: outside this bot dedicated project pool"%(mid,ch)); continue
         if not pool: key=legacy   # keep a dedicated bot in its single checkout/session
         if p.get("archived") or (g and g.get("archived")):
             say("message %s in #%s skipped: %s is archived"%(mid,ch,"group "+g["slug"] if g and g.get("archived") else "project "+key)); continue
@@ -871,7 +899,7 @@ for key,e in seen.items():
     for gs,g in e["groups"].items(): text.append(ctx("Group "+str(gs),g))
     open(os.path.join(rdir,key+".ctx"),"w").write("\n\n".join(text)+"\n")
 print("\n".join(out))
-' "$BOARD" "$TOKFILE" "$POOL" "$FLEET_CHANNELS" "$PROJECT" "$STATE" "$REPO"
+' "$BOARD" "$TOKFILE" "$POOL" "$FLEET_CHANNELS" "$PROJECT" "$STATE" "$REPO" "$HANDLE" "$WATCH"
 }
 
 # ---- first turn: read the rules ---------------------------------------------------
@@ -910,7 +938,11 @@ import sys,json
 me,seen,goal,watch=sys.argv[1],int(sys.argv[2]),sys.argv[3],set(filter(None,sys.argv[4].split(",")))
 fleet=set(sys.argv[7].split(","))
 # "all" = every project channel plus help; fleet channels and conversations are not watched
-def watched(b): return (b=="help" or (b not in fleet and not b.startswith("dm-"))) if "all" in watch else b in watch
+def watched(b):
+    # Pool assignment is checked before a harness runs. Intake project messages
+    # even with custom watches so an explicit human assignment can take effect.
+    project_channel=b not in fleet and not b.startswith("dm-")
+    return (bool(sys.argv[8]) and project_channel) or ((b=="help" or project_channel) if "all" in watch else b in watch)
 alld=json.load(open(sys.argv[5])); msgs=alld.get("messages",[])
 hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have not looked at
 mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
@@ -923,7 +955,7 @@ for m in msgs:
     kind=str((m.get("meta") or {}).get("kind") or "")   # meta.kind: context_update, context_seed, ...
     kind=kind if kind.replace("_","").isalnum() else ""
     print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,kind,m["body"].replace("\n","\\n")]))
-print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" "$FLEET_CHANNELS" 2>"$STATE/seen.tmp"
+print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" "$FLEET_CHANNELS" "$POOL" 2>"$STATE/seen.tmp"
   SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
 }
 
@@ -949,6 +981,10 @@ while :; do
   PROJECTS=$(cut -f1 <<<"$NEW" | awk '!s[$0]++')
   while IFS= read -r proj; do
     GROUP=$(awk -F'\t' -v p="$proj" '$1 == p' <<<"$NEW" | cut -f2-)
+    if [ -n "$POOL" ] && [ -n "$GROUP" ]; then
+      # Recheck between harness runs: an operator may have reassigned the bot while it was busy.
+      GROUP=$(cut -f1-6,8- <<<"$GROUP" | route_batch 2>>"$STATE/route.log" | cut -f2-)
+    fi
     if [ "$proj" = - ]; then proj=""; fi
     [ -n "$GROUP" ] || continue
     N=$(wc -l <<<"$GROUP")
