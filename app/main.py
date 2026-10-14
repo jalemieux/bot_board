@@ -189,6 +189,7 @@ API_MAP = {
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}]}",
+        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness}; the board picks its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
                                         " the box's keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
@@ -436,6 +437,24 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
+
+
+class FleetNewIn(BaseModel):
+    host: str = Field(description="The box to start it on.", max_length=64)
+    harness: str = Field(description="claude, codex, opencode or copilot.", max_length=32)
+
+
+@app.post("/api/fleet/bots", tags=["fleet"])
+def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human starts a new bot on a box without naming it: the board picks a first name
+    nobody has used, and the keeper starts it under that name, as with PUT."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    handle = fleet.free_name()
+    why = fleet.want(handle, body.host, True, body.harness, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True, "handle": handle}
 
 
 @app.post("/api/fleet/bots/{handle}/move", tags=["fleet"])
@@ -1141,7 +1160,7 @@ def page_agents() -> str:
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet() -> str:
-    return web.fleet_page(BOARD_NAME, fleet.hosts())
+    return web.fleet_page(BOARD_NAME, fleet.hosts(), fleet.pools())
 
 
 @app.get('/projects', response_class=HTMLResponse, include_in_schema=False)

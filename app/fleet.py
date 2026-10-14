@@ -7,6 +7,8 @@ acts on a box; it records what the keepers say.
 from __future__ import annotations
 
 import json
+import random
+import uuid
 
 from . import db
 
@@ -39,6 +41,14 @@ MOVE_COLUMNS = ("move_to", "fetch")
 STALE_AFTER = 180
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 UP = ("waiting", "running")     # how bin/bot ps describes a bot whose launcher is alive
+# The first names bin/bot draws a new bot's handle from (its BOT_NAMES default).
+NAMES = ("ada", "alma", "amos", "anya", "arlo", "basil", "bea", "bruno", "cleo", "cora", "dara", "dex",
+         "edie", "eli", "elsa", "enzo", "esme", "ezra", "faye", "finn", "flora", "gus", "hana", "hugo",
+         "ida", "igor", "ines", "iris", "ivo", "jade", "jonas", "juno", "kai", "kira", "lars", "lena",
+         "leo", "lila", "linus", "lola", "luca", "mabel", "mara", "milo", "mina", "nell", "nico", "nina",
+         "noor", "olga", "omar", "opal", "otis", "otto", "pia", "quinn", "rafa", "remy", "rosa", "rufus",
+         "sana", "seth", "sven", "tess", "theo", "tilda", "uma", "vera", "wes", "willa", "yara", "zane",
+         "zoe",)
 
 
 def init() -> None:
@@ -115,6 +125,30 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str
         )
         c.commit()
     return None
+
+
+def pools() -> list[dict]:
+    """Projects with a dedicated bot pool, and its bots (none: no pool bot works there)."""
+    c = db.conn()
+    try:
+        rows = c.execute("SELECT p.id, p.slug FROM project_pools pp JOIN projects p ON p.id = pp.project_id"
+                         " WHERE pp.configured = 1 AND p.archived = 0 ORDER BY p.slug").fetchall()
+    except db.sqlite3.OperationalError:     # a board without projects yet
+        return []
+    return [{"project": r["slug"], "bots": [b[0] for b in c.execute(
+        "SELECT a.handle FROM project_pool_bots pb JOIN agents a ON a.id = pb.agent_id"
+        " WHERE pb.project_id = ? ORDER BY a.handle COLLATE NOCASE", (r["id"],))]} for r in rows]
+
+
+def free_name() -> str:
+    """A first name for a new bot that no agent on the board, no request and no box
+    has used; once those run out, a name with four hex characters, as bin/bot does."""
+    c = db.conn()
+    taken = {r[0].lower() for r in c.execute("SELECT handle FROM agents")}
+    taken |= {r[0].lower() for r in c.execute("SELECT handle FROM fleet_bots")}
+    taken |= {b["handle"].lower() for h in hosts() for b in h["bots"]}
+    free = [n for n in NAMES if n not in taken]
+    return random.choice(free) if free else f"{random.choice(NAMES)}-{uuid.uuid4().hex[:4]}"
 
 
 def move(handle: str, to: str, by: str) -> str | None:
@@ -223,6 +257,13 @@ def hosts() -> list[dict]:
     # when each bot last posted, from the board's side of what it does
     posted = {p["handle"].lower(): p["at"] for p in db.conn().execute(
         "SELECT a.handle, MAX(m.created_at) AS at FROM messages m JOIN agents a ON a.id = m.agent_id GROUP BY a.id")}
+    # each bot's dedicated project, if a project's bot pool names it
+    try:
+        dedicated = {r["handle"].lower(): r["slug"] for r in db.conn().execute(
+            "SELECT a.handle, p.slug FROM project_pool_bots pb JOIN agents a ON a.id = pb.agent_id"
+            " JOIN projects p ON p.id = pb.project_id WHERE p.archived = 0")}
+    except db.sqlite3.OperationalError:     # a board without projects yet
+        dedicated = {}
     out = []
     for r in rows:
         secs = db.seconds_since(r["reported_at"])
@@ -245,5 +286,6 @@ def hosts() -> list[dict]:
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
         for b in h["bots"]:
             b["last_post"] = posted.get(b["handle"].lower(), "")
+            b["project"] = dedicated.get(b["handle"].lower())
         out.append(h)
     return out
