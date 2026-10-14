@@ -117,7 +117,7 @@ ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px}
 .box td.st.run{color:var(--good)}.box td.dim,.box summary{color:var(--dim)}
 .box td.dim{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
 .box details{margin-top:8px;font-size:13px}.box summary{cursor:pointer}
-.box td.do{text-align:right;width:1%}.box .by{color:var(--dim)}.box .prob{color:var(--accent);white-space:normal}
+.box td.do{text-align:right;width:1%;white-space:nowrap}.box .by{color:var(--dim)}.box .prob{color:var(--accent);white-space:normal}
 .box button{background:var(--accent-soft);color:var(--accent);border:0;border-radius:6px;padding:3px 10px;font:12px var(--mono);cursor:pointer}
 .box form.newbot{margin-top:10px;font-size:13px;color:var(--dim)}
 .box form.newbot input,.box form.newbot select{background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:3px 7px;font:12px var(--mono)}
@@ -1184,11 +1184,15 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
             f'{e(text)}</span>')
 
 
-def _bot_rows(bots: list, host: str) -> str:
+def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
     rows = []
     for b in bots:
         up = b["status"].startswith(("waiting", "running"))
         status = e(b["status"])
+        if b.get("move_to"):
+            status = f'moving to {e(b["move_to"])}: ' + ("stopping" if up else "packing")
+        elif b.get("fetch") and not up:
+            status = "arriving: unpacking"
         # asked for and not there yet: say so, the keeper acts within its next report
         if b.get("want") == "running" and not up and b["status"] != "moved":
             status = "starting" if not b.get("problem") else "not running"
@@ -1202,6 +1206,10 @@ def _bot_rows(bots: list, host: str) -> str:
         can = b["status"] != "moved" and (up or b.get("harness"))
         btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
                f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can else ""
+        # a pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
+        if can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
+            btn += (f' <select class="move" data-handle="{e(b["handle"])}"><option value="">move to…</option>'
+                    + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
         rows.append(
             f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
             f'<td class="st{" run" if b["status"].startswith("running") else ""}">{status}</td>'
@@ -1227,6 +1235,18 @@ document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.act'); if (!b) return;
   ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1');
 });
+document.addEventListener('change', function (ev) {
+  var s = ev.target.closest('select.move'); if (!s || !s.value) return;
+  var to = s.value; s.value = '';
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  if (!confirm('Move @' + s.dataset.handle + ' to ' + to + '? It is stopped after the run it is in, packed, and started there.')) return;
+  fetch('/api/fleet/bots/' + encodeURIComponent(s.dataset.handle) + '/move', {method: 'POST',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
+    body: JSON.stringify({to: to})})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
 document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot'); if (!f) return;
   ev.preventDefault();
@@ -1235,7 +1255,7 @@ document.addEventListener('submit', function (ev) {
 // Keep the page current, but never under someone who is typing a name.
 setInterval(function () {
   var a = document.activeElement;
-  if (!(a && a.tagName === 'INPUT') && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)'))
+  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)'))
     location.reload();
 }, 15000);
 """
@@ -1253,13 +1273,14 @@ def fleet_page(board_name, hosts) -> str:
         gone = "" if h["reporting"] else (f'<span class="gone">not reporting: last heard {e(ago(h["reported_at"]))}, '
                                           "figures are from then</span>")
         # what someone asked for stays in sight whatever its state; the rest of the stopped ones fold away
-        asked = [b for b in down if b.get("want") == "running" or b.get("problem")]
+        asked = [b for b in down if b.get("want") == "running" or b.get("problem") or b.get("move_to") or b.get("fetch")]
         down = [b for b in down if b not in asked]
         name = h["name"]
-        table = (f"<table>{_bot_rows(up + asked, name)}</table>" if up or asked
+        others = [o["name"] for o in hosts if o["name"] != name and o["reporting"]]
+        table = (f"<table>{_bot_rows(up + asked, name, others)}</table>" if up or asked
                  else '<p class="sub">No bot running here.</p>')
         rest = (f"<details><summary>{len(down)} not running (stopped, or moved to another box)</summary>"
-                f"<table>{_bot_rows(down, name)}</table></details>") if down else ""
+                f"<table>{_bot_rows(down, name, others)}</table></details>") if down else ""
         options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
         rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
                  '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '

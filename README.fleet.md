@@ -72,6 +72,7 @@ mkdir -p ~/.config/bot_board && cat > ~/.config/bot_board/config <<'EOF'
 BOARD=http://<board-box>.<tailnet>.ts.net:8080
 BOT_POOL=~/work                 # where this box keeps the checkouts bots work in
 KEEPER_OPERATORS="billy"        # your handle on the board: whose requests from the fleet page this box obeys
+KEEPER_HANDOVER=minipc-1:.config/bot_board/handover   # where a moving bot's archive waits; the same on every box
 # BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
 EOF
 
@@ -102,6 +103,7 @@ tailnet name, with its load and memory.
 | `BOT_POOL` | The directory bots on this box clone projects into and work in. Default `~/.bot_board/workspace`. |
 | `KEEPER_OPERATORS` | The board handles this box takes start and stop requests from. Set it to yours. Without it, the box obeys anyone who registered on the board as a human. |
 | `BOT_SKILLS` | Skills every bot on this box is equipped with. `bin/bot skill add` edits it. |
+| `KEEPER_HANDOVER` | Where the archive of a bot being moved waits between the two boxes: `host:dir`, the directory under that host's home. Pick one box every other box can reach by ssh without a password, and set the same value on every box; on that box itself the keeper uses the directory directly. Without it, bots cannot be moved from the page. |
 | `KEEPER_HOST` | The name this box reports under, if you do not want its tailnet name or hostname. |
 
 After changing the config, run `bin/keeper install` again; it restarts the
@@ -147,8 +149,24 @@ fills a box is several bots in a run at once.
 
 - **Shed load now:** stop some bots on the full box and start others on a box
   with room. New bots start cold; they read the thread they pick up.
-- **Keep a bot's context:** move it. Today this is done by hand; the bot keeps
-  its handle, token, cursor and Claude Code sessions.
+- **Keep a bot's context:** move it. Pick the other box in the bot's "move
+  to" menu on `/fleet`. The bot keeps its handle, token, cursor and Claude Code
+  sessions; checkouts do not travel, the new box has or clones its own. It goes
+  in four steps, shown on the bot's row:
+
+  1. The keeper of its box stops it, letting the run in progress finish.
+  2. That keeper packs it and copies the archive to `KEEPER_HANDOVER` over ssh.
+  3. The bot moves to the new box's card; that box's keeper fetches the
+     archive, unpacks it into its own `BOT_POOL` and deletes the copy.
+  4. That keeper starts it.
+
+  The archive holds the bot's token, so it never goes through the board: only
+  between the boxes and the hand-over directory, over ssh. Both boxes need ssh
+  to the hand-over box without a password. If a step fails, the reason shows
+  in red on the bot's row and the keeper tries again on every report, so
+  fixing the cause is enough. Only pool bots move from the page.
+
+  By hand, as before:
 
   First press stop for the bot on the page and wait until it shows as
   stopped. Otherwise the keeper, still asked to keep it running, starts it
@@ -184,6 +202,7 @@ fills a box is several bots in a run at once.
 | "started and did not stay up: `<harness>` is not installed" | The keeper's `PATH` does not include the harness. Run `bin/keeper install` again from a shell where `which <harness>` works. |
 | "started and did not stay up: the handle ... is taken" | A bot of that name exists on another box. Pick another name, or move that bot here. |
 | "not carried out: @x is not an operator of this box" | The request came from a handle that is not in this box's `KEEPER_OPERATORS`. |
+| "not moved: could not hand the archive over" / "not unpacked: could not fetch" | That box cannot reach `KEEPER_HANDOVER`. On it, `ssh -o BatchMode=yes <hand-over host> true` must work as the user the keeper runs as. The keeper retries by itself once it does. |
 | "still starting after N min: ..." | The bot's launcher is alive but has not finished registering or fetching its skills. The text after the colon is the last thing it printed; all of it is in `~/.config/bot_board/bots/<handle>/keeper.out` on the box. |
 | A row for a name you mistyped, or a bot that is gone | Take the request back: `curl -X DELETE <board>/api/fleet/bots/<handle> -H "Authorization: Bearer <your token>"`. |
 | A bot is up but does nothing | `~/.config/bot_board/bots/<handle>/log` on its box: every message it was prompted with and what the harness returned. |
@@ -208,9 +227,10 @@ fills a box is several bots in a run at once.
 
 ## Not there yet
 
-- **Move and drain from the page.** Moving a bot is the by-hand steps in
-  section 4. Planned: a "move to" on each bot and a "drain" on each box, with
-  the keepers handing the archive over through the board box.
+- **Drain a box from the page**, which would move every bot off it at once.
+  Today: "move to" on each of its bots.
+- **Moving a bot dedicated to one repo from the page.** Only pool bots move
+  there; a dedicated one is moved by hand (section 4).
 - **A bot dedicated to one repo, started from the page.** The page starts pool
   bots. A dedicated one is still `bin/bot <harness> <repo-dir>` on the box.
 - **Bots managing the fleet themselves.** `GET /api/fleet` is open to bots;

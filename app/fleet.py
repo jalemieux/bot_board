@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS fleet_bots (
     problem TEXT NOT NULL DEFAULT ''
 );
 """
+# A move, in two steps: move_to is set on the row while the bot's own box packs it
+# and hands the archive over; then the row points at the new box with fetch naming
+# the archive, until that box has unpacked it. The archive holds the bot's token,
+# so it travels box to box over ssh (KEEPER_HANDOVER), never through the board.
+MOVE_COLUMNS = ("move_to", "fetch")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
 HARNESSES = ("claude", "codex", "opencode", "copilot")
@@ -40,6 +45,10 @@ def init() -> None:
     c = db.conn()
     with db._write_lock:
         c.executescript(SCHEMA)
+        have = {r["name"] for r in c.execute("PRAGMA table_info(fleet_bots)")}
+        for col in MOVE_COLUMNS:
+            if col not in have:
+                c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
 
 
@@ -101,11 +110,69 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str
         c.execute(
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at) VALUES (?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem=''",
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL",
             (handle, host.lower(), harness, int(run), by, db.now()),
         )
         c.commit()
     return None
+
+
+def move(handle: str, to: str, by: str) -> str | None:
+    """Record that a human wants this bot on another box. Its own box's keeper stops
+    it, packs it and hands the archive over; the board then points the bot at the new
+    box (handed), whose keeper unpacks it and starts it (fetched). Returns None, or why not."""
+    boxes = {h["name"].lower(): h for h in hosts()}
+    to = to.lower()
+    if to not in boxes or not boxes[to]["reporting"]:
+        return f"no box named {to} is reporting"
+    c = db.conn()
+    row = c.execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    # the bot's box: where it was asked to be, else the reporting box that has it
+    src = row["host"] if row else next((n for n, h in boxes.items() if h["reporting"] and
+                                        any(b["handle"].lower() == handle.lower() and b["status"] != "moved"
+                                            for b in h["bots"])), None)
+    if not src or src not in boxes:
+        return f"no box reports {handle}"
+    if row and row["fetch"]:
+        return f"{handle} is still being unpacked on {src}; move it once it is there"
+    if src == to:
+        return f"{handle} is on {to} already"
+    if not boxes[src]["reporting"]:
+        return f"{src} is not reporting, so nothing can pack {handle} there"
+    seen = next((b for b in boxes[src]["bots"] if b["handle"].lower() == handle.lower()), None)
+    if not seen:
+        return f"{src} does not report {handle}"
+    if not seen.get("pool"):
+        return f"{handle} is dedicated to one repo; only pool bots move from the board (bin/bot pack and unpack by hand)"
+    harness = seen.get("harness") or (row["harness"] if row else None)
+    if harness not in HARNESSES:
+        return f"{src} does not say which harness {handle} runs"
+    for box in (boxes[src], boxes[to]):
+        why = not_operator(box, by)
+        if why:
+            return why
+    with db._write_lock:
+        c.execute(
+            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL",
+            (handle, src, harness, 1, by, db.now(), to),
+        )
+        c.commit()
+    return None
+
+
+def moved(host: str, handed: dict, fetched: list) -> None:
+    """A keeper's word on moves: handed (handle -> archive name) it packed and handed
+    over, so the bot now belongs to the box it is going to; fetched, it unpacked."""
+    c = db.conn()
+    with db._write_lock:
+        for h, archive in handed.items():
+            c.execute("UPDATE fleet_bots SET host=move_to, fetch=?, move_to=NULL, problem='' WHERE handle=?"
+                      " AND host=? AND move_to IS NOT NULL", (str(archive)[:200], h, host))
+        for h in fetched:
+            c.execute("UPDATE fleet_bots SET fetch=NULL WHERE handle=? AND host=?", (h, host))
+        c.commit()
 
 
 def not_operator(box: dict, by: str) -> str | None:
@@ -167,9 +234,10 @@ def hosts() -> list[dict]:
             w = asked.pop(b["handle"].lower(), None)
             if w:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
-                         problem=w["problem"], harness=b.get("harness") or w["harness"])
+                         problem=w["problem"], harness=b.get("harness") or w["harness"],
+                         move_to=w["move_to"], fetch=w["fetch"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
-                       "problem": w["problem"]} for w in asked.values()]
+                       "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
         out.append(h)
     return out
