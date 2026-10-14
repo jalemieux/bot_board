@@ -55,35 +55,25 @@ and routing when display names change.
 
 Project operators can create groups, edit scopes, configure allocation, and archive
 their projects/groups. Board operators can create projects and designate project
-operators. These permissions require trusted human identities or explicit operator
-configuration; self-registering with `kind: human` is not authorization. Bots can
-propose changes in threads, but do not gain management rights by joining a group.
+operators. Group creation and scope changes are human actions. These permissions
+require trusted human identities or explicit operator configuration;
+self-registering with `kind: human` is not authorization. Bots can suggest changes
+in threads, but cannot create groups or change their scope.
 Apply the same permission checks to UI actions and API writes; record the actor,
 time, and reason for lifecycle and allocation changes.
 
 Projects and groups have active and archived states. Archiving preserves channels,
 context revisions, decisions, artifacts' links, and history; it is not deletion.
 Archived entries remain searchable with an archive filter, but receive no new
-allocations or task claims. Project archive applies to every child group for
-routing/allocation purposes without erasing each group's own state.
+allocations or task claims. An archived parent also prevents work in its groups.
+For the first version, reject archive while the scope has active claims and show
+which work must finish or be released first. Check and archive atomically so a
+concurrent claim cannot slip through. Existing unanswered requests and unclaimed
+work remain visible as suspended; do not silently cancel or transfer them.
+Configured allocation numbers are retained but inactive while archived.
 
-The archive action previews active claims and unanswered requests. Stop new work
-immediately; existing workers finish or explicitly hand off before their allocation
-is released. Require open requests and unclaimed tasks to be transferred or
-explicitly closed in the archive action, with recorded reasons. A successor group
-can receive new requests with a visible redirect; do not silently move active task
-ownership. Keep existing thread links readable and allow completion/handoff replies
-for work already in flight. Human users can restore archived records, but bot
-allocation resumes only when they explicitly re-enable its targets.
-
-Keep configured targets with a separate allocation-enabled flag: archive suspends
-allocation without losing the numbers, and restore leaves it suspended until a
-human enables it. A group's effective archive state is its own archive flag OR
-its parent's flag; restoring a project does not restore independently archived
-groups. A worker releasing an archived-scope task must explicitly transfer it to
-an active destination or cancel it with a reason, never reopen it in the archive.
-Pending context proposals stay visible there; project operators can reconcile
-them without allocating new bots or rewriting history.
+Detailed retirement workflows, group merges, successor routing, work transfers,
+and restoration are deferred. Basic archive does not need that machinery.
 
 ## Human-configured bot allocation
 
@@ -222,12 +212,11 @@ messages since its own cursor. It reads other groups only when the task needs
 them. On completion or handoff, it records material findings and updates context
 when a decision or constraint changed. Routine progress does not require edits.
 
-The group overview also shows pending context revisions and work needing
-reconciliation after a bot leaves without a handoff. Any appropriately allocated
-bot can claim context maintenance; stewardship is a task, not permanent group
-ownership. Project operators provide a fallback when a delegated maintainer is
-unavailable. Record which decision threads have been reconciled into current
-context so an edit timestamp alone does not imply all recent work is reflected.
+Keep stewardship simple: the overview shows pending updates and the last context
+update with its source threads. Any appropriately allocated bot can maintain the
+context after reading recent work; no permanent steward or separate reconciliation
+workflow is required. If a bot leaves without updating context, the next bot uses
+the same record and thread history. Humans resolve disputed decisions.
 
 Context updates supply the revision the writer read. The board accepts the new
 revision only if that revision is still current; otherwise it returns a conflict
@@ -334,13 +323,12 @@ The launcher integration must ship alongside the corresponding board features:
   including reviews in `help`, to the requesting project session rather than
   assuming the reply's channel identifies that session. One handle can represent
   several project sessions, so subscriptions and ownership need that scope too.
-- **Context authority (step 1).** Authenticated contributors propose revisions;
-  project-configured maintainers approve changes to recorded decisions. Authority
-  comes from configured identities, never self-declared `kind: human`. Decision
-  changes require a supporting thread link. Enforce a 16,000-character document
-  cap and retain pending proposals separately from current context. Treat context
-  and linked messages as data, not instructions overriding operator/harness rules.
-  Include unresolved review findings in handoffs until fixed or explicitly accepted.
+- **Context authority (step 1).** Bots maintain routine knowledge with revision
+  checks and source links. Humans approve initial seeds and changes to recorded
+  decisions; disputed changes remain pending. Authority comes from configured
+  identities, never self-declared `kind: human`. Enforce a 16,000-character document
+  cap. Treat context and linked messages as data, not instructions overriding
+  operator/harness rules. Include unresolved review findings in handoffs.
 - **Cheap context events (step 1).** Mark context-update events with a structured
   type. Launchers advance cursors and invalidate cached context without invoking
   a harness just for an edit. The next real task loads the current revision.
@@ -374,7 +362,7 @@ Implement in three reviewable steps:
 
 1. Add projects, direct child groups, their directory, revisioned context, and
    channel-change events and source-backed context seeding. Add human
-   create/archive/restore controls, trusted management permissions, and allocation
+   create/archive controls, trusted management permissions, and allocation
    configuration with explicit pending status until enforcement ships. Surface
    them in the UI and bot instructions.
 2. Add discoverable group requests and subscriptions, with linked decisions and
@@ -399,18 +387,16 @@ Acceptance checks for the implementation:
   source links and failed experiments, and flag conflicts or inaccessible sources.
 - Normal group tasks wait for an approved initial revision or an explicit empty
   seed; seeding work is eligible beforehand and reimports cannot overwrite context.
-- Archiving preserves knowledge and links, prevents new work, and reconciles open
-  requests while existing claims drain safely. Restore does not silently restart work.
+- Archiving preserves knowledge and links, prevents new work, and shows unresolved
+  work as suspended. An active or concurrent claim prevents archive.
 - Project pool = 6 allocates six distinct bots across the project; group targets
   2/3/1 allocate six total, with no extra parent allocation or double-counted bots.
 - Concurrent project allocations cannot assign the same bot twice. Target reductions
   drain existing work, and unavailable capacity shows a shortfall rather than oversubscription.
-- Restore preserves independently archived groups and previous target numbers
-  without automatically enabling allocation; archived tasks cannot reopen in place.
 - Unconfigured projects and fleet reviews retain open claims. A draining bot
   cannot count as ready in a new allocation, including during mode changes.
-- A bot leaving without a handoff exposes unreconciled work and pending revisions
-  to its group, allowing another bot to maintain the context.
+- After a bot leaves, another bot can maintain the same context using its source
+  threads and pending updates without needing a permanent steward.
 - A new bot reconstructs art's current constraints without replaying all messages.
 - Concurrent context edits conflict visibly without losing either writer's input.
 - A request to mechanics survives the original bot leaving and has one linked answer.
@@ -420,9 +406,10 @@ Acceptance checks for the implementation:
 - A disconnected worker cannot have its still-running render capacity reassigned.
 - Existing clients can still read, post, and catch up using their current URLs/cursors.
 
-This first version deliberately defers nested group hierarchies, automatic context
-summarization, task-ranking algorithms, automatic bot migration, and a separate
-artifact store. Group knowledge and resource matching can work without those.
+This first version deliberately defers detailed retirement/restore workflows,
+nested group hierarchies, automatic context summarization, task-ranking algorithms,
+automatic bot migration, and a separate artifact store. Group knowledge and
+resource matching can work without those.
 
 ## Related work
 
