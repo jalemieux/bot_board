@@ -40,6 +40,19 @@ ROUTINES_CSS = """
 .rt dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;font-size:13px;margin:6px 0 10px}
 .rt dt{color:var(--dim);font-family:var(--mono);font-size:12px}.rt dd{margin:0}
 .rt details summary{cursor:pointer;color:var(--dim);font-size:13px}
+.rt h4{margin:10px 0 0;font:600 11.5px var(--mono);text-transform:uppercase;letter-spacing:.09em;color:var(--dim)}
+.rt .srcs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.rt .src{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font:500 13px inherit}
+.rt .src[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.rt .src:disabled{opacity:.4}
+.rt .checks{display:grid;gap:6px}
+.rt label.inline{display:flex;gap:8px;align-items:center;font:13px inherit;color:var(--ink)}
+.rt .groups{display:flex;flex-wrap:wrap;gap:6px}
+.rt .groups span{font:12px var(--mono);background:var(--line);border-radius:5px;padding:2px 8px}
+.rt .rules{display:grid;gap:6px}
+.rt .rule{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
+.rt .rule button{padding:2px 9px}
+.rt select{background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:5px 8px;font:13px var(--mono)}
 """
 
 ROUTINES_JS = r"""
@@ -174,7 +187,7 @@ function list() {
         h('td', {'class': 'note'}, openJob ? ['open: ', thread(openJob.id)] : last ? ['last: ', thread(last.id), last.done_by ? ' by @' + last.done_by : ''] : 'none yet'),
         h('td', null, thread(r.thread)));
     }))));
-  if (ME) add(root, h('section', null, h('h3', {text: 'Create a routine'}), routineForm(null)));
+  if (ME) add(root, h('section', null, h('h3', {text: 'Create a routine'}), sourcePicker({})));
 }
 
 // ---- one routine -----------------------------------------------------------------
@@ -228,13 +241,15 @@ function detail(r) {
         h('td', {'class': 'note', text: j.done_at ? 'by @' + (j.done_by || '?') + ', ' + when(j.done_at) : 'open'}));
     }))) : h('p', {'class': 'note', text: 'Nothing fired yet.'})));
 
-  add(root, h('section', null, h('h3', {text: 'Prompt'}), h('pre', {text: r.prompt || ''}),
+  if (r.recipe) add(root, recipeView(r));
+  var code = [h('h3', {text: 'Prompt'}), h('pre', {text: r.prompt || ''}),
     h('h3', {text: 'Check'}), h('pre', {text: r.check || ''}),
-    h('p', {'class': 'note', text: 'The check runs on the runner\'s box with its credentials. Read it before enabling.'})));
+    h('p', {'class': 'note', text: 'The check runs on the runner\'s box with its credentials. Read it before enabling.'})];
+  add(root, h('section', null, r.recipe ? h('details', null, h('summary', {text: 'See the prompt and the check this recipe writes (you don\'t need to edit them)'}), code) : code));
 
   if (ME) add(root, h('section', null, h('details', null, h('summary', {text: 'Edit: post a new version'}),
     h('p', {'class': 'note', text: 'A new version is a reply in the same thread with a new code. It starts paused: enable it once you have read it.'}),
-    routineForm(r))));
+    r.recipe ? recipeForm(r) : routineForm(r))));
 }
 
 function act(btn, r, body, okText) {
@@ -290,6 +305,150 @@ function testResult(r) {
     t.error ? h('pre', {'class': 'prob', text: t.error}) : null,
     found ? [h('div', {'class': 'note', text: 'Found:'}), h('pre', {text: found})] : null,
     t.watermark != null ? [h('div', {'class': 'note', text: 'Watermark it would carry:'}), h('pre', {text: JSON.stringify(t.watermark)})] : null);
+}
+
+// ---- a recipe: the board writes the check and the prompt -----------------------------
+var projectsCache = null;
+function projectList() {
+  if (!projectsCache) projectsCache = api('GET', '/api/projects').then(function (res) { return res.ok ? res.data.projects || [] : []; });
+  return projectsCache;
+}
+function sourcePicker(r, onPick) {   // which kind of routine the form below writes
+  var kind = r.thread ? (r.recipe ? 'issues' : 'script') : 'issues';
+  var box = h('div');
+  var bar = h('div', {'class': 'srcs', role: 'group', 'aria-label': 'what it watches'});
+  [['issues', 'GitHub issues'], ['script', 'Custom script']].forEach(function (k) {
+    add(bar, h('button', {type: 'button', 'class': 'src', 'aria-pressed': String(k[0] === kind), text: k[1], disabled: !!r.thread && k[0] !== kind,
+      onclick: function () { kind = k[0]; bar.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.textContent === k[1])); }); show(); }}));
+  });
+  function show() { clear(box); add(box, kind === 'issues' ? recipeForm(r) : routineForm(r)); }
+  show();
+  return [r.thread ? null : bar, box];
+}
+function recipeForm(r) {
+  r = r || {};
+  var rc = r.recipe || {type: 'github-issues', unassigned: true, no_linked_pr: true, skip_labels: ['claimed', 'in-progress'],
+                       batch: 5, after: '', rules: [], remind_after: 7200, reminds: 3, escalate: ME ? ME.handle : ''};
+  var out = h('div', {role: 'status', 'aria-live': 'polite'});
+  var name = h('input', {type: 'text', required: true, value: r.name || '', autocomplete: 'off', placeholder: 'e.g. route space game issues'});
+  var about = h('input', {type: 'text', value: r.about || '', placeholder: 'one line: what it is for'});
+  var repo = h('input', {type: 'text', required: true, value: rc.repo || '', placeholder: 'owner/repo or its GitHub URL', autocomplete: 'off'});
+  var box = function (v) { return h('input', {type: 'checkbox', checked: v ? true : null}); };
+  var unassigned = box(rc.unassigned), noPr = box(rc.no_linked_pr);
+  unassigned.checked = !!rc.unassigned; noPr.checked = !!rc.no_linked_pr;
+  var skip = h('input', {type: 'text', value: (rc.skip_labels || []).join(', '), placeholder: 'labels, comma separated'});
+  var startNew = h('input', {type: 'radio', name: 'start' + (++uid), value: 'new'});
+  var startAll = h('input', {type: 'radio', name: startNew.name, value: 'all'});
+  (rc.after ? startNew : startAll).checked = true;
+  var batch = h('input', {type: 'number', 'class': 'short', min: 1, max: 50, required: true, value: rc.batch});
+  var every = h('input', {type: 'text', 'class': 'short', required: true, value: fmtDur(r.every || 600)});
+  var project = h('select', {required: true}, h('option', {value: '', text: 'choose a project…'}));
+  var groupsNote = h('div', {'class': 'groups'});
+  var groups = [];
+  var rules = h('div', {'class': 'rules'});
+  var remindAfter = h('input', {type: 'text', 'class': 'short', required: true, value: fmtDur(rc.remind_after)});
+  var reminds = h('input', {type: 'number', 'class': 'short', min: 0, max: 20, required: true, value: rc.reminds});
+  var escalate = h('input', {type: 'text', 'class': 'short', value: rc.escalate || '', placeholder: 'handle'});
+
+  function ruleRow(rule) {
+    var label = h('input', {type: 'text', 'class': 'short', value: rule ? rule.label : '', placeholder: 'label', 'aria-label': 'label'});
+    var group = h('select', {'aria-label': 'group'}, groups.map(function (g) { return h('option', {value: g.slug, text: g.slug}); }));
+    if (rule) { if (!groups.some(function (g) { return g.slug === rule.group; })) add(group, h('option', {value: rule.group, text: rule.group})); group.value = rule.group; }
+    var row = h('div', {'class': 'rule'}, 'label ', label, ' always goes to ', group,
+      h('button', {type: 'button', 'class': 'quiet', 'aria-label': 'remove rule', text: '×', onclick: function () { row.remove(); }}));
+    add(rules, row);
+  }
+  function loadGroups(first) {
+    clear(groupsNote); groups = [];
+    if (!project.value) return;
+    api('GET', '/api/projects/' + encodeURIComponent(project.value)).then(function (res) {
+      if (!res.ok) return;
+      groups = (res.data.project.groups || []).filter(function (g) { return !g.archived; });
+      add(groupsNote, groups.length ? groups.map(function (g) { return h('span', {title: g.purpose || '', text: g.slug}); })
+                                    : h('span', {'class': 'note', text: 'This project has no groups yet: every issue goes to its channel.'}));
+      clear(rules);
+      if (first && rc.rules) rc.rules.forEach(ruleRow);
+    });
+  }
+  project.addEventListener('change', function () { loadGroups(false); });
+  projectList().then(function (ps) {
+    ps.filter(function (p) { return !p.archived; }).forEach(function (p) { add(project, h('option', {value: p.slug, text: p.name && p.name !== p.slug ? p.name + ' (' + p.slug + ')' : p.slug})); });
+    if (rc.project) { project.value = rc.project; loadGroups(true); }
+  });
+
+  var form = h('form', {onsubmit: function (ev) {
+    ev.preventDefault();
+    var secs = {every: parseDur(every.value), remind_after: parseDur(remindAfter.value)};
+    var bad = Object.keys(secs).filter(function (k) { return secs[k] == null; });
+    if (bad.length) { status(out, false, 'Not a duration: ' + bad.join(', ') + '. Use 90s, 2m, 1h, 1d or 1h30m.'); return; }
+    var recipe = {type: 'github-issues', repo: repo.value.trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/+$/g, ''),
+      project: project.value, unassigned: unassigned.checked, no_linked_pr: noPr.checked,
+      skip_labels: skip.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean),
+      batch: parseInt(batch.value, 10) || 5,
+      after: startNew.checked ? (rc.after || new Date().toISOString().replace(/\.\d+Z$/, 'Z')) : '',
+      rules: Array.prototype.map.call(rules.querySelectorAll('.rule'), function (row) {
+        return {label: row.querySelector('input').value.trim(), group: row.querySelector('select').value};
+      }).filter(function (x) { return x.label && x.group; }),
+      remind_after: secs.remind_after, reminds: parseInt(reminds.value, 10) || 0, escalate: escalate.value.trim().replace(/^@/, '')};
+    var body = {name: name.value.trim(), recipe: recipe, every: secs.every};
+    if (about.value.trim()) body.about = about.value.trim();
+    if (r.thread) body.thread = r.thread;
+    var btn = form.querySelector('button[type=submit]'); btn.disabled = true;
+    api('POST', '/api/routines', body).then(function (res) {
+      btn.disabled = false;
+      if (!res.ok) { status(out, false, (res.status === 422 ? 'Not posted: ' : '') + why(res)); return; }
+      var t = res.data.thread || r.thread;
+      status(out, true, (r.thread ? 'New version posted' : 'Routine posted') + ', paused. Asking the runner what it would announce now…');
+      // "If it ran now": the same `test` a human would type, answered on the runner's next pass.
+      load().then(function () {
+        location.hash = 'r=' + t; draw();
+        var now = (data.routines || []).find(function (x) { return +x.thread === +t; });
+        var tb = Array.prototype.find.call(root.querySelectorAll('button'), function (b) { return b.textContent === 'Test the check'; });
+        if (now && tb) test(tb, now, root.querySelector('[role=status]'));
+      });
+    });
+  }},
+    h('div', {'class': 'row'}, field('Name', name), field('About', about)),
+    h('h4', {text: 'Watch'}),
+    field('Open issues in', repo),
+    h('div', {'class': 'checks'},
+      h('label', {'class': 'inline'}, unassigned, 'skip issues that have an assignee'),
+      h('label', {'class': 'inline'}, noPr, 'skip issues a pull request is linked to'),
+      field('skip issues labelled', skip),
+      h('p', {'class': 'note', text: 'Each issue is announced at most once: the routine remembers the numbers it has sent.'})),
+    h('div', {'class': 'checks'},
+      h('label', {'class': 'inline'}, startNew, 'only issues opened from now on'),
+      h('label', {'class': 'inline'}, startAll, 'also the ones open today, a batch at a time')),
+    h('div', {'class': 'row'}, field('Batch', batch, 'issues per round'), field('Look every', every)),
+    h('h4', {text: 'Route and announce'}),
+    field('To the best-fitting group of', project), groupsNote,
+    h('p', {'class': 'note', text: 'A bot reads each issue and the groups\' purposes and picks one; the runner then posts the issue in that group\'s channel and asks for a taker. A label rule skips the bot.'}),
+    rules, h('button', {type: 'button', 'class': 'quiet', text: '+ add a label rule', onclick: function () { ruleRow(null); }}),
+    h('h4', {text: 'If nobody takes it'}),
+    h('div', {'class': 'row'}, field('Post again after', remindAfter), field('Up to', reminds, 'times'), field('Then tell', escalate)),
+    h('p', {'class': 'note', text: 'Taken means a bot replied in the announcement\'s thread, or the issue got an assignee or a linked pull request, or was closed.'}),
+    h('button', {type: 'submit', text: r.thread ? 'Post new version' : 'Create, paused, and test'}), out);
+  return form;
+}
+function recipeView(r) {
+  var rc = r.recipe;
+  return h('section', null, h('h3', {text: 'What it does'}),
+    h('dl', null,
+      h('dt', {text: 'watches'}), h('dd', null, h('a', {href: 'https://github.com/' + rc.repo + '/issues', text: rc.repo}),
+        rc.after ? ', opened after ' + when(rc.after) : ', including the backlog', ', ' + rc.batch + ' at a time'),
+      h('dt', {text: 'skips'}), h('dd', {text: [rc.unassigned ? 'assigned' : '', rc.no_linked_pr ? 'linked to a PR' : '',
+        rc.skip_labels.length ? 'labelled ' + rc.skip_labels.join(', ') : ''].filter(Boolean).join(' · ') || 'nothing'}),
+      h('dt', {text: 'routes to'}), h('dd', null, h('a', {href: '/projects/' + encodeURIComponent(rc.project), text: rc.project}),
+        rc.rules.length ? ' · rules: ' + rc.rules.map(function (x) { return x.label + ' → ' + x.group; }).join(', ') : ''),
+      h('dt', {text: 'chases'}), h('dd', {text: rc.reminds ? 'again after ' + fmtDur(rc.remind_after) + ', ' + rc.reminds + ' times' +
+        (rc.escalate ? ', then tells @' + rc.escalate : '') : 'no reminders'})),
+    (r.items || []).length ? [h('h3', {text: 'Announced'}), h('table', null,
+      h('thead', null, h('tr', null, ['issue', 'where', 'announced', 'replies'].map(function (t) { return h('th', {text: t}); }))),
+      h('tbody', null, r.items.map(function (i) {
+        return h('tr', null, h('td', null, h('a', {href: 'https://github.com/' + rc.repo + '/issues/' + i.number, text: '#' + i.number})),
+          h('td', null, thread(i.id, '#' + i.channel)), h('td', {'class': 'note', text: when(i.created_at)}),
+          h('td', {'class': 'mono', text: String(i.replies)}));
+      })))] : h('p', {'class': 'note', text: 'Nothing announced yet.'}));
 }
 
 // ---- create, or a new version of r ---------------------------------------------------

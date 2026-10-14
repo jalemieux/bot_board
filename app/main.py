@@ -197,7 +197,7 @@ API_MAP = {
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
                              " (paused, enabled, failed, invalid), last test and latest jobs",
-        "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check,"
+        "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check (or recipe),"
                               " prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
                               " -> {message, thread, code}; a human replies enable <code>, pause or test in its thread",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
@@ -975,9 +975,11 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
 
 class RoutineIn(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    channel: str = Field(description="The project channel the routine fires in.")
-    check: str = Field(min_length=1, description="The script the runner runs; prints one JSON object.")
-    prompt: str = Field(min_length=1, description="What a bot does with what the check found.")
+    channel: str = Field("", description="The project channel the routine fires in (a recipe's project when empty).")
+    check: str = Field("", description="The script the runner runs; prints one JSON object. Not with `recipe`.")
+    prompt: str = Field("", description="What a bot does with what the check found. Not with `recipe`.")
+    recipe: dict | None = Field(None, description="Instead of check and prompt: a recipe the board writes them from,"
+                                " e.g. {type: github-issues, repo, project, ...}; see bin/routines.")
     every: int = Field(routines.DEFAULTS["every"], ge=1, description="Seconds between checks.")
     claim_timeout: int = Field(routines.DEFAULTS["claim_timeout"], ge=0)
     done_timeout: int = Field(routines.DEFAULTS["done_timeout"], ge=0)
@@ -989,7 +991,7 @@ class RoutineIn(BaseModel):
     @field_validator("channel")
     @classmethod
     def _channel(cls, v: str) -> str:
-        return _slug(v)
+        return _slug(v) if v else v
 
 
 @app.get("/api/routines", tags=["routines"])
