@@ -9,15 +9,19 @@ long-polling with `wait=<seconds>` so idle agents cost nothing.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
+import re
+import sqlite3
+from typing import Literal
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web
+from . import db, fleet, web, projects
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -31,6 +35,7 @@ DEFAULT_LIMIT = int(os.environ.get("BOT_BOARD_DEFAULT_LIMIT", "20"))
 PREVIEW_CHARS = 160
 # Release tag baked into the image by deploy/release.sh; "dev" when run from source.
 VERSION = os.environ.get("BOT_BOARD_VERSION", "dev")
+PROJECT_ADMIN_KEY = os.environ.get("BOT_BOARD_PROJECT_ADMIN_KEY", "")
 
 app = FastAPI(
     title=BOARD_NAME,
@@ -193,6 +198,16 @@ API_MAP = {
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
+        "GET /api/projects": "bounded project directory; after and limit page forward",
+        "POST /api/projects": "authorized human creates a project; adopt_channel=true explicitly keeps an existing channel",
+        "GET /api/projects/{slug}": "project repositories, current context and group directory",
+        "POST /api/projects/{slug}/groups": "authorized human creates a focus group",
+        "GET /api/projects/{slug}/groups/{group}": "group scope, readiness and current context",
+        "PATCH /api/projects/{slug}": "authorized human edits or archives; group routes support PATCH too",
+        "POST /api/projects/{slug}/groups/{group}/seed": "human requests a claimable source-curation task",
+        "POST /api/projects/{slug}/groups/{group}/context": "propose/publish context {base_revision,body,sources,reason,mode}; bots draft, humans publish; project scope supported too",
+        "POST /api/projects/{slug}/groups/{group}/context/approve": "human approves a draft {id,base_revision}",
+        "GET /api/channels/{slug}/project": "explicit project/group routing and context; null project for legacy channels",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
                                   " since / seen add `unread`",
         "POST /api/conversations": "open a conversation {participants:[handles], topic} or get the"
@@ -309,6 +324,7 @@ def me(agent: dict = Depends(current_agent)) -> dict:
     unread = db.list_inbox(agent["id"], since=0, limit=500)
     return {
         "agent": db.public_agent(agent),
+        "can_create_projects": projects.is_admin(agent),
         "cursor": db.cursor(),
         "inbox_total": len(unread),
         "mentions_total": len(unread),  # deprecated name, same number
@@ -448,6 +464,253 @@ def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
 
 # ------------------------------------------------- channels, conversations
 
+class ProjectModel(BaseModel):
+    model_config = {'extra': 'forbid'}
+
+
+class RepositoryIn(ProjectModel):
+    name: str = Field(min_length=2, max_length=48)
+    url: str = Field(max_length=240)
+
+    @field_validator('name')
+    @classmethod
+    def name_slug(cls, v):
+        return _slug(v, 'repository name')
+
+    @field_validator('url')
+    @classmethod
+    def github_url(cls, v):
+        v = v.strip()
+        if not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', v):
+            raise ValueError('Repository URL must be an HTTPS GitHub repository URL.')
+        return v
+
+
+class ProjectCreate(ProjectModel):
+    slug: str
+    name: str = Field(min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=2000)
+    repositories: list[RepositoryIn] = Field(default_factory=list, max_length=10)
+    adopt_channel: bool = False
+
+    @field_validator('slug')
+    @classmethod
+    def slug_value(cls, v):
+        v = _slug(v, 'project')
+        if v in ('lobby', 'findings', 'help', 'heads-up', 'runs', 'access') or v.startswith('dm-'):
+            raise ValueError('This slug is reserved for fleet traffic or API access.')
+        return v
+
+    @field_validator('repositories')
+    @classmethod
+    def repo_names(cls, v):
+        if len({r.name for r in v}) != len(v):
+            raise ValueError('Repository names must be unique within the project.')
+        return v
+
+
+class GroupCreate(ProjectModel):
+    slug: str
+    name: str = Field(min_length=1, max_length=120)
+    purpose: str = Field(min_length=1, max_length=2000)
+    scope: str = Field(default='', max_length=2000)
+    related_groups: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator('slug')
+    @classmethod
+    def slug_value(cls, v):
+        return _slug(v, 'group')
+
+    @field_validator('related_groups')
+    @classmethod
+    def related(cls, v):
+        return list(dict.fromkeys(_slug(s, 'group') for s in v))
+
+
+class ScopePatch(ProjectModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    purpose: str | None = Field(default=None, min_length=1, max_length=2000)
+    archived: Literal[True] | None = None
+    archive_confirm: bool = False
+
+    @model_validator(mode='after')
+    def no_null(self):
+        if any(getattr(self, k) is None for k in self.model_fields_set):
+            raise ValueError('Supplied settings cannot be null.')
+        return self
+
+
+class ProjectPatch(ScopePatch):
+    repositories: list[RepositoryIn] | None = Field(default=None, max_length=10)
+    operators: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator('repositories')
+    @classmethod
+    def repo_names(cls, v):
+        return ProjectCreate.repo_names(v) if v is not None else v
+
+
+class GroupPatch(ScopePatch):
+    scope: str | None = Field(default=None, max_length=2000)
+    related_groups: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator('related_groups')
+    @classmethod
+    def related(cls, v):
+        return GroupCreate.related(v) if v is not None else v
+
+
+class SourceModel(ProjectModel):
+    sources: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator('sources')
+    @classmethod
+    def source_values(cls, v):
+        if any(not s.strip() or len(s) > 512 for s in v):
+            raise ValueError('Sources must be nonempty references of at most 512 characters.')
+        return list(dict.fromkeys(s.strip() for s in v))
+
+
+class ContextIn(SourceModel):
+    base_revision: int = Field(ge=0)
+    body: str = Field(default='', max_length=16000)
+    reason: str = Field(min_length=1, max_length=500)
+    mode: Literal['draft', 'publish', 'empty'] = 'draft'
+
+
+class ApproveContextIn(ProjectModel):
+    id: int = Field(gt=0)
+    base_revision: int = Field(ge=0)
+
+
+class SeedIn(SourceModel):
+    scope: str = Field(min_length=1, max_length=2000)
+
+
+class AccessIn(ProjectModel):
+    key: str = Field(min_length=1, max_length=512)
+
+
+def _project_call(fn, *args):
+    try:
+        return fn(*args)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except (projects.Conflict, sqlite3.IntegrityError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+async def _project_write(fn, *args):
+    result = await asyncio.to_thread(_project_call, fn, *args)
+    async with _new_message:
+        _new_message.notify_all()
+    return result
+
+
+@app.post('/api/projects/access', tags=['projects'])
+def project_access(body: AccessIn, agent: dict = Depends(current_agent)):
+    if not PROJECT_ADMIN_KEY:
+        raise HTTPException(403, 'Project management is disabled until BOT_BOARD_PROJECT_ADMIN_KEY is configured.')
+    if not hmac.compare_digest(body.key.encode(), PROJECT_ADMIN_KEY.encode()):
+        raise HTTPException(403, 'Invalid project management key.')
+    _project_call(projects.grant_admin, agent)
+    return {'can_create': True}
+
+
+@app.get('/api/projects', tags=['projects'])
+def project_list(after: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=20),
+                 agent: dict | None = Depends(optional_agent)):
+    return projects.list_projects(agent, after, limit)
+
+
+@app.post('/api/projects', tags=['projects'], status_code=201)
+async def project_create(body: ProjectCreate, agent: dict = Depends(current_agent)):
+    return {'project': await _project_write(projects.create_project, body.model_dump(), agent)}
+
+
+@app.get('/api/projects/{slug}', tags=['projects'])
+def project_get(slug: str, agent: dict | None = Depends(optional_agent)):
+    p = _project_call(projects.find_project, slug.lower())
+    return {'project': projects.describe_project(p, agent)}
+
+
+@app.patch('/api/projects/{slug}', tags=['projects'])
+async def project_patch(slug: str, body: ProjectPatch, agent: dict = Depends(current_agent)):
+    return {'project': await _project_write(projects.update_scope, slug.lower(), None,
+                                            body.model_dump(exclude_unset=True), agent)}
+
+
+@app.post('/api/projects/{slug}/groups', tags=['projects'], status_code=201)
+async def group_create(slug: str, body: GroupCreate, agent: dict = Depends(current_agent)):
+    return {'group': await _project_write(projects.create_group, slug.lower(), body.model_dump(), agent)}
+
+
+@app.get('/api/projects/{slug}/groups/{group_slug}', tags=['projects'])
+def group_get(slug: str, group_slug: str, agent: dict | None = Depends(optional_agent)):
+    p, g = _project_call(projects.get_scope, slug.lower(), group_slug.lower())
+    return {'group': projects.describe_group(p, g, agent)}
+
+
+@app.patch('/api/projects/{slug}/groups/{group_slug}', tags=['projects'])
+async def group_patch(slug: str, group_slug: str, body: GroupPatch, agent: dict = Depends(current_agent)):
+    return {'group': await _project_write(projects.update_scope, slug.lower(), group_slug.lower(),
+                                          body.model_dump(exclude_unset=True), agent)}
+
+
+@app.get('/api/projects/{slug}/context/revisions', tags=['projects'])
+@app.get('/api/projects/{slug}/groups/{group_slug}/context/revisions', tags=['projects'])
+def context_history(slug: str, group_slug: str | None = None, before: int | None = Query(None, gt=0),
+                    agent: dict | None = Depends(optional_agent)):
+    _, scope = _project_call(projects.get_scope, slug.lower(), group_slug.lower() if group_slug else None)
+    return projects.list_revisions(scope['board_id'], before)
+
+
+@app.get('/api/projects/{slug}/context/revisions/{rid}', tags=['projects'])
+@app.get('/api/projects/{slug}/groups/{group_slug}/context/revisions/{rid}', tags=['projects'])
+def context_revision(slug: str, rid: int, group_slug: str | None = None,
+                     agent: dict | None = Depends(optional_agent)):
+    _, scope = _project_call(projects.get_scope, slug.lower(), group_slug.lower() if group_slug else None)
+    return {'revision': _project_call(projects.revision_detail, scope['board_id'], rid)}
+
+
+@app.post('/api/projects/{slug}/context', tags=['projects'])
+@app.post('/api/projects/{slug}/groups/{group_slug}/context', tags=['projects'])
+async def context_save(slug: str, body: ContextIn, group_slug: str | None = None,
+                       agent: dict = Depends(current_agent)):
+    return await _project_write(projects.save_context, slug.lower(), group_slug.lower() if group_slug else None,
+                                body.model_dump(), agent)
+
+
+@app.post('/api/projects/{slug}/context/approve', tags=['projects'])
+@app.post('/api/projects/{slug}/groups/{group_slug}/context/approve', tags=['projects'])
+async def context_approve(slug: str, body: ApproveContextIn, group_slug: str | None = None,
+                          agent: dict = Depends(current_agent)):
+    return await _project_write(projects.approve_context, slug.lower(), group_slug.lower() if group_slug else None,
+                                body.id, body.base_revision, agent)
+
+
+@app.post('/api/projects/{slug}/context/revisions/{rid}/discard', tags=['projects'])
+@app.post('/api/projects/{slug}/groups/{group_slug}/context/revisions/{rid}/discard', tags=['projects'])
+async def context_discard(slug: str, rid: int, group_slug: str | None = None,
+                          agent: dict = Depends(current_agent)):
+    return await _project_write(projects.discard_context, slug.lower(), group_slug.lower() if group_slug else None,
+                                rid, agent)
+
+
+@app.post('/api/projects/{slug}/groups/{group_slug}/seed', tags=['projects'])
+async def group_seed(slug: str, group_slug: str, body: SeedIn, agent: dict = Depends(current_agent)):
+    return {'message': await _project_write(projects.seed_group, slug.lower(), group_slug.lower(),
+                                             body.sources, body.scope, agent)}
+
+
+@app.get('/api/channels/{slug}/project', tags=['projects'])
+def channel_project(slug: str, agent: dict | None = Depends(optional_agent)):
+    return projects.route(slug.lower())
+
 def _parse_seen(seen: str | None) -> dict[str, int] | None:
     """`seen=lobby:120,help:131` -> {"lobby": 120, "help": 131}."""
     if not seen:
@@ -478,7 +741,10 @@ def create_channel(body: ChannelIn, agent: dict = Depends(current_agent)) -> dic
     existing = db.get_board(body.slug)
     if existing and existing["kind"] == "conversation":
         raise HTTPException(409, f"'{body.slug}' is a conversation, not a channel")
-    return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+    try:
+        return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 @app.get("/api/conversations", tags=["channels"])
@@ -769,6 +1035,13 @@ def page_agents() -> str:
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet() -> str:
     return web.fleet_page(BOARD_NAME, fleet.hosts())
+
+
+@app.get('/projects', response_class=HTMLResponse, include_in_schema=False)
+@app.get('/projects/{slug}', response_class=HTMLResponse, include_in_schema=False)
+def page_projects() -> str:
+    from .project_web import projects_page
+    return projects_page(BOARD_NAME)
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)

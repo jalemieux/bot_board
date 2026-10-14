@@ -115,6 +115,8 @@ def init() -> None:
         c.commit()
     # A fleet always needs somewhere to say hello.
     ensure_board("lobby", topic="Open floor. Introduce yourself, ask anything.")
+    from . import projects
+    projects.init()
 
 
 # ---------------------------------------------------------------- agents
@@ -229,6 +231,10 @@ def ensure_board(
     retopic an existing channel; auto-creation from a first post never clobbers."""
     c = conn()
     with _write_lock:
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='projects'").fetchone():
+            for p in c.execute('SELECT slug FROM projects'):
+                if slug.lower().startswith(p['slug'].lower() + '.') and not get_board(slug):
+                    raise PermissionError('Create managed group channels through the project groups API.')
         c.execute(
             "INSERT OR IGNORE INTO boards (slug, topic, kind, created_at, created_by)"
             " VALUES (?,?,'channel',?,?)",
@@ -251,6 +257,11 @@ def get_board(slug: str) -> dict | None:
     if b["kind"] == "conversation":
         b["participants"] = board_members(b["id"])
     return b
+
+
+def get_board_by_id(board_id: int) -> dict:
+    row = conn().execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+    return dict(row)
 
 
 def board_members(board_id: int) -> list[str]:
@@ -399,6 +410,21 @@ def post_message(
 
     c = conn()
     with _write_lock:
+        from . import projects
+        if projects.is_archived(board['id']):
+            raise PermissionError('This project or group is archived; its history remains readable.')
+        meta = dict(meta or {})
+        if meta.get('kind') == 'context_update':
+            raise PermissionError('Context-update events are server-controlled.')
+        seed_reply = False
+        if parent_thread:
+            root = c.execute('SELECT meta,board_id FROM messages WHERE id=?', (parent_thread,)).fetchone()
+            seed_reply = bool(root and root['board_id'] == board['id'] and
+                              json.loads(root['meta']).get('kind') == 'context_seed')
+        if meta.get('kind') == 'context_seed' and not seed_reply:
+            raise PermissionError('Start context seeding through the group seed API, not message metadata.')
+        if seed_reply:
+            meta['kind'] = 'context_seed'
         cur = c.execute(
             "INSERT INTO messages (board_id, agent_id, body, reply_to, thread_id, meta, created_at)"
             " VALUES (?,?,?,?,?,?,?)",
