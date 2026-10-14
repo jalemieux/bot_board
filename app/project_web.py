@@ -153,13 +153,15 @@ function listView() {
         h('div', {'class': 'meta'}, p.channel ? h('a', {href: '/c/' + encodeURIComponent(p.channel), text: '#' + p.channel}) : null,
           ' ', p.slug)));
     });
+    if (data.has_more) add(grid, h('button', {type: 'button', text: 'Load more projects', onclick: function () { load(data.next_after); }}));
     clear(createBox);
     if (data.can_create) add(createBox, createProjectForm());
     else add(createBox, unlockForm(load));
   }
-  function load() {
-    api('GET', '/api/projects').then(function (res) {
+  function load(after) {
+    api('GET', '/api/projects' + (after ? '?after=' + encodeURIComponent(after) : '')).then(function (res) {
       if (!res.ok) { status(out, false, 'Could not load projects: ' + why(res)); return; }
+      if (after && data) res.data.projects = data.projects.concat(res.data.projects || []);
       data = res.data; clear(out); draw();
     });
   }
@@ -172,6 +174,7 @@ function createProjectForm() {
   var name = h('input', {type: 'text', required: true});
   var purpose = h('textarea', {required: true});
   var repos = h('textarea', {placeholder: 'game https://github.com/owner/game'});
+  var adopt = h('input', {type: 'checkbox'});
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   return h('section', null, h('h3', {text: 'Create project'}),
     h('form', {onsubmit: function (ev) {
@@ -179,14 +182,16 @@ function createProjectForm() {
       var repositories = lines(repos.value).map(function (l) {
         var m = l.split(/\s+/); return m.length > 1 ? {name: m[0], url: m.slice(1).join(' ')} : {name: m[0].replace(/^.*\//, ''), url: m[0]};
       });
-      api('POST', '/api/projects', {slug: slug.value.trim(), name: name.value.trim(), purpose: purpose.value.trim(), repositories: repositories})
+      api('POST', '/api/projects', {slug: slug.value.trim(), name: name.value.trim(), purpose: purpose.value.trim(), repositories: repositories, adopt_channel: adopt.checked})
         .then(function (res) {
           if (res.ok) location.href = '/projects/' + encodeURIComponent(slug.value.trim());
           else status(out, false, why(res));   // the form keeps what was typed
         });
     }},
       field('Slug (stable id, used in links)', slug), field('Name', name), field('Purpose', purpose),
-      field('Repositories, one per line: name url', repos), h('button', {type: 'submit', text: 'Create project'}), out));
+      field('Repositories, one per line: name url', repos),
+      h('label', {'class': 'inline'}, adopt, 'Use the existing channel with this slug (preserves earlier discussions)'),
+      h('button', {type: 'submit', text: 'Create project'}), out));
 }
 
 // ================================================================= a project
@@ -246,9 +251,9 @@ function drawProject() {
 
   var groupBox = h('div');
   add(clear(root), head, groupBox, groupsBox);
-  if (p.can_manage) add(root, h('div', {'class': 'two'}, projectEditBox(), allocationBox()));
-  else add(root, allocationBox());
-  add(root, contextBox(P(p.slug), p.context, p.can_manage, 'project ' + (p.name || p.slug)));
+  if (p.can_manage && !p.archived) add(root, projectEditBox());
+  add(root, h('p', {'class': 'note', text: 'Bot allocation is not enforced yet. Project and group targets arrive with resource-aware task claims.'}));
+  add(root, contextBox(P(p.slug), p.context, p.can_manage, 'project ' + (p.name || p.slug), p.archived));
   if (openGroup) groupView(groupBox);
 }
 window.addEventListener('hashchange', function () {
@@ -276,62 +281,11 @@ function archiveControl(path, what, label, after) {
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   return h('div', {style: 'margin-top:12px'},
     h('button', {type: 'button', 'class': 'quiet', onclick: function () {
-      if (!confirm('Archive ' + what + ' "' + label + '"? Its history and context are kept; it takes no new allocations or claims. It is refused while work is claimed in it.')) return;
+      if (!confirm('Archive ' + what + ' "' + label + '"? First finish or release any active work. Its history and context are kept. Active prose claims are not checked automatically yet.')) return;
       api('PATCH', path, {archived: true, archive_confirm: true}).then(function (res) {
         if (res.ok) after(); else status(out, false, 'Not archived: ' + why(res));
       });
     }, text: 'Archive ' + what}), out);
-}
-
-// ---- allocation: recorded now, enforced in a later step ----------------------------
-function allocationBox() {
-  var p = proj, a = p.allocation || {mode: 'unconfigured', target: 0, group_targets: {}, enforced: false};
-  var box = h('section', null, h('h3', null, 'Bot allocation', a.enforced ? null : badge('pending enforcement', 'pending')));
-  add(box, h('p', {'class': 'note', text: a.enforced
-    ? 'Enforced: launchers only give this project\'s work to bots allocated to it.'
-    : 'Recorded but not enforced yet: today every bot can still claim work here. The numbers take effect when enforcement ships.'}));
-  var active = (p.groups || []).filter(function (g) { return !g.archived; });
-  if (!p.can_manage) {
-    add(box, h('p', {text: a.mode === 'project' ? 'Project pool: ' + a.target + ' bot(s).' : a.mode === 'groups'
-      ? 'Group targets: ' + active.map(function (g) { return (g.name || g.slug) + ' ' + ((a.group_targets || {})[g.slug] || 0); }).join(', ') + '.'
-      : 'Not configured: open claiming, as today.'}));
-    return box;
-  }
-  var out = h('div', {role: 'status', 'aria-live': 'polite'});
-  var mode = h('select', null,
-    h('option', {value: 'unconfigured', text: 'not configured (open claiming)'}),
-    h('option', {value: 'project', text: 'project pool: N bots across all groups'}),
-    h('option', {value: 'groups', text: 'group targets: N bots per group'}));
-  mode.value = a.mode || 'unconfigured';
-  var target = h('input', {type: 'number', min: 0, step: 1, value: a.target || 0});
-  var per = {};
-  var perBox = h('div', {'class': 'row'}, active.map(function (g) {
-    per[g.slug] = h('input', {type: 'number', min: 0, step: 1, value: (a.group_targets || {})[g.slug] || 0});
-    return field(g.name || g.slug, per[g.slug]);
-  }));
-  var preview = h('p', {'class': 'note', role: 'status', 'aria-live': 'polite'});
-  var poolRow = field('Bots in the project pool', target);
-  function n(el) { var v = parseInt(el.value, 10); return isNaN(v) || v < 0 ? 0 : v; }
-  function show() {
-    poolRow.hidden = mode.value !== 'project';
-    perBox.hidden = mode.value !== 'groups';
-    var total = mode.value === 'project' ? n(target) : mode.value === 'groups' ? Object.keys(per).reduce(function (s, k) { return s + n(per[k]); }, 0) : null;
-    var was = a.mode === 'project' ? a.target : a.mode === 'groups' ? Object.keys(a.group_targets || {}).reduce(function (s, k) { return s + (a.group_targets[k] || 0); }, 0) : null;
-    preview.textContent = (total == null ? 'Preview: open claiming, no staffing target.' : 'Preview: ' + total + ' bot(s) in total' +
-      (mode.value === 'groups' ? ' (' + active.map(function (g) { return (g.name || g.slug) + ' ' + n(per[g.slug]); }).join(', ') + ')' : '') + '.') +
-      (mode.value !== a.mode ? ' Switching from "' + (a.mode || 'unconfigured') + '"' + (was != null ? ' (' + was + ' in total)' : '') + '; the other mode\'s numbers are kept but do not apply.' : '') +
-      ' Zero means stop: no new allocation or claims, running work is not cancelled.';
-  }
-  [mode, target].concat(Object.keys(per).map(function (k) { return per[k]; })).forEach(function (el) { el.addEventListener('input', show); el.addEventListener('change', show); });
-  add(box, h('form', {onsubmit: function (ev) {
-    ev.preventDefault();
-    var gt = {}; Object.keys(per).forEach(function (k) { gt[k] = n(per[k]); });
-    api('PATCH', P(p.slug), {allocation: {mode: mode.value, target: n(target), group_targets: gt}}).then(function (res) {
-      if (res.ok) { status(out, true, 'Saved.'); reloadProject(true); } else status(out, false, why(res));
-    });
-  }}, field('Mode', mode), poolRow, perBox, preview, h('button', {type: 'submit', text: 'Save allocation'}), out));
-  show();
-  return box;
 }
 
 // ---- create a group: existing scopes shown, to spot overlaps -----------------------
@@ -377,10 +331,10 @@ function groupView(box) {
       g.channel ? h('p', {'class': 'note'}, 'Channel: ', h('a', {href: '/c/' + encodeURIComponent(g.channel), text: '#' + g.channel})) : null,
       g.readiness && g.readiness !== 'ready' ? h('p', {'class': 'note', text: 'Not ready for normal tasks until a human approves its first context. Seeding and review work can be done meanwhile.'}) : null);
     add(clear(box), sec);
-    if (g.can_manage) {
+    if (g.can_manage && !g.archived) {
       add(box, h('div', {'class': 'two'}, groupEditBox(path, g), seedBox(path, g)));
     }
-    add(box, contextBox(path, g.context, g.can_manage, 'group ' + (g.name || g.slug)));
+    add(box, contextBox(path, g.context, g.can_manage, 'group ' + (g.name || g.slug), g.archived));
   });
 }
 
@@ -421,7 +375,7 @@ function seedBox(path, g) {
 // ================================================================= context
 // One current document per project or group, with its revision history. Edits
 // carry the revision they were based on; a conflict keeps the draft on screen.
-function contextBox(path, ctx, canManage, label) {
+function contextBox(path, ctx, canManage, label, archived) {
   ctx = ctx || {revision: 0, body: '', sources: []};
   var sec = h('section', null, h('h3', null, 'Context of ' + label, ' ', h('span', {'class': 'note', text: ctx.revision ? 'revision ' + ctx.revision : 'no revision yet'})));
   var current = h('div');
@@ -449,7 +403,7 @@ function contextBox(path, ctx, canManage, label) {
   var form = h('form', {onsubmit: function (ev) {
     ev.preventDefault();
     if (mode.value === 'empty' && !confirm('Approve this context as empty? This records that it starts with no prior knowledge.')) return;
-    api('POST', path + '/context', {base_revision: base, body: mode.value === 'empty' ? '' : body.value, sources: lines(sources.value),
+    api('POST', path + '/context', {base_revision: base, body: mode.value === 'empty' ? '' : body.value, sources: mode.value === 'empty' ? [] : lines(sources.value),
       reason: reason.value.trim(), mode: mode.value, decision_change: decision.checked}).then(function (res) {
       if (res.ok) {
         status(out, true, mode.value === 'draft' ? 'Draft saved for review.' : 'Published.');
@@ -470,7 +424,7 @@ function contextBox(path, ctx, canManage, label) {
     field('Sources', sources), field('Reason', reason),
     h('label', {'class': 'inline'}, decision, 'this changes a decision or constraint'),
     field('Save as', mode), h('button', {type: 'submit', text: 'Save'}), out);
-  add(sec, h('details', null, h('summary', {text: canManage ? 'Edit context' : 'Propose a change (saved as a draft for a human to approve)'}), form));
+  if (ME && !archived) add(sec, h('details', null, h('summary', {text: canManage ? 'Edit context' : 'Propose a change (saved as a draft for a human to approve)'}), form));
 
   var hist = h('div');
   add(sec, h('details', {ontoggle: function (ev) { if (ev.target.open && !hist.firstChild) loadHistory(); }}, h('summary', {text: 'Drafts and history'}), hist));
@@ -524,7 +478,7 @@ function contextBox(path, ctx, canManage, label) {
         (r.sources || []).length ? h('div', {'class': 'note'}, 'Sources:', h('ul', {'class': 'plain'}, r.sources.map(srcItem))) : null,
         r.reason ? h('p', {'class': 'note', text: 'Reason: ' + r.reason}) : null,
         h('p', {'class': 'note', text: 'Based on revision ' + (r.base_revision != null ? r.base_revision : '?') + (r.base_revision !== base ? '; the current one is ' + base + ', so check what changed since before approving.' : '.')}));
-      if (canManage && (r.status === 'draft' || r.status === 'pending')) {
+      if (canManage && !archived && (r.status === 'draft' || r.status === 'pending')) {
         add(view, h('div', {'class': 'row'},
           h('button', {type: 'button', onclick: function () {
             api('POST', path + '/context/approve', {id: r.id, base_revision: base}).then(function (ares) {
@@ -536,6 +490,11 @@ function contextBox(path, ctx, canManage, label) {
             body.value = r.body || ''; sources.value = (r.sources || []).join('\n');
             form.parentNode.open = true; body.focus();
           }, text: 'Edit before approving'})), vout);
+        add(view, h('button', {type: 'button', 'class': 'quiet', text: 'Discard draft', onclick: function () {
+          api('POST', path + '/context/revisions/' + r.id + '/discard').then(function (res) {
+            if (res.ok) { clear(view); refresh(); } else status(vout, false, why(res));
+          });
+        }}));
       }
     });
   }

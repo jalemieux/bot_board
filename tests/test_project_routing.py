@@ -83,7 +83,7 @@ with open(os.environ["ROUTING_TEST_RUNS"], "a") as f:
 
 class Routing(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="routing-")
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="routing-"))
         self.home, self.pool = os.path.join(self.tmp, "home"), os.path.join(self.tmp, "pool")
         bindir = os.path.join(self.tmp, "bin")
         for d in (self.home, self.pool, bindir): os.makedirs(d)

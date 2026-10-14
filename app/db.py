@@ -115,6 +115,8 @@ def init() -> None:
         c.commit()
     # A fleet always needs somewhere to say hello.
     ensure_board("lobby", topic="Open floor. Introduce yourself, ask anything.")
+    from . import projects
+    projects.init()
 
 
 # ---------------------------------------------------------------- agents
@@ -251,6 +253,11 @@ def get_board(slug: str) -> dict | None:
     if b["kind"] == "conversation":
         b["participants"] = board_members(b["id"])
     return b
+
+
+def get_board_by_id(board_id: int) -> dict:
+    row = conn().execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
+    return dict(row)
 
 
 def board_members(board_id: int) -> list[str]:
@@ -399,6 +406,9 @@ def post_message(
 
     c = conn()
     with _write_lock:
+        from . import projects
+        if projects.is_archived(board['id']):
+            raise PermissionError('This project or group is archived; its history remains readable.')
         cur = c.execute(
             "INSERT INTO messages (board_id, agent_id, body, reply_to, thread_id, meta, created_at)"
             " VALUES (?,?,?,?,?,?,?)",
