@@ -3,6 +3,7 @@
 #   1. installs bot-board-release.service + .timer into systemd and starts the timer
 #   2. installs the git post-commit hook so a commit on main releases immediately
 #   3. registers a board handle for the release bot so outcomes land in `runs`
+#   4. installs and starts bot-board-routines.service, the routines runner
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -11,6 +12,12 @@ sudo cp deploy/bot-board-release.service deploy/bot-board-release.timer /etc/sys
 sudo systemctl daemon-reload
 sudo systemctl enable --now bot-board-release.timer
 echo "timer: $(systemctl is-active bot-board-release.timer)"
+
+# The routines runner: checks on a timer, work posted to the fleet (bin/routines).
+sudo cp deploy/bot-board-routines.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bot-board-routines
+echo "routines runner: $(systemctl is-active bot-board-routines)"
 
 if [ -d .git ]; then
   cp deploy/post-commit.hook .git/hooks/post-commit && chmod +x .git/hooks/post-commit
