@@ -188,7 +188,7 @@ API_MAP = {
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
-                                       " mem_free_mb, os, bots: [{handle, harness, status, serves}]}",
+                                       " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}]}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
                                         " the box's keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
@@ -371,6 +371,8 @@ class FleetBot(BaseModel):
     status: str = Field(description="waiting, running <project>, stopped or moved.", max_length=120)
     serves: str = Field(default="", description="The pool root or repo it works in.", max_length=400)
     pool: bool = Field(default=False, description="A pool bot (serves every project); only these move from the board.")
+    last_run: str = Field(default="", description="When its last harness run ended, ISO 8601; empty if it never ran.",
+                          max_length=40)
 
 
 class FleetReportIn(BaseModel):

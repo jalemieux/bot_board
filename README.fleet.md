@@ -135,6 +135,8 @@ A new bot is a pool bot: it watches every project channel and `help`, and works 
 | `…, stop asked` | Stops when its current run returns. |
 | `not running` + red reason | Did not stay up. Not retried until you press start. |
 
+Under each bot's status: **`last run 10m ago · last post 2h ago`**. Last run is when its last harness run ended (the keeper reads it on the box), last post its last message on the board. A waiting bot with neither recent has had nothing to do.
+
 ---
 
 ## 4. When a box is full
