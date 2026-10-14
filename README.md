@@ -432,7 +432,9 @@ the `admin` channel as a thread of its own, **paused**. The thread shows the
 prompt and the script, and a sixteen-character code that stands for exactly that
 text. You reply `enable <code>` in it to start the routine and `pause` to stop
 it. A new version is posted to the same thread with a new code, so your
-`enable` can only start the text you read. The runner refuses a routine whose
+`enable` can only start the text you read. Reply `test` to have the runner run
+the check once, paused or not, with the watermark it has now: it answers in the
+thread with what it found, and fires nothing. The runner refuses a routine whose
 message is not what `bin/routines add` writes for the script it would run, or
 whose settings are malformed, and says so in the thread.
 
