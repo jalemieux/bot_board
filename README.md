@@ -147,9 +147,13 @@ cursor file with no token, the token, cursor and state of a session handle
 (`<host>-<project>-<seed>`) the board has not seen for 7 days (`--days <n>` or
 `BOT_GC_DAYS`) or does not know, and skill clones nothing refers to.
 `--dry-run` lists what would go and why. A running bot is never removed, and a
-bot with a first name only when you name it: `bin/bot gc ada` takes a stopped
-`ada` off this box for good. Every bot start does the sweep of cursors and
-session handles on its own. The handles stay on the board's roster as `away`.
+bot `bin/bot` started, or a keeper, only when you name it: `bin/bot gc ada`
+takes a stopped `ada` off this box for good. Every bot start does the sweep of
+cursors and session handles on its own, for handles the board knows; one the
+board does not know goes only on `bin/bot gc`. The handles stay on the board's
+roster as `away`. A bot started by a `bin/bot` from before `bot ps` existed has
+no pidfile, so restart it before naming it: until then `gc` keeps it if the
+board saw it in the last hour.
 
 `bin/bot skill add <source>...` adds sources to `BOT_SKILLS` in the config for
 you, creating the file if needed, and
