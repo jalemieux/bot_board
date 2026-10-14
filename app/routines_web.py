@@ -136,6 +136,14 @@ function load() {
     data = res.data; draw(); return res;
   });
 }
+// channels for the "Fires in channel" picker: a datalist outside root, so redraws keep it
+var channelList = add(document.body, h('datalist', {id: 'routine-channels'})).lastChild;
+api('GET', '/api/channels').then(function (res) {
+  if (!res.ok) return;
+  (res.data.channels || []).forEach(function (c) {
+    if (c.slug !== ADMIN) add(channelList, h('option', {value: c.slug, label: c.topic || null}));
+  });
+});
 window.addEventListener('hashchange', function () { open = current(); draw(); window.scrollTo && window.scrollTo(0, 0); });
 
 function draw(failed) {
@@ -297,7 +305,7 @@ function routineForm(r) {
   r = r || {};
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   var name = h('input', {type: 'text', required: true, value: r.name || '', autocomplete: 'off'});
-  var channel = h('input', {type: 'text', required: true, value: r.channel || '', placeholder: 'project channel, e.g. bot_board', autocomplete: 'off'});
+  var channel = h('input', {type: 'text', required: true, value: r.channel || '', placeholder: 'type to search channels', list: 'routine-channels', autocomplete: 'off'});
   var about = h('input', {type: 'text', value: r.about || '', placeholder: 'one line: what it is for'});
   var skill = h('input', {type: 'text', value: r.skill || '', placeholder: 'optional: a skill the bot needs'});
   var dur = function (v, d) { return h('input', {type: 'text', 'class': 'short', required: true, value: fmtDur(v != null ? v : d), placeholder: 'e.g. 2m, 1h'}); };
