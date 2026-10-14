@@ -46,7 +46,7 @@ KEEPER_OPERATORS (handles, space or comma separated: only what they asked is car
 out; unset, anyone the board accepted as a human), KEEPER_HANDOVER (where archives of
 moving bots wait: host:dir, e.g. minipc-1:.config/bot_board/handover).
 """
-import argparse, fcntl, json, os, platform, re, shlex, shutil, subprocess, sys, time, urllib.error, urllib.request
+import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 
 CFG = os.path.expanduser("~/.config/bot_board")
 BOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bot")
@@ -143,17 +143,41 @@ class Handover:
     def __init__(self, me):
         m = re.match(r"([^/:]+):(.*)$", HANDOVER)
         self.host, path = (m.group(1), m.group(2)) if m else ("", HANDOVER)
-        if self.host and self.host.split("@")[-1].split(".")[0].lower() == me:
+        if self.host and self.is_me(self.host, me):
             self.host = ""      # the hand-over box is this one: no ssh to ourselves
-        self.dir = path.rstrip("/") or ".config/bot_board/handover"
+        # the path is under the home directory either way; a ~/ in front would be quoted
+        # into a directory named ~ by the remote mkdir, while scp expands it
+        path = re.sub(r"^~/?", "", path.rstrip("/"))
+        self.dir = path or ".config/bot_board/handover"
         if not self.host:
-            self.dir = os.path.join(os.path.expanduser("~"), os.path.expanduser(self.dir))
+            self.dir = os.path.join(os.path.expanduser("~"), self.dir)
+
+    @staticmethod
+    def is_me(host, me):
+        """This box, by its keeper name, or by any address it resolves to that is ours:
+        localhost, the tailnet IP, another name for the same box."""
+        host = host.split("@")[-1]
+        if host.split(".")[0].lower() == me:
+            return True
+        try:
+            addrs = {a[4][0] for a in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
+        except OSError:
+            return False
+        for ip in addrs:
+            fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
+            try:
+                with socket.socket(fam, socket.SOCK_DGRAM) as sk:
+                    sk.bind((ip, 0))    # only an address of this box can be bound
+                return True
+            except OSError:
+                continue
+        return False
 
     def run(self, *cmd):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
         if r.returncode:
-            lines = (r.stderr or r.stdout).strip().splitlines()
-            raise RuntimeError(lines[-1] if lines else f"{cmd[0]} exited {r.returncode}")
+            err = " ".join((r.stderr or r.stdout).split())
+            raise RuntimeError(err[-400:] or f"{cmd[0]} exited {r.returncode}")
 
     def put(self, local, name):
         if self.host:
@@ -187,6 +211,9 @@ class Hands:
         self.me = me
         self.handed = {}        # handle -> archive: packed and handed over, for the next report
         self.fetched = []       # unpacked after a move, for the next report
+        # hand-over copies already unpacked here that could not be deleted yet; they hold
+        # a token, so they are retried until they go, across restarts of the keeper
+        self.drops_file = os.path.join(CFG, "handover-drops")
         self.started = {}       # handle -> (when we last started it, the set_at of the request)
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
@@ -194,7 +221,9 @@ class Hands:
     def reconcile(self, want, seen):
         """want: the board's rows for this box. seen: bin/bot ps. Returns handle -> problem."""
         up = {b["handle"].lower(): b["status"] for b in seen if b["status"].startswith(("waiting", "running"))}
+        here = {b["handle"].lower() for b in seen if b["status"] != "moved"}
         problems = {}
+        self.retry_drops()
         for w in want:
             h = w["handle"]
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
@@ -205,10 +234,15 @@ class Hands:
                 why = self.leave(w, up, seen)
                 if why:
                     problems[h] = why
-            elif w.get("fetch") and not any(b["handle"].lower() == h.lower() and b["status"] != "moved" for b in seen):
+            elif w.get("fetch") and h.lower() not in here:
                 why = self.arrive(w)    # started on the next round, like any bot asked to run
                 if why:
                     problems[h] = why
+            elif w.get("fetch") and h not in self.fetched:
+                # unpacked already (by this keeper before a restart, or the report was lost):
+                # tell the board, and make sure the hand-over copy goes
+                self.fetched.append(h)
+                self.queue_drop(w["fetch"])
             elif not w["run"]:
                 if h.lower() in up and "stopping" not in up[h.lower()]:
                     self.spawn(h, [BOT, "stop", h])
@@ -242,6 +276,11 @@ class Hands:
         h = w["handle"]
         if h in self.handed:
             return None         # done; the board learns it with this report
+        mark = os.path.join(CFG, "bots", h, "handed")
+        if os.path.exists(mark):
+            # handed over before this keeper restarted: report that, never pack a second copy
+            self.handed[h] = open(mark).read().strip()
+            return None
         if not HANDOVER:
             return f"not moved: set KEEPER_HANDOVER on this box (where archives wait, e.g. minipc-1:.config/bot_board/handover)"
         if h.lower() in up:
@@ -253,16 +292,31 @@ class Hands:
             return "not moved: only pool bots move from the board"
         name = f"{h}-{os.urandom(4).hex()}.botpack.tgz"
         tmp = os.path.join(CFG, "bots", h + ".botpack.tgz")
+        packed = False
         try:
             r = subprocess.run([BOT, "pack", h, tmp], capture_output=True, text=True, timeout=900)
             if r.returncode:
                 return f"not moved: bin/bot pack failed: {(r.stderr or r.stdout).strip()[-300:]}"
+            packed = True
             Handover(self.me).put(tmp, name)
         except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+            if packed:
+                # pack marked the bot as gone from this box; it is not anywhere else yet
+                try:
+                    os.remove(os.path.join(CFG, "bots", h, "moved"))
+                except FileNotFoundError:
+                    pass
             return f"not moved: could not hand the archive over to {HANDOVER}: {e}"
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
+        with open(os.open(mark, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+            fh.write(name + "\n")
+        # the archive holds the token now; the box the bot left keeps no copy of it
+        try:
+            os.remove(os.path.join(CFG, f"{h}.token"))
+        except FileNotFoundError:
+            pass
         self.handed[h] = name
         print(f"keeper: packed {h} and handed it over for {w['move_to']} as {name}", flush=True)
         return None
@@ -281,15 +335,39 @@ class Hands:
             r = subprocess.run([BOT, "unpack", tmp], capture_output=True, text=True, timeout=900)
             if r.returncode:
                 return f"not unpacked: {(r.stderr or r.stdout).strip()[-300:]}"
-            ho.drop(name)
         except (OSError, subprocess.SubprocessError, RuntimeError) as e:
             return f"not unpacked: could not fetch {name} from {HANDOVER}: {e}"
         finally:
             if os.path.exists(tmp):
                 os.remove(tmp)
         self.fetched.append(h)
+        self.queue_drop(name)
         print(f"keeper: unpacked {h}, moved here by @{w['set_by']}", flush=True)
         return None
+
+    def queue_drop(self, name):
+        with open(self.drops_file, "a") as fh:
+            fh.write(name + "\n")
+        self.retry_drops()
+
+    def retry_drops(self):
+        """Delete the hand-over copies of bots unpacked here; keep the ones that fail for next time."""
+        try:
+            names = [n for n in open(self.drops_file).read().split() if n]
+        except FileNotFoundError:
+            return
+        left = []
+        for n in dict.fromkeys(names):
+            try:
+                Handover(self.me).drop(n)
+            except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+                left.append(n)
+                print(f"keeper: could not delete the hand-over copy {n}, will retry: {e}", file=sys.stderr, flush=True)
+        if left:
+            with open(self.drops_file, "w") as fh:
+                fh.write("".join(n + "\n" for n in left))
+        else:
+            os.remove(self.drops_file)
 
     def out_path(self, handle):
         return os.path.join(CFG, "bots", handle, "keeper.out")
@@ -355,7 +433,7 @@ def service(install):
     Either way the bots it starts must outlive a restart of the keeper, and it needs
     the PATH of the shell that installs it, where the harnesses are."""
     me, env = os.path.realpath(__file__), {"PATH": os.environ.get("PATH", "")}
-    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS"):
+    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER"):
         if os.environ.get(k):
             env[k] = os.environ[k]
     if sys.platform.startswith("linux"):
@@ -444,6 +522,10 @@ def main():
             if code == 200:     # the board has them now
                 for h in moves["handed"]:
                     hands.handed.pop(h, None)
+                    try:
+                        os.remove(os.path.join(CFG, "bots", h, "handed"))
+                    except FileNotFoundError:
+                        pass
                 hands.fetched = [h for h in hands.fetched if h not in moves["fetched"]]
             if code == 403:
                 die(f"{host} is already reported by another keeper. If another box has this name, set KEEPER_HOST "

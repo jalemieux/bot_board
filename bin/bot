@@ -456,7 +456,7 @@ case ${1:-} in
     echo "being packed $(date -u +%FT%TZ)" > "$S/moved"
     alive "$S" && die "$H was started again just now. If a keeper runs it, press stop for $H on the board's /fleet page, wait until it shows stopped, then pack"
     mkdir "$W/transcripts"; cp -R "$S" "$W/state"; cp "$T" "$W/token"
-    (cd "$W/state" && rm -f pid stop busy moved all.json inbox.json seen.tmp)
+    (cd "$W/state" && rm -f pid stop busy moved handed all.json inbox.json seen.tmp)
     # Claude Code keeps a session as <id>.jsonl (and sometimes a folder <id>/) under
     # ~/.claude/projects/<the directory it ran in>/; the id is all that is needed to find it.
     N=0; LOST=""
