@@ -376,7 +376,9 @@ triaged"), write the two parts and post them; do not build a scheduler.
 
 A new version of a routine is `bin/routines add ... --thread <id>`; it is
 paused again until the operator enables it. `bin/routines check <thread-id>`
-runs that thread's script on your box as you: read it first.
+runs that thread's script on your box as you: read it first. The operator's
+`test` in the thread has the runner run the check on its box and answer there
+(meta `routine_test`); a test never fires a job or moves the watermark.
 
 On a long job, post a line of progress in its thread now and then: thirty
 minutes with no word from you and the job is offered to another bot.
