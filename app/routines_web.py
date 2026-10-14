@@ -168,7 +168,7 @@ function list() {
       var openJob = jobs.find(function (j) { return !j.done_at; });
       return h('tr', null,
         h('td', null, h('a', {href: '#r=' + r.thread, text: r.name || ('#' + r.thread)}), r.about ? h('div', {'class': 'note', text: r.about}) : null),
-        h('td', null, badge(r.state || '?', r.state)),
+        h('td', null, badge(r.state || '?', r.state), (r.tests || []).length ? h('div', {'class': 'note', text: 'test pending'}) : null),
         h('td', null, chan(r.channel)),
         h('td', {'class': 'mono', text: fmtDur(r.every)}),
         h('td', {'class': 'note'}, openJob ? ['open: ', thread(openJob.id)] : last ? ['last: ', thread(last.id), last.done_by ? ' by @' + last.done_by : ''] : 'none yet'),
@@ -188,7 +188,7 @@ function detail(r) {
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   var sec = h('section', null,
     h('dl', null,
-      h('dt', {text: 'thread'}), h('dd', null, thread(r.thread, '#' + r.thread + ' in #' + ADMIN), r.version ? ' (version ' + r.version + ')' : ''),
+      h('dt', {text: 'thread'}), h('dd', null, thread(r.thread, '#' + r.thread + ' in #' + ADMIN), r.version && +r.version !== +r.thread ? [', current version ', h('a', {href: '/t/' + encodeURIComponent(r.thread) + '#m' + encodeURIComponent(r.version), text: '#' + r.version})] : null),
       h('dt', {text: 'fires in'}), h('dd', null, chan(r.channel)),
       h('dt', {text: 'checks every'}), h('dd', {text: fmtDur(r.every)}),
       h('dt', {text: 'claim within'}), h('dd', {text: fmtDur(r.claim_timeout)}),
@@ -213,6 +213,9 @@ function detail(r) {
       add(acts, h('button', {type: 'button', 'class': 'quiet', text: 'Test the check', onclick: function (ev) { test(ev.currentTarget, r, out); }}));
     add(sec, acts, h('p', {'class': 'note', text: 'Each button posts the reply you would type in the thread. Enable and pause count only from the runner\'s operators.'}), out);
   }
+  if ((r.tests || []).length)   // human `test` replies the runner has not answered yet
+    add(sec, h('p', {'class': 'note', role: 'status', text: 'Test pending (' + r.tests.map(function (i) { return '#' + i; }).join(', ') +
+      '): the runner answers on its next pass.' + (testing[r.thread] ? '' : ' Reload to see the answer.')}));
   add(sec, testResult(r));
 
   var jobs = r.jobs || [];
@@ -260,7 +263,8 @@ function test(btn, r, out) {
         if (res2.ok) {
           data = res2.data;
           var now = (data.routines || []).find(function (x) { return +x.thread === +r.thread; });
-          if (now && now.last_test && +now.last_test['for'] === +mid) { delete testing[r.thread]; draw(); return; }
+          // answered: last_test is for this test, or the board no longer lists it as pending
+          if (now && ((now.last_test && +now.last_test['for'] === +mid) || (now.tests && now.tests.indexOf(+mid) < 0 && now.tests.indexOf(String(mid)) < 0 && now.last_test))) { delete testing[r.thread]; draw(); return; }
         }
         if (Date.now() - t.since > TEST_WAIT * 1000) {
           delete testing[r.thread];
