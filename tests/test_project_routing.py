@@ -26,10 +26,12 @@ def scope(slug, readiness="ready", body="", archived=False, **kw):
 class FakeBoard:
     """Messages, an inbox, and GET /api/channels/{slug}/project from a table."""
 
-    def __init__(self, messages, routes, has_lookup=True, flaky=()):
+    def __init__(self, messages, routes, has_lookup=True, flaky=(), assigned=None, assignment_error=False):
         self.messages, self.routes, self.has_lookup = messages, routes, has_lookup
         self.flaky = dict.fromkeys(flaky, 1)   # channel -> lookups left that fail with 500
         self.lookups = []
+        self.assigned = assigned
+        self.assignment_error = assignment_error
         board = self
 
         class H(BaseHTTPRequestHandler):
@@ -49,6 +51,13 @@ class FakeBoard:
                 u = urlparse(self.path); q = parse_qs(u.query); path = u.path
                 since = int(q.get("since", ["0"])[0])
                 if path == "/api/me": return self.send(200, {"agent": {"handle": ME}, "cursor": 0})
+                if path == '/api/me/project-pool':
+                    if not board.has_lookup: return self.send(404, {'detail': 'Not Found'})
+                    if board.assignment_error: return self.send(500, {'detail': 'failed'})
+                    assigned = board.assigned
+                    if isinstance(assigned, list):
+                        assigned = board.assigned.pop(0) if len(board.assigned) > 1 else board.assigned[0]
+                    return self.send(200, {'project': assigned})
                 if path in ("/api/agents", "/api/channels"): return self.send(200, {"agents": [], "channels": []})
                 if path in ("/api/messages", "/api/inbox"):
                     new = [m for m in board.messages if m["id"] > since and (path == "/api/messages" or m["mention"])]
@@ -108,9 +117,11 @@ class Routing(unittest.TestCase):
         git("add", "."); git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
         return "file://" + d
 
-    def run_bot(self, board, until, timeout=40):
+    def run_bot(self, board, until, timeout=40, watch=None):
         """Start the launcher, wait until until(runs) holds, stop it, return the runs."""
-        p = subprocess.Popen([BOT, "claude", "--pool", self.pool, "--name", ME], env=dict(self.env, BOARD=board.url),
+        args = [BOT, "claude", "--pool", self.pool, "--name", ME]
+        if watch: args += ['--watch', watch]
+        p = subprocess.Popen(args, env=dict(self.env, BOARD=board.url),
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         runs, end = [], time.time() + timeout
         try:
@@ -181,9 +192,9 @@ class Routing(unittest.TestCase):
         root = [r for r in runs if r["cwd"] == self.pool]
         self.assertTrue(any("hello fleet" in r["prompt"] for r in root))
         self.assertNotIn("Ships are wedge-shaped.", "\n".join(r["prompt"] for r in root))
-        # one lookup per channel per batch, never one for a fleet channel
+        # Cached within routing, then checked again at each harness boundary.
         self.assertNotIn("help", board.lookups)
-        self.assertEqual(board.lookups.count("game-art"), 1)
+        self.assertLessEqual(board.lookups.count("game-art"), 2)
 
     def test_old_board_keeps_channel_routing(self):
         os.makedirs(os.path.join(self.pool, "wordsnap"))
@@ -198,6 +209,62 @@ class Routing(unittest.TestCase):
         self.assertTrue(any(r["cwd"] == self.pool and "anyone?" in r["prompt"] for r in runs))
         self.assertTrue(os.path.exists(os.path.join(self.home, ".config/bot_board/bots", ME, "session.wordsnap")))
         self.assertNotIn("held", self.log)
+
+    def test_dedicated_pool_filters_projects_and_group_work(self):
+        os.makedirs(os.path.join(self.pool, 'game'))
+        game = scope('game', repositories=[], bot_pool={'configured': True, 'bots': [ME]})
+        other = scope('other', repositories=[], bot_pool={'configured': True, 'bots': ['someone']})
+        board = FakeBoard([msg(1, 'game-art', 'our art task'), msg(2, 'other', 'not our project', mention=True),
+            msg(3, 'legacy', 'legacy unrelated'), msg(4, 'help', 'fleet question')],
+            {'game-art': {'project': game, 'group': scope('art')},
+             'other': {'project': other, 'group': None}}, assigned='game')
+        try:
+            runs = self.run_bot(board, lambda rs: any('fleet question' in r['prompt'] for r in rs), watch='help')
+        finally:
+            board.close()
+        prompts = '\n'.join(r['prompt'] for r in runs)
+        self.assertIn('our art task', prompts)
+        self.assertIn('fleet question', prompts)
+        self.assertIn('not our project', prompts)  # addressed messages get a handoff response, not new work
+        self.assertIn('outside your pool assignment', prompts)
+        self.assertFalse(any(r['cwd'] == os.path.join(self.pool, 'other') for r in runs))
+        self.assertNotIn('legacy unrelated', prompts)
+
+    def test_shared_pool_bots_do_not_enter_another_project_pool(self):
+        board = FakeBoard([msg(1, 'game', 'reserved work'), msg(2, 'help', 'fleet control'),
+            msg(3, 'game', 'please hand this off', mention=True)],
+            {'game': {'project': scope('game', bot_pool={'configured': True, 'bots': ['someone']}), 'group': None}})
+        try:
+            runs = self.run_bot(board, lambda rs: any('fleet control' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        self.assertNotIn('reserved work', '\n'.join(r['prompt'] for r in runs))
+        self.assertIn('please hand this off', '\n'.join(r['prompt'] for r in runs))
+
+    def test_assignment_is_rechecked_between_runs(self):
+        os.makedirs(os.path.join(self.pool, 'game'))
+        os.makedirs(os.path.join(self.pool, 'other'))
+        board = FakeBoard([msg(1, 'game', 'keep our work'), msg(2, 'other', 'stale queued work'),
+            msg(3, 'help', 'boundary control')], {
+            'game': {'project': scope('game'), 'group': None},
+            'other': {'project': scope('other'), 'group': None}}, assigned=[None, 'game'])
+        try:
+            runs = self.run_bot(board, lambda rs: any('boundary control' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        prompts = '\n'.join(r['prompt'] for r in runs)
+        self.assertIn('keep our work', prompts)
+        self.assertNotIn('stale queued work', prompts)
+
+    def test_assignment_lookup_failure_holds_work_but_keeps_fleet_communication(self):
+        board = FakeBoard([msg(1, 'game', 'do not guess'), msg(2, 'help', 'failure control')],
+            {'game': {'project': scope('game'), 'group': None}}, assignment_error=True)
+        try:
+            runs = self.run_bot(board, lambda rs: any('failure control' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        self.assertNotIn('do not guess', '\n'.join(r['prompt'] for r in runs))
+        self.assertIn('pool assignment lookup failed', self.log)
 
 
 if __name__ == "__main__":

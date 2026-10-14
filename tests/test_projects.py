@@ -161,6 +161,59 @@ class Projects(unittest.TestCase):
         self.call('PATCH', '/api/projects/game', {'name': None}, expected=422)
         self.call('PATCH', '/api/projects/game', {'owner_id': 99}, expected=422)
 
+    def report_pool(self, bots=None):
+        self.call('PUT', '/api/fleet/hosts/test-box', {'bots': bots if bots is not None else [
+            {'handle': 'worker', 'harness': 'codex', 'status': 'waiting', 'pool': True}]})
+
+    def test_project_pool_permissions_conflicts_and_archive_release(self):
+        self.report_pool()
+        pool = self.call('GET', '/api/projects/game/bots')
+        self.assertFalse(pool['configured'])
+        self.assertTrue(pool['candidates'][0]['available'])
+        data = {'configured': True, 'bots': ['worker'], 'base_revision': 0}
+        self.call('PUT', '/api/projects/game/bots', data, auth=self.bot, expected=403)
+        self.call('PUT', '/api/projects/game/bots', data, auth=self.other, expected=403)
+        saved = self.call('PUT', '/api/projects/game/bots', data)
+        self.assertEqual(saved['bots'], ['worker'])
+        self.assertEqual(self.call('GET', '/api/me/project-pool', auth=self.bot)['project'], 'game')
+        self.assertTrue(self.call('GET', '/api/channels/game.art/project')['project']['bot_pool']['configured'])
+        self.call('PUT', '/api/projects/game/bots', data, expected=409)
+        self.call('POST', '/api/projects', {'slug': 'other-game', 'name': 'Other', 'purpose': 'Elsewhere'}, expected=201)
+        self.call('PUT', '/api/projects/other-game/bots', data, expected=409)
+        self.call('PATCH', '/api/projects/game', {'archived': True, 'archive_confirm': True})
+        self.assertIsNone(self.call('GET', '/api/me/project-pool', auth=self.bot)['project'])
+        self.call('PUT', '/api/projects/other-game/bots', data)
+
+    def test_offline_pool_members_are_retained_and_can_be_released(self):
+        self.report_pool()
+        path = '/api/projects/game/bots'
+        self.call('PUT', path, {'configured': True, 'bots': ['worker'], 'base_revision': 0})
+        self.report_pool([])
+        offline = self.call('GET', path)
+        self.assertEqual(offline['bots'], ['worker'])
+        self.assertFalse(offline['candidates'][0]['available'])
+        self.call('PUT', path, {'configured': True, 'bots': ['worker'], 'base_revision': 1})
+        self.call('PUT', path, {'configured': False, 'bots': [], 'base_revision': 2})
+        self.assertIsNone(self.call('GET', '/api/me/project-pool', auth=self.bot)['project'])
+
+    def test_pool_rejects_non_pool_bots_and_accepts_empty_dedication(self):
+        self.report_pool([{'handle': 'worker', 'harness': 'codex', 'status': 'waiting', 'pool': False}])
+        path = '/api/projects/game/bots'
+        self.call('PUT', path, {'configured': True, 'bots': ['worker'], 'base_revision': 0}, expected=422)
+        self.call('PUT', path, {'configured': False, 'bots': ['worker'], 'base_revision': 0}, expected=422)
+        result = self.call('PUT', path, {'configured': True, 'bots': [], 'base_revision': 0})
+        self.assertTrue(result['configured'])
+        self.assertEqual(result['bots'], [])
+
+    def test_concurrent_projects_cannot_take_the_same_bot(self):
+        self.report_pool()
+        self.call('POST', '/api/projects', {'slug': 'other-game', 'name': 'Other', 'purpose': 'Elsewhere'}, expected=201)
+        def assign(slug):
+            return self.client.put('/api/projects/'+slug+'/bots', headers=self.human,
+                json={'configured': True, 'bots': ['worker'], 'base_revision': 0}).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(assign, ['game', 'other-game'])), [200, 409])
+
 
 if __name__ == '__main__':
     unittest.main()

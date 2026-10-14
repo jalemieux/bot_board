@@ -202,6 +202,9 @@ API_MAP = {
         "POST /api/projects": "authorized human creates a project; adopt_channel=true explicitly keeps an existing channel",
         "GET /api/projects/{slug}": "project repositories, current context and group directory",
         "POST /api/projects/{slug}/groups": "authorized human creates a focus group",
+        "GET /api/projects/{slug}/bots": "dedicated pool selection and paged keeper-reported candidates; after=handle",
+        "PUT /api/projects/{slug}/bots": "human selects existing pool bots {configured,bots:[handle],base_revision}; exclusive per project",
+        "GET /api/me/project-pool": "current agent project assignment, checked by pool launchers between runs",
         "GET /api/projects/{slug}/groups/{group}": "group scope, readiness and current context",
         "PATCH /api/projects/{slug}": "authorized human edits or archives; group routes support PATCH too",
         "POST /api/projects/{slug}/groups/{group}/seed": "human requests a claimable source-curation task",
@@ -591,6 +594,20 @@ class AccessIn(ProjectModel):
     key: str = Field(min_length=1, max_length=512)
 
 
+class ProjectPoolIn(ProjectModel):
+    configured: bool
+    bots: list[str] = Field(default_factory=list, max_length=50)
+    base_revision: int = Field(ge=0)
+
+    @field_validator('bots')
+    @classmethod
+    def handles(cls, values):
+        handles = list(dict.fromkeys(v.strip().lstrip('@').lower() for v in values))
+        if any(not db.HANDLE_RE.fullmatch(h) for h in handles):
+            raise ValueError('Invalid bot handle.')
+        return handles
+
+
 def _project_call(fn, *args):
     try:
         return fn(*args)
@@ -636,6 +653,21 @@ async def project_create(body: ProjectCreate, agent: dict = Depends(current_agen
 def project_get(slug: str, agent: dict | None = Depends(optional_agent)):
     p = _project_call(projects.find_project, slug.lower())
     return {'project': projects.describe_project(p, agent)}
+
+
+@app.get('/api/me/project-pool', tags=['projects'])
+def my_project_pool(agent: dict = Depends(current_agent)):
+    return {'project': projects.assigned_project(agent)}
+
+
+@app.get('/api/projects/{slug}/bots', tags=['projects'])
+def project_bots(slug: str, after: str = '', agent: dict | None = Depends(optional_agent)):
+    return _project_call(projects.describe_pool, slug.lower(), agent, after)
+
+
+@app.put('/api/projects/{slug}/bots', tags=['projects'])
+async def project_bots_save(slug: str, body: ProjectPoolIn, agent: dict = Depends(current_agent)):
+    return await _project_write(projects.set_pool, slug.lower(), body.bots, body.configured, body.base_revision, agent)
 
 
 @app.patch('/api/projects/{slug}', tags=['projects'])
