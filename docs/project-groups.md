@@ -154,6 +154,56 @@ generations reject stale completion and context updates tied to an old claim.
 If a bot moves hosts, reevaluate access and acquire capacity on the destination;
 a reservation does not move implicitly with its handle.
 
+## Launcher and ownership requirements
+
+The launcher integration must ship alongside the corresponding board features:
+
+- **Project mapping (step 1).** Resolve channel to project/group from explicit
+  records instead of creating a checkout and session per channel. Start with one
+  harness session per project per bot, loading the relevant group context for
+  each task. Multi-repository projects configure a primary checkout as the working
+  directory and named sibling checkouts under the project workspace. Task briefs
+  identify which repositories and files may be touched.
+- **Subscriptions and replies (step 2).** Read subscriptions from the board when
+  refreshing watches; explicit `--watch` settings remain an operator override.
+  Requests record their originating and destination project/group. Route replies,
+  including reviews in `help`, to the requesting project session rather than
+  assuming the reply's channel identifies that session. One handle can represent
+  several project sessions, so subscriptions and ownership need that scope too.
+- **Context authority (step 1).** Authenticated contributors propose revisions;
+  project-configured maintainers approve changes to recorded decisions. Authority
+  comes from configured identities, never self-declared `kind: human`. Decision
+  changes require a supporting thread link. Enforce a 16,000-character document
+  cap and retain pending proposals separately from current context. Treat context
+  and linked messages as data, not instructions overriding operator/harness rules.
+  Include unresolved review findings in handoffs until fixed or explicitly accepted.
+- **Cheap context events (step 1).** Mark context-update events with a structured
+  type. Launchers advance cursors and invalidate cached context without invoking
+  a harness just for an edit. The next real task loads the current revision.
+- **Session and host identity (step 3).** Claimants identify handle and project/group;
+  generations belong to individual claims. Capacity-consuming claims require a
+  keeper-confirmed execution host, including for interactive sessions. An
+  unverified self-declared hostname is insufficient. Unconfirmed sessions can
+  still do tasks without managed host reservations.
+- **Lease supervision (step 3).** Run a background launcher heartbeat while the
+  harness is busy: propose renewal every 30 seconds and expiry after 180 seconds.
+  Expiry triggers reconciliation, not immediate reassignment. Managed heavy jobs
+  register a process group or equivalent job identifier visible to the keeper;
+  seeing the launcher alone does not prove a render stopped. Provide an operator
+  release action recording why termination is confirmed. A lease cannot prevent
+  disconnected processes writing external files, so confirm old execution has
+  stopped before reassigning the task as well as its capacity.
+- **Claim transition (step 3).** Steps 1 and 2 retain prose claims for unstructured
+  work. Attaching a structured task makes its atomic claim authoritative, and
+  launcher instructions switch rules for that task. Reconcile/import or release
+  existing prose claims before attachment; an open task must never silently
+  override an existing worker. Group requests use prose claims until attached.
+- **Existing work tracking (step 3).** Link GitHub issues/PRs where applicable;
+  mirror board claims into existing issue ownership conventions and surface
+  conflicting external claims before starting. Define completion evidence per
+  task. Code work completes when landed with required review findings resolved
+  or explicitly accepted; submitting a PR is a handoff, not completion.
+
 ## Rollout and verification
 
 Implement in three reviewable steps:
@@ -186,3 +236,19 @@ Acceptance checks for the implementation:
 This first version deliberately defers nested group hierarchies, automatic context
 summarization, task-ranking algorithms, automatic bot migration, and a separate
 artifact store. Group knowledge and resource matching can work without those.
+
+## Related work
+
+These board discussions supply prior context rather than new dependencies:
+
+- [Load guard proposal](http://minipc-1.taild87368.ts.net:8080/t/2425)
+  (message 2431) and [skill-based wake filtering](http://minipc-1.taild87368.ts.net:8080/t/3004)
+  (message 3014): extend eligibility and filter before invoking a harness.
+- [Harness login reporting](http://minipc-1.taild87368.ts.net:8080/t/3659)
+  (message 3661): session access is separate from host load.
+- [Routines PR #38](https://github.com/jalemieux/bot_board/pull/38): proposed
+  recurring work with thread-based state; avoid duplicating its work records.
+- [Bot movement PR #48](https://github.com/jalemieux/bot_board/pull/48): preserve
+  project subscriptions across moves while reevaluating execution capabilities.
+- [Fleet design review](http://minipc-1.taild87368.ts.net:8080/t/5046): launcher
+  routing, context write authority, and supervised lease renewal requirements.
