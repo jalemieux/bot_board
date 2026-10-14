@@ -22,7 +22,10 @@ message go to the routine's project channel, the prompt plus what the check
 found, for a standby bot to claim like any other work.
 
 The thread is the switch and the history. A routine is created paused; it runs
-once a human replies `enable <code>` in its thread, and stops on `pause`. The
+once a human replies `enable <code>` in its thread, and stops on `pause`. A human's
+`test` there, paused or not, has the runner run the check once, with the watermark
+it has now, and reply with what it found (meta `routine_test`); nothing fires and
+nothing it remembers changes. The
 code is in the routine's message and stands for exactly that text, so an
 `enable` starts what the human read and nothing posted since. A new version is
 a reply carrying a new `meta.routine`, with a new code. The runner posts there
@@ -199,8 +202,12 @@ def routines_of(messages, runner=None, operators=None):
                  if m["author_kind"] == "human" and (not operators or m["author"] in operators)}
         switch = last(lambda m: words.get(m["id"]) in (["pause"], ["enable", code_of(routine)]))
         failed = last(lambda m: m["author"] == runner and m["meta"].get("routine_failed"))
+        # a human's `test` that the runner has not answered yet
+        answered = {m["meta"]["routine_test"].get("for") for m in msgs
+                    if m["author"] == runner and isinstance(m["meta"].get("routine_test"), dict)}
         r = {**routine, "thread": tid, "version": defn["id"], "code": code_of(routine),
-             "problem": problem_with(routine, defn["body"], defn["id"] != tid)}
+             "problem": problem_with(routine, defn["body"], defn["id"] != tid),
+             "tests": [i for i in sorted(words) if words[i] == ["test"] and i not in answered]}
         if r["problem"]:
             r["state"] = "invalid"
             if not isinstance(r.get("name"), str) or not r["name"].strip():
@@ -305,6 +312,9 @@ class Runner:
         for r in self.board.routines():
             st = self.state.setdefault(str(r["thread"]), {})
             try:
+                for t in r["tests"]:
+                    if t > st.get("tested", 0):
+                        self.test(r, st, t)
                 if r["state"] != "enabled":
                     st.pop("job", None)     # paused or replaced mid-job: the next enable starts clean
                     if r["state"] == "invalid" and st.get("refused") != r["version"]:
@@ -326,6 +336,29 @@ class Runner:
                 self.log(r, f"skipped this pass: {type(e).__name__}: {e}")
             finally:
                 self.save()
+
+    def test(self, r, st, asked):
+        """Run the check once for a human's `test`, and say what it found. Fires nothing, and
+        leaves the watermark, the job and the next check where they were."""
+        res = {"for": asked, "ok": False, "work": False, "found": None, "watermark": None, "error": None}
+        if r["state"] == "invalid":
+            res["error"] = f"this definition cannot run: {r['problem']}"
+        else:
+            try:
+                out = run_check(r["check"], r["name"], st.get("watermark"))
+                res.update(ok=True, work=out["work"], found=out.get("found"), watermark=out.get("watermark"))
+            except CheckError as e:
+                res["error"] = str(e)
+        if res["error"]:
+            body = f"Test of `{r['name']}`: {res['error']}"
+        elif res["work"]:
+            body = (f"Test of `{r['name']}`: the check found work. Enabled, this would go to #{r['channel']}:\n\n"
+                    f"{found_text(res['found'])}\n\nNothing was sent; the watermark is unchanged.")
+        else:
+            body = f"Test of `{r['name']}`: the check found nothing to do. Nothing was sent."
+        self.board.post(ADMIN, body, reply_to=r["thread"], meta={"routine_test": res})
+        st["tested"] = asked
+        self.log(r, f"tested for message {asked}: " + (res["error"] or ("work" if res["work"] else "no work")))
 
     def check(self, r, st):
         st["checked_at"] = time.time()
