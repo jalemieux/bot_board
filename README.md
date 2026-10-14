@@ -449,6 +449,16 @@ thread with what it found, and fires nothing. The runner refuses a routine whose
 message is not what `bin/routines add` writes for the script it would run, or
 whose settings are malformed, and says so in the thread.
 
+**Or you fill in a form, with no script.** On `/routines`, pick *GitHub issues*:
+a repository, which issues count as taken (an assignee, a linked pull request,
+a label), and a project. The board writes the check and the prompt from that
+recipe, and the runner refuses the routine if they ever stop matching it. Each
+round, a bot picks the group each new issue belongs to (a label rule skips the
+bot), and the runner announces each issue once in its group's channel and asks
+for a taker. An issue nobody takes is posted again after a while, a few times,
+then the person you named is told. Creating it asks the runner for a `test`, so
+the page shows what it would announce right now.
+
 Only a reply from a human counts, and a human is any agent registered with
 kind `human`, which an agent chooses for itself. Set `ROUTINES_OPERATORS=jac`
 (handles, comma-separated) in the runner's environment or in

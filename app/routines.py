@@ -12,7 +12,7 @@ import importlib.machinery
 import importlib.util
 import os
 
-from . import db
+from . import db, projects
 
 _PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "routines")
 
@@ -28,6 +28,7 @@ cli = _load()
 ADMIN = cli.ADMIN
 DEFAULTS = cli.DEFAULTS
 JOBS_SHOWN = 5
+ITEMS_SHOWN = 30
 
 
 def _all(**kw) -> list[dict]:
@@ -56,6 +57,17 @@ def _jobs(r: dict) -> list[dict]:
     return out
 
 
+def _items(r: dict) -> list[dict]:
+    """The issues a recipe routine announced, newest first, with how many replies each has."""
+    rows = db.conn().execute(
+        "SELECT m.id, b.slug AS channel, m.created_at, json_extract(m.meta,'$.routine_item.number') AS number,"
+        " (SELECT COUNT(*) FROM messages x WHERE x.thread_id=m.id AND x.id<>m.id) AS replies"
+        " FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.reply_to IS NULL"
+        " AND json_extract(m.meta,'$.routine')=? AND json_extract(m.meta,'$.routine_item') IS NOT NULL"
+        " ORDER BY m.id DESC LIMIT ?", (r["thread"], ITEMS_SHOWN)).fetchall()
+    return [dict(x) for x in rows]
+
+
 def list_routines() -> list[dict]:
     admin = _all(board=ADMIN)
     by_thread: dict[int, list[dict]] = {}
@@ -69,7 +81,8 @@ def list_routines() -> list[dict]:
         out.append({**r,
                     "failure": failed["body"] if failed and r["state"] == "failed" else None,
                     "last_test": test and {**test["meta"]["routine_test"], "id": test["id"], "at": test["created_at"]},
-                    "jobs": [] if r["state"] == "invalid" else _jobs(r)})
+                    "jobs": [] if r["state"] == "invalid" else _jobs(r),
+                    "items": _items(r) if isinstance(r.get("recipe"), dict) else []})
     return out
 
 
@@ -78,6 +91,19 @@ def create(data: dict, agent: dict, max_body: int) -> dict:
     text = lambda k: (data.get(k) or "").replace("\r\n", "\n")
     r = {"name": text("name").strip(), "channel": text("channel").strip().lower(), "check": text("check"),
          "prompt": text("prompt").strip(), **{k: data.get(k, v) for k, v in DEFAULTS.items()}}
+    if data.get("recipe") is not None:
+        # The board writes the check and the prompt from the recipe; the runner checks they still match.
+        if not isinstance(data["recipe"], dict):
+            raise ValueError("not posted: `recipe` must be an object")
+        rc = cli.recipe_of(data["recipe"])
+        problem = cli.recipe_problem(rc)
+        if problem:
+            raise ValueError(f"not posted: {problem}")
+        project = projects.find_project(rc["project"])   # KeyError when there is none
+        if project["archived"]:
+            raise ValueError(f"not posted: the project `{rc['project']}` is archived")
+        r.update(recipe=rc, recipe_version=cli.RECIPE_VERSION, check=cli.recipe_check(rc), prompt=cli.recipe_prompt(rc))
+        r["channel"] = r["channel"] or db.get_board_by_id(project["board_id"])["slug"]
     for k in ("about", "skill"):
         if text(k).strip():
             r[k] = text(k).strip()

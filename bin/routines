@@ -4,7 +4,7 @@
   routines run [--interval 30]     the runner: keep checking, fire, follow up (one per board, on a box with the credentials the checks need)
   routines once                    one pass of the same, then exit
   routines ls [--as HANDLE]        every routine on the board and where it stands
-  routines add --name N --channel C --check FILE --prompt FILE [--about TEXT] [--every 2m]
+  routines add --name N --channel C (--check FILE --prompt FILE | --recipe FILE) [--about TEXT] [--every 2m]
                [--claim-timeout 5m] [--done-timeout 30m] [--resends 3] [--skill S]
                [--thread ID] [--as HANDLE]
                                    post a routine to the admin channel, paused (--thread: a new version of that one)
@@ -48,6 +48,18 @@ of progress say, starts done_timeout again. A job is done when a bot replies in
 its thread with meta {"done": true}. One job per routine is open at a time, so
 however fast the check runs, a routine costs at most one bot run at a time.
 
+A routine can also be written as a recipe (`meta.routine.recipe`) instead of a
+check of your own. The one recipe now, `github-issues`, watches a repository's
+open issues that nobody has taken and routes each to a group of a project:
+its check and its prompt are written from the recipe (recipe_check,
+recipe_prompt), so the message a human approves still shows exactly what runs.
+Issues a label rule places are announced by the runner without a bot; the
+rest go out as one job, a few at a time, for a bot to pick the group, and the
+bot answers with meta {"done": true, "routes": [{"number", "group", "why"}]}.
+The runner announces each issue in its group's channel once, then chases it:
+no bot reply in that thread, no assignee and no linked pull request after
+`remind_after`, it is posted again, `reminds` times, then `escalate` is told.
+
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
 (default routines), ROUTINES_OPERATORS (the handles whose `enable` and `pause` count;
 default any agent of kind human, which is whatever an agent called itself when it
@@ -56,7 +68,7 @@ remembers between passes is ~/.config/bot_board/routines/state.json; without tha
 file each routine with work fires once more.
 """
 import argparse, hashlib, json, os, re, signal, shlex, subprocess, sys, tempfile, time, urllib.error, urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 CFG = os.path.expanduser("~/.config/bot_board")
 ADMIN = "admin"
@@ -137,7 +149,8 @@ def body_of(routine, new_version=False):
             f"- Fires in #{r['channel']} when the check finds work; the check runs every {mins(r['every'])}.\n"
             f"- Sent again if unclaimed for {mins(r['claim_timeout'])} or unfinished for {mins(r['done_timeout'])}, "
             f"{r['resends']} times, then reported as failed.\n"
-            + (f"- The message it fires is marked for the skill `{r['skill']}`.\n" if r.get("skill") else "") +
+            + (f"- The message it fires is marked for the skill `{r['skill']}`.\n" if r.get("skill") else "")
+            + (recipe_summary(r["recipe"]) if isinstance(r.get("recipe"), dict) and not recipe_problem(r["recipe"]) else "") +
             f"- **Paused.** A human replies `enable {code_of(r)}` in this thread to start it, `pause` to stop it.\n\n"
             f"The prompt a bot gets:\n\n{chr(10).join('> ' + line for line in r['prompt'].splitlines())}\n\n"
             f"The check (runs on the runner's box, costs no tokens):\n\n```\n{r['check'].rstrip()}\n```")
@@ -154,9 +167,139 @@ def problem_with(routine, body, new_version):
     for key in ("about", "skill"):
         if not isinstance(routine.get(key, ""), str):
             return f"`{key}` is not text"
+    if "recipe" in routine:
+        rc = routine["recipe"]
+        if not isinstance(rc, dict) or set(rc) != set(recipe_of({}) or {}):
+            return "`recipe` is not a complete recipe"
+        if recipe_problem(rc):
+            return recipe_problem(rc)
+        version = routine.get("recipe_version")
+        if type(version) is not int or not 1 <= version <= RECIPE_VERSION:
+            return "`recipe_version` is missing or not one this runner knows"
+        if version == RECIPE_VERSION and (routine["check"] != recipe_check(rc) or routine["prompt"] != recipe_prompt(rc)):
+            return "its check or prompt is not what its recipe writes"
     if body != body_of(routine, new_version):
         return "its message is not what `routines add` writes for its `meta.routine`, so a human would approve text that is not what runs"
     return ""
+
+
+# ---------------------------------------------------------------- recipes
+
+# Bump when recipe_check or recipe_prompt changes what they write. A definition keeps
+# the version it was written with: what a human approved is its stored check and
+# prompt (the message shows them), so an older one keeps running after a release
+# instead of turning invalid; it is checked against the writer only while current.
+RECIPE_VERSION = 1
+RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
+                   "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
+REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}")
+
+
+def recipe_of(data):
+    """A recipe with every setting present: what is stored and what the code is taken from."""
+    rc = {"type": data.get("type"), "repo": data.get("repo"), "project": data.get("project")}
+    rc.update({k: data.get(k, v) for k, v in RECIPE_DEFAULTS.items()})
+    if isinstance(rc["after"], str) and rc["after"]:
+        # The check compares it with gh's createdAt as text, which is always UTC with a Z.
+        try:
+            t = datetime.fromisoformat(rc["after"].replace("Z", "+00:00"))
+            if t.tzinfo:
+                rc["after"] = t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            pass    # recipe_problem says what is wrong with it
+    return rc
+
+
+def recipe_problem(rc):
+    """Why a recipe cannot run, or ''."""
+    if rc.get("type") != "github-issues":
+        return "the recipe `type` must be github-issues"
+    if not isinstance(rc.get("repo"), str) or not REPO_RE.fullmatch(rc["repo"]):
+        return "the recipe `repo` must be owner/name"
+    if not isinstance(rc.get("project"), str) or not NAME_RE.fullmatch(rc["project"]):
+        return "the recipe `project` must be a project slug"
+    for key in ("unassigned", "no_linked_pr"):
+        if type(rc.get(key)) is not bool:
+            return f"the recipe `{key}` must be true or false"
+    if not isinstance(rc.get("skip_labels"), list) or not all(isinstance(x, str) and x.strip() for x in rc["skip_labels"]):
+        return "the recipe `skip_labels` must be a list of labels"
+    for key, low, high in (("batch", 1, 50), ("remind_after", 60, 30 * 86400), ("reminds", 0, 20)):
+        if type(rc.get(key)) is not int or not low <= rc[key] <= high:
+            return f"the recipe `{key}` must be a whole number from {low} to {high}"
+    if not isinstance(rc.get("after"), str) or (rc["after"] and not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rc["after"])):
+        return "the recipe `after` must be empty or an ISO time in UTC (2026-10-14T21:00:00Z)"
+    if not isinstance(rc.get("escalate"), str) or (rc["escalate"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", rc["escalate"])):
+        return "the recipe `escalate` must be empty or a handle"
+    rules = rc.get("rules")
+    if not isinstance(rules, list) or not all(isinstance(x, dict) and set(x) == {"label", "group"}
+                                              and isinstance(x["label"], str) and x["label"].strip()
+                                              and isinstance(x["group"], str) and NAME_RE.fullmatch(x["group"])
+                                              for x in rules):
+        return "the recipe `rules` must be a list of {label, group}"
+    return ""
+
+
+def recipe_check(rc):
+    """The check a github-issues recipe runs: open issues nobody has taken and the routine
+    has not announced yet (the watermark is the list of numbers it has), `batch` at a time."""
+    cfg = {k: rc[k] for k in ("unassigned", "no_linked_pr", "skip_labels", "batch", "after", "rules")}
+    return f"""#!/bin/sh
+# Written from the routine's recipe: edit the recipe, not this.
+# Open issues in {rc['repo']} that nobody has taken and this routine has not announced.
+set -e
+gh issue list -R {rc['repo']} --state open --limit 1000 \\
+  --json number,title,url,labels,assignees,createdAt,closedByPullRequestsReferences > issues.json
+exec python3 - <<'PY'
+import json, os
+cfg = json.loads({json.dumps(json.dumps(cfg, sort_keys=True))})
+sent = set(json.loads(os.environ.get("ROUTINE_WATERMARK") or "[]"))
+skip = set(cfg["skip_labels"])
+rules = {{r["label"]: r["group"] for r in cfg["rules"]}}
+new = []
+for i in sorted(json.load(open("issues.json")), key=lambda i: i["number"]):
+    labels = [l["name"] for l in i["labels"]]
+    if i["number"] in sent or skip & set(labels) or (cfg["after"] and i["createdAt"] <= cfg["after"]):
+        continue
+    if (cfg["unassigned"] and i["assignees"]) or (cfg["no_linked_pr"] and i["closedByPullRequestsReferences"]):
+        continue
+    group = next((rules[l] for l in labels if l in rules), "")
+    new.append({{"number": i["number"], "title": i["title"], "url": i["url"], "labels": labels, "group": group}})
+batch = new[:cfg["batch"]]
+print(json.dumps({{"work": bool(batch),
+                  "found": [f"#{{i['number']}} {{i['title']}} {{i['url']}}" + (f" (rule: {{i['group']}})" if i["group"] else "")
+                            for i in batch] + ([f"and {{len(new) - len(batch)}} more after these"] if len(new) > len(batch) else []),
+                  "items": batch,
+                  "watermark": sorted(sent | {{i["number"] for i in batch}})}}))
+PY
+"""
+
+
+def recipe_prompt(rc):
+    return (f"Route each GitHub issue below, from {rc['repo']}, to the group of project `{rc['project']}` "
+            f"it belongs to. The groups and what each is for are at GET /api/projects/{rc['project']} "
+            f"(`groups`: slug, purpose, scope); read the issue (`gh issue view <n> -R {rc['repo']}`) when the "
+            "title is not enough. Issues marked with a rule already have their group: keep it.\n\n"
+            "Do not announce the issues yourself and do not assign anyone: the runner posts each one in its "
+            "group's channel and follows it up. Reply in this thread with `meta` "
+            '`{"done": true, "routes": [{"number": 34, "group": "economy", "why": "one line on why"}]}`, '
+            "one route per issue. An issue that fits no group gets `\"group\": \"\"` and goes to the project channel.")
+
+
+def recipe_summary(rc):
+    taken = ["it has an assignee"] * rc["unassigned"] + ["a pull request is linked to it"] * rc["no_linked_pr"]
+    taken += [f"it is labelled {', '.join(rc['skip_labels'])}"] * bool(rc["skip_labels"])
+    lines = [f"- Watches open issues in {rc['repo']}"
+             + (f" opened after {rc['after']}" if rc["after"] else "")
+             + (f", skipping any where {' or '.join(taken)}" if taken else "")
+             + f"; each is announced once, {rc['batch']} at a time.",
+             f"- Routes each to a group of project `{rc['project']}`"
+             + ("; label rules: " + ", ".join(f"`{x['label']}` → {x['group']}" for x in rc["rules"]) if rc["rules"] else "")
+             + ". A bot picks the group for the rest."]
+    if rc["reminds"]:
+        lines.append(f"- An announced issue no bot has taken is posted again after {mins(rc['remind_after'])}, "
+                     f"{rc['reminds']} times" + (f", then @{rc['escalate']} is told." if rc["escalate"] else "."))
+    return "\n".join(lines) + "\n"
 
 
 class Board:
@@ -234,6 +377,10 @@ def mins(secs):
 
 
 class CheckError(Exception):
+    pass
+
+
+class ProjectGone(Exception):
     pass
 
 
@@ -326,6 +473,11 @@ class Runner:
                 if st.get("version") != r["version"]:
                     st.update(version=r["version"], checked_at=0)
                     st.pop("job", None)
+                if r.get("recipe"):
+                    try:
+                        self.chase(r, st)
+                    except Exception as e:      # reminders wait; the routine's own work goes on
+                        self.log(r, f"chasing skipped this pass: {type(e).__name__}: {e}")
                 if "job" in st:
                     self.follow(r, st)
                 elif time.time() - st.get("checked_at", 0) >= r["every"]:
@@ -368,6 +520,14 @@ class Runner:
             return self.fail(r, st, str(e))
         if not out["work"]:
             return
+        items = out.get("items") if r.get("recipe") and isinstance(out.get("items"), list) else None
+        if items and all(i.get("group") for i in items):   # every one placed by a label rule: no bot needed
+            try:
+                self.announce(r, st, items, {})
+            except ProjectGone as e:
+                return self.fail(r, st, f"{e}; nothing was announced.")
+            st["watermark"] = out.get("watermark")
+            return
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
                 f"Routine `{r['name']}` (#{ADMIN} thread {r['thread']}). One bot takes this: claim it here as usual. "
                 "When it is finished, reply in this thread with the result and `meta` `{\"done\": true}`; "
@@ -378,6 +538,8 @@ class Runner:
         m = self.board.post(r["channel"], body, meta=meta)
         st["job"] = {"msg": m["id"], "sent": m["id"], "sent_at": time.time(), "sends": 1,
                      "watermark": out.get("watermark")}
+        if items:
+            st["job"]["items"] = items
         self.log(r, f"work found, fired as message {m['id']} in #{r['channel']}")
 
     def follow(self, r, st):
@@ -386,6 +548,13 @@ class Runner:
                    if m["id"] > job["msg"] and m["author"] != ME and m["author_kind"] != "human"]
         done = next((m for m in replies if m["meta"].get("done") is True), None)
         if done:
+            if job.get("items"):
+                routes = done["meta"].get("routes")
+                routes = {x.get("number"): x for x in routes if isinstance(x, dict)} if isinstance(routes, list) else {}
+                try:
+                    self.announce(r, st, job["items"], routes)
+                except ProjectGone as e:
+                    return self.fail(r, st, f"{e}; nothing was announced.")
             st["watermark"] = job["watermark"]
             del st["job"]
             return self.log(r, f"done by {done['author']} (message {done['id']})")
@@ -406,6 +575,87 @@ class Runner:
                             reply_to=job["msg"], meta={"routine": r["thread"], "name": r["name"], "resend": job["sends"]})
         job.update(sent=m["id"], sent_at=time.time(), sends=job["sends"] + 1)
         self.log(r, f"sent again ({why}), message {m['id']}")
+
+
+    # ---- recipes: announce each item once, then chase it until a bot takes it
+
+    def project(self, slug):
+        try:
+            p = call("GET", f"/api/projects/{slug}", token=self.board.token)["project"]
+        except ConnectionError as e:
+            if ": 404 " in str(e):
+                raise ProjectGone(f"the project `{slug}` this routine routes to does not exist") from None
+            raise
+        if p.get("archived"):
+            raise ProjectGone(f"the project `{slug}` this routine routes to is archived")
+        return p["channel"], {g["slug"]: g["channel"] for g in p.get("groups", []) if not g.get("archived")}
+
+    def announce(self, r, st, items, routes):
+        rc = r["recipe"]
+        home, groups = self.project(rc["project"])
+        items_st = st.setdefault("items", {})
+        for i in items:
+            if str(i["number"]) in items_st:
+                continue
+            route = routes.get(i["number"]) or {}
+            group = i.get("group") or str(route.get("group") or "")
+            why = "label rule" if i.get("group") else str(route.get("why") or "").strip()[:300]
+            channel = groups.get(group, home)
+            body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
+                    + (f"Routed to {group}: {why}.\n" if channel != home and why else
+                       f"Routed to {group}.\n" if channel != home else "No group fits it, so it is here.\n")
+                    + f"Reply in this thread to take it (\"taking this\"), then assign yourself: "
+                    f"`gh issue edit {i['number']} -R {rc['repo']} --add-assignee @me`.")
+            m = self.board.post(channel, body, meta={"routine": r["thread"], "name": r["name"],
+                                                     "routine_item": {"repo": rc["repo"], "number": i["number"]}})
+            items_st[str(i["number"])] = {"msg": m["id"], "channel": channel, "sent_at": time.time(), "reminds": 0}
+            self.log(r, f"announced #{i['number']} in #{channel} as message {m['id']}")
+
+    def taken(self, r, item):
+        """A bot answered in the announcement's thread, or the issue moved on on GitHub."""
+        if any(m["id"] > item["msg"] and m["author"] != ME and m["author_kind"] != "human"
+               for m in self.board.pages(f"/api/threads/{item['msg']}")):
+            return "a bot took it"
+        try:
+            got = json.loads(subprocess.run(
+                ["gh", "issue", "view", str(item["number"]), "-R", r["recipe"]["repo"],
+                 "--json", "state,assignees,closedByPullRequestsReferences"],
+                capture_output=True, text=True, timeout=60, check=True).stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return ""       # GitHub unreachable: ask again on the next pass
+        if got["state"] != "OPEN":
+            return "closed"
+        if got["assignees"] or got["closedByPullRequestsReferences"]:
+            return "assigned or linked to a pull request"
+        return ""
+
+    def chase(self, r, st):
+        rc = r["recipe"]
+        for number, item in list(st.get("items", {}).items()):
+            if item.get("over") or time.time() - item["sent_at"] < rc["remind_after"]:
+                continue
+            item["number"] = int(number)
+            why = self.taken(r, item)
+            if why:
+                item["over"] = why
+                self.log(r, f"#{number}: {why}")
+            elif item["reminds"] < rc["reminds"]:
+                item["reminds"] += 1
+                item["sent_at"] = time.time()
+                self.board.post(item["channel"], f"Still nobody on #{number} after {mins(rc['remind_after'])} "
+                                f"(reminder {item['reminds']} of {rc['reminds']}). Anyone free: reply here to take it.",
+                                reply_to=item["msg"], meta={"routine": r["thread"], "name": r["name"],
+                                                            "routine_item": {"repo": rc["repo"], "number": int(number)}})
+                self.log(r, f"reminded #{number} ({item['reminds']} of {rc['reminds']})")
+            else:
+                item["over"] = "no taker"
+                if rc["escalate"]:
+                    home, _ = self.project(rc["project"])
+                    self.board.post(home, f"@{rc['escalate']} #{number} has had no taker after {rc['reminds']} "
+                                    f"reminders: message {item['msg']} in #{item['channel']}.",
+                                    meta={"routine": r["thread"], "name": r["name"]})
+                self.log(r, f"#{number}: no taker after {rc['reminds']} reminders")
+            self.save()
 
 
 # ---------------------------------------------------------------- commands
@@ -458,20 +708,33 @@ def cmd_check(a):
 
 
 def cmd_add(a):
-    check = open(a.check, encoding="utf-8").read()
-    prompt = open(a.prompt, encoding="utf-8").read().strip()
+    recipe = None
+    if a.recipe:
+        recipe = recipe_of(json.load(open(a.recipe, encoding="utf-8")))
+        if recipe_problem(recipe):
+            die(f"not posted: {recipe_problem(recipe)}")
+        check, prompt = recipe_check(recipe), recipe_prompt(recipe)
+    elif a.check and a.prompt:
+        check = open(a.check, encoding="utf-8").read()
+        prompt = open(a.prompt, encoding="utf-8").read().strip()
+    else:
+        die("add needs --check and --prompt, or --recipe")
     r = {"name": a.name, "channel": a.channel, "check": check, "prompt": prompt, "every": duration(a.every),
          "claim_timeout": duration(a.claim_timeout), "done_timeout": duration(a.done_timeout), "resends": a.resends}
     if a.about:
         r["about"] = a.about
     if a.skill:
         r["skill"] = a.skill
+    if recipe:
+        r.update(recipe=recipe, recipe_version=RECIPE_VERSION)
     body = body_of(r, bool(a.thread))
     if problem_with(r, body, bool(a.thread)):
         die(f"not posted: {problem_with(r, body, bool(a.thread))}")
     if not a.no_dry_run:
         run_check(check, a.name)    # a check that does not run is not worth a human's look
     board = Board(a.as_handle)
+    if recipe:   # a 404 here stops it: a routine that routes to no project would only fail later
+        call("GET", f"/api/projects/{recipe['project']}", token=board.token)
     if not a.thread:
         call("POST", "/api/channels", {"slug": ADMIN, "topic": "Fleet administration: one thread per routine "
              "(recurring work); a human replies enable <code> or pause in a routine's thread. Not a project."}, board.token)
@@ -492,8 +755,11 @@ def main():
     c.add_argument("--file")
     c.add_argument("--watermark")
     c = sub.add_parser("add")
-    for flag in ("--name", "--channel", "--check", "--prompt"):
+    for flag in ("--name", "--channel"):
         c.add_argument(flag, required=True)
+    c.add_argument("--check")
+    c.add_argument("--prompt")
+    c.add_argument("--recipe", help="a JSON recipe file instead of --check and --prompt")
     c.add_argument("--about", default="")
     c.add_argument("--every", default=str(DEFAULTS["every"]))
     c.add_argument("--claim-timeout", default=str(DEFAULTS["claim_timeout"]))
