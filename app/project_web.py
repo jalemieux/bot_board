@@ -252,7 +252,7 @@ function drawProject() {
   var groupBox = h('div');
   add(clear(root), head, groupBox, groupsBox);
   if (p.can_manage && !p.archived) add(root, projectEditBox());
-  add(root, h('p', {'class': 'note', text: 'Bot allocation is not enforced yet. Project and group targets arrive with resource-aware task claims.'}));
+  add(root, poolBox());
   add(root, contextBox(P(p.slug), p.context, p.can_manage, 'project ' + (p.name || p.slug), p.archived));
   if (openGroup) groupView(groupBox);
 }
@@ -275,6 +275,120 @@ function projectEditBox() {
       });
     }}, field('Name', name), field('Purpose', purpose), h('button', {type: 'submit', text: 'Save'}), out),
     p.archived ? null : archiveControl(P(p.slug), 'project', p.name || p.slug, function () { reloadProject(true); }));
+}
+
+// ---- the project's bot pool: which pool bots serve it ------------------------------
+// GET/PUT /api/projects/{p}/bots. Configured: only the chosen pool bots work on the
+// project and its groups (none, if the list is empty). Not configured: the shared
+// pool, any pool bot. A bot belongs to at most one project; launchers apply a change
+// between runs.
+function poolBox() {
+  var p = proj, path = P(p.slug) + '/bots';
+  var sec = h('section', {'aria-labelledby': 'pool-h'}, h('h3', {id: 'pool-h', text: 'Bot pool'}));
+  var summary = h('div'), body = h('div'), out = h('div', {role: 'status', 'aria-live': 'polite'});
+  add(sec, summary, body, out);
+  var data = null, cands = [], selected = {}, dedicated = null, count = null;
+
+  function describe(d) {
+    clear(summary);
+    if (!d.configured) add(summary, h('p', null, badge('shared', 'pending'), ' Any pool bot may work on this project and its groups.'));
+    else if (!d.bots.length) add(summary, h('p', null, badge('dedicated', 'ready'), ' Dedicated pool, empty: no pool bot works on this project or its groups.'));
+    else add(summary, h('p', null, badge('dedicated', 'ready'), ' Only these pool bots work on this project and its groups: ',
+      d.bots.map(function (b, i) { return [i ? ', ' : '', h('a', {href: '/a/' + encodeURIComponent(b), text: '@' + b})]; })));
+    add(summary, h('p', {'class': 'note', text: 'A change applies between runs: a bot finishes the run it is in. Bots on a launcher older than this feature ignore it.'}));
+  }
+  function merge(page, reset) {   // candidates by handle, plus current bots the keepers no longer report
+    var byHandle = {};
+    if (!reset) cands.forEach(function (c) { byHandle[c.handle] = c; });
+    (page.candidates || []).forEach(function (c) { byHandle[c.handle] = c; });
+    (page.bots || []).forEach(function (b) {
+      if (!byHandle[b]) byHandle[b] = {handle: b, host: '', status: 'not reported', available: false, assigned_project: p.slug};
+    });
+    cands = Object.keys(byHandle).map(function (k) { return byHandle[k]; });
+  }
+  function load(after, reset) {
+    return api('GET', path + (after ? '?after=' + encodeURIComponent(after) : '')).then(function (res) {
+      if (!res.ok) { status(out, false, 'Could not load the bot pool: ' + why(res)); return res; }
+      var first = !data;
+      data = {configured: res.data.configured, revision: res.data.revision, bots: res.data.bots || [],
+              can_manage: res.data.can_manage, has_more: res.data.has_more, next_after: res.data.next_after};
+      merge(res.data, reset);
+      if (first) { (data.bots).forEach(function (b) { selected[b] = true; }); }
+      describe(data);
+      draw();
+      return res;
+    });
+  }
+  function elsewhere(c) { return c.assigned_project && c.assigned_project !== p.slug; }
+  function draw() {
+    clear(body);
+    if (!data.can_manage || p.archived) {
+      if (data.configured && data.bots.length) add(body, botTable(cands.filter(function (c) { return data.bots.indexOf(c.handle) >= 0; }), false));
+      return;
+    }
+    if (dedicated === null) dedicated = data.configured;
+    var box = h('input', {type: 'checkbox', checked: dedicated, onchange: function () { dedicated = box.checked; draw(); }});
+    count = h('span', {'class': 'note', 'aria-live': 'polite'});
+    var form = h('form', {onsubmit: function (ev) { ev.preventDefault(); save(); }},
+      h('label', {'class': 'inline'}, box, 'Dedicated pool: only the bots chosen below work on this project'));
+    if (dedicated) {
+      add(form, cands.length ? botTable(cands, true) : h('p', {'class': 'note', text: 'No pool bot is reported by a keeper yet.'}));
+      if (data.has_more) add(form, h('button', {type: 'button', 'class': 'quiet', text: 'Show more bots', onclick: function () { load(data.next_after); }}));
+      add(form, count);
+    } else if (data.configured) {
+      add(form, h('p', {'class': 'note', text: 'Saving returns the project to the shared pool and frees its ' + data.bots.length + ' bot(s) for other projects.'}));
+    }
+    add(form, h('button', {type: 'submit', text: 'Save bot pool'}));
+    add(body, form);
+    counted();
+  }
+  function counted() {
+    if (!count) return;
+    var n = Object.keys(selected).filter(function (k) { return selected[k]; }).length;
+    count.textContent = n + ' selected' + (n ? '' : ': an empty dedicated pool means no pool bot works here');
+  }
+  function botTable(list, editable) {
+    return h('table', null,
+      h('thead', null, h('tr', null, editable ? h('th', {text: 'serve'}) : null, h('th', {text: 'bot'}), h('th', {text: 'box'}), h('th', {text: 'status'}), h('th', {text: 'availability'}))),
+      h('tbody', null, list.map(function (c) {
+        var taken = elsewhere(c);
+        var cell = null;
+        if (editable) {
+          var cb = h('input', {type: 'checkbox', checked: !!selected[c.handle], 'aria-label': 'serve ' + p.slug + ' with @' + c.handle,
+                               onchange: function () { selected[c.handle] = cb.checked; counted(); }});
+          // assigned to another project: not choosable, unless it is already chosen here (so it can be unticked)
+          if (taken && !selected[c.handle]) cb.disabled = true;
+          cell = h('td', null, cb);
+        }
+        var avail = taken ? 'in project ' + c.assigned_project : c.status === 'not reported' ? 'not reported by any keeper' : c.available ? 'available' : 'unavailable';
+        return h('tr', null, cell,
+          h('td', null, h('a', {href: '/a/' + encodeURIComponent(c.handle), text: '@' + c.handle})),
+          h('td', {'class': 'note', text: c.host || '?'}),
+          h('td', {'class': 'note', text: c.status || ''}),
+          h('td', {'class': 'note', text: avail}));
+      })));
+  }
+  function save() {
+    var bots = dedicated ? Object.keys(selected).filter(function (k) { return selected[k]; }) : [];
+    api('PUT', path, {configured: dedicated, bots: bots, base_revision: data.revision}).then(function (res) {
+      if (res.ok) {
+        selected = {}; (res.data.bots || []).forEach(function (b) { selected[b] = true; });
+        dedicated = res.data.configured;
+        data = null; cands = [];
+        load(null, true).then(function () { status(out, true, 'Saved. Bots pick it up after their current run.'); });
+        return;
+      }
+      // keep what was chosen; show why, and the pool as it is now, so a second save is informed
+      var reason = why(res);
+      load(null, true).then(function () {
+        status(out, false, (res.status === 409 ? 'Not saved: the pool or an assignment changed meanwhile (' + reason + '). Your choice is kept below, against the current assignments; save again to apply it.'
+                                               : 'Not saved: ' + reason));
+      });
+    });
+  }
+  add(body, h('p', {'class': 'note', text: 'loading…'}));
+  load(null, true);
+  return sec;
 }
 
 function archiveControl(path, what, label, after) {
