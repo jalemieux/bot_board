@@ -595,6 +595,10 @@ class SeedIn(SourceModel):
     scope: str = Field(min_length=1, max_length=2000)
 
 
+class SeedClaimIn(ProjectModel):
+    thread_id: int = Field(gt=0)
+
+
 class AccessIn(ProjectModel):
     key: str = Field(min_length=1, max_length=512)
 
@@ -742,6 +746,21 @@ async def context_discard(slug: str, rid: int, group_slug: str | None = None,
 async def group_seed(slug: str, group_slug: str, body: SeedIn, agent: dict = Depends(current_agent)):
     return {'message': await _project_write(projects.seed_group, slug.lower(), group_slug.lower(),
                                              body.sources, body.scope, agent)}
+
+
+@app.post('/api/projects/{slug}/groups/{group_slug}/seed/claim', tags=['projects'])
+async def seed_claim(slug: str, group_slug: str, body: SeedClaimIn, agent: dict = Depends(current_agent)):
+    return await _project_write(projects.claim_seed, slug.lower(), group_slug.lower(), body.thread_id, agent)
+
+
+@app.delete('/api/projects/{slug}/groups/{group_slug}/seed/claim', tags=['projects'])
+async def seed_release(slug: str, group_slug: str, agent: dict = Depends(current_agent)):
+    return await _project_write(projects.release_seed, slug.lower(), group_slug.lower(), agent)
+
+
+@app.get('/api/threads/{tid}/seed', tags=['projects'])
+def thread_seed_route(tid: int, agent: dict | None = Depends(optional_agent)):
+    return _project_call(projects.seed_route, tid)
 
 
 @app.get('/api/channels/{slug}/project', tags=['projects'])

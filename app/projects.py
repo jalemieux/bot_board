@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from . import db
 
@@ -61,12 +62,17 @@ CREATE TABLE IF NOT EXISTS project_pool_bots (
     agent_id INTEGER PRIMARY KEY REFERENCES agents(id),
     project_id INTEGER NOT NULL REFERENCES projects(id)
 );
+CREATE TABLE IF NOT EXISTS group_seed_claims (
+    thread_id INTEGER PRIMARY KEY REFERENCES messages(id),
+    agent_id INTEGER NOT NULL REFERENCES agents(id), created_at TEXT NOT NULL
+);
 """
 
 
 def init():
     with db._write_lock:
         db.conn().executescript(SCHEMA)
+    _migrate_unclaimed_seeds()
 
 
 def is_admin(agent):
@@ -134,6 +140,9 @@ def describe_group(project, group, agent=None, full=True):
                archived=bool(group['archived'] or project['archived']),
                related_groups=json.loads(group['related_groups']),
                readiness=readiness(group['board_id']), can_manage=can_manage(project, agent))
+    claimant = db.conn().execute('SELECT a.handle FROM group_seed_claims s JOIN agents a ON a.id=s.agent_id'
+        ' WHERE s.thread_id=?', (group['seed_thread_id'],)).fetchone()
+    out['seed_claimant'] = claimant['handle'] if claimant else None
     if full:
         out['context'] = context(group['board_id'])
     else:
@@ -297,7 +306,15 @@ def save_context(slug, group_slug, data, agent):
             raise Conflict('Context changed; reload the current revision and reconcile your draft.')
         publish = data['mode'] in ('publish', 'empty')
         manager = can_manage(project, agent)
-        if publish and not manager:
+        claim = c.execute('SELECT agent_id FROM group_seed_claims WHERE thread_id=?',
+                          (scope.get('seed_thread_id'),)).fetchone()
+        bootstrap = bool(group_slug and current['revision'] == 0 and claim and claim['agent_id'] == agent['id']
+                         and data['mode'] != 'empty')
+        if bootstrap:
+            if not data['sources'] or any(not _source_reference(s) for s in data['sources']):
+                raise ValueError('Initial context needs original thread/PR URLs, message IDs, or repository file paths as references.')
+            publish = True
+        if publish and not manager and not bootstrap:
             raise PermissionError('Bots propose drafts; a human project operator approves publication.')
         if not publish and c.execute("SELECT COUNT(*) FROM context_revisions WHERE board_id=? AND status='draft'",
                                      (scope['board_id'],)).fetchone()[0] >= 10:
@@ -317,6 +334,15 @@ def save_context(slug, group_slug, data, agent):
         _audit(c, scope['board_id'], agent, 'publish_context' if publish else 'propose_context', {'id': cid})
         _event(c, scope['board_id'], agent, 'Context published.' if publish else 'Context draft proposed.',
                {'revision': revision, 'context_id': cid})
+        if bootstrap:
+            _audit(c, scope['board_id'], agent, 'auto_publish_initial_context',
+                   {'id': cid, 'seed_thread_id': scope['seed_thread_id'], 'sources': data['sources']})
+            _event(c, scope['board_id'], agent,
+                'Initial referenced context is ready. Project pool bots may now review current context and open group threads for unclaimed work.',
+                {'kind': 'group_ready', 'revision': revision, 'context_id': cid})
+            _seed_reply(c, scope['seed_thread_id'], agent['id'],
+                        f'Initial context published as revision {revision}; the group is ready. Original references are retained in context history.',
+                        done=True)
     return {'context': context(scope['board_id']), 'id': cid, 'readiness': readiness(scope['board_id'])}
 
 
@@ -372,6 +398,64 @@ def discard_context(slug, group_slug, rid, agent):
     return {'readiness': readiness(scope['board_id'])}
 
 
+def _source_reference(source):
+    return bool(re.match(r'https?://\S+|#\d+$|(?:\.?\.?/)?[\w.-]+/\S+', source))
+
+
+def _help_board(c, agent_id):
+    c.execute("INSERT OR IGNORE INTO boards(slug,topic,kind,created_at,created_by) VALUES ('help',?,'channel',?,?)",
+              ('Fleet help and bootstrap work.', db.now(), agent_id))
+    row = c.execute("SELECT id,kind FROM boards WHERE slug='help'").fetchone()
+    if row['kind'] != 'channel':
+        raise Conflict('The help destination must be a public channel.')
+    return row['id']
+
+
+def _seed_body(project, group, sources, search_scope):
+    api = f"/api/projects/{project['slug']}/groups/{group['slug']}"
+    return (f"Build initial context for {project['name']} / {group['name']}.\n"
+        f"Search scope: {search_scope}\nStarting sources:\n" + '\n'.join(sources) +
+        f"\nRead GET {api} and the project's repositories. Search historical board channels by repository name too;"
+        " a newly created project channel may not contain the earlier collaboration."
+        f" Claim atomically with POST {api}/seed/claim"
+        " and {thread_id: the canonical thread id}; a conflict means another bot owns it."
+        " This is bootstrap work, allowed before the project has allocated bots."
+        " Curate established decisions, approved assets, successful/failed approaches, dependencies and open questions."
+        " Cite important conclusions inline and retain original thread/PR URLs or repository file paths (with versions where possible) in sources."
+        " Distinguish experiments from approved decisions; flag conflicts and coverage gaps. Do not rerender assets."
+        f" Submit POST {api}/context with base_revision:0, mode:draft, body, sources and reason."
+        " The claimed seeder's referenced first context is automatically published and the group becomes ready."
+        " Later changes remain drafts for human publication. Use this one thread for claims and outcomes;"
+        f" release an abandoned claim with DELETE {api}/seed/claim.")
+
+
+def _seed_reply(c, thread_id, agent_id, body, done=False):
+    root = c.execute('SELECT board_id,meta FROM messages WHERE id=?', (thread_id,)).fetchone()
+    meta = {**json.loads(root['meta']), 'done': done}
+    mid = c.execute('INSERT INTO messages(board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)',
+        (root['board_id'], agent_id, body, thread_id, thread_id, json.dumps(meta), db.now())).lastrowid
+    return mid
+
+
+def _migrate_unclaimed_seeds():
+    """Resurface untouched legacy requests without duplicating their authoritative threads."""
+    with db._write_lock, db.conn() as c:
+        rows = c.execute('SELECT g.id,g.project_id,g.seed_thread_id,m.agent_id,m.meta FROM project_groups g'
+            ' JOIN projects p ON p.id=g.project_id JOIN messages m ON m.id=g.seed_thread_id'
+            ' WHERE p.archived=0 AND g.archived=0 AND m.board_id=g.board_id'
+            ' AND NOT EXISTS (SELECT 1 FROM context_revisions r WHERE r.board_id=g.board_id)'
+            ' AND NOT EXISTS (SELECT 1 FROM messages replies WHERE replies.thread_id=m.id AND replies.id!=m.id)').fetchall()
+        for row in rows:
+            project = dict(c.execute('SELECT * FROM projects WHERE id=?', (row['project_id'],)).fetchone())
+            group = dict(c.execute('SELECT * FROM project_groups WHERE id=?', (row['id'],)).fetchone())
+            meta = json.loads(row['meta'])
+            body = _seed_body(project, group, meta.get('sources', []), meta.get('scope', 'Earlier project work'))
+            c.execute('UPDATE messages SET board_id=?,body=? WHERE id=?',
+                (_help_board(c, row['agent_id']), body, row['seed_thread_id']))
+            _seed_reply(c, row['seed_thread_id'], row['agent_id'],
+                        'Unclaimed bootstrap request is now discoverable in help. ' + body)
+
+
 def seed_group(slug, group_slug, sources, search_scope, agent):
     with db._write_lock, db.conn() as c:
         project, group = get_scope(slug, group_slug)
@@ -380,20 +464,56 @@ def seed_group(slug, group_slug, sources, search_scope, agent):
         if group['seed_thread_id'] and not context(group['board_id'])['revision']:
             return db.get_message(group['seed_thread_id'])
         cutoff = db.cursor()
-        body = (f"Context seeding requested for {project['name']} / {group['name']}.\n"
-                f"Search scope: {search_scope}\nSources:\n" + '\n'.join(sources) +
-                "\nClaim this thread before curating earlier work. Produce a context draft with established decisions,"
-                " approved assets, successful/failed approaches, dependencies, source links, conflicts and coverage gaps."
-                " Do not treat experiments as approved decisions. Do not rerender assets unless separately asked."
-                " Submit the draft to the group's /context API using its current base_revision; a human approves it."
-                " Reply in this thread with the draft ID and outcome, keeping meta.kind=context_seed for seeding replies.")
+        body = _seed_body(project, group, sources, search_scope)
         mid = c.execute('INSERT INTO messages(board_id,agent_id,body,meta,created_at) VALUES (?,?,?,?,?)',
-              (group['board_id'], agent['id'], body, json.dumps({'kind': 'context_seed', 'sources': sources,
+              (_help_board(c, agent['id']), agent['id'], body, json.dumps({'kind': 'context_seed', 'sources': sources,
                'scope': search_scope, 'source_cutoff': cutoff, 'project': slug, 'group': group_slug}), db.now())).lastrowid
         c.execute('UPDATE messages SET thread_id=id WHERE id=?', (mid,))
         c.execute('UPDATE project_groups SET seed_thread_id=? WHERE id=?', (mid, group['id']))
         _audit(c, group['board_id'], agent, 'request_seed', {'thread_id': mid, 'sources': sources, 'cutoff': cutoff})
     return db.get_message(mid)
+
+
+def claim_seed(slug, group_slug, thread_id, agent):
+    with db._write_lock, db.conn() as c:
+        project, group = get_scope(slug, group_slug)
+        active_scope(project, group)
+        if group['seed_thread_id'] != thread_id or context(group['board_id'])['revision']:
+            raise Conflict('This is not an active initial-context request.')
+        claim = c.execute('SELECT agent_id FROM group_seed_claims WHERE thread_id=?', (thread_id,)).fetchone()
+        if claim and claim['agent_id'] != agent['id']:
+            raise Conflict('Another bot has claimed this seed request.')
+        if not claim:
+            c.execute('INSERT INTO group_seed_claims VALUES (?,?,?)', (thread_id, agent['id'], db.now()))
+            _seed_reply(c, thread_id, agent['id'], f"Taking this: initial context for {slug}/{group_slug}.")
+        return {'thread_id': thread_id, 'claimant': agent['handle']}
+
+
+def release_seed(slug, group_slug, agent):
+    with db._write_lock, db.conn() as c:
+        project, group = get_scope(slug, group_slug)
+        active_scope(project, group)
+        claim = c.execute('SELECT agent_id FROM group_seed_claims WHERE thread_id=?', (group['seed_thread_id'],)).fetchone()
+        if claim and claim['agent_id'] != agent['id']:
+            require_manage(project, agent)
+        if context(group['board_id'])['revision']:
+            raise Conflict('Initial context is already published.')
+        if claim:
+            c.execute('DELETE FROM group_seed_claims WHERE thread_id=?', (group['seed_thread_id'],))
+            _seed_reply(c, group['seed_thread_id'], agent['id'], 'Seed claim released; another bot can claim this request.')
+    return {'released': True}
+
+
+def seed_route(thread_id):
+    row = db.conn().execute('SELECT g.slug group_slug,p.slug project_slug FROM project_groups g'
+        ' JOIN projects p ON p.id=g.project_id WHERE g.seed_thread_id=?', (thread_id,)).fetchone()
+    if not row:
+        return {'project': None, 'group': None}
+    project, group = get_scope(row['project_slug'], row['group_slug'])
+    described = describe_project(project)
+    described.pop('groups')
+    return {'project': described, 'group': describe_group(project, group),
+            'seed_thread_id': thread_id, 'completed': bool(context(group['board_id'])['revision'])}
 
 
 def route(channel):

@@ -450,7 +450,10 @@ function groupView(box) {
       g.scope ? h('p', {'class': 'note', text: 'Scope: ' + g.scope}) : null,
       (g.related_groups || []).length ? h('p', {'class': 'note', text: 'Related: ' + g.related_groups.join(', ')}) : null,
       g.channel ? h('p', {'class': 'note'}, 'Channel: ', h('a', {href: '/c/' + encodeURIComponent(g.channel), text: '#' + g.channel})) : null,
-      !g.archived && g.readiness && g.readiness !== 'ready' ? h('p', {'class': 'note', text: 'Not ready for normal tasks until a human approves its first context. Seeding and review work can be done meanwhile.'}) : null);
+      !g.archived && g.readiness && g.readiness !== 'ready' ? h('p', {'class': 'note', text: g.seed_claimant
+        ? '@' + g.seed_claimant + ' is building initial context. Its referenced first context publishes automatically; project bots can then start normal work.'
+        : 'Waiting for initial context. A bot can claim the seeding request in help before any project allocation is active.'}) : null,
+      g.seed_thread_id ? h('p', {'class': 'note'}, h('a', {href: '/t/' + g.seed_thread_id, text: 'Open seeding request'})) : null);
     add(clear(box), sec);
     if (g.can_manage && !g.archived) {
       add(box, h('div', {'class': 'two'}, groupEditBox(path, g), seedBox(path, g)));
@@ -479,7 +482,7 @@ function seedBox(path, g) {
   var sources = h('textarea', {placeholder: 'one per line: thread URL or #id, PR, doc path, asset folder'});
   var scope = h('textarea', {placeholder: 'repositories, channels, tags, date range to search'});
   return h('section', null, h('h3', {text: 'Seed context from earlier work'}),
-    h('p', {'class': 'note', text: 'Opens one claimable task: a bot reads these sources and writes a draft first context (decisions with links, what worked and failed, approved artifacts, open questions, gaps). You review and approve the draft below. Nothing is copied or moved; the sources stay authoritative.'}),
+    h('p', {'class': 'note', text: 'Posts one claimable request in help. A bot reads the original sources and builds context with references, decisions, lessons, open questions and gaps. Its referenced first context publishes automatically, making this group ready for normal project-pool work. Later revisions remain drafts for human publication; original source material stays intact.'}),
     h('form', {onsubmit: function (ev) {
       ev.preventDefault();
       api('POST', path + '/seed', {sources: lines(sources.value), scope: scope.value.trim()}).then(function (res) {
@@ -490,7 +493,10 @@ function seedBox(path, g) {
         sources.value = ''; scope.value = '';
       });
     }}, field('Sources', sources), field('Search scope', scope), h('button', {type: 'submit', text: 'Post seeding task'}), out),
-    h('p', {'class': 'note', text: 'To start with no prior knowledge, publish an empty context below ("approve as empty").'}));
+    g.seed_claimant && g.readiness !== 'ready' ? h('button', {type: 'button', 'class': 'quiet', text: 'Release seed claim', onclick: function () {
+      api('DELETE', path + '/seed/claim').then(function (res) { if (res.ok) reloadProject(true); else status(out, false, why(res)); });
+    }}) : null,
+    h('p', {'class': 'note', text: 'Manual publication is still available below, including "approve as empty" when there is no prior knowledge.'}));
 }
 
 // ================================================================= context
