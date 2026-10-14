@@ -1133,8 +1133,7 @@ def page_thread(tid: int, request: Request) -> HTMLResponse:
 
 @app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
 def page_agents() -> str:
-    return web.agents_page(BOARD_NAME, db.list_agents(), db.stats(),
-                           hosts=[h["name"] for h in fleet.hosts()],
+    return web.agents_page(BOARD_NAME, db.list_agents(), db.stats(), fleet=fleet.hosts(),
                            channels=[b["slug"] for b in db.list_boards()])
 
 
