@@ -5,6 +5,10 @@ import json
 
 from . import db
 
+
+class Conflict(ValueError):
+    """The request is valid but conflicts with stored state."""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_admins (
     agent_id INTEGER PRIMARY KEY REFERENCES agents(id), granted_at TEXT NOT NULL
@@ -171,7 +175,7 @@ def _event(c, board_id, agent, action, detail):
 def _channel(c, slug, purpose, agent):
     existing = c.execute('SELECT id FROM boards WHERE slug=?', (slug,)).fetchone()
     if existing:
-        raise ValueError('Channel already exists; choose a new slug. Existing channels are not adopted automatically.')
+        raise Conflict('Channel already exists; choose a new slug. Existing channels are not adopted automatically.')
     return c.execute("INSERT INTO boards(slug,topic,kind,created_at,created_by) VALUES (?,?,'channel',?,?)",
                      (slug, purpose, db.now(), agent['id'])).lastrowid
 
@@ -231,7 +235,7 @@ def update_scope(slug, group_slug, data, agent):
         require_manage(project, agent)
         scope = find_group(project, group_slug) if group_slug else project
         if scope['archived'] or project['archived']:
-            raise ValueError('Archived records are read-only; restore workflows are deferred.')
+            raise Conflict('Archived records are read-only; restore workflows are deferred.')
         if data.get('archived'):
             if not data.pop('archive_confirm', False):
                 raise ValueError('Confirm active work has finished or been released before archiving.')
@@ -269,7 +273,7 @@ def get_scope(slug, group_slug=None):
 
 def active_scope(project, scope):
     if project['archived'] or scope['archived']:
-        raise ValueError('Archived context is read-only.')
+        raise Conflict('Archived context is read-only.')
 
 
 def save_context(slug, group_slug, data, agent):
@@ -278,14 +282,14 @@ def save_context(slug, group_slug, data, agent):
         active_scope(project, scope)
         current = context(scope['board_id'])
         if data['base_revision'] != current['revision']:
-            raise ValueError('Context changed; reload the current revision and reconcile your draft.')
+            raise Conflict('Context changed; reload the current revision and reconcile your draft.')
         publish = data['mode'] in ('publish', 'empty')
         manager = can_manage(project, agent)
         if publish and not manager:
             raise PermissionError('Bots propose drafts; a human project operator approves publication.')
         if not publish and c.execute("SELECT COUNT(*) FROM context_revisions WHERE board_id=? AND status='draft'",
                                      (scope['board_id'],)).fetchone()[0] >= 10:
-            raise ValueError('This scope has 10 pending drafts; review or discard them before adding another.')
+            raise Conflict('This scope has 10 pending drafts; review or discard them before adding another.')
         if data['mode'] == 'empty' and (data['body'] or data['sources']):
             raise ValueError('An explicit empty seed cannot contain body or sources.')
         if data['mode'] != 'empty' and not data['body'].strip():
@@ -333,7 +337,7 @@ def approve_context(slug, group_slug, rid, expected, agent):
         draft = revision_detail(scope['board_id'], rid)
         current = context(scope['board_id'])
         if draft['status'] != 'draft' or expected != current['revision'] or draft['base_revision'] != expected:
-            raise ValueError('Draft or current context changed; reconcile before approval.')
+            raise Conflict('Draft or current context changed; reconcile before approval.')
         if not draft['sources']:
             raise ValueError('A draft must reference its sources before approval; use explicit empty mode otherwise.')
         c.execute("UPDATE context_revisions SET status='published', revision=?, approved_by=?, published_at=? WHERE id=?",

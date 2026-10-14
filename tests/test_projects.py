@@ -118,7 +118,7 @@ class Projects(unittest.TestCase):
         path = '/api/projects/game/groups/art'
         self.call('POST', path + '/context', {'base_revision': 0, 'body': '', 'sources': [],
                   'reason': 'No prior work', 'mode': 'empty'})
-        self.call('PATCH', path, {'archived': True}, expected=409)
+        self.call('PATCH', path, {'archived': True}, expected=422)
         self.call('PATCH', path, {'archived': True, 'archive_confirm': True})
         self.assertTrue(self.call('GET', path)['group']['archived'])
         self.assertEqual(self.call('GET', path)['group']['context']['revision'], 1)
@@ -139,7 +139,7 @@ class Projects(unittest.TestCase):
     def test_context_bounds_revision_scope_and_list_paging(self):
         path = '/api/projects/game/groups/art/context'
         self.call('POST', path, self.context('x' * 16001), expected=422)
-        self.call('POST', path, self.context(mode='publish', sources=[]), expected=409)
+        self.call('POST', path, self.context(mode='publish', sources=[]), expected=422)
         draft = self.call('POST', path, self.context(), auth=self.bot)
         self.call('GET', '/api/projects/game/context/revisions/' + str(draft['id']), expected=404)
         self.call('POST', path + '/revisions/' + str(draft['id']) + '/discard')

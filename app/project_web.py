@@ -101,7 +101,7 @@ function api(method, path, body) {
 function why(res) {
   var d = res.data || {};
   var m = d.error || d.detail || ('refused: ' + res.status);
-  if (Array.isArray(m)) m = m.map(function (x) { return x.msg || JSON.stringify(x); }).join('; ');
+  if (Array.isArray(m)) m = m.map(function (x) { return (x.loc ? x.loc.slice(1).join('.') + ': ' : '') + (x.msg || JSON.stringify(x)); }).join('; ');
   return typeof m === 'string' ? m : JSON.stringify(m);
 }
 function P(slug) { return '/api/projects/' + encodeURIComponent(slug); }
@@ -170,7 +170,7 @@ function listView() {
 }
 
 function createProjectForm() {
-  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._-]{1,63}', autocomplete: 'off'});
+  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._\\-]{1,63}', autocomplete: 'off'});
   var name = h('input', {type: 'text', required: true});
   var purpose = h('textarea', {required: true});
   var repos = h('textarea', {placeholder: 'game https://github.com/owner/game'});
@@ -291,7 +291,7 @@ function archiveControl(path, what, label, after) {
 // ---- create a group: existing scopes shown, to spot overlaps -----------------------
 function createGroupForm() {
   var p = proj, out = h('div', {role: 'status', 'aria-live': 'polite'});
-  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._-]{1,63}', autocomplete: 'off'});
+  var slug = h('input', {type: 'text', required: true, pattern: '[a-z0-9][a-z0-9._\\-]{1,63}', autocomplete: 'off'});
   var name = h('input', {type: 'text', required: true});
   var purpose = h('textarea', {required: true});
   var scope = h('textarea', {required: true, placeholder: 'what this group is responsible for, and what it is not'});
@@ -329,7 +329,7 @@ function groupView(box) {
       g.scope ? h('p', {'class': 'note', text: 'Scope: ' + g.scope}) : null,
       (g.related_groups || []).length ? h('p', {'class': 'note', text: 'Related: ' + g.related_groups.join(', ')}) : null,
       g.channel ? h('p', {'class': 'note'}, 'Channel: ', h('a', {href: '/c/' + encodeURIComponent(g.channel), text: '#' + g.channel})) : null,
-      g.readiness && g.readiness !== 'ready' ? h('p', {'class': 'note', text: 'Not ready for normal tasks until a human approves its first context. Seeding and review work can be done meanwhile.'}) : null);
+      !g.archived && g.readiness && g.readiness !== 'ready' ? h('p', {'class': 'note', text: 'Not ready for normal tasks until a human approves its first context. Seeding and review work can be done meanwhile.'}) : null);
     add(clear(box), sec);
     if (g.can_manage && !g.archived) {
       add(box, h('div', {'class': 'two'}, groupEditBox(path, g), seedBox(path, g)));
@@ -393,7 +393,7 @@ function contextBox(path, ctx, canManage, label, archived) {
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   var body = h('textarea', {'class': 'body', value: ctx.body || ''});
   var sources = h('textarea', {value: (ctx.sources || []).join('\n'), placeholder: 'one source per line: thread, PR, doc, artifact'});
-  var reason = h('input', {type: 'text', placeholder: 'what changed and why'});
+  var reason = h('input', {type: 'text', required: true, placeholder: 'what changed and why'});
   var mode = h('select', null,
     h('option', {value: 'draft', text: 'save as a draft for review'}),
     canManage ? h('option', {value: 'publish', text: 'publish as the current context'}) : null,

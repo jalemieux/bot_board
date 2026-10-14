@@ -598,8 +598,10 @@ def _project_call(fn, *args):
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    except (ValueError, sqlite3.IntegrityError) as exc:
+    except (projects.Conflict, sqlite3.IntegrityError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 async def _project_write(fn, *args):
