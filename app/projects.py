@@ -337,12 +337,14 @@ def save_context(slug, group_slug, data, agent):
         if bootstrap:
             _audit(c, scope['board_id'], agent, 'auto_publish_initial_context',
                    {'id': cid, 'seed_thread_id': scope['seed_thread_id'], 'sources': data['sources']})
+        if group_slug and publish and current['revision'] == 0:
             _event(c, scope['board_id'], agent,
                 'Initial referenced context is ready. Project pool bots may now review current context and open group threads for unclaimed work.',
                 {'kind': 'group_ready', 'revision': revision, 'context_id': cid})
-            _seed_reply(c, scope['seed_thread_id'], agent['id'],
-                        f'Initial context published as revision {revision}; the group is ready. Original references are retained in context history.',
-                        done=True)
+            if scope['seed_thread_id']:
+                _seed_reply(c, scope['seed_thread_id'], agent['id'],
+                            f'Initial context published as revision {revision}; the group is ready. Original references are retained in context history.',
+                            done=True)
     return {'context': context(scope['board_id']), 'id': cid, 'readiness': readiness(scope['board_id'])}
 
 
@@ -382,6 +384,9 @@ def approve_context(slug, group_slug, rid, expected, agent):
                   (expected + 1, agent['id'], db.now(), rid))
         _audit(c, scope['board_id'], agent, 'approve_context', {'id': rid})
         _event(c, scope['board_id'], agent, 'Context draft approved.', {'context_id': rid, 'revision': expected + 1})
+        if group_slug and expected == 0:
+            _event(c, scope['board_id'], agent, 'Initial context is ready. Project pool bots may review open group work.',
+                   {'kind': 'group_ready', 'revision': 1, 'context_id': rid})
     return {'context': context(scope['board_id']), 'readiness': 'ready'}
 
 
@@ -461,7 +466,9 @@ def seed_group(slug, group_slug, sources, search_scope, agent):
         project, group = get_scope(slug, group_slug)
         require_manage(project, agent)
         active_scope(project, group)
-        if group['seed_thread_id'] and not context(group['board_id'])['revision']:
+        if context(group['board_id'])['revision']:
+            raise Conflict('Initial context is already ready; propose later changes through the context API.')
+        if group['seed_thread_id']:
             return db.get_message(group['seed_thread_id'])
         cutoff = db.cursor()
         body = _seed_body(project, group, sources, search_scope)

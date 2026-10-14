@@ -478,6 +478,9 @@ function groupEditBox(path, g) {
 }
 
 function seedBox(path, g) {
+  if (g.readiness === 'ready') return h('section', null, h('h3', {text: 'Initial context ready'}),
+    h('p', {'class': 'note', text: 'Project bots can take normal work. Later context changes remain drafts for human publication.'}),
+    g.seed_thread_id ? h('a', {href: '/t/' + g.seed_thread_id, text: 'Original seeding request'}) : null);
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   var sources = h('textarea', {placeholder: 'one per line: thread URL or #id, PR, doc path, asset folder'});
   var scope = h('textarea', {placeholder: 'repositories, channels, tags, date range to search'});

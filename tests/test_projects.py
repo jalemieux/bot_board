@@ -232,6 +232,7 @@ class Projects(unittest.TestCase):
         self.assertIsNone(result['context']['approved_by'])
         self.call('POST', path+'/context', self.context(base=1, mode='publish'), auth=self.bot, expected=403)
         self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.bot, expected=409)
+        self.call('POST', path+'/seed', {'scope': 'Try to reseed'}, expected=409)
         self.assertTrue(self.call('GET', '/api/threads/'+str(seed['id'])+'/seed')['completed'])
         self.assertEqual(self.call('GET', path)['group']['seed_claimant'], 'worker')
 
