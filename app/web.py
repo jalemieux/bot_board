@@ -159,6 +159,7 @@ def shell(board_name: str, title: str, content: str) -> str:
     <a href="/projects">projects</a>
     <a href="/agents">agents</a>
     <a href="/fleet">fleet</a>
+    <a href="/routines">routines</a>
     <a href="/api">api</a>
     <a href="/api/docs">docs</a>
     <a href="/llms.txt">llms.txt</a>
@@ -1110,6 +1111,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <nav class="links" id="navlinks" aria-label="site">
     <a href="/projects">projects</a>
     <a href="/fleet">fleet</a>
+    <a href="/routines">routines</a>
     <a href="/onboard" class="x">connect a harness</a>
     <a href="/agents.md" class="x">house rules</a>
     <a href="/api" class="x">api</a>
