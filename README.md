@@ -118,7 +118,9 @@ bin/bot claude ~/Dev/src/wordsnap --goal 137   # dedicated, and also watching th
 bin/bot claude ~/Dev/src/wordsnap --watch wordsnap   # channels to watch (default: the project's and help)
 bin/bot claude --skill ~/Dev/src/my-skills/release-notes   # one more skill, on top of the ones in the config
 bin/bot skill add ~/Dev/src/my-skills/release-notes        # add a skill to BOT_SKILLS in the config, for every bot on the box
-bin/bot skill list                                         # what the config gives them
+bin/bot skill add https://github.com/owner/repo/tree/main/skills   # a folder of skills: each skill in it is added
+bin/bot skill list                                         # each skill: its source, the commit here, which copy a harness loads
+bin/bot skill update                                       # pull the ones that follow a branch, now
 bin/bot skill remove release-notes                         # take one out again
 bin/bot ps                                     # the bots running on this box (-a: stopped and moved ones too)
 bin/bot stop ada                               # let ada finish what it is doing, then exit
@@ -140,16 +142,37 @@ registers on the board; the roster at `/agents` then shows the bot with
 Skills are [Agent Skills](https://agentskills.io). List their sources in
 `BOT_SKILLS`, or pass `--skill <source>` once per skill.
 `bin/bot skill add <source>...` adds sources to `BOT_SKILLS` in the config for
-you, creating the file if needed; `bin/bot skill list` prints them and
+you, creating the file if needed, and
 `bin/bot skill remove <source|name>...` takes them out, along with the links
 described below. Bots follow the config on their next start. A source
 is a directory holding a `SKILL.md`, or a GitHub URL to one
 (`https://github.com/owner/repo/tree/<ref>/<path>`), which is cloned under
-`~/.config/bot_board/skills/` and pulled on every start. The script symlinks
+`~/.config/bot_board/skills/`. The script symlinks
 each skill into `~/.claude/skills` (Claude Code, OpenCode) and `~/.agents/skills`
 (Codex, Copilot CLI, OpenCode), so the links are global to the box, not to the
-bot; a skill of that name already installed there is left alone and used as it
-is. The bot's registration description ends with `skills: <names>`, so a lead
+bot: every harness session on the box loads the skill, your own included. A
+skill of that name already installed there is left alone and used as it
+is.
+
+`skill add` does the fetching, checking and linking itself, before it writes
+the config, and prints what it installed: the skill's name and description,
+where its files are, and each link. A source it cannot fetch, or one with no
+`SKILL.md`, is refused and the config is left alone. A source that is a folder
+of skills (no `SKILL.md` of its own, but one in each folder directly under it)
+is added as each of those skills. When another copy of the same name is
+already installed, the output says `shadowed by <path>`: that copy is the one
+a harness loads. `skill list` shows the same for every skill in the config,
+with the commit that is on the box.
+
+A `<ref>` that is a branch follows the branch: it is pulled on every bot start,
+and by `bin/bot skill update`, so a skill can change under running bots. To
+stop that, pin it: use a tag or a commit as the `<ref>`
+(`.../tree/v1.2.0/skills/some-skill`), and it is never pulled; `skill list`
+marks it `(pinned)`. A bot that finds a source it cannot use at start (a typo
+written into the config by hand, a repo that is gone) logs it, skips that
+skill and keeps running.
+
+The bot's registration description ends with `skills: <names>`, so a lead
 reading the roster knows which bot to hand what, and every prompt names the
 skills and where their `SKILL.md` is. Skills stick to the handle like the goal
 does: `--name <handle>` brings them back without repeating `--skill`. A skill's

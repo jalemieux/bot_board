@@ -5,7 +5,7 @@
 #       [--skill <dir|github-url>]...
 #   bot <claude|codex|opencode|copilot> <repo-dir> [--goal <thread-id>] [--name <handle>]
 #       [--watch <channel,...>|all] [--skill <dir|github-url>]...
-#   bot skill add <dir|github-url>... | remove <source|name>... | list
+#   bot skill add <dir|github-url>... | remove <source|name>... | list | update
 #       the skills in BOT_SKILLS in the config, which every bot on this box gets
 #   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
 #   bot stop <handle>               let the bot finish what it is doing, then exit
@@ -36,11 +36,13 @@
 # A bot can be equipped with Agent Skills (--skill, repeatable): a directory
 # holding a SKILL.md, or a GitHub URL to one
 # (https://github.com/owner/repo/tree/<ref>/<path>), which is cloned under
-# ~/.config/bot_board/skills/ and pulled on every start. Each skill is
+# ~/.config/bot_board/skills/. A <ref> that is a branch is pulled on every
+# start; a tag or a commit is a pin and stays as it is. Each skill is
 # symlinked into ~/.claude/skills (Claude Code, OpenCode) and ~/.agents/skills
 # (Codex, Copilot, OpenCode), named in the bot's registration so the fleet
 # knows what it can do, and pointed out to the harness. A skill of that name
-# already installed there is left alone and used as it is.
+# already installed there is left alone and used as it is. A source that
+# cannot be fetched or holds no SKILL.md is logged and skipped.
 #
 # A new bot is given a first name for a handle (ada, milo, ...), drawn from
 # BOT_NAMES: one no bot on this box has had and the board does not know yet.
@@ -67,7 +69,10 @@
 #     BOT_POOL=~/Dev/src
 #     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
 # A variable set in the environment wins over the file; a flag wins over both.
-# `bot skill add|remove|list` edits BOT_SKILLS there for you; bots pick it up on their next start.
+# `bot skill add|remove` edits BOT_SKILLS there for you; bots pick it up on their next start.
+# add fetches, checks and links the skill there and then, and says what it installed; a
+# folder of skills is added as each skill in it. list shows, per skill, the commit
+# that is here and which copy a harness loads; update pulls them now.
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
@@ -101,7 +106,7 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
 
-usage() { sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,82p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
@@ -116,10 +121,72 @@ alive() {
 # A skill source that is a GitHub URL: owner, repo, ref and path are groups 1, 2, 4 and 6.
 GH_SKILL='^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$'
 
+# skill_fetch <source> [local]: sets SKILL_DIR to where the source is on this box
+# and SKILL_CLONE to its checkout if it is a GitHub URL, which is cloned, or
+# pulled if it is on a branch; a tag or a commit is a pin and is never pulled.
+# "local" stays off the network. Returns 1 with SKILL_ERR set; a pull that
+# fails is only SKILL_WARN, since the copy already here still works.
+skill_fetch() {
+  local src=$1 out
+  SKILL_ERR=""; SKILL_WARN=""; SKILL_CLONE=""
+  if [[ $src =~ $GH_SKILL ]]; then
+    local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]%.git} ref=${BASH_REMATCH[4]} sub=${BASH_REMATCH[6]%/}
+    SKILL_CLONE=$CFG/skills/$owner/$repo@${ref:-HEAD}
+    if [ -d "$SKILL_CLONE/.git" ]; then
+      if [ -z "${2:-}" ] && git -C "$SKILL_CLONE" symbolic-ref -q HEAD >/dev/null; then
+        git -C "$SKILL_CLONE" pull -q --ff-only >/dev/null 2>&1 || SKILL_WARN="pull failed, using the checkout as it is"
+      fi
+    elif [ -n "${2:-}" ]; then SKILL_ERR="not fetched yet"; return 1
+    else
+      mkdir -p "$(dirname "$SKILL_CLONE")"
+      out=$(GIT_TERMINAL_PROMPT=0 git clone -q "https://github.com/$owner/$repo.git" "$SKILL_CLONE" 2>&1 \
+            && { [ -z "$ref" ] || git -C "$SKILL_CLONE" checkout -q "$ref" 2>&1; }) \
+        || { rm -rf "$SKILL_CLONE"; SKILL_ERR="cannot fetch $src: $(echo $out)"; return 1; }
+    fi
+    SKILL_DIR=$SKILL_CLONE${sub:+/$sub}
+  else SKILL_DIR=$src; fi
+  [ -d "$SKILL_DIR" ] || { SKILL_ERR="no directory $SKILL_DIR"; return 1; }
+  SKILL_DIR=$(cd "$SKILL_DIR" && pwd -P)
+}
+# skill_meta <dir>: "name<TAB>description" from the SKILL.md frontmatter; the directory name if it has none
+skill_meta() {
+  python3 -c '
+import sys,os,re
+t=open(os.path.join(sys.argv[1],"SKILL.md"),encoding="utf-8").read()
+m=re.match(r"---\n(.*?)\n---",t,re.S); f={}; block=set(); k=""
+for l in (m.group(1) if m else "").splitlines():
+    if l.startswith((" ","\t")):
+        if f.get(k,"x")[:1] in (">","|"): f[k]=l.strip()  # a block scalar: its text is on the lines below
+        elif k in block: f[k]+=" "+l.strip()
+        continue
+    k,_,v=l.partition(":"); k=k.strip(); f[k]=v.strip().strip("\"\x27")
+    if f[k][:1] in (">","|"): block.add(k)
+print(re.sub(r"[^A-Za-z0-9._-]","-",f.get("name") or os.path.basename(sys.argv[1])),re.sub(r"\s+"," ",f.get("description","")),sep="\t")' "$1"
+}
+# skill_link <dir> <name> [check]: symlink the skill where the harnesses load skills
+# from (symlink, not copy: a skill's scripts may reach into the rest of its
+# checkout), one line on stdout per place. A skill of that name already there
+# from elsewhere is left alone and is the one the harness loads. "check" only
+# reports. Returns 1 if something that is not a skill is in the way.
+skill_link() {
+  local dir=$1 name=$2 base link have rc=0
+  for base in ~/.claude/skills ~/.agents/skills; do
+    link=$base/$name
+    if [ -e "$link" ] || [ -L "$link" ]; then
+      have=$(cd "$link" 2>/dev/null && pwd -P || true)
+      if [ "$have" = "$dir" ]; then echo "linked $link"
+      elif [ -f "$link/SKILL.md" ]; then echo "shadowed by ${have:-$link}: a harness loads that copy, not this one"
+      else echo "blocked: $link exists and is not a skill; move it aside"; rc=1; fi
+    elif [ -n "${3:-}" ]; then echo "not linked at $link"
+    else mkdir -p "$base"; ln -s "$dir" "$link"; echo "linked $link"; fi
+  done
+  return $rc
+}
+
 # ---- bot skill add|remove|list: BOT_SKILLS in the config ---------------------------
-# This edits the file; the bots fetch and link the skills when they next start.
-# A directory is written as its absolute path; a GitHub URL is checked with
-# ls-remote, not cloned. remove also takes away the links a bot made for the skill.
+# add fetches, checks and links a skill before it writes the file, so a bad source
+# fails here and not when the bots next start. A directory is written as its
+# absolute path. remove also takes away the links made for the skill.
 if [ "${1:-}" = skill ]; then
   ACT=${2:-}; shift; shift || usage
   # what the file sets, not what the environment says
@@ -143,28 +210,57 @@ open(path,"w",encoding="utf-8").write("\n".join(lines)+"\n")
 PY
   }
   case $ACT in
-    list|ls)
+    list|ls|update)
       [ -n "$HAVE" ] || { echo "bot: no skills in $BOT_CONFIG" >&2; exit 0; }
-      printf '%s\n' $HAVE ;;
+      # one block per skill: what it is, which commit is here, and which copy a harness loads
+      for src in $HAVE; do
+        if [ "$ACT" = update ]; then skill_fetch "$src" || true; else skill_fetch "$src" local || true; fi
+        if [ -n "$SKILL_ERR" ]; then printf '%s\n    source  %s\n    %s\n' "?" "$src" "$SKILL_ERR"; continue; fi
+        if [ ! -f "$SKILL_DIR/SKILL.md" ]; then printf '%s\n    source  %s\n    no SKILL.md in %s\n' "?" "$src" "$SKILL_DIR"; continue; fi
+        IFS=$'\t' read -r name desc < <(skill_meta "$SKILL_DIR")
+        printf '%s\n    source  %s\n    here    %s' "$name" "$src" "$SKILL_DIR"
+        if [ -n "$SKILL_CLONE" ]; then
+          printf ' at %s' "$(git -C "$SKILL_CLONE" rev-parse --short HEAD)"
+          git -C "$SKILL_CLONE" symbolic-ref -q HEAD >/dev/null || printf ' (pinned)'
+        fi
+        printf '\n'; [ -z "$SKILL_WARN" ] || echo "    $SKILL_WARN"
+        skill_link "$SKILL_DIR" "$name" check | sed 's/^/    /' || true
+      done ;;
     add)
       [ $# -gt 0 ] || usage
-      ADD=""
+      # everything is fetched and checked before the config is touched
+      ADD=(); DIRS=()
       for src in "$@"; do
-        if [[ $src =~ $GH_SKILL ]]; then
-          git ls-remote --exit-code "https://github.com/${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}.git" ${BASH_REMATCH[4]:+"${BASH_REMATCH[4]}"} >/dev/null \
-            || { echo "bot: cannot find the repo or ref of $src" >&2; exit 1; }
-        else
-          [ -f "$src/SKILL.md" ] || { echo "bot: no SKILL.md in $src" >&2; exit 1; }
-          src=$(cd "$src" && pwd)
+        if ! [[ $src =~ $GH_SKILL ]]; then [ -d "$src" ] || die "no directory $src"; src=$(cd "$src" && pwd); fi
+        skill_fetch "$src" || die "$SKILL_ERR"
+        ONE=("$src")
+        if [ ! -f "$SKILL_DIR/SKILL.md" ]; then
+          # a folder of skills stands for each skill in it
+          ONE=(); base=${src%/}
+          if [[ $src =~ $GH_SKILL ]] && [ -z "${BASH_REMATCH[4]}" ]; then base+=/tree/$(git -C "$SKILL_CLONE" rev-parse --abbrev-ref HEAD); fi
+          for md in "$SKILL_DIR"/*/SKILL.md; do
+            if [ -f "$md" ]; then md=${md%/SKILL.md}; ONE+=("$base/${md##*/}"); fi
+          done
+          [ ${#ONE[@]} -gt 0 ] || die "no SKILL.md in $src, nor in the folders directly under it"
+          echo "bot: $src is a folder of ${#ONE[@]} skills; adding each of them"
         fi
-        # BOT_SKILLS is split on whitespace and written inside double quotes
-        case $src in *[[:space:]\"\'\$\`\\]*) echo "bot: BOT_SKILLS cannot hold a source with spaces or quotes: $src" >&2; exit 1 ;; esac
-        case " $HAVE $ADD " in *" $src "*) echo "bot: $src is already in BOT_SKILLS"; continue ;; esac
-        ADD+="${ADD:+ }$src"
+        for one in "${ONE[@]}"; do
+          # BOT_SKILLS is split on whitespace and written inside double quotes
+          case $one in *[[:space:]\"\'\$\`\\]*) die "BOT_SKILLS cannot hold a source with spaces or quotes: $one" ;; esac
+          case " $HAVE ${ADD[*]:-} " in *" $one "*) echo "bot: $one is already in BOT_SKILLS"; continue ;; esac
+          skill_fetch "$one" local || skill_fetch "$one" || die "$SKILL_ERR"
+          ADD+=("$one"); DIRS+=("$SKILL_DIR")
+        done
       done
-      [ -n "$ADD" ] || exit 0
-      set_skills "$HAVE${HAVE:+ }$ADD"
-      echo "bot: added to BOT_SKILLS in $BOT_CONFIG: $ADD" ;;
+      [ ${#ADD[@]} -gt 0 ] || exit 0
+      set_skills "$HAVE${HAVE:+ }${ADD[*]}"
+      for i in "${!ADD[@]}"; do
+        IFS=$'\t' read -r name desc < <(skill_meta "${DIRS[$i]}")
+        printf 'bot: added %s\n    about   %s\n    source  %s\n    here    %s\n' "$name" "${desc:-(no description)}" "${ADD[$i]}" "${DIRS[$i]}"
+        skill_link "${DIRS[$i]}" "$name" | sed 's/^/    /' || true
+      done
+      echo "bot: BOT_SKILLS in $BOT_CONFIG now lists ${#ADD[@]} more. The links are for the whole box:"
+      echo "bot: every Claude Code, Codex, Copilot and OpenCode session here loads these skills, yours included, not only the bots" ;;
     remove|rm)
       # a skill is named by its source as listed, its directory, or the last part of either
       [ $# -gt 0 ] || usage
@@ -193,7 +289,7 @@ PY
       done ;;
     *) usage ;;
   esac
-  [ "$ACT" = list ] || [ "$ACT" = ls ] || echo "bot: restart the bots on this box for this to take effect"
+  case $ACT in add|remove|rm) echo "bot: restart the bots on this box for this to take effect" ;; esac
   exit 0
 fi
 
@@ -425,42 +521,15 @@ log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 # and SKILL_BRIEF (one "- name: description" line each).
 SKILL_NAMES=""; SKILL_PATHS=""; SKILL_BRIEF=""
 equip() {
-  local src=$1 dir name desc base link have
-  if [[ $src =~ $GH_SKILL ]]; then
-    local owner=${BASH_REMATCH[1]} repo=${BASH_REMATCH[2]%.git} ref=${BASH_REMATCH[4]} sub=${BASH_REMATCH[6]%/}
-    local clone=$CFG/skills/$owner/$repo@${ref:-HEAD}
-    if [ -d "$clone/.git" ]; then
-      # a failed pull (offline, local edits) is not fatal: the bot runs with the copy it has
-      git -C "$clone" pull -q --ff-only >>"$LOG" 2>&1 || log "skill $src: pull failed, using the checkout as it is"
-    else
-      mkdir -p "$(dirname "$clone")"
-      git clone -q ${ref:+--branch "$ref"} "https://github.com/$owner/$repo.git" "$clone" >>"$LOG" 2>&1 \
-        || { echo "bot: cannot clone skill $src (see $LOG)" >&2; exit 1; }
-    fi
-    dir=$clone${sub:+/$sub}
-  else dir=$src; fi
-  [ -f "$dir/SKILL.md" ] || { echo "bot: no SKILL.md in $dir (skill $src)" >&2; exit 1; }
-  dir=$(cd "$dir" && pwd -P)
-  # name and description from the SKILL.md frontmatter; the directory name if it has none
-  IFS=$'\t' read -r name desc < <(python3 -c '
-import sys,os,re
-t=open(os.path.join(sys.argv[1],"SKILL.md"),encoding="utf-8").read()
-m=re.match(r"---\n(.*?)\n---",t,re.S); f={}
-for l in (m.group(1) if m else "").splitlines():
-    k,_,v=l.partition(":")
-    if _ and not k.startswith((" ","\t")): f[k.strip()]=v.strip().strip("\"\x27")
-print(re.sub(r"[^A-Za-z0-9._-]","-",f.get("name") or os.path.basename(sys.argv[1])),re.sub(r"\s+"," ",f.get("description","")),sep="\t")' "$dir")
-  # symlink, not copy: a skill's scripts may reach into the rest of its checkout
-  for base in ~/.claude/skills ~/.agents/skills; do
-    link=$base/$name; mkdir -p "$base"
-    if [ -e "$link" ] || [ -L "$link" ]; then
-      have=$(cd "$link" 2>/dev/null && pwd -P || true)
-      if [ "$have" != "$dir" ]; then
-        if [ -f "$link/SKILL.md" ]; then log "skill $name: $link is already installed from ${have:-elsewhere}, leaving it"
-        else echo "bot: $link exists and is not a skill; move it aside to install $name" >&2; exit 1; fi
-      fi
-    else ln -s "$dir" "$link"; log "skill $name: linked $link -> $dir"; fi
-  done
+  local src=$1 dir name desc have out
+  # a source that cannot be used is skipped, not fatal: one typo in the config must not stop every bot on the box
+  skill_fetch "$src" || { log "skill $src: $SKILL_ERR; skipped"; return 0; }
+  [ -z "$SKILL_WARN" ] || log "skill $src: $SKILL_WARN"
+  dir=$SKILL_DIR
+  [ -f "$dir/SKILL.md" ] || { log "skill $src: no SKILL.md in $dir; skipped"; return 0; }
+  IFS=$'\t' read -r name desc < <(skill_meta "$dir")
+  out=$(skill_link "$dir" "$name") || { log "skill $name: ${out//$'\n'/; }; skipped"; return 0; }
+  log "skill $name: ${out//$'\n'/; }"
   # what the harness will actually load is whatever the Claude link resolves to
   have=$(cd ~/.claude/skills/"$name" && pwd -P)
   SKILL_NAMES+="${SKILL_NAMES:+, }$name"
