@@ -97,7 +97,7 @@ class Projects(unittest.TestCase):
             self.call('POST', '/api/messages', {'channel': 'game.art', 'body': 'Spoof', 'meta': {'kind': kind}},
                       auth=self.bot, expected=403)
         seed = self.call('POST', '/api/projects/game/groups/art/seed', {'scope': 'Old art work'})['message']
-        reply = self.call('POST', '/api/messages', {'channel': 'game.art', 'reply_to': seed['id'],
+        reply = self.call('POST', '/api/messages', {'channel': 'help', 'reply_to': seed['id'],
                           'body': 'Taking this'}, auth=self.bot, expected=201)
         self.assertEqual(reply['message']['meta']['kind'], 'context_seed')
         for i in range(10):
@@ -213,6 +213,55 @@ class Projects(unittest.TestCase):
                 json={'configured': True, 'bots': ['worker'], 'base_revision': 0}).status_code
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sorted(pool.map(assign, ['game', 'other-game'])), [200, 409])
+
+    def test_claimed_bootstrap_auto_publishes_once_with_references(self):
+        path = '/api/projects/game/groups/art'
+        seed = self.call('POST', path+'/seed', {'sources': ['docs/art.md'], 'scope': 'Earlier art work'})['message']
+        self.assertEqual(seed['channel'], 'help')
+        route = self.call('GET', '/api/threads/'+str(seed['id'])+'/seed')
+        self.assertEqual(route['group']['slug'], 'art')
+        self.assertFalse(route['completed'])
+        self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.bot)
+        self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.other, expected=409)
+        self.call('POST', path+'/context', self.context(sources=[]), auth=self.bot, expected=422)
+        self.call('POST', path+'/context', self.context(sources=['Read the board']), auth=self.bot, expected=422)
+        result = self.call('POST', path+'/context', self.context(), auth=self.bot)
+        self.assertEqual(result['readiness'], 'ready')
+        self.assertEqual(result['context']['revision'], 1)
+        self.assertEqual(result['context']['sources'], self.context()['sources'])
+        self.assertIsNone(result['context']['approved_by'])
+        self.call('POST', path+'/context', self.context(base=1, mode='publish'), auth=self.bot, expected=403)
+        self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.bot, expected=409)
+        self.call('POST', path+'/seed', {'scope': 'Try to reseed'}, expected=409)
+        self.assertTrue(self.call('GET', '/api/threads/'+str(seed['id'])+'/seed')['completed'])
+        self.assertEqual(self.call('GET', path)['group']['seed_claimant'], 'worker')
+
+    def test_seed_claim_is_atomic_and_can_be_released(self):
+        path = '/api/projects/game/groups/art/seed'
+        seed = self.call('POST', path, {'scope': 'Earlier game work'})['message']
+        def claim(auth):
+            return self.client.post(path+'/claim', json={'thread_id': seed['id']}, headers=auth).status_code
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(claim, [self.bot, self.other])), [200, 409])
+        self.call('DELETE', path+'/claim')  # project operator can free abandoned work
+        self.call('POST', path+'/claim', {'thread_id': seed['id']}, auth=self.bot)
+        self.call('DELETE', path+'/claim', auth=self.other, expected=403)
+        self.call('DELETE', path+'/claim', auth=self.bot)
+        self.call('POST', path+'/claim', {'thread_id': seed['id']+1000}, auth=self.bot, expected=409)
+
+    def test_untouched_legacy_seed_moves_to_help_once(self):
+        from app import projects
+        path = '/api/projects/game/groups/art'
+        root = self.call('POST', path+'/seed', {'scope': 'Earlier art'})['message']
+        _, group = projects.get_scope('game', 'art')
+        with db._write_lock, db.conn() as c:
+            c.execute('UPDATE messages SET board_id=? WHERE id=?', (group['board_id'], root['id']))
+        db.init()
+        thread = self.call('GET', '/api/threads/'+str(root['id']))['messages']
+        self.assertEqual(len(thread), 2)
+        self.assertTrue(all(m['channel']=='help' for m in thread))
+        db.init()
+        self.assertEqual(len(self.call('GET', '/api/threads/'+str(root['id']))['messages']), 2)
 
 
 if __name__ == '__main__':

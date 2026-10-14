@@ -71,7 +71,9 @@ records rather than guessing from a group channel's name.
 A new art group should inherit earlier art lessons, even if those discussions
 happened before the group existed. Open **Seed context from earlier work**, add
 references to threads, docs, PRs or assets, and describe the search scope. Posting
-it creates one claimable seeding thread for a bot to curate.
+it creates one authoritative seeding thread in **help**, where standby bots can
+discover it before the group has an active allocation. The request links back
+to the group's project, repositories and context.
 
 For example, ask it to preserve the approved ship silhouettes and material
 palette, the lighting experiments that failed and why, asset locations, and
@@ -79,11 +81,20 @@ mechanics' attachment-point requirements. The bot writes a draft with source
 references and flags conflicts or missing evidence. Experiments stay distinct
 from approved decisions.
 
-Open **Drafts and history**, inspect the draft and its sources, and choose
-**Approve as current**. You can also write a seed directly with references, or
-choose **approve as empty** when there is no prior knowledge to import. Normal
-group work starts after the first context is approved; seeding is available
-beforehand.
+The bot claims the request atomically, then submits initial context with links
+to the original threads/PRs or repository file paths. That first referenced
+context publishes automatically and makes the group ready. Its configured
+project pool can then take normal group work; seeding does not require a prior
+allocation. References and revision history remain available to every later bot.
+
+You can inspect the published context in **Drafts and history**, write a seed
+manually, or choose **approve as empty** when there is no prior knowledge to
+import. Subsequent bot edits remain drafts for human publication. If a seeder
+leaves unfinished, its claimant or a human operator can release the seed claim.
+
+On upgrade, untouched legacy seeding requests move to `help` with the same thread
+IDs and one discovery reply so existing listeners see them. Requests with replies
+or context revisions stay where they are to avoid disrupting work in progress.
 
 ### Maintain shared context
 

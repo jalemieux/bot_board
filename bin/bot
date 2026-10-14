@@ -834,6 +834,18 @@ def lookup(ch):   # ("legacy"|"managed"|"hold", detail)
 def legacy_key(ch):
     if not pool: return legacy
     return "-" if ch in fleet or ch.startswith("dm-") else ch
+def seed_lookup(tid):
+    key="seed:"+tid
+    if key not in cache:
+        req=urllib.request.Request(board+"/api/threads/"+tid+"/seed",headers={"Authorization":"Bearer "+tok})
+        try:
+            data=json.load(urllib.request.urlopen(req,timeout=20))
+            cache[key]=("managed",data) if data.get("project") else ("legacy",None)
+        except urllib.error.HTTPError as e:
+            cache[key]=("legacy",None) if e.code==404 else ("hold","HTTP %d"%e.code)
+        except (OSError,ValueError) as e:
+            cache[key]=("hold",str(e)[:200])
+    return cache[key]
 def ctx(label,scope):
     c=scope.get("context") or {}
     body=(c.get("body") or "").strip()
@@ -852,10 +864,17 @@ for line in sys.stdin.read().splitlines():
         continue
     if pool and assignment_error and ch not in fleet and not ch.startswith("dm-"):
         held.append(line); say("message %s held: pool assignment lookup failed (%s)"%(mid,assignment_error)); continue
-    st,d=lookup(ch)
+    st,d=seed_lookup(thread) if pool and kind=="context_seed" else lookup(ch)
+    if st=="legacy" and pool and kind=="context_seed": st,d=lookup(ch)
     if st=="hold":
         held.append(line); say("message %s in #%s held: project lookup failed (%s)"%(mid,ch,d)); continue
     note=""
+    bootstrap=bool(st=="managed" and kind=="context_seed" and str(d.get("seed_thread_id"))==thread
+                   and not d.get("completed") and d.get("group"))
+    if st=="managed" and kind=="context_seed" and d.get("completed"):
+        if why!="for you": continue
+        st,d="legacy",None
+        note="Initial context is already published. Answer or propose a follow-up draft; do not claim the bootstrap again."
     if st=="legacy":
         key=legacy_key(ch)
         if pool and assigned and key!="-" and key!=assigned:
@@ -870,7 +889,7 @@ for line in sys.stdin.read().splitlines():
         key=p.get("slug") or ""
         if not SLUG.match(key):
             held.append(line); say("message %s in #%s held: the board gave project slug %r"%(mid,ch,key)); continue
-        if pool:
+        if pool and not bootstrap:
             selection=p.get("bot_pool") or {}
             members={str(h).lower() for h in selection.get("bots",[])}
             if (assigned and assigned!=key) or (selection.get("configured") and handle.lower() not in members):
@@ -885,6 +904,8 @@ for line in sys.stdin.read().splitlines():
             if why!="for you":
                 say("message %s in #%s skipped: group %s is %s, only seeding its context is open"%(mid,ch,g.get("slug"),g.get("readiness"))); continue
             note="group %s is %s: its context is not approved yet, so do not start normal work for it; say so in your reply"%(g.get("slug"),g.get("readiness"))
+        if bootstrap:
+            note="Bootstrap exception: only curate this initial context. Claim through the group seed/claim API before work; only the claimant can auto-publish referenced revision 1. Do not take normal implementation tasks or change approved context."
         e=seen.setdefault(key,{"project":p,"groups":{}})
         if g: e["groups"][g.get("slug")]=g
     out.append("\t".join([key,mid,ch,thread,author,why,kind or "-",note or "-",body]))   # "-": bash read drops empty fields

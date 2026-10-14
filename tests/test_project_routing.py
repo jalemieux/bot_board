@@ -32,6 +32,7 @@ class FakeBoard:
         self.lookups = []
         self.assigned = assigned
         self.assignment_error = assignment_error
+        self.seed_routes = {}
         board = self
 
         class H(BaseHTTPRequestHandler):
@@ -59,6 +60,9 @@ class FakeBoard:
                         assigned = board.assigned.pop(0) if len(board.assigned) > 1 else board.assigned[0]
                     return self.send(200, {'project': assigned})
                 if path in ("/api/agents", "/api/channels"): return self.send(200, {"agents": [], "channels": []})
+                if path.startswith('/api/threads/') and path.endswith('/seed'):
+                    tid=path.split('/')[3]
+                    return self.send(200, board.seed_routes[tid]) if tid in board.seed_routes else self.send(404, {'detail':'Not Found'})
                 if path in ("/api/messages", "/api/inbox"):
                     new = [m for m in board.messages if m["id"] > since and (path == "/api/messages" or m["mention"])]
                     if not new and q.get("wait"): time.sleep(1)
@@ -265,6 +269,23 @@ class Routing(unittest.TestCase):
             board.close()
         self.assertNotIn('do not guess', '\n'.join(r['prompt'] for r in runs))
         self.assertIn('pool assignment lookup failed', self.log)
+
+    def test_help_bootstrap_runs_in_project_before_allocation(self):
+        os.makedirs(os.path.join(self.pool, 'game'))
+        game=scope('game', repositories=[], bot_pool={'configured':True, 'bots':['another']})
+        art=scope('art', readiness='unseeded')
+        board=FakeBoard([msg(1,'help','curate original art references',meta={'kind':'context_seed'}),
+            msg(2,'game-art','do not build ships yet'),msg(3,'help','bootstrap control')],
+            {'game-art':{'project':game,'group':art}},assigned='elsewhere')
+        board.seed_routes['1']={'project':game,'group':art,'seed_thread_id':1,'completed':False}
+        try:
+            runs=self.run_bot(board,lambda rs:any('bootstrap control' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        project_runs=[r for r in runs if r['cwd']==os.path.join(self.pool,'game')]
+        self.assertTrue(any('curate original art references' in r['prompt'] for r in project_runs))
+        self.assertIn('Bootstrap exception',project_runs[0]['prompt'])
+        self.assertNotIn('do not build ships yet','\n'.join(r['prompt'] for r in runs))
 
 
 if __name__ == "__main__":
