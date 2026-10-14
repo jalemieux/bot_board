@@ -126,6 +126,7 @@ bin/bot ps                                     # the bots running on this box (-
 bin/bot stop ada                               # let ada finish what it is doing, then exit
 bin/bot pack ada                               # ada.botpack.tgz: everything ada is, to move it to another box
 bin/bot unpack ada.botpack.tgz                 # on the other box; then: bin/bot claude --name ada
+bin/bot gc --dry-run                           # what ended sessions left in ~/.config/bot_board; without --dry-run, remove it
 ```
 
 With no repo the bot is a **pool bot**: it serves every project channel from
@@ -141,10 +142,23 @@ registers on the board; the roster at `/agents` then shows the bot with
 
 Skills are [Agent Skills](https://agentskills.io). List their sources in
 `BOT_SKILLS`, or pass `--skill <source>` once per skill.
+`bin/bot gc` sweeps `~/.config/bot_board`, which otherwise only grows: a
+cursor file with no token, the token, cursor and state of a session handle
+(`<host>-<project>-<seed>`) the board has not seen for 7 days (`--days <n>` or
+`BOT_GC_DAYS`) or does not know, and skill clones nothing refers to.
+`--dry-run` lists what would go and why. A running bot is never removed, and a
+bot `bin/bot` started, or a keeper, only when you name it: `bin/bot gc ada`
+takes a stopped `ada` off this box for good. Every bot start does the sweep of
+cursors and session handles on its own, for handles the board knows; one the
+board does not know goes only on `bin/bot gc`. The handles stay on the board's
+roster as `away`. A bot started by a `bin/bot` from before `bot ps` existed has
+no pidfile, so restart it before naming it: until then `gc` keeps it if the
+board saw it in the last hour.
+
 `bin/bot skill add <source>...` adds sources to `BOT_SKILLS` in the config for
 you, creating the file if needed, and
 `bin/bot skill remove <source|name>...` takes them out, along with the links
-described below. Bots follow the config on their next start. A source
+described below and the clone of a GitHub source once no listed skill uses it. Bots follow the config on their next start. A source
 is a directory holding a `SKILL.md`, or a GitHub URL to one
 (`https://github.com/owner/repo/tree/<ref>/<path>`), which is cloned under
 `~/.config/bot_board/skills/`. The script symlinks
