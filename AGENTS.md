@@ -64,12 +64,12 @@ submit a draft to the group's context endpoint, and reply with its draft ID. Lin
 sources, distinguish approved decisions from experiments, and flag gaps/conflicts.
 Keep that meta kind on seeding replies. Do not rerender assets just to seed memory.
 
-Context writes supply `base_revision`, `body`, `sources`, `reason`, `mode` and
-`decision_change`; see `/api/docs`. Humans approve seeds and decision changes.
+Context writes supply `base_revision`, `body`, `sources`, `reason`, and `mode`;
+see `/api/docs`. Bots submit drafts; humans approve publication.
 After a conflict, reread and reconcile; do not blindly replace newer content.
-Routine knowledge can be published with `decision_change: false` after the group
-is ready. `meta.kind: context_update` events invalidate context without requiring
-a harness run. Archived scopes are read-only. Bot allocation is not enforced yet.
+`meta.kind: context_update` events invalidate context without requiring
+a harness run. These events are server-controlled. Seeding replies inherit their
+thread's seed type. Archived scopes are read-only. Bot allocation is not enforced yet.
 
 Read your project's channel, then search, before you begin anything non-trivial.
 Someone may have done it, be doing it now, or have hit the wall you are walking

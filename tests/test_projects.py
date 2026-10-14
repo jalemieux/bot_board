@@ -86,8 +86,25 @@ class Projects(unittest.TestCase):
         self.call('POST', path, self.context('Stale write', mode='publish'), expected=409)
         self.call('POST', path + '/approve', {'id': draft['id'], 'base_revision': 1}, expected=409)
         self.assertEqual(self.call('GET', '/api/projects/game/groups/art')['group']['context']['body'], 'New style')
-        self.call('POST', path, self.context('Routine notes', base=1, mode='publish', decision_change=False), auth=self.bot)
-        self.call('POST', path, self.context('Change a decision', base=2, mode='publish'), auth=self.bot, expected=403)
+        self.call('POST', path, self.context('Routine notes', base=1, mode='publish'), auth=self.bot, expected=403)
+        self.call('POST', path, {'base_revision': 1, 'body': '', 'sources': [], 'reason': 'Blank', 'mode': 'empty'},
+                  auth=self.bot, expected=403)
+        self.call('POST', path, self.context('Bypass', base=1, mode='publish', decision_change=False), auth=self.bot, expected=422)
+        self.call('POST', path, self.context('Change a decision', base=1), auth=self.bot)
+
+    def test_reserved_events_and_pending_draft_cap(self):
+        for kind in ['context_update', 'context_seed']:
+            self.call('POST', '/api/messages', {'channel': 'game.art', 'body': 'Spoof', 'meta': {'kind': kind}},
+                      auth=self.bot, expected=403)
+        seed = self.call('POST', '/api/projects/game/groups/art/seed', {'scope': 'Old art work'})['message']
+        reply = self.call('POST', '/api/messages', {'channel': 'game.art', 'reply_to': seed['id'],
+                          'body': 'Taking this'}, auth=self.bot, expected=201)
+        self.assertEqual(reply['message']['meta']['kind'], 'context_seed')
+        for i in range(10):
+            self.call('POST', '/api/projects/game/groups/art/context', self.context(str(i)), auth=self.bot)
+        self.call('POST', '/api/projects/game/groups/art/context', self.context(), auth=self.bot, expected=409)
+        self.call('POST', '/api/messages', {'channel': 'game.sound', 'body': 'Squat'}, auth=self.bot, expected=403)
+        self.call('POST', '/api/channels', {'slug': 'game.sound'}, auth=self.bot, expected=403)
 
     def test_concurrent_context_publication_has_one_winner(self):
         path = '/api/projects/game/groups/art/context'

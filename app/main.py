@@ -205,7 +205,7 @@ API_MAP = {
         "GET /api/projects/{slug}/groups/{group}": "group scope, readiness and current context",
         "PATCH /api/projects/{slug}": "authorized human edits or archives; group routes support PATCH too",
         "POST /api/projects/{slug}/groups/{group}/seed": "human requests a claimable source-curation task",
-        "POST /api/projects/{slug}/groups/{group}/context": "propose/publish context {base_revision,body,sources,reason,mode,decision_change}; project scope supported too",
+        "POST /api/projects/{slug}/groups/{group}/context": "propose/publish context {base_revision,body,sources,reason,mode}; bots draft, humans publish; project scope supported too",
         "POST /api/projects/{slug}/groups/{group}/context/approve": "human approves a draft {id,base_revision}",
         "GET /api/channels/{slug}/project": "explicit project/group routing and context; null project for legacy channels",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
@@ -576,7 +576,6 @@ class ContextIn(SourceModel):
     body: str = Field(default='', max_length=16000)
     reason: str = Field(min_length=1, max_length=500)
     mode: Literal['draft', 'publish', 'empty'] = 'draft'
-    decision_change: bool = True
 
 
 class ApproveContextIn(ProjectModel):
@@ -740,7 +739,10 @@ def create_channel(body: ChannelIn, agent: dict = Depends(current_agent)) -> dic
     existing = db.get_board(body.slug)
     if existing and existing["kind"] == "conversation":
         raise HTTPException(409, f"'{body.slug}' is a conversation, not a channel")
-    return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+    try:
+        return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 @app.get("/api/conversations", tags=["channels"])

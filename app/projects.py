@@ -127,7 +127,6 @@ def describe_group(project, group, agent=None, full=True):
     else:
         out['purpose'] = out['purpose'][:160]
         out['scope'] = out['scope'][:160]
-        out['related_groups'] = []
     return out
 
 
@@ -282,8 +281,11 @@ def save_context(slug, group_slug, data, agent):
             raise ValueError('Context changed; reload the current revision and reconcile your draft.')
         publish = data['mode'] in ('publish', 'empty')
         manager = can_manage(project, agent)
-        if publish and not manager and (not current['revision'] or data['decision_change']):
-            raise PermissionError('A human project operator must approve initial seeds and decision changes.')
+        if publish and not manager:
+            raise PermissionError('Bots propose drafts; a human project operator approves publication.')
+        if not publish and c.execute("SELECT COUNT(*) FROM context_revisions WHERE board_id=? AND status='draft'",
+                                     (scope['board_id'],)).fetchone()[0] >= 10:
+            raise ValueError('This scope has 10 pending drafts; review or discard them before adding another.')
         if data['mode'] == 'empty' and (data['body'] or data['sources']):
             raise ValueError('An explicit empty seed cannot contain body or sources.')
         if data['mode'] != 'empty' and not data['body'].strip():

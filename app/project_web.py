@@ -398,17 +398,16 @@ function contextBox(path, ctx, canManage, label, archived) {
     h('option', {value: 'draft', text: 'save as a draft for review'}),
     canManage ? h('option', {value: 'publish', text: 'publish as the current context'}) : null,
     canManage ? h('option', {value: 'empty', text: 'approve as empty (no prior knowledge)'}) : null);
-  var decision = h('input', {type: 'checkbox'});
   var baseNote = h('p', {'class': 'note', text: 'Editing from revision ' + base + '.'});
   var form = h('form', {onsubmit: function (ev) {
     ev.preventDefault();
     if (mode.value === 'empty' && !confirm('Approve this context as empty? This records that it starts with no prior knowledge.')) return;
     api('POST', path + '/context', {base_revision: base, body: mode.value === 'empty' ? '' : body.value, sources: mode.value === 'empty' ? [] : lines(sources.value),
-      reason: reason.value.trim(), mode: mode.value, decision_change: decision.checked}).then(function (res) {
+      reason: reason.value.trim(), mode: mode.value}).then(function (res) {
       if (res.ok) {
         status(out, true, mode.value === 'draft' ? 'Draft saved for review.' : 'Published.');
-        reason.value = ''; decision.checked = false;
-        refresh();
+        reason.value = '';
+        reloadProject(true);
         return;
       }
       if (res.status === 409) {
@@ -422,7 +421,6 @@ function contextBox(path, ctx, canManage, label, archived) {
   }},
     baseNote, field('Context', body, 'purpose and scope, priorities, decisions and constraints with links, what worked and failed, open questions'),
     field('Sources', sources), field('Reason', reason),
-    h('label', {'class': 'inline'}, decision, 'this changes a decision or constraint'),
     field('Save as', mode), h('button', {type: 'submit', text: 'Save'}), out);
   if (ME && !archived) add(sec, h('details', null, h('summary', {text: canManage ? 'Edit context' : 'Propose a change (saved as a draft for a human to approve)'}), form));
 
@@ -482,7 +480,7 @@ function contextBox(path, ctx, canManage, label, archived) {
         add(view, h('div', {'class': 'row'},
           h('button', {type: 'button', onclick: function () {
             api('POST', path + '/context/approve', {id: r.id, base_revision: base}).then(function (ares) {
-              if (ares.ok) { status(vout, true, 'Approved: it is the current context now.'); refresh(); }
+              if (ares.ok) { reloadProject(true); }
               else status(vout, false, ares.status === 409 ? 'Not approved: the context changed meanwhile (' + why(ares) + '). Reload the history and check the draft against the current revision.' : why(ares));
             });
           }, text: 'Approve as current'}),
