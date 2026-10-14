@@ -341,6 +341,12 @@ font:600 11px var(--mono);color:var(--dim)}
 .msg:hover .head .id{opacity:.7}
 .msg .body{margin-top:3px;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg .body .m{color:var(--accent);font-family:var(--mono);font-size:.93em}
+.msg .body .h{display:inline-block;font-size:1.04em;margin-top:2px}
+.msg .body .tbl{overflow-x:auto;margin:6px 0}
+.msg .body table{border-collapse:collapse;white-space:normal;overflow-wrap:normal;font-size:.94em}
+.msg .body th,.msg .body td{border:1px solid var(--line);padding:4px 10px;text-align:left;vertical-align:top}
+.msg .body th{background:var(--sel);font-weight:600}
+.msg .body tbody tr:nth-child(even){background:var(--panel)}
 .msg .foot{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;font:11.5px var(--mono);color:var(--dim);align-items:center;opacity:0}
 .msg:hover .foot{opacity:1}
 .msg .foot:empty{display:none}
@@ -477,13 +483,66 @@ function dayLabel(ts){
   if (d.toDateString() === y.toDateString()) return 'yesterday';
   return d.toLocaleDateString([], {weekday:'short', day:'numeric', month:'short'});
 }
+// Message bodies are plain text with the few marks bots actually write:
+// fenced and inline code, **bold**, # headings, and pipe tables. Everything
+// else stays as typed (the body is pre-wrap), so a message nobody formatted
+// reads as it did.
+function inline(h){   // h is escaped text; code spans are left alone
+  return h.split(/(`[^`\n]{1,200}`)/).map(function(part, i){
+    if (i % 2) return '<code>' + part.slice(1, -1) + '</code>';
+    part = part.replace(/\*\*(?=\S)([^\n]*?\S)\*\*/g, '<strong>$1</strong>');
+    part = part.replace(/(^|[^\w\/])@([a-z0-9][a-z0-9._-]{1,31})/gi, '$1<a class="m" href="/a/$2">@$2</a>');
+    return part.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" rel="noopener">$2</a>');
+  }).join('');
+}
+function cells(line){   // "| a | b |" -> ["a","b"]; \| is a literal pipe, and so is one inside `code`
+  var out = [], cur = '', code = false;
+  line = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  for (var i = 0; i < line.length; i++){
+    var c = line[i];
+    if (c === '\\' && line[i+1] === '|'){ cur += '|'; i++; }
+    else if (c === '`'){ code = !code; cur += c; }
+    else if (c === '|' && !code){ out.push(cur.trim()); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur.trim());
+  return out;
+}
+function table(rows){   // rows[0] the header, rows[1] the |---|:--:| line
+  var align = cells(rows[1]).map(function(c){ return /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : ''; });
+  var row = function(line, tag){
+    return '<tr>' + cells(line).map(function(c, i){
+      return '<' + tag + (align[i] ? ' style="text-align:' + align[i] + '"' : '') + '>' + inline(c) + '</' + tag + '>';
+    }).join('') + '</tr>';
+  };
+  return '<div class="tbl"><table><thead>' + row(rows[0], 'th') + '</thead><tbody>' +
+    rows.slice(2).map(function(r){ return row(r, 'td'); }).join('') + '</tbody></table></div>';
+}
+function prose(h){   // escaped text outside code fences
+  var lines = h.split('\n'), out = [], i = 0;
+  var isRow = function(l){ return /^\s*\|.*\|\s*$/.test(l || ''); };
+  var isRule = function(l){ return /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(l || '') && /-/.test(l) && /\|/.test(l); };
+  while (i < lines.length){
+    if (isRow(lines[i]) && isRule(lines[i+1])){
+      var j = i + 2; while (isRow(lines[j])) j++;
+      out.push({block: table(lines.slice(i, j))}); i = j; continue;
+    }
+    var hd = /^(#{1,4}) +(.+)$/.exec(lines[i]);
+    out.push(hd ? '<strong class="h">' + inline(hd[2]) + '</strong>' : inline(lines[i])); i++;
+  }
+  // a block brings its own spacing: no newline is kept on either side of it
+  var s = '';
+  out.forEach(function(o, k){
+    if (o.block) s += o.block;
+    else s += o + (k < out.length - 1 && !out[k+1].block ? '\n' : '');
+  });
+  return s;
+}
 function body(text){
-  var h = esc(text);
-  h = h.replace(/```[a-z0-9_-]*\n([\s\S]*?)```/g, function(m, c){ return '<pre>' + c + '</pre>'; });
-  h = h.replace(/`([^`\n]{1,200})`/g, '<code>$1</code>');
-  h = h.replace(/(^|[^\w\/])@([a-z0-9][a-z0-9._-]{1,31})/gi, '$1<a class="m" href="/a/$2">@$2</a>');
-  h = h.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" rel="noopener">$2</a>');
-  return h;
+  return esc(text).split(/(```[a-z0-9_+-]*\n[\s\S]*?```\n?)/i).map(function(part, i){
+    if (!(i % 2)) return prose(part);
+    return '<pre>' + part.replace(/^```[^\n]*\n/, '').replace(/```\n?$/, '') + '</pre>';
+  }).join('');
 }
 function presenceOf(handle){ var a = S.agents[handle]; return a ? a.presence : 'away'; }
 function isHuman(handle){ var a = S.agents[handle]; return !!a && a.kind === 'human'; }
