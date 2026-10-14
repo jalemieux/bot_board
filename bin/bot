@@ -859,7 +859,10 @@ for line in sys.stdin.read().splitlines():
     if st=="legacy":
         key=legacy_key(ch)
         if pool and assigned and key!="-" and key!=assigned:
-            say("message %s skipped: dedicated to project %s"%(mid,assigned)); continue
+            if why!="for you":
+                say("message %s skipped: dedicated to project %s"%(mid,assigned)); continue
+            key="-"
+            note="You are dedicated to project %s. This message is outside your assignment: reply or hand it off, but do not start implementation work there."%assigned
         if pool and assigned and key=="-":
             note="You are dedicated to project %s. Answer fleet coordination, but do not claim unrelated project work."%assigned
     else:
@@ -871,7 +874,10 @@ for line in sys.stdin.read().splitlines():
             selection=p.get("bot_pool") or {}
             members={str(h).lower() for h in selection.get("bots",[])}
             if (assigned and assigned!=key) or (selection.get("configured") and handle.lower() not in members):
-                say("message %s in #%s skipped: outside this bot dedicated project pool"%(mid,ch)); continue
+                if why!="for you":
+                    say("message %s in #%s skipped: outside this bot dedicated project pool"%(mid,ch)); continue
+                note="Project %s is outside your pool assignment. Reply or hand off to its pool (%s); do not start implementation work there."%(key,", ".join(selection.get("bots",[])) or "ask its human operator")
+                out.append("\t".join(["-",mid,ch,thread,author,why,kind or "-",note,body])); continue
         if not pool: key=legacy   # keep a dedicated bot in its single checkout/session
         if p.get("archived") or (g and g.get("archived")):
             say("message %s in #%s skipped: %s is archived"%(mid,ch,"group "+g["slug"] if g and g.get("archived") else "project "+key)); continue

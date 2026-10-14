@@ -492,6 +492,7 @@ def set_pool(slug, handles, configured, expected, agent):
         c.executemany('INSERT INTO project_pool_bots(agent_id,project_id) VALUES (?,?)',
                       [(aid, project['id']) for aid in ids])
         _audit(c, project['board_id'], agent, 'set_bot_pool', {'configured': configured, 'bots': handles})
+        # Wake the newly eligible pool to inspect existing work (all shared bots when released).
         _event(c, project['board_id'], agent,
             'Project bot pool changed. Allocated bots: review current project/group context and open threads for'
             ' unclaimed work before taking a task. Existing work is not cancelled.',

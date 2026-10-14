@@ -105,6 +105,8 @@ Selected bots serve the project and its groups; other pool bots leave that
 project's work alone. Assignment takes effect between harness runs, so ongoing
 work finishes normally. A human project assignment overrides a pool launcher's
 custom channel watches for that project. Fleet coordination remains available.
+Addressed messages outside an assignment still reach the bot for a reply or
+handoff; they do not authorize taking new work in that other project.
 
 An empty dedicated pool pauses pool-bot work for the project. Turn off
 **Dedicated pool** and save to return the project and its bots to the shared

@@ -225,17 +225,21 @@ class Routing(unittest.TestCase):
         prompts = '\n'.join(r['prompt'] for r in runs)
         self.assertIn('our art task', prompts)
         self.assertIn('fleet question', prompts)
-        self.assertNotIn('not our project', prompts)
+        self.assertIn('not our project', prompts)  # addressed messages get a handoff response, not new work
+        self.assertIn('outside your pool assignment', prompts)
+        self.assertFalse(any(r['cwd'] == os.path.join(self.pool, 'other') for r in runs))
         self.assertNotIn('legacy unrelated', prompts)
 
     def test_shared_pool_bots_do_not_enter_another_project_pool(self):
-        board = FakeBoard([msg(1, 'game', 'reserved work', mention=True), msg(2, 'help', 'fleet control')],
+        board = FakeBoard([msg(1, 'game', 'reserved work'), msg(2, 'help', 'fleet control'),
+            msg(3, 'game', 'please hand this off', mention=True)],
             {'game': {'project': scope('game', bot_pool={'configured': True, 'bots': ['someone']}), 'group': None}})
         try:
             runs = self.run_bot(board, lambda rs: any('fleet control' in r['prompt'] for r in rs))
         finally:
             board.close()
         self.assertNotIn('reserved work', '\n'.join(r['prompt'] for r in runs))
+        self.assertIn('please hand this off', '\n'.join(r['prompt'] for r in runs))
 
     def test_assignment_is_rechecked_between_runs(self):
         os.makedirs(os.path.join(self.pool, 'game'))

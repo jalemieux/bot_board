@@ -308,7 +308,7 @@ function poolBox() {
   }
   function load(after, reset) {
     return api('GET', path + (after ? '?after=' + encodeURIComponent(after) : '')).then(function (res) {
-      if (!res.ok) { status(out, false, 'Could not load the bot pool: ' + why(res)); return res; }
+      if (!res.ok) { if (!data) clear(body); status(out, false, 'Could not load the bot pool: ' + why(res)); return res; }
       var first = !data;
       data = {configured: res.data.configured, revision: res.data.revision, bots: res.data.bots || [],
               can_manage: res.data.can_manage, has_more: res.data.has_more, next_after: res.data.next_after};
@@ -360,7 +360,7 @@ function poolBox() {
           if (taken && !selected[c.handle]) cb.disabled = true;
           cell = h('td', null, cb);
         }
-        var avail = taken ? 'in project ' + c.assigned_project : c.status === 'not reported' ? 'not reported by any keeper' : c.available ? 'available' : 'unavailable';
+        var avail = taken ? 'in project ' + c.assigned_project : !c.host || c.status === 'not reported' || c.status === 'not reporting' ? 'not reported by any keeper' : c.available ? 'available' : 'unavailable';
         return h('tr', null, cell,
           h('td', null, h('a', {href: '/a/' + encodeURIComponent(c.handle), text: '@' + c.handle})),
           h('td', {'class': 'note', text: c.host || '?'}),
@@ -380,9 +380,16 @@ function poolBox() {
       }
       // keep what was chosen; show why, and the pool as it is now, so a second save is informed
       var reason = why(res);
-      load(null, true).then(function () {
-        status(out, false, (res.status === 409 ? 'Not saved: the pool or an assignment changed meanwhile (' + reason + '). Your choice is kept below, against the current assignments; save again to apply it.'
-                                               : 'Not saved: ' + reason));
+      load(null, false).then(function (loaded) {
+        if (!loaded.ok) return;
+        var removed = [];
+        cands.forEach(function (c) {
+          if (selected[c.handle] && elsewhere(c)) { delete selected[c.handle]; removed.push('@' + c.handle); }
+        });
+        if (removed.length) draw();
+        status(out, false, 'Not saved: ' + reason +
+          (removed.length ? ' Now assigned elsewhere and deselected: ' + removed.join(', ') + '.' : '') +
+          (res.status === 409 ? ' Review the updated choices before saving again.' : ''));
       });
     });
   }
