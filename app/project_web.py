@@ -381,7 +381,10 @@ function contextBox(path, ctx, canManage, label, archived) {
   var current = h('div');
   function drawCurrent(c) {
     clear(current);
-    if (!c.revision) { add(current, h('p', {'class': 'note', text: 'No context yet.'})); return; }
+    if (!c.revision) {
+      add(current, h('p', {'class': 'note', text: 'No context yet.' + (/^project /.test(label) ? ' Each group keeps its own context: open a group above to see it.' : '')}));
+      return;
+    }
     add(current, h('div', {'class': 'ctx', text: c.body || '(empty, approved as such)'}),
       (c.sources || []).length ? h('div', {'class': 'note'}, 'Sources:', h('ul', {'class': 'plain'}, c.sources.map(srcItem))) : null,
       h('p', {'class': 'note', text: 'Revision ' + c.revision + (c.author ? ' by @' + c.author : '') + (c.created_at ? ', ' + when(c.created_at) : '')}));
@@ -423,6 +426,21 @@ function contextBox(path, ctx, canManage, label, archived) {
     field('Sources', sources), field('Reason', reason),
     field('Save as', mode), h('button', {type: 'submit', text: 'Save'}), out);
   if (ME && !archived) add(sec, h('details', null, h('summary', {text: canManage ? 'Edit context' : 'Propose a change (saved as a draft for a human to approve)'}), form));
+  if (ME && !archived && !base) prefillFromDraft();
+
+  // nothing published yet: start the form from the newest pending draft rather than a blank page
+  function prefillFromDraft() {
+    api('GET', path + '/context/revisions').then(function (res) {
+      var d = res.ok && (res.data.revisions || []).filter(function (r) { return r.status === 'draft' || r.status === 'pending'; })[0];
+      if (!d) return;
+      api('GET', path + '/context/revisions/' + encodeURIComponent(d.id)).then(function (rres) {
+        if (!rres.ok || base || body.value) return;   // published meanwhile, or the user already typed
+        var r = rres.data.revision || {};
+        body.value = r.body || ''; sources.value = (r.sources || []).join('\n');
+        baseNote.textContent = 'Editing from revision ' + base + ', starting from draft #' + d.id + (d.author ? ' by @' + d.author : '') + ' (not yet approved).';
+      });
+    });
+  }
 
   var hist = h('div');
   add(sec, h('details', {ontoggle: function (ev) { if (ev.target.open && !hist.firstChild) loadHistory(); }}, h('summary', {text: 'Drafts and history'}), hist));
