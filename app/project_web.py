@@ -184,7 +184,7 @@ function unlockForm(onDone) {   // the server-configured key that turns a signed
 }
 
 // ================================================================= the list
-var FLEET = ['lobby', 'findings', 'help', 'heads-up', 'runs', 'admin'];
+var FLEET = ['lobby', 'findings', 'help', 'heads-up', 'runs'];
 var READY = {ready: ['context approved', 'ready'], draft: ['draft to approve', 'draft'], unseeded: ['no context yet', 'none']};
 function pill(readiness) {
   var r = READY[readiness] || [readiness, 'none'];

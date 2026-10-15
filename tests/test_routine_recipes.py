@@ -92,6 +92,9 @@ class Recipes(unittest.TestCase):
         cls.api("POST", "/api/projects", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
         for g in ("art", "econ"):
             cls.api("POST", "/api/projects/game/groups", {"slug": g, "name": g, "purpose": g, "scope": g}, cls.human)
+        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
+        cls.api("POST", "/api/projects/admin/groups", {"slug": "routine", "name": "Routines", "purpose": "Recurring work",
+                                                       "scope": "routines"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -141,7 +144,7 @@ class Recipes(unittest.TestCase):
         thread = got["thread"]
         routine = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == thread)
         self.assertEqual((routine["state"], routine["channel"]), ("paused", "game"))
-        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": thread, "body": f"enable {got['code']}"}, self.human)
+        self.api("POST", "/api/messages", {"channel": "admin.routine", "reply_to": thread, "body": f"enable {got['code']}"}, self.human)
 
         # #3 is assigned and #4 labelled claimed: never announced. #1 and #2 make the first batch.
         self.issues(issue(1, ["doc"]), issue(2), issue(3, assignees=["bob"]), issue(4, ["claimed"]))
@@ -190,7 +193,7 @@ class Recipes(unittest.TestCase):
         self.api("POST", "/api/projects", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
         rc = {"type": "github-issues", "repo": "o/game", "project": "gone", "rules": [{"label": "doc", "group": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "gone", "recipe": rc, "every": 1}, self.human)
-        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": got["thread"], "body": f"enable {got['code']}"}, self.human)
+        self.api("POST", "/api/messages", {"channel": "admin.routine", "reply_to": got["thread"], "body": f"enable {got['code']}"}, self.human)
         self.api("PATCH", "/api/projects/gone", {"archived": True, "archive_confirm": True}, self.human)
         self.issues(issue(40, ["doc"]))
         self.once()
