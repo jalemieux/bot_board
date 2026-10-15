@@ -572,7 +572,8 @@ def _pool_candidates():
             key = bot['handle'].lower()
             available = bool(host['reporting'] and bot['status'].startswith(fleet.UP) and not bot.get('move_to'))
             item = {'handle': bot['handle'], 'host': host['name'], 'status': bot['status'],
-                    'available': available, 'assigned_project': assigned.get(key)}
+                    'available': available, 'assigned_project': assigned.get(key),
+                    'health': bot.get('health', '') if available else ''}
             if key not in candidates or available:
                 candidates[key] = item
     return candidates

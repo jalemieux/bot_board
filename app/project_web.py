@@ -460,7 +460,7 @@ function poolBox() {
   var sec = h('section', {'aria-labelledby': 'pool-h'}, h('h3', {id: 'pool-h', text: 'Bot pool'}));
   var summary = h('div'), body = h('div'), out = h('div', {role: 'status', 'aria-live': 'polite'});
   add(sec, summary, body, out);
-  var data = null, cands = [], selected = {}, dedicated = null, count = null;
+  var data = null, cands = [], selected = {}, dedicated = null, count = null, showAll = false;
 
   function describe(d) {
     clear(summary);
@@ -505,7 +505,19 @@ function poolBox() {
     var form = h('form', {onsubmit: function (ev) { ev.preventDefault(); save(); }},
       h('label', {'class': 'inline'}, box, 'Dedicated pool: only the bots chosen below work on this project'));
     if (dedicated) {
-      add(form, cands.length ? botTable(cands, true) : h('p', {'class': 'note', text: 'No pool bot is reported by a keeper yet.'}));
+      // the bots that can take work now, plus any already chosen here (so they can be unticked);
+      // the stopped and unreported ones fold away behind a toggle
+      var shown = cands.filter(function (c) { return c.available || selected[c.handle]; });
+      var rest = cands.filter(function (c) { return shown.indexOf(c) < 0; });
+      add(form, shown.length ? botTable(shown, true)
+        : h('p', {'class': 'note', text: cands.length ? 'No pool bot is running right now.' : 'No pool bot is reported by a keeper yet.'}));
+      if (rest.length) {
+        var t = h('button', {type: 'button', 'class': 'quiet', 'aria-expanded': showAll ? 'true' : 'false',
+          text: (showAll ? 'Hide ' : 'Show ') + rest.length + ' stopped or unreported bot' + (rest.length === 1 ? '' : 's'),
+          onclick: function () { showAll = !showAll; draw(); }});
+        add(form, t);
+        if (showAll) add(form, botTable(rest, true));
+      }
       if (data.has_more) add(form, h('button', {type: 'button', 'class': 'quiet', text: 'Show more bots', onclick: function () { load(data.next_after); }}));
       add(form, count);
     } else if (data.configured) {
@@ -522,7 +534,7 @@ function poolBox() {
   }
   function botTable(list, editable) {
     return h('table', null,
-      h('thead', null, h('tr', null, editable ? h('th', {text: 'serve'}) : null, h('th', {text: 'bot'}), h('th', {text: 'box'}), h('th', {text: 'status'}), h('th', {text: 'availability'}))),
+      h('thead', null, h('tr', null, editable ? h('th', {text: 'serve'}) : null, h('th', {text: 'bot'}), h('th', {text: 'box'}), h('th', {text: 'now'}), h('th', {text: 'availability'}))),
       h('tbody', null, list.map(function (c) {
         var taken = elsewhere(c);
         var cell = null;
@@ -537,9 +549,16 @@ function poolBox() {
         return h('tr', null, cell,
           h('td', null, h('a', {href: '/a/' + encodeURIComponent(c.handle), text: '@' + c.handle})),
           h('td', {'class': 'note', text: c.host || '?'}),
-          h('td', {'class': 'note', text: c.status || ''}),
+          h('td', {'class': 'note'}, state(c), c.health ? h('div', {'class': 'msg-err', text: c.health}) : null),
           h('td', {'class': 'note', text: avail}));
       })));
+  }
+  function state(c) {   // what the bot is doing now, in words
+    var st = c.status || '';
+    if (/^waiting/.test(st)) return 'idle';
+    var m = /^running (.+)$/.exec(st);
+    if (m) return 'busy · ' + m[1];
+    return st || '?';
   }
   function save() {
     var bots = dedicated ? Object.keys(selected).filter(function (k) { return selected[k]; }) : [];
