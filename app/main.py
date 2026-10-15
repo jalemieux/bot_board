@@ -200,15 +200,15 @@ API_MAP = {
                                              " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
-        "GET /api/routines": "every routine in admin.routine (recurring work, bin/routines) with its state"
-                             " (paused, enabled, failed, invalid), last test and latest jobs",
-        "POST /api/routines": "post a routine to admin.routine, paused, as `routines add` would {name, channel, check"
-                              " (or recipe), prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
-                              " -> {message, thread, code}; thread: the request it answers, or a new version",
-        "POST /api/routines/{thread}/{enable|pause|test}": "switch a routine {approved_by?} -> {message, code}; human"
-                              " operators, or admin bots (the admin project's bot pool) whose enable and test cite"
-                              " a human's yes in the thread after the current definition",
-        "DELETE /api/routines/{thread}": "stop a routine for good (posts `delete`); human operators and admin bots",
+        "GET /api/routines": "every routine (recurring work, run by bin/routines) with its state (paused, enabled,"
+                             " failed), last test and latest jobs; GET /api/routines/{id} for one",
+        "POST /api/routines": "store a routine, paused {name, channel, check (or recipe), prompt, every?,"
+                              " claim_timeout?, done_timeout?, resends?, about?, skill?, thread?}; thread: the message"
+                              " it was asked for in. Human managers of the admin project and admin bots (its bot pool)",
+        "PATCH /api/routines/{id}": "a new version of a routine (the fields sent), paused again",
+        "POST /api/routines/{id}/{enable|pause|test}": "{approved_by?}: an admin bot's enable and test cite a human"
+                              " manager's reply in the routine's thread posted after its current version",
+        "DELETE /api/routines/{id}": "stop a routine for good",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -1035,71 +1035,92 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
 
 
 class RoutineIn(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
-    channel: str = Field("", description="The project channel the routine fires in (a recipe's project when empty).")
-    check: str = Field("", description="The script the runner runs; prints one JSON object. Not with `recipe`.")
-    prompt: str = Field("", description="What a bot does with what the check found. Not with `recipe`.")
+    name: str | None = Field(None, min_length=1, max_length=64)
+    channel: str | None = Field(None, description="The project channel the routine fires in (a recipe's project when empty).")
+    check: str | None = Field(None, description="The script the runner runs; prints one JSON object. Not with `recipe`.")
+    prompt: str | None = Field(None, description="What a bot does with what the check found. Not with `recipe`.")
     recipe: dict | None = Field(None, description="Instead of check and prompt: a recipe the board writes them from,"
                                 " e.g. {type: github-issues, repo, project, ...}; see bin/routines.")
-    every: int = Field(routines.DEFAULTS["every"], ge=1, description="Seconds between checks.")
-    claim_timeout: int = Field(routines.DEFAULTS["claim_timeout"], ge=0)
-    done_timeout: int = Field(routines.DEFAULTS["done_timeout"], ge=0)
-    resends: int = Field(routines.DEFAULTS["resends"], ge=0)
-    about: str = ""
-    skill: str = ""
-    thread: int | None = Field(None, description="Post into this thread of the routines channel: the request"
-                               " it answers, or a new version of the routine there.")
+    every: int | None = Field(None, ge=1, description="Seconds between checks.")
+    claim_timeout: int | None = Field(None, ge=0)
+    done_timeout: int | None = Field(None, ge=0)
+    resends: int | None = Field(None, ge=0)
+    about: str | None = None
+    skill: str | None = None
+    thread: int | None = Field(None, description="On create: the message the routine was asked for in. Its"
+                               " thread is where the human's yes is looked for.")
 
     @field_validator("channel")
     @classmethod
-    def _channel(cls, v: str) -> str:
+    def _channel(cls, v: str | None) -> str | None:
         return _slug(v) if v else v
-
-
-@app.get("/api/routines", tags=["routines"])
-def routine_list(_: dict | None = Depends(optional_agent)) -> dict:
-    """Every routine in the routines channel (admin.routine), in the states the runner (bin/routines) acts on, with its latest jobs."""
-    return {"routines": routines.list_routines()}
-
-
-@app.post("/api/routines", tags=["routines"], status_code=201)
-async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
-    """Post a routine to the routines channel, paused, exactly as `routines add` would. It
-    starts on `enable <code>` in its thread; `pause` stops it and `test` dry-runs its check."""
-    return await _routine_call(routines.create, body.model_dump(), agent, MAX_BODY)
 
 
 class RoutineActIn(BaseModel):
     approved_by: int | None = Field(None, description="For an admin bot's enable or test: the id of the human's"
-                                    " reply in the thread, after the current definition, that said yes to it.")
+                                    " reply in the routine's thread, after its current version, that said yes to it.")
 
 
-@app.post("/api/routines/{thread}/{action}", tags=["routines"], status_code=201)
-async def routine_act(thread: int, action: str = Path(pattern="^(enable|pause|test)$"),
+@app.get("/api/routines", tags=["routines"])
+def routine_list(full: bool = Query(True, description="With latest jobs and announced items."),
+                 _: dict | None = Depends(optional_agent)) -> dict:
+    """Every routine (recurring work, run by bin/routines) with its state, last test and latest jobs."""
+    return {"routines": routines.list_routines(full)}
+
+
+@app.get("/api/routines/{rid}", tags=["routines"])
+def routine_get(rid: int, _: dict | None = Depends(optional_agent)) -> dict:
+    try:
+        return routines.get(rid)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+
+@app.post("/api/routines", tags=["routines"], status_code=201)
+async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
+    """Store a routine, paused. Human managers of the admin project, and admin bots (its bot pool)."""
+    data = body.model_dump()
+    missing = [k for k in ("name", "channel", "check", "prompt") if not data.get(k)
+               and not (data.get("recipe") is not None and k in ("channel", "check", "prompt"))]
+    if missing:
+        raise HTTPException(422, f"missing: {', '.join(missing)}")
+    return await _routine_call(routines.create, data, agent)
+
+
+@app.patch("/api/routines/{rid}", tags=["routines"])
+async def routine_update(rid: int, body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
+    """A new version of the definition (only the fields sent change); paused until enabled again."""
+    return await _routine_call(routines.update, rid, body.model_dump(exclude={"thread"}), agent)
+
+
+@app.post("/api/routines/{rid}/report", tags=["routines"], include_in_schema=False)
+async def routine_report(rid: int, body: dict, agent: dict = Depends(current_agent)) -> dict:
+    """The runner's: a test result {test}, or {failed, version}."""
+    return await _routine_call(routines.report, rid, body, agent)
+
+
+@app.post("/api/routines/{rid}/{action}", tags=["routines"])
+async def routine_act(rid: int, action: str = Path(pattern="^(enable|pause|test)$"),
                       body: RoutineActIn = RoutineActIn(), agent: dict = Depends(current_agent)) -> dict:
-    """Post the reply that switches a routine: `enable <code>`, `pause` or `test`. From a human
-    operator, or an admin bot (the admin project's bot pool) citing the human's yes."""
-    return await _routine_call(routines.act, thread, action, agent, body.approved_by)
+    """Enable, pause or test a routine. An admin bot's enable and test cite the human's yes."""
+    return await _routine_call(routines.act, rid, action, agent, body.approved_by)
 
 
-@app.delete("/api/routines/{thread}", tags=["routines"])
-async def routine_delete(thread: int, agent: dict = Depends(current_agent)) -> dict:
-    """Stop a routine for good: posts `delete` in its thread, which stays as history."""
-    return await _routine_call(routines.act, thread, "delete", agent)
+@app.delete("/api/routines/{rid}", tags=["routines"])
+async def routine_delete(rid: int, agent: dict = Depends(current_agent)) -> dict:
+    """Stop a routine for good."""
+    return await _routine_call(routines.act, rid, "delete", agent)
 
 
 async def _routine_call(fn, *args) -> dict:
     try:
-        out = await asyncio.to_thread(fn, *args)
+        return await asyncio.to_thread(fn, *args)
     except KeyError as exc:
         raise HTTPException(404, str(exc).strip("'\"")) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    async with _new_message:
-        _new_message.notify_all()
-    return out
 
 
 @app.get("/api/messages/{mid}", tags=["messages"])

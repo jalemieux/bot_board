@@ -1,17 +1,16 @@
 """The routines page: what recurring work exists, and a way to delete it.
 
-A routine is a thread in admin.routine (bin/routines): a human asks there, the
-admin bot works it out with them, tests it and switches it on. This page is a
-window onto those threads, from GET /api/routines; its one write is Delete
-(DELETE /api/routines/{thread}), with the identity the board page keeps in this
-browser (localStorage bb.me). Creating, changing, pausing and testing happen in
-the thread. Data from the API is only ever put on the page as text, never as HTML.
+Routines are stored on the board (app/routines.py) and asked for in a
+conversation with the admin bot, which stores, tests and enables them. This page
+reads GET /api/routines; its one write is Delete (DELETE /api/routines/{id}),
+with the identity the board page keeps in this browser (localStorage bb.me).
+Data from the API is only ever put on the page as text, never as HTML.
 """
 from __future__ import annotations
 
 import json
 
-from .routines import ADMIN
+from .routines import ADMIN_PROJECT
 from .web import shell
 
 ROUTINES_CSS = """
@@ -62,7 +61,7 @@ ROUTINES_JS = r"""
 'use strict';
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 var root = document.getElementById('rt');
-var ADMIN = '__ADMIN__';
+var ADMIN_PROJECT = '__ADMIN_PROJECT__';
 
 // ---- DOM helpers: data only ever goes in as text --------------------------------
 function h(tag, attrs) {
@@ -125,7 +124,7 @@ function why(res) {
 
 // ================================================================= the page
 var data = null;          // GET /api/routines
-var open = null;          // thread id shown, from #r=
+var open = null;          // routine id shown, from #r=
 
 function current() { var m = /r=(\d+)/.exec(location.hash); return m ? +m[1] : null; }
 function load() {
@@ -142,12 +141,12 @@ function draw(failed) {
   add(root, h('div', {'class': 'bar'},
     ME ? h('span', {text: 'Signed in as @' + ME.handle + '.'})
        : h('span', null, 'Read only. To delete a routine, sign in on the ', h('a', {href: '/', text: 'board page'}), ' first, then come back.'),
-    h('a', {href: '/c/' + ADMIN, text: '#' + ADMIN})));
+    h('a', {href: '/projects/' + encodeURIComponent(ADMIN_PROJECT), text: 'project ' + ADMIN_PROJECT})));
   if (failed) { add(root, h('p', {'class': 'msg-err', text: 'Could not load routines: ' + why(failed)})); return; }
   if (!data) { add(root, h('p', {'class': 'sub', text: 'Loading routines…'})); return; }
-  var r = open != null ? (data.routines || []).find(function (x) { return +x.thread === open; }) : null;
+  var r = open != null ? (data.routines || []).find(function (x) { return +x.id === open; }) : null;
   if (open != null && !r) {
-    add(root, h('p', {'class': 'sub'}, h('a', {href: '#', text: '← all routines'})), h('p', {'class': 'msg-err', text: 'No routine with thread #' + open + '.'}));
+    add(root, h('p', {'class': 'sub'}, h('a', {href: '#', text: '← all routines'})), h('p', {'class': 'msg-err', text: 'No routine ' + open + '.'}));
     return;
   }
   if (r) detail(r); else list();
@@ -157,50 +156,52 @@ function draw(failed) {
 function list() {
   add(root, h('h1', {text: 'Routines'}),
     h('p', {'class': 'sub'}, 'Recurring work. A check script runs on a timer at no cost; only when it finds work does a message go to the project channel for a bot to claim. ',
-      'To get a new routine, or to change one, say what you want in ', chan(ADMIN),
+      'To get a new routine, or to change one, say what you want in the channel of the ',
+      h('a', {href: '/projects/' + encodeURIComponent(ADMIN_PROJECT), text: ADMIN_PROJECT + ' project'}),
       ': the admin bot works it out with you there, tests it once you agree, and switches it on.'));
   var rs = data.routines || [];
   if (!rs.length) add(root, h('div', {'class': 'empty', text: 'No routine yet.'}));
   else add(root, h('table', null,
-    h('thead', null, h('tr', null, ['routine', 'state', 'fires in', 'every', 'jobs', 'thread'].map(function (t) { return h('th', {text: t}); }))),
+    h('thead', null, h('tr', null, ['routine', 'state', 'fires in', 'every', 'jobs', 'asked in'].map(function (t) { return h('th', {text: t}); }))),
     h('tbody', null, rs.map(function (r) {
       var jobs = r.jobs || [], last = jobs[0];
       var openJob = jobs.find(function (j) { return !j.done_at; });
       return h('tr', null,
-        h('td', null, h('a', {href: '#r=' + r.thread, text: r.name || ('#' + r.thread)}), r.about ? h('div', {'class': 'note', text: r.about}) : null),
+        h('td', null, h('a', {href: '#r=' + r.id, text: r.name || ('#' + r.id)}), r.about ? h('div', {'class': 'note', text: r.about}) : null),
         h('td', null, badge(r.state || '?', r.state)),
         h('td', null, chan(r.channel)),
         h('td', {'class': 'mono', text: fmtDur(r.every)}),
         h('td', {'class': 'note'}, openJob ? ['open: ', thread(openJob.id)] : last ? ['last: ', thread(last.id), last.done_by ? ' by @' + last.done_by : ''] : 'none yet'),
-        h('td', null, thread(r.thread)));
+        h('td', null, r.thread ? thread(r.thread) : null));
     }))));
 }
 
 // ---- one routine -----------------------------------------------------------------
 function detail(r) {
   add(root, h('p', {'class': 'sub'}, h('a', {href: '#', text: '← all routines'})),
-    h('h1', null, r.name || ('#' + r.thread), badge(r.state || '?', r.state)),
+    h('h1', null, r.name || ('#' + r.id), badge(r.state || '?', r.state)),
     r.about ? h('p', {'class': 'sub', text: r.about}) : null);
   if (r.problem) add(root, h('p', {'class': 'prob', text: 'Invalid, so it never runs: ' + r.problem}));
   if (r.failure) add(root, h('p', {'class': 'prob', text: 'Failed: ' + r.failure + (r.state === 'failed' ? ' It runs again once enabled again.' : '')}));
 
   var sec = h('section', null,
     h('dl', null,
-      h('dt', {text: 'thread'}), h('dd', null, thread(r.thread, '#' + r.thread + ' in #' + ADMIN), r.version && +r.version !== +r.thread ? [', current version ', h('a', {href: '/t/' + encodeURIComponent(r.thread) + '#m' + encodeURIComponent(r.version), text: '#' + r.version})] : null),
+      r.thread ? [h('dt', {text: 'asked in'}), h('dd', null, thread(r.thread))] : null,
+      h('dt', {text: 'version'}), h('dd', {text: String(r.version) + (r.updated_at ? ', ' + when(r.updated_at) : '')}),
       h('dt', {text: 'fires in'}), h('dd', null, chan(r.channel)),
       h('dt', {text: 'checks every'}), h('dd', {text: fmtDur(r.every)}),
       h('dt', {text: 'claim within'}), h('dd', {text: fmtDur(r.claim_timeout)}),
       h('dt', {text: 'done within'}), h('dd', {text: fmtDur(r.done_timeout)}),
       h('dt', {text: 'sent again'}), h('dd', {text: (r.resends != null ? r.resends : '?') + ' time(s) before it counts as failed'}),
       r.skill ? [h('dt', {text: 'needs skill'}), h('dd', {text: r.skill})] : null),
-    h('p', {'class': 'note'}, 'To change, pause or test it, say so in ', thread(r.thread, 'its thread'), '.'));
+    h('p', {'class': 'note'}, 'To change, pause or test it, ask the admin bot', r.thread ? [' in ', thread(r.thread, 'the thread it came from')] : null, '.'));
   add(root, sec);
   if (ME) {
     var out = h('div', {role: 'status', 'aria-live': 'polite'});
     add(sec, h('button', {type: 'button', 'class': 'quiet', text: 'Delete', onclick: function (ev) {
-      if (!window.confirm('Delete the routine ' + (r.name || '#' + r.thread) + '? It stops for good; its thread stays as history.')) return;
+      if (!window.confirm('Delete the routine ' + (r.name || '#' + r.id) + '? It stops for good.')) return;
       var btn = ev.currentTarget; btn.disabled = true;
-      api('DELETE', '/api/routines/' + encodeURIComponent(r.thread)).then(function (res) {
+      api('DELETE', '/api/routines/' + encodeURIComponent(r.id)).then(function (res) {
         btn.disabled = false;
         if (!res.ok) { status(out, false, why(res)); return; }
         location.hash = ''; load();
@@ -234,7 +235,7 @@ function testResult(r) {
   else if (found != null && typeof found !== 'string') found = JSON.stringify(found, null, 1);
   return h('div', null, h('h3', {text: 'Last test'}),
     h('p', {'class': t.ok ? 'msg-ok' : 'msg-err', text: (t.ok ? (t.work ? 'Found work.' : 'Ran fine, nothing to do.') : 'The check failed.') +
-      (t.at ? ' ' + when(t.at) : '') + (t['for'] ? ' (for #' + t['for'] + ')' : '')}),
+      (t.at ? ' ' + when(t.at) : '') + (t.version ? ' (version ' + t.version + ')' : '')}),
     t.error ? h('pre', {'class': 'prob', text: t.error}) : null,
     found ? [h('div', {'class': 'note', text: 'Found:'}), h('pre', {text: found})] : null,
     t.watermark != null ? [h('div', {'class': 'note', text: 'Watermark it would carry:'}), h('pre', {text: JSON.stringify(t.watermark)})] : null);
@@ -273,6 +274,5 @@ def routines_page(board_name: str) -> str:
                  '<style>' + ROUTINES_CSS + '</style>'
                  '<div class="rt" id="rt"><p class="sub">Loading routines…</p>'
                  '<noscript><p class="sub">This page needs JavaScript. The same data is at '
-                 '<a href="/api/routines">/api/routines</a>; routines live in the '
-                 f'<a href="/c/{ADMIN}">#{ADMIN}</a> channel.</p></noscript></div>'
-                 '<script>' + ROUTINES_JS.replace("'__ADMIN__'", json.dumps(ADMIN)) + '</script>')
+                 '<a href="/api/routines">/api/routines</a>.</p></noscript></div>'
+                 '<script>' + ROUTINES_JS.replace("'__ADMIN_PROJECT__'", json.dumps(ADMIN_PROJECT)) + '</script>')

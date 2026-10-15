@@ -1,10 +1,10 @@
-"""A human's `test` in a routine's thread: the runner runs the check once and says what it found.
+"""The runner end to end: it runs what the board says is enabled, answers tests, reports failures.
 
-End to end: the real board under uvicorn on a free port, and bin/routines as a
-subprocess, as a box would run it. Needs the board's requirements (uvicorn).
+The real board under uvicorn on a free port, and bin/routines as a subprocess, as
+a box would run it. Needs the board's requirements (uvicorn).
 Run with python -m unittest discover -s tests.
 """
-import json, os, socket, sqlite3, subprocess, sys, tempfile, time, unittest, urllib.request
+import json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +18,7 @@ BROKEN = """#!/bin/sh
 if [ -e "$HOME/fail" ]; then echo oops; exit 3; fi
 echo '{"work": false}'
 """
+
 
 class RoutineTest(unittest.TestCase):
     @classmethod
@@ -38,14 +39,11 @@ class RoutineTest(unittest.TestCase):
         cls.home = os.path.join(cls.tmp.name, "home")
         cls.cfg = os.path.join(cls.home, ".config", "bot_board")
         os.makedirs(cls.cfg)
-        cls.human = cls.register("jac", "human")
-        cls.bot = cls.register("ada", "claude-code")
-        with open(os.path.join(cls.cfg, "ada.token"), "w") as fh:
-            fh.write(cls.bot)
+        cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
+        with open(os.path.join(cls.cfg, "jac.token"), "w") as fh:
+            fh.write(cls.human)
         cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
         cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
-        cls.api("POST", "/api/projects/admin/groups", {"slug": "routine", "name": "Routines", "purpose": "Recurring work",
-                                                       "scope": "routines"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -61,13 +59,9 @@ class RoutineTest(unittest.TestCase):
         with urllib.request.urlopen(req) as r:
             return json.load(r)
 
-    @classmethod
-    def register(cls, handle, kind):
-        return cls.api("POST", "/api/agents", {"handle": handle, "kind": kind})["token"]
-
     def routines(self, *args):
         p = subprocess.run([sys.executable, ROUTINES, *args], capture_output=True, text=True,
-                           env=dict(os.environ, HOME=self.home, BOARD=self.board, ROUTINES_OPERATORS=""))
+                           env=dict(os.environ, HOME=self.home, BOARD=self.board, BOT_CONFIG=os.devnull))
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         return p.stdout
 
@@ -77,93 +71,74 @@ class RoutineTest(unittest.TestCase):
             files[k] = os.path.join(self.tmp.name, f"{name}.{k}")
             with open(files[k], "w") as fh:
                 fh.write(text)
-        self.routines("add", "--as", "ada", "--name", name, "--channel", "proj", "--check", files["check"],
+        self.routines("add", "--as", "jac", "--name", name, "--channel", "proj", "--check", files["check"],
                       "--prompt", files["prompt"])
-        return max(m["id"] for m in self.api("GET", "/api/messages?channel=admin.routine", token=self.human)["messages"]
-                   if m["meta"].get("routine", {}).get("name") == name)
+        return next(r["id"] for r in self.api("GET", "/api/routines")["routines"] if r["name"] == name)
 
-    def say(self, thread, body, token=None):
-        return self.api("POST", "/api/messages", {"channel": "admin.routine", "body": body, "reply_to": thread},
-                        token or self.human)["message"]["id"]
+    def routine(self, rid):
+        return self.api("GET", f"/api/routines/{rid}")
 
-    def answers(self, thread):
-        return [m["meta"]["routine_test"] for m in self.api("GET", f"/api/threads/{thread}", token=self.human)["messages"]
-                if isinstance(m["meta"].get("routine_test"), dict)]
+    def ask(self, rid, action):
+        return self.api("POST", f"/api/routines/{rid}/{action}", {}, self.human)
 
     def state(self):
         try:
-            return json.load(open(os.path.join(self.cfg, "routines", "state.json")))
+            with open(os.path.join(self.cfg, "routines", "state.json")) as fh:
+                return json.load(fh)
         except OSError:
             return {}
 
-    def project_posts(self):
-        return self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
+    def project_posts(self, rid):
+        return [m for m in self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
+                if m["meta"].get("routine") == rid]
 
     def test_paused_routine_is_tested_once_without_firing(self):
-        t = self.add("paused-one")
-        asked = self.say(t, "test")
-        self.say(t, "test", token=self.bot)              # a bot's `test` does not count
+        rid = self.add("paused-one")
+        self.ask(rid, "test")
         self.routines("once")
-        got = self.answers(t)
-        self.assertEqual(len(got), 1)
-        self.assertEqual(got[0]["for"], asked)
-        self.assertTrue(got[0]["ok"] and got[0]["work"])
-        self.assertEqual(got[0]["found"], ["mark=none"])
-        self.assertEqual(got[0]["watermark"], {"n": 9})
-        self.assertIsNone(got[0]["error"])
-        self.assertEqual(self.project_posts(), [], "a test must not fire a job")
-        st = self.state()[str(t)]
-        self.assertEqual(st.get("tested"), asked)
+        t = self.routine(rid)["last_test"]
+        self.assertFalse(self.routine(rid)["test_pending"])
+        self.assertEqual((t["ok"], t["work"], t["found"], t["watermark"], t["error"]),
+                         (True, True, ["mark=none"], {"n": 9}, None))
+        self.assertEqual(self.project_posts(rid), [], "a test must not fire a job")
+        st = self.state()[str(rid)]
         self.assertNotIn("watermark", st); self.assertNotIn("job", st)
-        self.routines("once")                            # handled once per test message
-        self.assertEqual(len(self.answers(t)), 1)
+        self.routines("once")                            # answered once per ask
+        self.assertEqual(self.routine(rid)["last_test"]["at"], t["at"])
 
-    def test_enabled_routine_uses_the_current_watermark_and_keeps_it(self):
-        t = self.add("enabled-one")
-        code = self.api("GET", "/api/messages?channel=admin.routine", token=self.human)["messages"]
-        code = next(m for m in code if m["id"] == t)["body"].split("enable ")[1].split("`")[0]
-        self.say(t, f"enable {code}")
-        st = self.state(); st[str(t)] = {"watermark": {"n": 5}, "version": t, "checked_at": time.time()}
+    def test_enabled_routine_fires_and_a_test_keeps_the_watermark(self):
+        rid = self.add("enabled-one")
+        self.ask(rid, "enable")
+        st = self.state(); st[str(rid)] = {"watermark": {"n": 5}, "version": 1, "checked_at": time.time()}
         os.makedirs(os.path.join(self.cfg, "routines"), exist_ok=True)
-        json.dump(st, open(os.path.join(self.cfg, "routines", "state.json"), "w"))
-        asked = self.say(t, "Test.")
+        with open(os.path.join(self.cfg, "routines", "state.json"), "w") as fh:
+            json.dump(st, fh)
+        self.ask(rid, "test")
         self.routines("once")
-        got = self.answers(t)
-        self.assertEqual([a["for"] for a in got], [asked], got)
-        self.assertTrue(got[0]["ok"], got[0])
-        self.assertEqual(got[0]["found"], ['mark={"n": 5}'])
-        st = self.state()[str(t)]
-        self.assertEqual(st["watermark"], {"n": 5}, "a test must leave the watermark alone")
-        self.assertNotIn("job", st)
+        self.assertEqual(self.routine(rid)["last_test"]["found"], ['mark={"n": 5}'])
+        self.assertEqual(self.state()[str(rid)]["watermark"], {"n": 5}, "a test must leave the watermark alone")
+        st = self.state(); st[str(rid)]["checked_at"] = 0
+        with open(os.path.join(self.cfg, "routines", "state.json"), "w") as fh:
+            json.dump(st, fh)
+        self.routines("once")
+        (job,) = self.project_posts(rid)
+        self.assertIn('mark={"n": 5}', job["body"])
+        self.assertEqual(self.routine(rid)["jobs"][0]["id"], job["id"])
 
-    def test_failing_check_and_invalid_definition_are_answered_with_the_reason(self):
-        t = self.add("broken", check=BROKEN)
+    def test_a_failing_check_stops_the_routine_and_says_so_in_heads_up(self):
+        rid = self.add("broken", check=BROKEN)
+        self.ask(rid, "enable")
         open(os.path.join(self.home, "fail"), "w").close()
-        self.say(t, "test")
-        bad = self.api("POST", "/api/messages", {"channel": "admin.routine", "body": "not what routines add writes",
-                       "meta": {"routine": {"name": "hand-made"}}}, self.human)["message"]["id"]
-        self.say(bad, "test")
-        self.routines("once")
-        (b,) = self.answers(t)
-        self.assertFalse(b["ok"]); self.assertIn("exited 3", b["error"])
-        (i,) = self.answers(bad)
-        self.assertFalse(i["ok"]); self.assertIn("cannot run", i["error"])
-        self.assertFalse(any("Routine `broken` stopped" in m["body"]
-                             for m in self.api("GET", f"/api/threads/{t}", token=self.human)["messages"]),
-                         "a failed test must not fail the routine")
-
-    def test_an_admin_bot_test_counts_only_with_a_human_yes_after_the_definition(self):
-        t = self.add("asked-for")
-        self.assertEqual(self.answers(t), [])
-        with sqlite3.connect(os.path.join(self.tmp.name, "b.db")) as c:   # ada joins the admin project's bot pool
-            c.execute("INSERT OR IGNORE INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p,"
-                      " agents a WHERE p.slug='admin' AND a.handle='ada'")
-        unapproved = self.api("POST", "/api/messages", {"channel": "admin.routine", "body": "test", "reply_to": t,
-                              "meta": {"approved_by": t}}, self.bot)["message"]["id"]
-        yes = self.say(t, "yes")
-        asked = self.api("POST", f"/api/routines/{t}/test", {"approved_by": yes}, self.bot)["message"]["id"]
-        self.routines("once")
-        self.assertEqual([a["for"] for a in self.answers(t)], [asked], f"not {unapproved}: it cites no yes")
+        try:
+            self.routines("once")
+        finally:
+            os.remove(os.path.join(self.home, "fail"))
+        r = self.routine(rid)
+        self.assertEqual(r["state"], "failed")
+        self.assertIn("exited 3", r["failure"])
+        told = [m for m in self.api("GET", "/api/messages?channel=heads-up", token=self.human)["messages"]
+                if m["meta"].get("routine") == rid]
+        self.assertEqual(len(told), 1)
 
 
 if __name__ == "__main__":
