@@ -978,6 +978,9 @@ hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have no
 mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
 for m in msgs:
     if m["author"]==me: continue
+    # another launcher saying its harness failed: for the humans reading, never work for a bot.
+    # Answering one with a harness run that fails too is how two broken bots loop for ever.
+    if (m.get("meta") or {}).get("launcher")=="bin/bot": continue
     tid=m["thread_id"] or m["id"]
     if m["id"] in mine or (goal and str(tid)==goal): why="for you"
     elif watched(m["board"]): why="channel"
@@ -1004,12 +1007,17 @@ logged_out() {  # true when the harness says it has no login; unknown counts as 
 login_hint() {
   case $HARNESS in claude) echo "run claude, then /login, as $(id -un) on $(hostname)" ;; codex) echo "run codex login as $(id -un) on $(hostname)" ;; *) echo "log $HARNESS in on $(hostname)" ;; esac
 }
+# limited <log offset>: the run that wrote the log past that offset hit a usage or rate
+# limit. Retrying at once only fails again, and burns what is left of the limit.
+limited() { tail -c +$(($1 + 1)) "$LOG" | grep -qiE 'session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded'; }
+PAUSE=0          # epoch seconds: a limit was hit, nothing is prompted before then
 OUTAGE=""        # set while the harness is logged out: the time it was found so
 if [ -s "$STATE/health" ] && grep -q '^logged out' "$STATE/health"; then OUTAGE=$(date -u +%FT%TZ); fi
 
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  if [ "$PAUSE" -gt "$(date +%s)" ]; then sleep 30; continue; fi
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
     if logged_out; then sleep 60; continue; fi
@@ -1061,15 +1069,32 @@ while :; do
       if [ "$note" = - ]; then note=""; fi
       PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id${kind:+, kind $kind}]${note:+ Note: $note.}"$'\n'"${body//\\n/$'\n'}"$'\n'
     done <<<"$GROUP"
-    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"
+    LOGPOS=$(wc -c <"$LOG")
+    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"; PAUSE=0
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
     else
       rc=$?; log "harness exited $rc"
       last=$(tail -n1 <<<"$GROUP")
-      if logged_out; then
-        # keep this group's messages, and those of the groups not run yet, for when the login is back
+      lim=""; lout=""
+      if limited "$LOGPOS"; then lim=1; elif logged_out; then lout=1; fi
+      if [ -n "$lim$lout" ]; then
+        # keep this group's messages, and those of the groups not run yet, for when it can run again
         awk -F'\t' 'NR==FNR{done[$1]=1; next} !($1 in done)' <(tr ' ' '\n' <<<"$DONE_IDS") <(printf '%s\n' "$RAW") >>"$STATE/held"
         awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"   # routing may have held some already
+      fi
+      if [ -n "$lim" ]; then
+        why=$(tail -c +$((LOGPOS + 1)) "$LOG" | grep -iE 'session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded' | tail -n1 | cut -c1-200)
+        # say it once per outage, to nobody in particular: a mention would wake another bot
+        if ! grep -q '^out of ' "$STATE/health" 2>/dev/null; then
+          say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+              "My harness ($HARNESS) on $(hostname) hit a limit: $why. I am keeping the messages and will try again every 10 minutes." || true
+        fi
+        echo "out of $HARNESS usage since $(date -u +%FT%TZ): $why; messages are kept, retrying every 10 min" >"$STATE/health"
+        log "$HARNESS hit a limit; holding the batch, next try in 10 min"
+        PAUSE=$(( $(date +%s) + 600 ))
+        break
+      fi
+      if [ -n "$lout" ]; then
         echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
         log "$HARNESS is logged out; holding $(wc -l <<<"$GROUP") message(s) and waiting for a login"
         if [ -z "$OUTAGE" ]; then
@@ -1080,9 +1105,12 @@ while :; do
         break     # the rest of the batch waits too: the next round sees OUTAGE before prompting again
       fi
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
+      # one notice per run of failures: a bot failing on every batch must not post on every batch
+      if ! grep -q '^last run failed' "$STATE/health" 2>/dev/null; then
+        say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+            "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
+      fi
       echo "last run failed (exit $rc) at $(date -u +%FT%TZ): $(grep -v '^[0-9]\{4\}-..-..T' "$LOG" | tail -n1 | cut -c1-200)" >"$STATE/health"
-      say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-          "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
     fi
   done <<<"$PROJECTS"
 done

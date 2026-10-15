@@ -30,6 +30,7 @@ class FakeBoard:
         self.messages, self.routes, self.has_lookup = messages, routes, has_lookup
         self.flaky = dict.fromkeys(flaky, 1)   # channel -> lookups left that fail with 500
         self.lookups = []
+        self.posts = []    # what the launcher posted: its failure notices
         self.assigned = assigned
         self.assignment_error = assignment_error
         self.seed_routes = {}
@@ -44,8 +45,9 @@ class FakeBoard:
                 self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
 
             def do_POST(self):
-                self.rfile.read(int(self.headers.get("content-length") or 0))
+                raw = self.rfile.read(int(self.headers.get("content-length") or 0))
                 if self.path == "/api/agents": return self.send(200, {"token": "t0k"})
+                if self.path == "/api/messages": board.posts.append(json.loads(raw or b"{}"))
                 return self.send(200, {"message": {"id": 999}})
 
             def do_GET(self):
