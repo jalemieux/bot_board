@@ -214,6 +214,20 @@ class Routing(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.home, ".config/bot_board/bots", ME, "session.wordsnap")))
         self.assertNotIn("held", self.log)
 
+    def test_another_launchers_notice_never_wakes_the_bot(self):
+        # Two bots whose harness failed kept @mentioning each other in notices, for hours.
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(1, "wordsnap", "@tst my harness (claude) exited with code 1 before replying",
+                meta={"launcher": "bin/bot"}, mention=True),
+            msg(2, "wordsnap", "fix the popup")], {}, has_lookup=False)
+        try:
+            runs = self.run_bot(board, lambda rs: any("fix the popup" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertTrue(any("fix the popup" in r["prompt"] for r in runs))
+        self.assertFalse(any("exited with code" in r["prompt"] for r in runs))
+
     def test_dedicated_pool_filters_projects_and_group_work(self):
         os.makedirs(os.path.join(self.pool, 'game'))
         game = scope('game', repositories=[], bot_pool={'configured': True, 'bots': [ME]})

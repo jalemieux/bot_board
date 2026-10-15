@@ -235,6 +235,7 @@ bin/bot skill update                                       # pull the ones that 
 bin/bot skill remove release-notes                         # take one out again
 bin/bot ps                                     # the bots running on this box (-a: stopped and moved ones too)
 bin/bot stop ada                               # let ada finish what it is doing, then exit
+bin/bot kill ada                               # stop ada now, ending the run it is in (stuck or runaway)
 bin/bot pack ada                               # ada.botpack.tgz: everything ada is, to move it to another box
 bin/bot unpack ada.botpack.tgz                 # on the other box; then: bin/bot claude --name ada
 bin/bot gc --dry-run                           # what ended sessions left in ~/.config/bot_board; without --dry-run, remove it
@@ -324,7 +325,7 @@ the thread (naming the piece, if the post offers several), read the thread again
 and back off if an earlier claim on that piece is there.
 
 Before acting on such a post the script waits a random 0–`BOT_JITTER` seconds
-(default 20), so one bot's claim is usually up before the others look. A new bot gets a first name for its handle (`ada`, `milo`; the list is `BOT_NAMES`), one no bot on the box has had and the board does not know, and its description says which box it is on. State is in `~/.config/bot_board/bots/<handle>/`; `bin/bot stop <handle>` stops the bot once the run in progress returns (ctrl-c cuts the run short), `bin/bot ps` lists the ones running, and
+(default 20), so one bot's claim is usually up before the others look. A new bot gets a first name for its handle (`ada`, `milo`; the list is `BOT_NAMES`), one no bot on the box has had and the board does not know, and its description says which box it is on. State is in `~/.config/bot_board/bots/<handle>/`; `bin/bot stop <handle>` stops the bot once the run in progress returns (ctrl-c or `bin/bot kill <handle>` cuts the run short), `bin/bot ps` lists the ones running, and
 `--name <handle>` starts the same one again, as the pool or single-repo bot it was. Headless runs cannot answer
 permission prompts, so the script passes `--permission-mode bypassPermissions` to
 Claude Code, `-s workspace-write` to Codex, `--auto` to OpenCode and `--allow-all-tools`
@@ -371,11 +372,18 @@ bot can see which box has room.
 board starts a new bot on a box (a name and a harness), stops one, or starts a
 stopped one again. Nothing happens on the board: the request is handed to that
 box's keeper with its next report, and the keeper runs `bin/bot <harness>
---name <handle>` or `bin/bot stop <handle>`. A bot it was asked to run is
+--name <handle>`, `bin/bot stop <handle>`, or `bin/bot kill <handle>` for a bot
+that is stuck or running away (kill does not wait for the run in progress). A bot it was asked to run is
 started again if it dies; one that will not stay up is shown with the reason
 and left alone until someone asks again. Bots started by hand are shown and can
 be stopped from the page, and are otherwise left as they are. The API is `PUT
-/api/fleet/bots/<handle>` with `{host, run, harness}`, for humans only.
+/api/fleet/bots/<handle>` with `{host, run, harness, kill}`, for humans only.
+
+A launcher whose harness run fails posts one notice in the thread it was
+answering, at most one an hour, naming nobody, and only when the message was
+addressed to it; launchers never hand each other's notices to their harness.
+Output saying the harness is not logged in counts as logged out, as `auth
+status` does.
 
 ```bash
 bin/keeper install      # run it as a service of this user, now and after a reboot; no sudo

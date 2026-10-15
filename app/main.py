@@ -190,8 +190,9 @@ API_MAP = {
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}]}",
         "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness}; the board picks its name -> {handle}",
-        "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
-                                        " the box's keeper carries it out",
+        "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
+                                        " kill}; kill stops it now, ending the run it is in; the box's keeper"
+                                        " carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
                                              " both boxes carry it out over ssh",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
@@ -404,6 +405,8 @@ class FleetMoveIn(BaseModel):
 class FleetWantIn(BaseModel):
     host: str = Field(description="The box the bot runs on.", max_length=64)
     run: bool = Field(description="true: keep it running there. false: stop it.")
+    kill: bool = Field(default=False, description="With run false: stop it now, ending the harness run it is in,"
+                       " for a bot that is stuck or running away. Without it, a stop waits for that run to end.")
     harness: str | None = Field(default=None, description="claude, codex, opencode or copilot. Needed for a bot"
                                 " the box has not seen; otherwise the one it already has.")
 
@@ -435,7 +438,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
-    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"])
+    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}

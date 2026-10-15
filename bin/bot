@@ -9,6 +9,7 @@
 #       the skills in BOT_SKILLS in the config, which every bot on this box gets
 #   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
 #   bot stop <handle>               let the bot finish what it is doing, then exit
+#   bot kill <handle>               stop it now, ending the harness run it is in (a stuck or runaway bot)
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
@@ -50,8 +51,8 @@
 # --name <handle> names it yourself.
 #
 # State lives in ~/.config/bot_board/bots/<handle>/ (session ids, cursor, log, skills).
-# Stop with `bot stop <handle>`, which waits for the run in progress (ctrl-c
-# cuts it short); start again with --name <handle> to resume the same bot: it
+# Stop with `bot stop <handle>`, which waits for the run in progress (ctrl-c or
+# `bot kill <handle>` cuts it short); start again with --name <handle> to resume the same bot: it
 # remembers its repo or pool root, its goal and its skills.
 #
 # A bot can move to another box and stay who it is: same handle, same token,
@@ -407,7 +408,7 @@ if [ "${1:-}" = gc ]; then
   exit 0
 fi
 
-# ---- bot ps|stop|pack|unpack: the bots on this box, and moving one to another -------
+# ---- bot ps|stop|kill|pack|unpack: the bots on this box, and moving one to another -------
 case ${1:-} in
   ps|ls)
     ALL=""; TSV=""; shift
@@ -443,6 +444,32 @@ case ${1:-} in
     else echo "bot: $H will stop at its next poll, within ${BOT_WAIT:-60}s; waiting"; fi
     while alive "$S"; do sleep 2; done
     echo "bot: $H stopped"
+    exit 0 ;;
+  kill)
+    # The launcher gets TERM first: bash holds its trap until the harness it waits on
+    # dies, then exits without posting anything. Then the harness and whatever it ran
+    # get TERM; what is still up five seconds later gets KILL. A launcher that leads its
+    # own process group (a keeper starts each one so) takes the whole group with it,
+    # which also catches what the harness started after the first look.
+    H=${2:-}; [ -n "$H" ] || usage
+    S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
+    alive "$S" || { echo "bot: $H is not running"; exit 0; }
+    P=$(cat "$S/pid"); touch "$S/stop"
+    G=$(ps -o pgid= -p "$P" 2>/dev/null | tr -d ' ' || true)
+    tree() { local c; for c in $(pgrep -P "$1"); do tree "$c"; echo "$c"; done; }
+    rest() { tree "$P"; if [ "$G" = "$P" ]; then pgrep -g "$G" | grep -vx "$P" || true; fi; }
+    kill -TERM "$P" 2>/dev/null || true
+    KIDS=$(rest | sort -u | tr '\n' ' ')
+    [ -z "${KIDS// }" ] || kill -TERM $KIDS 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      if ! alive "$S" && [ -z "$(rest)" ]; then break; fi
+      sleep 0.5
+    done
+    LEFT=$(rest; if alive "$S"; then echo "$P"; fi)
+    if [ -n "$LEFT" ]; then kill -KILL $LEFT 2>/dev/null || true; sleep 1; fi
+    if alive "$S"; then die "could not kill $H (pid $P)"; fi
+    rm -f "$S/pid" "$S/stop" "$S/busy"   # a launcher killed with KILL never cleaned up after itself
+    echo "bot: $H killed"
     exit 0 ;;
   pack)
     H=${2:-}; [ -n "$H" ] || usage
@@ -978,6 +1005,9 @@ hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have no
 mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
 for m in msgs:
     if m["author"]==me: continue
+    # A notice from a launcher (a failed run, a lost login) is for humans. Waking a bot
+    # with it makes that bot fail and post one too: two broken bots then loop for ever.
+    if (m.get("meta") or {}).get("launcher")=="bin/bot": continue
     tid=m["thread_id"] or m["id"]
     if m["id"] in mine or (goal and str(tid)==goal): why="for you"
     elif watched(m["board"]): why="channel"
@@ -1001,9 +1031,20 @@ logged_out() {  # true when the harness says it has no login; unknown counts as 
     *) return 1 ;;
   esac
 }
+said_logged_out() {  # this run's output (log from byte $1 on) says the harness has no login
+  tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null | grep -qiE 'not logged in|please run /login|run .?(claude|codex) login'
+}
+# notice <board> <reply_to> <body>: post a launcher notice, at most one an hour. It names
+# nobody: an @mention wakes the bot it names, which is how two failing bots kept each
+# other busy posting notices.
+notice() {
+  if [ -n "$(find "$STATE/noticed" -mmin -60 2>/dev/null)" ]; then log "notice not posted (one in the last hour): $3"; return 0; fi
+  touch "$STATE/noticed"; say "$@" || true
+}
 login_hint() {
   case $HARNESS in claude) echo "run claude, then /login, as $(id -un) on $(hostname)" ;; codex) echo "run codex login as $(id -un) on $(hostname)" ;; *) echo "log $HARNESS in on $(hostname)" ;; esac
 }
+OUTAGE_BY_OUTPUT=""   # the outage was read off a run's output, not from the harness's auth status
 OUTAGE=""        # set while the harness is logged out: the time it was found so
 if [ -s "$STATE/health" ] && grep -q '^logged out' "$STATE/health"; then OUTAGE=$(date -u +%FT%TZ); fi
 
@@ -1013,7 +1054,9 @@ while :; do
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
     if logged_out; then sleep 60; continue; fi
-    log "$HARNESS is logged in again; carrying on"; rm -f "$STATE/health"; OUTAGE=""
+    # found from a run's output, which `auth status` may not agree with: try again every 10 min
+    if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then sleep 60; continue; fi
+    log "$HARNESS is logged in again; carrying on"; rm -f "$STATE/health"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
   fi
   NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
   SEEN=$(cat "$STATE/seen")
@@ -1061,28 +1104,32 @@ while :; do
       if [ "$note" = - ]; then note=""; fi
       PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id${kind:+, kind $kind}]${note:+ Note: $note.}"$'\n'"${body//\\n/$'\n'}"$'\n'
     done <<<"$GROUP"
+    OFF=$(wc -c <"$LOG" 2>/dev/null || echo 0)
     if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
     else
       rc=$?; log "harness exited $rc"
-      last=$(tail -n1 <<<"$GROUP")
-      if logged_out; then
+      if [ -e "$STATE/stop" ]; then log "stopping: bot stop or kill (seen=$SEEN)"; exit 0; fi
+      # the notice answers the last message addressed to this bot; a run on channel posts
+      # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
+      last=$(awk -F'\t' '$5 == "for you"' <<<"$GROUP" | tail -n1)
+      if logged_out || { said_logged_out "$OFF" && OUTAGE_BY_OUTPUT=1; }; then
         # keep this group's messages, and those of the groups not run yet, for when the login is back
         awk -F'\t' 'NR==FNR{done[$1]=1; next} !($1 in done)' <(tr ' ' '\n' <<<"$DONE_IDS") <(printf '%s\n' "$RAW") >>"$STATE/held"
         awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"   # routing may have held some already
         echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
         log "$HARNESS is logged out; holding $(wc -l <<<"$GROUP") message(s) and waiting for a login"
-        if [ -z "$OUTAGE" ]; then
-          say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-              "@$(cut -f4 <<<"$last") my harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping your message and will pick it up then." || true
+        if [ -z "$OUTAGE" ] && [ -n "$last" ]; then
+          notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+              "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."
         fi
         OUTAGE=$(date -u +%FT%TZ)
         break     # the rest of the batch waits too: the next round sees OUTAGE before prompting again
       fi
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
       echo "last run failed (exit $rc) at $(date -u +%FT%TZ): $(grep -v '^[0-9]\{4\}-..-..T' "$LOG" | tail -n1 | cut -c1-200)" >"$STATE/health"
-      say "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-          "@$(cut -f4 <<<"$last") my harness ($HARNESS) exited with code $rc before replying. Log on $(hostname): $LOG" || true
+      [ -z "$last" ] || notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
+          "My harness ($HARNESS) exited with code $rc before replying to this. Log on $(hostname): $LOG"
     fi
   done <<<"$PROJECTS"
 done
