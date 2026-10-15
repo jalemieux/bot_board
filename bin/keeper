@@ -46,14 +46,14 @@ the start while something is missing: the bot is reported "held: claude not
 logged in" and started on its own once a check passes again (checks run every
 5 minutes). Two kinds. A login (Claude Code /login, codex login) is interactive
 and belongs to this box, so it is only checked; someone logs in here. A secret
-(GH_TOKEN) is a plain long-lived string, kept in one file, fleet.env (KEY=value
-lines, mode 600), in ~/.config/bot_board on the hand-over box. Every keeper
-copies it over the ssh it already uses for moves, at start and every 5 minutes,
-to ~/.config/bot_board/fleet.env here, and starts bots with it in their
-environment, so rotating a token is editing that one file. Never through the
-board. KEEPER_FLEET_ENV=host:path names another place for it. Each
-credential's state goes out with the report and shows on /fleet; nothing about
-it is ever posted to a channel.
+(GH_TOKEN) is a plain long-lived string an admin sets once, under Secrets on
+/fleet. Each report tells the keeper which version of the secrets the board
+has; when it changes, the keeper fetches them (only a keeper may) and writes
+them to ~/.config/bot_board/fleet.env (KEY=value lines, mode 600). bin/bot reads
+that file before every harness run, so a rotated token is used from each bot's
+next run. With no secrets on the board, a fleet.env kept here by hand is left
+alone. Each credential's state goes out with the report and shows on /fleet;
+nothing about it is ever posted to a channel.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST,
 KEEPER_OPERATORS (handles, space or comma separated: only what they asked is carried
@@ -236,6 +236,7 @@ CREDENTIALS = (
 )
 CHECK_EVERY = 300
 FLEET_ENV = os.path.join(CFG, "fleet.env")
+FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits here are replaced\n"
 
 
 SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")   # what fleet.env may set; bin/bot reads the same
@@ -262,40 +263,39 @@ def read_env(path):
 
 
 class Credentials:
-    """Checks what bots need on this box, and keeps fleet.env in step with the central copy."""
+    """Checks what bots need on this box, and keeps fleet.env in step with the board's secrets."""
 
     def __init__(self, me):
         self.me = me
         self.state = {}         # name -> (state, detail)
         self.checked = 0        # when the checks last ran
+        self.version = None     # the version of the board's secrets fleet.env holds
         self.sync_error = ""
-        spec = setting("KEEPER_FLEET_ENV")
-        if not spec and HANDOVER:
-            ho = Handover(me)
-            spec = f"{ho.host}:.config/bot_board/fleet.env" if ho.host else ""   # the hand-over box is this one
-        self.source = spec      # host:path, or "" when fleet.env is kept here by hand
 
-    def sync(self):
-        """Copy fleet.env from its central place when it differs from ours. Errors keep our copy."""
-        if not self.source:
+    def sync(self, version, token):
+        """When the board's secrets changed (version, from the report), fetch them and write
+        fleet.env. Errors keep our copy, and are reported."""
+        if not version or version == self.version:
             return
-        d, name = os.path.split(self.source)
-        tmp = FLEET_ENV + ".new"
         try:
-            Handover(self.me, d).get(name or "fleet.env", tmp)
-            os.chmod(tmp, 0o600)
-            if not os.path.exists(FLEET_ENV) or Path(FLEET_ENV).read_bytes() != Path(tmp).read_bytes():
+            code, got = call("GET", "/api/fleet/secrets/values", None, token)
+            if code != 200:
+                raise RuntimeError(f"refused ({code}): {got.get('detail', got)}")
+            secrets = {k: v for k, v in got["secrets"].items()
+                       if SECRET_NAME.fullmatch(k) and "\n" not in v and "\0" not in v}
+            mine = os.path.exists(FLEET_ENV) and Path(FLEET_ENV).read_text(errors="replace").startswith(FROM_BOARD)
+            if secrets or mine:     # none on the board: a fleet.env kept here by hand stays
+                tmp = FLEET_ENV + ".new"
+                with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+                    fh.write(FROM_BOARD + "".join(f"{k}={shlex.quote(v)}\n" for k, v in secrets.items()))
                 os.replace(tmp, FLEET_ENV)
-                print(f"keeper: fleet.env updated from {self.source}", flush=True)
-            self.sync_error = ""
-        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
-            self.sync_error = f"fleet.env not copied from {self.source}: {str(e)[:200]}"
-        finally:
-            if os.path.exists(tmp):
-                os.remove(tmp)
+                print(f"keeper: fleet.env updated from the board ({', '.join(secrets) or 'no secrets'})", flush=True)
+            self.version, self.sync_error, self.checked = got.get("version", version), "", 0   # check again now
+        except (OSError, RuntimeError, ConnectionError, KeyError, AttributeError) as e:
+            self.sync_error = f"fleet.env not updated from the board: {str(e)[:200]}"
 
     def env(self):
-        """The environment bots are started with: fleet.env's secrets under the keeper's own
+        """The environment the checks run in: fleet.env's secrets under the keeper's own
         environment, which wins (as it does in bin/bot)."""
         return {**read_env(FLEET_ENV), **os.environ}
 
@@ -332,13 +332,11 @@ class Credentials:
             return "missing", (f"no {var} (fleet.env) and no login" if kind == "secret" else "not logged in")
         return "unknown", f"`{' '.join(cmd)}` exited {r.returncode}: {said}"[:200]
 
-    def refresh(self, harnesses, force=False, sync=True):
+    def refresh(self, harnesses, force=False):
         """Run the checks when they are due, or at once when a harness is new to them."""
         need = self.needed(harnesses)
         if not force and time.time() - self.checked < CHECK_EVERY and all(c[0] in self.state for c in need):
             return
-        if sync:
-            self.sync()
         env = self.env()
         self.state = {c[0]: self.check(c, env) for c in need}
         self.checked = time.time()
@@ -378,7 +376,6 @@ class Hands:
         self.killed = {}        # handle -> the kill request (its time) already carried out
         self.blocked = {}       # harness -> why its bots are not started now (Credentials.blocked)
         self.held = {}          # harness -> how many bots that held in the last round
-        self.env = None         # the environment bots start with (None: the keeper's own)
 
     def reconcile(self, want, seen):
         """want: the board's rows for this box. seen: bin/bot ps. Returns handle -> problem."""
@@ -551,8 +548,7 @@ class Hands:
         """Detached, so the bot outlives this keeper; its output goes beside its state."""
         os.makedirs(os.path.dirname(self.out_path(handle)), mode=0o700, exist_ok=True)
         with open(self.out_path(handle), "ab") as fh:
-            return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True,
-                                    env=self.env)
+            return subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True)
 
     def last_words(self, handle):
         try:
@@ -563,7 +559,7 @@ class Hands:
 
 
 def call(method, path, body, token=None):
-    req = urllib.request.Request(BOARD + path, method=method, data=json.dumps(body).encode())
+    req = urllib.request.Request(BOARD + path, method=method, data=None if body is None else json.dumps(body).encode())
     req.add_header("content-type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
@@ -678,7 +674,7 @@ def main():
     host = host_name()
     if a.cmd == "show":
         creds = Credentials(host)
-        creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True, sync=False)
+        creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True)
         return print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({})}, indent=1))
     try:
         token = token_for(host)
@@ -695,7 +691,7 @@ def main():
         try:
             snap = snapshot()
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
-            hands.blocked, hands.env = creds.blocked(), creds.env()
+            hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
@@ -715,6 +711,7 @@ def main():
             if code != 200:
                 print(f"keeper: report refused ({code}): {got}", file=sys.stderr, flush=True)
             else:
+                creds.sync(got.get("secrets"), token)
                 want = got.get("want", [])
                 problems = hands.reconcile(want, snap["bots"])
         except ConnectionError as e:

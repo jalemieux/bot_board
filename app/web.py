@@ -1595,10 +1595,40 @@ document.addEventListener('submit', function (ev) {
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.dataset.host, true, f.elements.harness.value);
 });
-// Keep the page current, but never under someone who is typing a name.
+// The fleet's secrets: names only, from the admin API.
+function secretCall(method, name, body) {
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return Promise.reject(); }
+  return fetch('/api/fleet/secrets' + (name ? '/' + encodeURIComponent(name) : ''), {method: method,
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: body ? JSON.stringify(body) : undefined})
+  .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
+}
+function listSecrets() {
+  var box = document.getElementById('secretlist');
+  if (!ME) { box.textContent = 'Sign in as a board admin to see and set them.'; return; }
+  secretCall('GET').then(function (d) {
+    box.textContent = d.secrets.length ? '' : 'None set.';
+    d.secrets.forEach(function (x) {
+      var row = document.createElement('div');
+      row.textContent = x.name + ' \\u2026' + x.ends + ' \\u00b7 set by @' + x.set_by + ' ' + x.set_at + ' ';
+      var del = document.createElement('button'); del.type = 'button'; del.textContent = 'remove';
+      del.onclick = function () { if (confirm('Remove ' + x.name + ' from every box?'))
+        secretCall('DELETE', x.name).then(listSecrets, function (e) { alert(e.message); }); };
+      row.appendChild(del); box.appendChild(row);
+    });
+  }, function (e) { box.textContent = e.message; });
+}
+listSecrets();
+document.addEventListener('submit', function (ev) {
+  var f = ev.target.closest('form.secret'); if (!f) return;
+  ev.preventDefault();
+  secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
+  .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
+});
+// Keep the page current, but never under someone who is typing a name or a secret.
 setInterval(function () {
   var a = document.activeElement;
-  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)'))
+  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)')
+      && !document.querySelector('form.secret input:not(:placeholder-shown)'))
     location.reload();
 }, 15000);
 """
@@ -1663,6 +1693,14 @@ def fleet_page(board_name, hosts, pools=()) -> str:
 carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in, kill cuts it short.
 <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
 {body}
+<h2 id="secrets">Secrets</h2>
+<p class="sub">Given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
+on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
+shown again. Board admins only.</p>
+<div id="secretlist" class="sub"></div>
+<form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
+ autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
+ autocomplete="off" required> <button type="submit">save</button></form>
 <script>{FLEET_JS}</script>""")
 
 

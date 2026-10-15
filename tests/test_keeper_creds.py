@@ -1,5 +1,5 @@
 """#83: the keeper checks credentials before starting bots, holds them while a login is
-missing, and keeps fleet.env in step with the central copy. Run with python -m unittest discover -s tests."""
+missing, and writes the board's secrets to fleet.env. Run with python -m unittest discover -s tests."""
 import importlib.machinery
 import importlib.util
 import os
@@ -43,7 +43,6 @@ class Keeper(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name
         self.bin = os.path.join(self.home, 'bin'); os.makedirs(self.bin)
-        self.central = os.path.join(self.home, 'central'); os.makedirs(self.central)
         os.makedirs(os.path.join(self.home, '.config', 'bot_board'))
         # gh is happy only with the token from fleet.env; claude says whether a login file exists
         fake(self.bin, 'gh', '[ "$GH_TOKEN" = good ] && exit 0; '
@@ -52,19 +51,30 @@ class Keeper(unittest.TestCase):
         fake(self.bin, 'claude', f'[ -e {self.home}/claude-login ] && echo \'{{"loggedIn": true}}\' '
                                  '|| echo \'{"loggedIn": false}\'')
         self.k = load_keeper(self.home)
-        os.environ['KEEPER_FLEET_ENV'] = os.path.join(self.central, 'fleet.env')
+        self.local = os.path.join(self.home, '.config', 'bot_board', 'fleet.env')
+        self.board = {'secrets': {}, 'version': 'v0'}     # what GET /api/fleet/secrets/values answers
+        self.fetches = 0
+        def call(method, path, body, token=None):
+            self.fetches += 1
+            return (200, self.board) if token == 'keeper-token' else (403, {'detail': 'not a keeper'})
+        self.k.call = call
         self.path = os.environ['PATH']
         os.environ['PATH'] = self.bin + os.pathsep + self.path
 
     def tearDown(self):
         os.environ['PATH'] = self.path
-        os.environ.pop('KEEPER_FLEET_ENV', None)
         self.tmp.cleanup()
 
-    def creds(self):
-        c = self.k.Credentials('box')
+    def creds(self, c=None, version=None, token='keeper-token'):
+        c = c or self.k.Credentials('box')
+        if version:
+            c.sync(version, token)
         c.refresh({'claude'}, force=True)
         return c
+
+    def secrets(self, version, **values):
+        self.board = {'secrets': values, 'version': version}
+        return version
 
     def want(self, h='tarzan'):
         return {'handle': h, 'harness': 'claude', 'run': True, 'set_by': 'op', 'set_at': '2026-10-15T01:00:00Z',
@@ -94,23 +104,42 @@ class Keeper(unittest.TestCase):
         self.assertNotIn('codex', c.state)      # no codex bot here: not checked, not reported
         self.assertEqual(c.blocked(), {})
 
-    def test_fleet_env_is_copied_private_and_used(self):
+    def test_board_secrets_are_written_private_and_used(self):
         c = self.creds()
         self.assertEqual(c.state['gh'][0], 'missing')
-        src = os.path.join(self.central, 'fleet.env')
-        with open(src, 'w') as f:
-            f.write('# fleet secrets\nexport GH_TOKEN="good"  # rotated 10-15\n')
-        c = self.creds()
-        local = os.path.join(self.home, '.config', 'bot_board', 'fleet.env')
-        self.assertEqual(stat.S_IMODE(os.stat(local).st_mode), 0o600)
+        c = self.creds(c, self.secrets('v1', GH_TOKEN='good'))
+        self.assertEqual(stat.S_IMODE(os.stat(self.local).st_mode), 0o600)
+        self.assertTrue(Path(self.local).read_text().startswith(self.k.FROM_BOARD))
         self.assertEqual(c.env()['GH_TOKEN'], 'good')
         self.assertEqual(c.state['gh'][0], 'ok')
-        # rotated to a bad token: one file changes, every box sees it on its next check
-        with open(src, 'w') as f:
-            f.write('GH_TOKEN=revoked\n')
-        c = self.creds()
+        # rotated to a bad token on the board: the next report carries a new version
+        c = self.creds(c, self.secrets('v2', GH_TOKEN='revoked'))
         self.assertEqual(c.state['gh'][0], 'expired')
         self.assertNotIn('revoked', str(c.report({})))   # the secret never goes into the report
+
+    def test_fetched_only_when_the_version_changes(self):
+        c = self.creds(None, self.secrets('v1', GH_TOKEN='good'))
+        self.creds(c, 'v1'); self.creds(c, 'v1')
+        self.assertEqual(self.fetches, 1)
+        self.creds(c, self.secrets('v2', GH_TOKEN='better'))
+        self.assertEqual(self.fetches, 2)
+
+    def test_a_refused_fetch_keeps_ours_and_says_so(self):
+        with open(self.local, 'w') as f:
+            f.write('GH_TOKEN=good\n')
+        c = self.creds(None, 'v1', token='not-a-keeper')
+        self.assertEqual(c.state['gh'][0], 'ok')
+        self.assertIn('stale', [r['state'] for r in c.report({})])
+        self.assertEqual(Path(self.local).read_text(), 'GH_TOKEN=good\n')
+
+    def test_no_board_secrets_leave_a_hand_kept_file_but_clear_ours(self):
+        with open(self.local, 'w') as f:
+            f.write('GH_TOKEN=good\n')
+        c = self.creds(None, 'v1')                      # the board has none: ours stays
+        self.assertEqual(Path(self.local).read_text(), 'GH_TOKEN=good\n')
+        c = self.creds(c, self.secrets('v2', GH_TOKEN='good'))
+        c = self.creds(c, self.secrets('v3'))           # removed on the board: removed here
+        self.assertNotIn('GH_TOKEN', c.env())
 
     def test_an_unclear_check_holds_nothing(self):
         # an older claude without `auth status`, then one that prints something we cannot read
@@ -122,7 +151,7 @@ class Keeper(unittest.TestCase):
             self.assertNotIn('claude claude', c.state['claude'][1])
 
     def test_fleet_env_sets_secrets_only_and_the_environment_wins(self):
-        with open(os.path.join(self.central, 'fleet.env'), 'w') as f:
+        with open(self.local, 'w') as f:
             f.write('GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
         os.environ['OTHER_KEY'] = 'mine'
         try:
@@ -133,14 +162,6 @@ class Keeper(unittest.TestCase):
         self.assertEqual(env['OTHER_KEY'], 'mine')
         self.assertEqual(env['PATH'], os.environ['PATH'])
         self.assertNotEqual(env.get('BOARD'), 'http://other')
-
-    def test_a_missing_central_copy_keeps_ours_and_says_so(self):
-        local = os.path.join(self.home, '.config', 'bot_board', 'fleet.env')
-        with open(local, 'w') as f:
-            f.write('GH_TOKEN=good\n')
-        c = self.creds()
-        self.assertEqual(c.state['gh'][0], 'ok')
-        self.assertIn('stale', [r['state'] for r in c.report({})])
 
 
 class BotReadsFleetEnv(unittest.TestCase):
@@ -183,6 +204,51 @@ class Page(unittest.TestCase):
         self.assertIn('claude missing (held 2 bots): not logged in', page)
         self.assertIn('gh ok', page)
 
+
+    def test_secrets_are_set_by_admins_and_read_by_keepers_only(self):
+        main.PROJECT_ADMIN_KEY = 'k'
+        def agent(handle, kind):
+            return {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': handle, 'kind': kind}).json()['token']}
+        admin, human, bot, keeper, idle = (agent('op', 'human'), agent('other', 'human'), agent('ada', 'claude-code'),
+                                            agent('keeper-box', 'keeper'), agent('keeper-x', 'keeper'))
+        self.client.post('/api/projects/access', headers=admin, json={'key': 'k'})
+        report = lambda: self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': []}).json()['secrets']
+        v0 = report()
+        self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=human, json={'value': 'x'}).status_code, 403)
+        self.assertEqual(self.client.put('/api/fleet/secrets/PATH', headers=admin, json={'value': 'x'}).status_code, 422)
+        self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'a\nb'}).status_code, 422)
+        r = self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'ghp_secret1234'})
+        self.assertEqual(r.status_code, 200, r.text)
+        listed = self.client.get('/api/fleet/secrets', headers=admin).json()['secrets']
+        self.assertEqual([(x['name'], x['ends'], x['set_by']) for x in listed], [('GH_TOKEN', '1234', 'op')])
+        self.assertNotIn('ghp_secret1234', self.client.get('/api/fleet/secrets', headers=admin).text)
+        self.assertNotEqual(report(), v0)
+        # the values: the keeper of a box, and nobody else
+        self.assertEqual(self.client.get('/api/fleet/secrets/values', headers=keeper).json()['secrets'],
+                         {'GH_TOKEN': 'ghp_secret1234'})
+        for who in (admin, bot, idle):
+            self.assertEqual(self.client.get('/api/fleet/secrets/values', headers=who).status_code, 403)
+        self.assertNotIn('ghp_secret1234', self.client.get('/api/fleet').text + self.client.get('/fleet').text)
+        self.assertEqual(self.client.delete('/api/fleet/secrets/GH_TOKEN', headers=admin).status_code, 200)
+        self.assertEqual(report(), v0)
+
+
+class BotReloadsFleetEnv(unittest.TestCase):
+    def test_rotated_and_removed_secrets_reach_the_next_run(self):
+        import subprocess
+        src = (ROOT / 'bin' / 'bot').read_text()
+        fn = src[src.index('_OWN_SECRETS='):src.index('\nload_fleet_env\n')]
+        with tempfile.TemporaryDirectory() as home:
+            env_file = os.path.join(home, '.config', 'bot_board', 'fleet.env'); os.makedirs(os.path.dirname(env_file))
+            script = fn + f'''
+w() {{ printf '%s\\n' "$1" > {env_file}; }}
+w GH_TOKEN=one; load_fleet_env; echo "gh=$GH_TOKEN own=$MY_KEY"
+w GH_TOKEN=two; load_fleet_env; echo "gh=$GH_TOKEN"
+w MY_KEY=theirs; load_fleet_env; echo "gh=${{GH_TOKEN:-gone}} own=$MY_KEY"
+'''
+            r = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True,
+                               env={'PATH': os.environ['PATH'], 'HOME': home, 'MY_KEY': 'mine'})
+            self.assertEqual(r.stdout.split('\n')[:3], ['gh=one own=mine', 'gh=two', 'gh=gone own=mine'], r.stderr)
 
 if __name__ == '__main__':
     unittest.main()
