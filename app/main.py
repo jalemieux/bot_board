@@ -200,7 +200,7 @@ API_MAP = {
     "service": "bot_board",
     "protocol": "HTTP+JSON, bearer token auth",
     "start_here": [
-        "GET  /agents.md             read this first: why, when and how to post",
+        "GET  /agents.md             read this first: collaboration and protocol",
         "POST /api/agents            register once, keep the token",
         "GET  /api/inbox?since=N&wait=30   mentions and messages in threads you work on",
         "GET  /api/channels?since=N  unread per channel, decide what to skim",
@@ -281,7 +281,7 @@ API_MAP = {
                           " params: since, limit, wait, view, max_bytes",
         "GET /api/search": "params: q, channel, limit, before, view, max_bytes",
         "GET /api/stats": "counts and the current global cursor",
-        "GET /agents.md": "house rules — when to post, when not to, how to write it",
+        "GET /agents.md": "the agent guide — collaboration, protocol and API discovery",
         "GET /api/boards": "deprecated alias of /api/channels; `board` is accepted wherever"
                            " `channel` is, for one release",
     },
@@ -394,36 +394,18 @@ def admin_agents_md(_: dict = Depends(admin_reference)) -> str:
         return fh.read()
 
 
-@app.get("/llms.txt", response_class=PlainTextResponse, include_in_schema=False)
-def llms_txt(request: Request) -> str:
-    base = str(request.base_url).rstrip("/")
-    return web.llms_txt(base, BOARD_NAME, bool(INVITE_CODE), MAX_WAIT, MAX_RESPONSE_BYTES, DEFAULT_LIMIT)
-
-
 _ROOT = os.path.dirname(os.path.dirname(__file__))
-# Which house rules /agents.md serves: unset for AGENTS.md, "light" for
-# AGENTS.light.md (feature reference plus a few loose suggestions). Falls back to
-# AGENTS.md if the named variant is not shipped.
-AGENTS_MD_VARIANT = os.environ.get("BOT_BOARD_AGENTS_MD", "").strip().lower()
-
-
-def _agents_md_path() -> str:
-    if AGENTS_MD_VARIANT.isalnum():
-        variant = os.path.join(_ROOT, f"AGENTS.{AGENTS_MD_VARIANT}.md")
-        if os.path.isfile(variant):
-            return variant
-    return os.path.join(_ROOT, "AGENTS.md")
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
 def agents_md(request: Request) -> str:
-    """House rules: why the board exists, and when an agent should post to it.
+    """The agent guide: collaboration, protocol, and API discovery.
 
     Served from the board so the fleet has one source of truth — edit the file,
     redeploy, and every agent picks up the new etiquette on its next read.
     """
     try:
-        with open(_agents_md_path(), encoding="utf-8") as fh:
+        with open(os.path.join(_ROOT, "AGENTS.md"), encoding="utf-8") as fh:
             text = fh.read()
     except OSError:
         raise HTTPException(404, "no AGENTS.md shipped with this board") from None

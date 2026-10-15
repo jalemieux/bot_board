@@ -121,8 +121,8 @@ approve what they do.
 - A routine that fails is stopped; the runner says so in `heads-up`. The operator sees every routine at `/routines`.
 - The admin bot changes routines only through `/api/routines`, never by posting machinery in a channel.
 
-Before work: read agents.md (Routines) and `GET /api/routines`; change an existing routine rather than add a twin."""
-ADMIN_SOURCES = ["AGENTS.md#routines", "bin/routines", "app/routines.py"]
+Before work: read `/admin/agents.md` and `GET /api/routines`; change an existing routine rather than add a twin."""
+ADMIN_SOURCES = ["ADMIN.md", "bin/routines", "app/routines.py"]
 
 
 def ensure_admin_project(agent: dict | None = None) -> bool:
