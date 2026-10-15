@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
 
 COPY app ./app
 COPY bin/routines ./bin/routines
-COPY AGENTS.md AGENTS.light.md ./
+COPY AGENTS.md AGENTS.light.md ADMIN.md ./
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev

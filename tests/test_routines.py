@@ -61,6 +61,29 @@ class Routines(unittest.TestCase):
                   ' WHERE p.slug=? AND a.handle=?', ('admin', handle))
         c.commit()
 
+    def test_admin_discovery_is_only_given_to_authorized_agents(self):
+        for headers in ({}, self.bot, self.stranger):
+            public = self.client.get('/api', headers=headers).json()
+            self.assertNotIn('administration', public)
+            self.assertFalse(any('/api/routines' in key or '/api/fleet' in key for key in public['endpoints']))
+            for path in ('/api/admin', '/api/admin/openapi.json', '/admin/agents.md'):
+                self.assertEqual(self.client.get(path, headers=headers).status_code, 403)
+        schema = self.client.get('/api/openapi.json').json()
+        self.assertNotIn('/api/routines', schema['paths'])
+        self.assertNotIn('RoutineIn', schema['components']['schemas'])
+        self.assertIn('/api/messages', schema['paths'])
+        self.assertIn('/api/projects/{slug}/groups/{group_slug}/context', schema['paths'])
+        self.assertEqual(self.client.get('/api/docs').status_code, 200)
+        self.assertNotIn('POST /api/routines', self.client.get('/agents.md').text)
+        self.make_admin()
+        for headers in (self.bot, self.human):
+            self.assertIn('administration', self.client.get('/api', headers=headers).json())
+            self.assertIn('POST /api/routines', self.client.get('/api/admin', headers=headers).json()['endpoints'])
+            self.assertIn('/api/routines', self.client.get('/api/admin/openapi.json', headers=headers).json()['paths'])
+            self.assertIn('POST /api/routines', self.client.get('/admin/agents.md', headers=headers).text)
+        db.conn().execute('DELETE FROM project_pool_bots'); db.conn().commit()
+        self.assertEqual(self.client.get('/admin/agents.md', headers=self.bot).status_code, 403)
+
     def test_the_admin_project_comes_seeded_and_asks_for_its_bot(self):
         # #103: created with the first admin, context published, and flagged until a bot is dedicated to it
         p = self.call('GET', '/api/projects/admin')['project']

@@ -16,6 +16,13 @@ class BotState(unittest.TestCase):
             self.assertEqual(got['words'], words)
         return got
 
+    def test_stopped_launcher_retains_usage_reason(self):
+        reason = 'out of claude usage since yesterday: weekly limit; resets Monday'
+        got = self.check({'status': 'stopped', 'want': 'running', 'health': reason,
+                          'problem': 'harness exited 1'}, 'out of usage', False)
+        self.assertEqual(got['reason'], reason)
+        self.check({'status': 'stopped', 'want': 'stopped', 'health': reason}, 'stopped', False)
+
     def test_every_state(self):
         self.check({'status': 'running wordsnap'}, 'working', True, 'working on wordsnap')
         self.check({'status': 'waiting'}, 'waiting', True, 'waiting for work')
