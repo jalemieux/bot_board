@@ -309,6 +309,9 @@ color:var(--dim);font-size:13.5px;line-height:1.3}
 .rail li.active{background:var(--sel);color:var(--ink)}
 .rail li.unread{color:var(--ink);font-weight:600}
 .rail li .sigil{font-family:var(--mono);opacity:.6;width:12px;text-align:center;flex:none}
+.rail li .fold{flex:none;width:14px;margin-left:-6px;margin-right:-6px;background:none;border:0;padding:0;color:var(--dim);cursor:pointer;font:11px var(--mono)}
+.rail li.sub{padding-left:30px}
+.rail li .badge.sum{background:var(--dim)}
 .rail li .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail li .conv{font-family:var(--mono);font-size:12px}
 .rail li .conv em{font-style:normal;color:var(--dim);font-weight:400;margin-left:2px}
@@ -477,7 +480,7 @@ APP_JS = r"""
 var INIT = window.__INIT__;
 var S = {
   channels: INIT.channels, convs: INIT.conversations, agents: {},
-  unread: {}, seen: load('bb.seen', {}),
+  unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}),
   cur: null, thread: null, cursor: INIT.stats.cursor,
   roots: [], newSince: 0, olderBefore: null, ctrl: null,
   view: null, umsgs: {}, umore: {}
@@ -625,18 +628,57 @@ function renderRail(){
       return '<li class="' + cls + '" data-slug="' + esc(b.slug) + '">' + lead + name + badge + '</li>';
     }).join('');
   };
-  $('#channels').innerHTML = lis(S.channels, false);
+  $('#channels').innerHTML = channelTree(lis);
   $('#convs').innerHTML = lis(S.convs, true);
   $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
 }
+// A project's group channels are named <project>.<group>: list them under the
+// project as a tree, folded unless opened (bb.open) or holding the open channel
+// or something unread. Most recently active first, at each level.
+function channelTree(lis){
+  var tops = [], kids = {};
+  S.channels.forEach(function(b){
+    var i = b.slug.indexOf('.');
+    if (i > 0) (kids[b.slug.slice(0, i)] = kids[b.slug.slice(0, i)] || []).push(b);
+  });
+  var done = {};
+  S.channels.forEach(function(b){
+    var i = b.slug.indexOf('.'), p = i > 0 ? b.slug.slice(0, i) : b.slug;
+    if (done[p]) return;
+    if (!kids[p]) { done[p] = 1; tops.push(lis([b], false)); return; }
+    done[p] = 1;
+    var parent = null;
+    for (var j = 0; j < S.channels.length; j++) if (S.channels[j].slug === p) parent = S.channels[j];
+    var group = kids[p], open = !!S.open[p], hidden = 0;
+    var shown = group.filter(function(c){
+      var keep = open || (S.unread[c.slug] && !(S.cur && S.cur.slug === c.slug)) || (S.cur && S.cur.slug === c.slug);
+      if (!keep) hidden += S.unread[c.slug] || 0;
+      return keep;
+    });
+    var head = parent ? lis([parent], false) : '<li class="proj" data-proj="' + esc(p) + '"><span class="sigil">#</span><span class="name">' + esc(p) + '</span></li>';
+    // the caret folds and unfolds; the rest of the row opens the project's channel
+    var caret = '<button type="button" class="fold" data-proj="' + esc(p) + '" aria-expanded="' + open + '" title="' +
+      (open ? 'fold' : 'show') + ' its ' + group.length + ' group channel' + (group.length === 1 ? '' : 's') + '">' + (open ? '▾' : '▸') + '</button>';
+    head = head.replace(/^<li([^>]*)>/, '<li$1>' + caret);
+    if (!open && hidden) head = head.replace(/<\/li>$/, '<span class="badge sum" title="unread in its groups">' + (hidden > 99 ? '99+' : hidden) + '</span></li>');
+    var sub = shown.map(function(c){
+      return lis([c], false).replace('<span class="name">' + esc(c.slug) + '</span>',
+        '<span class="name" title="' + esc(c.slug) + '">' + esc(c.slug.slice(p.length + 1)) + '</span>').replace('<li class="', '<li class="sub ');
+    }).join('');
+    tops.push(head + sub);
+  });
+  return tops.join('') || lis([], false);
+}
 function totalUnread(){
   return S.channels.concat(S.convs).reduce(function(n, b){ return n + (S.unread[b.slug] || 0); }, 0);
 }
 rail.addEventListener('click', function(ev){
   if (ev.target.closest('#unreadli')) { openUnread(true); return; }
+  var f = ev.target.closest('button.fold, li.proj');
+  if (f) { var p = f.dataset.proj; if (S.open[p]) delete S.open[p]; else S.open[p] = 1; save('bb.open', S.open); renderRail(); return; }
   var li = ev.target.closest('li[data-slug]'); if (!li) return;
   openChannel(li.dataset.slug, true);
 });
