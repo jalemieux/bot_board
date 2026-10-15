@@ -16,6 +16,7 @@ ME = "tst"
 def msg(mid, board, body, meta=None, mention=False, **kw):
     return {"id": mid, "board": board, "thread_id": None, "author": "jac", "body": body,
             "meta": meta or {}, "mention": mention, "reply_to": None,
+            "mentions": [ME] if mention else [],
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), **kw}
 
 
@@ -28,7 +29,7 @@ class FakeBoard:
     """Messages, an inbox, and GET /api/channels/{slug}/project from a table."""
 
     def __init__(self, messages, routes, has_lookup=True, flaky=(), assigned=None, assignment_error=False,
-                 cursor=0, page_size=20, backlog_failures=0):
+                 cursor=0, page_size=20, backlog_failures=0, workers=None, claim_failures=0):
         self.messages, self.routes, self.has_lookup = messages, routes, has_lookup
         self.flaky = dict.fromkeys(flaky, 1)   # channel -> lookups left that fail with 500
         self.lookups = []
@@ -37,6 +38,11 @@ class FakeBoard:
         self.seed_routes = {}
         self.cursor, self.page_size, self.backlog_failures = cursor, page_size, backlog_failures
         self.requests = []
+        self.workers = dict(workers or {})
+        self.claim_failures = claim_failures
+        self.claim_lock = threading.Lock()
+        self.tokens = {"t0k": ME}
+        self.on_claim = None
         board = self
 
         class H(BaseHTTPRequestHandler):
@@ -48,15 +54,34 @@ class FakeBoard:
                 self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
 
             def do_POST(self):
-                self.rfile.read(int(self.headers.get("content-length") or 0))
-                if self.path == "/api/agents": return self.send(200, {"token": "t0k"})
+                payload = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or "{}")
+                if self.path == "/api/agents":
+                    token = payload["handle"] + "-token"
+                    board.tokens[token] = payload["handle"]
+                    return self.send(200, {"token": token})
+                if self.path.startswith("/api/threads/") and self.path.endswith("/worker"):
+                    tid = int(self.path.split("/")[3])
+                    handle = board.tokens[self.headers["Authorization"].removeprefix("Bearer ")]
+                    with board.claim_lock:
+                        board.requests.append("POST " + self.path)
+                        if board.claim_failures:
+                            board.claim_failures -= 1
+                            return self.send(503, {"detail": "claim temporarily unavailable"})
+                        worker = board.workers.setdefault(tid, handle)
+                        if worker != handle:
+                            return self.send(409, {"detail": "already claimed"})
+                        if board.on_claim:
+                            hook, board.on_claim = board.on_claim, None
+                            hook()
+                        return self.send(200, {"thread_id": tid, "worker": worker})
                 return self.send(200, {"message": {"id": 999}})
 
             def do_GET(self):
                 u = urlparse(self.path); q = parse_qs(u.query); path = u.path
                 board.requests.append(self.path)
+                handle = board.tokens.get(self.headers.get("Authorization", "").removeprefix("Bearer "), ME)
                 since = int(q.get("since", ["0"])[0])
-                if path == "/api/me": return self.send(200, {"agent": {"handle": ME}, "cursor": board.cursor})
+                if path == "/api/me": return self.send(200, {"agent": {"handle": handle}, "cursor": board.cursor})
                 if path == '/api/me/project-pool':
                     if not board.has_lookup: return self.send(404, {'detail': 'Not Found'})
                     if board.assignment_error: return self.send(500, {'detail': 'failed'})
@@ -68,8 +93,19 @@ class FakeBoard:
                 if path.startswith('/api/threads/') and path.endswith('/seed'):
                     tid=path.split('/')[3]
                     return self.send(200, board.seed_routes[tid]) if tid in board.seed_routes else self.send(404, {'detail':'Not Found'})
+                if path.startswith("/api/threads/"):
+                    tid = int(path.split("/")[3])
+                    messages = [dict(m, worker=board.workers.get(tid)) for m in board.messages
+                                if (m["thread_id"] or m["id"]) == tid and m["id"] > since]
+                    page = messages[:board.page_size]
+                    return self.send(200, {"messages": page, "worker": board.workers.get(tid),
+                                          "has_more": len(messages) > len(page),
+                                          "next_since": page[-1]["id"] if page else since})
                 if path in ("/api/messages", "/api/inbox"):
-                    new = [m for m in board.messages if m["id"] > since and (path == "/api/messages" or m["mention"])]
+                    new = [dict(m, worker=board.workers.get(m["thread_id"] or m["id"]))
+                           for m in board.messages if m["id"] > since and
+                           (path == "/api/messages" or m["mention"] or
+                            board.workers.get(m["thread_id"] or m["id"]) == handle)]
                     if q.get("order") == ["desc"]:
                         if board.backlog_failures:
                             board.backlog_failures -= 1
@@ -340,8 +376,8 @@ class Routing(unittest.TestCase):
         for text in ("too old", "context event", "launcher failure", "already done"):
             self.assertNotIn(text, prompts)
         self.assertIn("[backlog: message 2", prompts)
-        self.assertIn("Read its entire current thread first", prompts)
-        self.assertIn("skip any piece already claimed and not released", prompts)
+        self.assertIn("read the current thread first", prompts)
+        self.assertIn("No prose claims or back-off messages", prompts)
         self.assertIn("[channel: message 7", prompts)
         self.assertIn("seen=6", self.log)
         self.assertTrue(any("since=6" in path for path in board.requests))
@@ -467,6 +503,111 @@ class Routing(unittest.TestCase):
         self.assertEqual(prompts.count("latest discussion"), 1)
         for text in ("old request", "resolved request", "completed reply", "thread original request"):
             self.assertNotIn(text, prompts)
+
+    def test_workers_get_followups_helpers_only_get_mentions_and_losers_stay_asleep(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(1, "wordsnap", "another bot owns this"),
+            msg(2, "wordsnap", "unmentioned discussion", thread_id=1, reply_to=1),
+            msg(3, "wordsnap", "@tst help with mapping", thread_id=1, reply_to=1, mention=True),
+            msg(4, "wordsnap", "our untagged followup", thread_id=99, reply_to=99),
+            msg(5, "wordsnap", "new open request"),
+        ], {}, workers={1: "someone", 99: ME})
+        try:
+            runs = self.run_bot(board, lambda rs: any("new open request" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        for text in ("help with mapping", "our untagged followup", "new open request"):
+            self.assertIn(text, prompts)
+        for text in ("another bot owns this", "unmentioned discussion"):
+            self.assertNotIn(text, prompts)
+        self.assertEqual(board.workers[1], "someone")
+        self.assertEqual(board.workers[5], ME)
+        self.assertNotIn("pausing", self.log)
+
+    def test_failed_atomic_claim_is_held_until_it_succeeds(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(1, "wordsnap", "retry the pickup")], {}, claim_failures=1)
+        try:
+            runs = self.run_bot(board, lambda rs: any("retry the pickup" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertIn("claim failed: HTTP 503; holding message 1", self.log)
+        self.assertEqual(sum("retry the pickup" in r["prompt"] for r in runs), 1)
+        self.assertEqual(board.requests.count("POST /api/threads/1/worker"), 2)
+
+    def test_pickup_catches_replies_that_arrived_before_the_claim(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(1, "wordsnap", "build the script"),
+            msg(2, "wordsnap", "here is the schema", thread_id=1, reply_to=1),
+            msg(3, "wordsnap", "also add resume", thread_id=1, reply_to=1),
+        ], {}, page_size=1)
+        try:
+            runs = self.run_bot(board, lambda rs: any("also add resume" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        for text in ("build the script", "here is the schema", "also add resume"):
+            self.assertEqual(prompts.count(text), 1)
+        self.assertTrue(any("thread 1" in r["prompt"] and "also add resume" in r["prompt"] for r in runs))
+
+    def test_reply_arriving_after_pickup_is_delivered_once_by_live_polling(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(1, "wordsnap", "new task")], {})
+        board.on_claim = lambda: board.messages.append(
+            msg(2, "wordsnap", "reply during pickup", thread_id=1, reply_to=1))
+        try:
+            runs = self.run_bot(board, lambda rs: any("reply during pickup" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertEqual(sum(r["prompt"].count("reply during pickup") for r in runs), 1)
+        self.assertTrue(any("since=1" in path for path in board.requests if "/api/messages?" in path))
+
+    def test_two_competing_launchers_wake_only_one_model_for_the_thread(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(1, "wordsnap", "one atomic pickup")], {})
+        processes = [subprocess.Popen(
+            [BOT, "claude", "--pool", self.pool, "--name", handle],
+            env=dict(self.env, BOARD=board.url), stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        ) for handle in ("first", "second")]
+        runs = []
+        try:
+            end = time.time() + 20
+            while time.time() < end:
+                time.sleep(0.2)
+                if os.path.exists(self.runs):
+                    with open(self.runs) as f:
+                        runs = [json.loads(line) for line in f]
+                if board.requests.count("POST /api/threads/1/worker") >= 2 and any(
+                        "one atomic pickup" in r["prompt"] for r in runs):
+                    break
+        finally:
+            for process in processes:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(10)
+            board.close()
+        self.assertGreaterEqual(board.requests.count("POST /api/threads/1/worker"), 2)
+        self.assertEqual(sum("one atomic pickup" in r["prompt"] for r in runs), 1)
+        self.assertIn(board.workers[1], ("first", "second"))
+
+    def test_release_event_reopens_pickup_without_subscribing_to_other_replies(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(1, "wordsnap", "ordinary reply stays quiet", thread_id=99, reply_to=99),
+            msg(2, "wordsnap", "worker released", thread_id=99, reply_to=99,
+                meta={"kind": "thread_released"}),
+        ], {})
+        try:
+            runs = self.run_bot(board, lambda rs: any("worker released" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        self.assertIn("worker released", prompts)
+        self.assertNotIn("ordinary reply stays quiet", prompts)
+        self.assertEqual(board.workers[99], ME)
 
 
 if __name__ == "__main__":

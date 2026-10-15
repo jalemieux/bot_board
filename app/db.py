@@ -6,8 +6,8 @@ poll on, so everything an agent needs to catch up is "give me > N".
 Vocabulary: the `boards` table holds both kinds of place a message can go.
 A *channel* (kind='channel') is open: anyone posts, it is created on first
 post. A *conversation* (kind='conversation') is a chat between a fixed set of
-participants held in `members`; only they can post, and every message in it
-lands in each participant's inbox. Everything is readable by everyone.
+participants held in `members`; only they can post. Inbox delivery is to
+explicit mentions and the thread's worker. Everything is readable by everyone.
 """
 
 from __future__ import annotations
@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_messages_board ON messages(board_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, id);
+
+CREATE TABLE IF NOT EXISTS thread_workers (
+    thread_id  INTEGER PRIMARY KEY REFERENCES messages(id),
+    agent_id   INTEGER NOT NULL REFERENCES agents(id),
+    claimed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_thread_workers_agent ON thread_workers(agent_id, thread_id);
 
 CREATE TABLE IF NOT EXISTS text_attachments (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id),
@@ -465,10 +472,13 @@ def post_message(
 _MSG_SELECT = """
 SELECT m.id, m.body, m.reply_to, m.thread_id, m.meta, m.created_at,
        b.slug AS board, b.kind AS kind, b.id AS board_id,
-       a.handle AS author, a.kind AS author_kind
+       a.handle AS author, a.kind AS author_kind, worker.handle AS worker,
+       w.claimed_at AS worker_claimed_at
 FROM messages m
 JOIN boards b ON b.id = m.board_id
 JOIN agents a ON a.id = m.agent_id
+LEFT JOIN thread_workers w ON w.thread_id = m.thread_id
+LEFT JOIN agents worker ON worker.id = w.agent_id
 """
 
 
@@ -545,6 +555,91 @@ def get_text_attachment(mid: int) -> str | None:
     return row["content"] if row else None
 
 
+def thread_worker(tid: int) -> dict:
+    root = conn().execute("SELECT thread_id FROM messages WHERE id=?", (tid,)).fetchone()
+    if root is None:
+        raise KeyError("no such thread")
+    tid = root["thread_id"] or tid
+    row = conn().execute(
+        "SELECT a.handle, w.claimed_at FROM thread_workers w"
+        " JOIN agents a ON a.id=w.agent_id WHERE w.thread_id=?", (tid,),
+    ).fetchone()
+    return {"thread_id": tid, "worker": row["handle"] if row else None,
+            "claimed_at": row["claimed_at"] if row else None}
+
+
+def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
+    root = c.execute(
+        "SELECT m.id, m.board_id, m.thread_id, b.kind FROM messages m"
+        " JOIN boards b ON b.id=m.board_id WHERE m.id=?", (tid,),
+    ).fetchone()
+    if root is None:
+        raise KeyError("no such thread")
+    if root["thread_id"] != tid:
+        raise ValueError("claim the thread root, not a reply")
+    if agent["kind"] in ("human", "keeper", "cron"):
+        raise PermissionError("only bots can be thread workers")
+    if root["kind"] == "conversation" and not is_member(root["board_id"], agent["id"]):
+        raise PermissionError("only conversation participants can claim its threads")
+    mentions = c.execute("SELECT agent_id FROM mentions WHERE message_id=?", (tid,)).fetchall()
+    if mentions and agent["id"] not in {m["agent_id"] for m in mentions}:
+        raise PermissionError("this request is addressed to someone else")
+    from . import projects
+    if projects.is_archived(root["board_id"]):
+        raise PermissionError("this project or group is archived")
+    c.execute(
+        "INSERT INTO thread_workers (thread_id,agent_id,claimed_at) VALUES (?,?,?)"
+        " ON CONFLICT(thread_id) DO NOTHING", (tid, agent["id"], now()),
+    )
+    worker = thread_worker(tid)
+    if worker["worker"].lower() != agent["handle"].lower():
+        raise ValueError(f"thread already has worker @{worker['worker']}")
+    return worker
+
+
+def claim_thread(tid: int, agent: dict) -> dict:
+    from . import projects
+    root = get_message(tid)
+    if root and root["meta"].get("kind") == "context_seed":
+        route = projects.seed_route(tid)
+        if not route["group"]:
+            raise ValueError("not an authoritative initial-context thread")
+        projects.claim_seed(route["project"]["slug"], route["group"]["slug"], tid, agent)
+        return thread_worker(tid)
+    with _write_lock, conn() as c:
+        return _claim_thread(c, tid, agent)
+
+
+def release_thread(tid: int, agent: dict) -> dict:
+    from . import projects
+    root = get_message(tid)
+    if root and root["meta"].get("kind") == "context_seed":
+        route = projects.seed_route(tid)
+        if not route["group"]:
+            raise ValueError("not an authoritative initial-context thread")
+        projects.release_seed(route["project"]["slug"], route["group"]["slug"], agent)
+        return thread_worker(tid)
+    with _write_lock, conn() as c:
+        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+        if root is None:
+            raise KeyError("no such thread root")
+        claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+        if claim is None:
+            return {"thread_id": tid, "worker": None}
+        if agent["id"] not in (claim["agent_id"], root["agent_id"]) and not projects.is_admin(agent):
+            raise PermissionError("only the worker, thread author or an administrator can release it")
+        if projects.is_archived(root["board_id"]):
+            raise PermissionError("this project or group is archived")
+        c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
+        c.execute(
+            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (root["board_id"], agent["id"], "Thread worker released; available for pickup.",
+             tid, tid, json.dumps({"kind": "thread_released"}), now()),
+        )
+    return {"thread_id": tid, "worker": None}
+
+
 def list_messages(
     board: str | None = None,
     since: int = 0,
@@ -587,21 +682,14 @@ def list_messages(
 
 
 def list_inbox(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
-    """What an agent must read: messages that @mention it, every message
-    someone else posted in a conversation it belongs to, and every reply
-    someone else posted in a thread it has posted in (its own threads and
-    the ones it answered on), so "reply on the thread" reaches the asker."""
+    """Mentions and messages in threads this agent works on, excluding its own."""
     rows = conn().execute(
         _MSG_SELECT
-        + """ WHERE m.id > ? AND (
+        + """ WHERE m.id > ? AND m.agent_id != ? AND (
               m.id IN (SELECT message_id FROM mentions WHERE agent_id = ?)
-              OR (m.agent_id != ? AND (
-                    m.board_id IN (SELECT board_id FROM members WHERE agent_id = ?)
-                 OR (m.reply_to IS NOT NULL AND m.thread_id IN
-                        (SELECT thread_id FROM messages WHERE agent_id = ? AND id < m.id))
-              ))
+              OR m.thread_id IN (SELECT thread_id FROM thread_workers WHERE agent_id = ?)
           ) ORDER BY m.id ASC LIMIT ?""",
-        (since, agent_id, agent_id, agent_id, agent_id, max(1, min(limit, 501))),
+        (since, agent_id, agent_id, agent_id, max(1, min(limit, 501))),
     ).fetchall()
     return _hydrate(rows)
 
