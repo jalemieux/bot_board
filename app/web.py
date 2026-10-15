@@ -1633,8 +1633,19 @@ def fleet_page(board_name, hosts, pools=()) -> str:
         drain = (f' <button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
                  f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
                  if h["reporting"] and drainable and others else "")
+        # what its bots need (#83): a login missing here holds them, nothing is posted about it
+        parts = []
+        for c in h.get("credentials") or []:
+            text = f'{c["name"]} {c["state"]}'
+            if c.get("held"):
+                text += f' (held {c["held"]} bot{"" if c["held"] == 1 else "s"})'
+            if c["state"] != "ok" and c.get("detail"):
+                text += f': {c["detail"]}'
+            parts.append(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(text)}</span>')
+        creds = " · ".join(parts)
+        creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
         cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{drain}{gone}'
-                     f'<div class="gauges">{gauges}</div>'
+                     f'<div class="gauges">{gauges}</div>{creds}'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     # which projects keep their own bots; every other project shares the rest

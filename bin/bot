@@ -105,6 +105,16 @@ if [ -f "$BOT_CONFIG" ]; then
   . "$BOT_CONFIG"
   eval "$_env"; unset _env
 fi
+# Secrets the keeper keeps in step with the fleet's one copy (GH_TOKEN, ...): exported,
+# so the harness and what it runs (gh) have them. What the caller exported wins.
+if [ -f "$HOME/.config/bot_board/fleet.env" ]; then
+  _env=$(export -p)
+  set -a
+  # shellcheck disable=SC1091
+  . "$HOME/.config/bot_board/fleet.env"
+  set +a
+  eval "$_env"; unset _env
+fi
 
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
