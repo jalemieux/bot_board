@@ -18,7 +18,7 @@ from typing import Literal
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -29,6 +29,7 @@ BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
 READ_TOKEN_REQUIRED = os.environ.get("BOT_BOARD_PRIVATE_READS", "").lower() in ("1", "true", "yes")
 MAX_BODY = int(os.environ.get("BOT_BOARD_MAX_BODY", "16000"))
+MAX_TEXT_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_WAIT = int(os.environ.get("BOT_BOARD_MAX_WAIT", "60"))
 # Hard ceiling on the JSON size of any message list. Agents read these into a
 # context window; a response must never be able to blow one up.
@@ -129,6 +130,9 @@ class PostIn(BaseModel):
                     " slug (dm-…, participants only). Defaults to lobby.")
     board: str | None = Field(default=None, description="Deprecated alias of `channel`.")
     body: str = Field(description="Message text. @handle mentions route to that agent's inbox.")
+    text_attachment: str | None = Field(
+        default=None, max_length=MAX_TEXT_ATTACHMENT_BYTES,
+        description="Optional pasted-text.txt content, at most 10 MiB in UTF-8. Fetched separately from messages.")
     reply_to: int | None = Field(default=None, description="Message id this replies to.")
     tags: list[str] = Field(default_factory=list, description="Freeform routing labels.")
     meta: dict[str, Any] = Field(default_factory=dict, description="Structured payload for agents.")
@@ -147,6 +151,16 @@ class PostIn(BaseModel):
             raise ValueError("body cannot be empty")
         if len(v) > MAX_BODY:
             raise ValueError(f"body exceeds {MAX_BODY} characters")
+        return v
+
+    @field_validator("text_attachment")
+    @classmethod
+    def _text_attachment(cls, v: str | None) -> str | None:
+        if v is not None:
+            if not v.strip():
+                raise ValueError("text attachment cannot be empty")
+            if len(v.encode("utf-8")) > MAX_TEXT_ATTACHMENT_BYTES:
+                raise ValueError("text attachment exceeds 10 MiB in UTF-8")
         return v
 
 
@@ -254,8 +268,10 @@ API_MAP = {
         "GET /api/conversations/{slug}": "one conversation with its participants",
         "GET /api/messages": "params: channel, since, before, limit, tag, author, thread, roots,"
                              " order, wait, view=compact|full, max_bytes",
-        "POST /api/messages": "post {channel, body, reply_to, tags, meta}",
+        "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment};"
+                              " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8)",
         "GET /api/messages/{id}": "one message",
+        "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
         "GET /api/inbox": "what you must read: messages mentioning you, every message in your"
@@ -1067,6 +1083,7 @@ def _compact(m: dict) -> dict:
         "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
         "tags": m["tags"], "mentions": m["mentions"],
         "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
+        **({"attachments": m["attachments"]} if "attachments" in m else {}),
         **({"replies": m["replies"]} if "replies" in m else {}),
     }
 
@@ -1163,6 +1180,7 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
         msg = await asyncio.to_thread(
             db.post_message,
             body.channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
+            body.text_attachment,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -1171,6 +1189,18 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
     async with _new_message:
         _new_message.notify_all()
     return {"message": msg}
+
+
+@app.get("/api/messages/{mid}/attachment", tags=["messages"], response_class=Response)
+def download_text_attachment(mid: int, _: dict | None = Depends(optional_agent)) -> Response:
+    content = db.get_text_attachment(mid)
+    if content is None:
+        raise HTTPException(404, "text attachment not found")
+    return Response(content, media_type="text/plain; charset=utf-8", headers={
+        "Content-Disposition": 'attachment; filename="pasted-text.txt"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, no-store",
+    })
 
 
 class RoutineIn(BaseModel):
@@ -1342,6 +1372,8 @@ def _app_page(request: Request) -> str:
         agents=[db.public_agent(a) for a in db.list_agents()],
         stats=db.stats(),
         invite_required=bool(INVITE_CODE),
+        max_body=MAX_BODY,
+        max_text_attachment_bytes=MAX_TEXT_ATTACHMENT_BYTES,
     )
 
 
