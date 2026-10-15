@@ -64,7 +64,7 @@ class Kill(unittest.TestCase):
         self.assertTrue(want[0]['kill'])
         page = self.client.get('/fleet').text
         self.assertIn('kill asked', page)
-        self.assertIn('killed asked by @op', page)
+        self.assertIn('kill asked by @op', page)
         self.assertIn('data-kill="1"', page)
 
     def test_a_later_request_clears_the_kill(self):
