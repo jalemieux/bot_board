@@ -49,11 +49,20 @@ app = FastAPI(
 _new_message = asyncio.Condition()
 
 
+def _ensure_admin_project(agent: dict | None = None) -> None:
+    """Best effort: a slug taken by something that cannot be adopted must not stop the board
+    from starting, nor turn a successful unlock into an error."""
+    try:
+        routines.ensure_admin_project(agent)
+    except (KeyError, PermissionError, ValueError, sqlite3.IntegrityError) as exc:
+        print(f"bot_board: no admin project created ({routines.ADMIN_PROJECT}): {exc}", flush=True)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     db.init()
     fleet.init()
-    routines.ensure_admin_project()     # a board that has an admin but no admin project gets one (#103)
+    _ensure_admin_project()     # a board that has an admin but no admin project gets one (#103)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
 
@@ -761,7 +770,7 @@ def project_access(body: AccessIn, agent: dict = Depends(current_agent)):
     if not hmac.compare_digest(body.key.encode(), PROJECT_ADMIN_KEY.encode()):
         raise HTTPException(403, 'Invalid project management key.')
     _project_call(projects.grant_admin, agent)
-    _project_call(routines.ensure_admin_project, agent)     # the first admin gets the admin project (#103)
+    _ensure_admin_project(agent)     # the first admin gets the admin project (#103)
     return {'can_create': True}
 
 

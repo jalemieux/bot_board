@@ -72,6 +72,27 @@ class Routines(unittest.TestCase):
         self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)
         self.assertEqual(self.call('GET', '/api/projects/admin')['project']['name'], 'Ops')
 
+    def test_a_board_with_an_admin_but_no_admin_project_gets_one_at_startup(self):
+        c = db.conn()
+        for t in ('project_pool_bots', 'project_pools', 'context_revisions', 'project_audit'):
+            c.execute(f'DELETE FROM {t}')
+        c.execute("DELETE FROM projects WHERE slug='admin'"); c.commit()
+        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)   # a later admin
+        c.execute("DELETE FROM projects WHERE slug='admin'"); c.execute('DELETE FROM context_revisions'); c.commit()
+        main._startup()
+        p = self.call('GET', '/api/projects/admin')['project']
+        self.assertEqual(p['context']['revision'], 1)
+        owner = c.execute("SELECT a.handle FROM projects p JOIN agents a ON a.id=p.owner_id WHERE p.slug='admin'").fetchone()
+        self.assertEqual(owner[0], 'jac')     # the first admin, not the latest
+
+    def test_a_slug_that_cannot_be_adopted_does_not_break_start_or_unlock(self):
+        c = db.conn()
+        c.execute("DELETE FROM projects WHERE slug='admin'"); c.execute('DELETE FROM context_revisions')
+        c.execute("UPDATE boards SET kind='conversation' WHERE slug='admin'"); c.commit()
+        main._startup()
+        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)
+        self.call('GET', '/api/projects/admin', expected=404)
+
     def test_a_stored_routine_is_paused_and_posts_nothing(self):
         before = db.cursor()
         r = self.add()
