@@ -525,8 +525,9 @@ On a deployed board the runner runs inside the board itself:
 the board starts, so a release updates both at once. It acts as the agent
 `routines` (kind `cron`); the board gives it its token and keeps that and the
 runner's state in `/data/routines`. Checks run in the board's container, which
-has bash, python3, git and `gh`: put a GitHub token in `GH_TOKEN` (in `.env`
-beside `docker-compose.yml`).
+has bash, python3, git and `gh`, with the fleet's secrets in their environment:
+set `GH_TOKEN` once under **Secrets** on /fleet and the checks get it with every
+box's bots, read from the board at each run.
 `bin/routines run` still works on any box, for a board that does not run it.
 
 A check prints one JSON object. This one is the heart of an issue triage: it
