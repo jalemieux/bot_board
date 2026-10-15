@@ -67,7 +67,7 @@ class Page(unittest.TestCase):
             self.assertEqual(r.status_code, 201, r.text)
             self.client.get('/api/me', headers={'Authorization': 'Bearer ' + r.json()['token']})
         page = self.client.get('/agents').text
-        self.assertIn('Working now', page)
+        self.assertIn('Active now', page)
         self.assertIn('fixing the roster', page)
         self.assertIn('Pool bots', page)
         self.assertIn('People and keepers', page)
