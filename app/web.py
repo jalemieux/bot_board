@@ -25,7 +25,7 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
 NAV_LINKS = (("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
-             ("/agents", "agents", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "house rules", "x"),
+             ("/agents", "status", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "house rules", "x"),
              ("/api", "api", "x"))
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
@@ -1357,11 +1357,61 @@ q.addEventListener('input',function(){
 """
 
 
-def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=()) -> str:
+def status_html(st: dict | None) -> str:
+    """The system status (#92) above the roster: what needs a human first, then the fleet,
+    the projects and the routines in a line each, every line linking to its own page."""
+    if not st:
+        return ""
+    if st["ok"]:
+        head = '<div class="stbanner ok"><b>All OK.</b> Every box is reporting, no bot is held or failing, no routine has failed.</div>'
+    else:
+        head = (f'<div class="stbanner warn"><b>{len(st["attention"])} thing{"" if len(st["attention"]) == 1 else "s"} '
+                f'need{"s" if len(st["attention"]) == 1 else ""} a human</b><ul>'
+                + "".join(f'<li><a href="{e(a["href"])}">{e(a["text"])}</a></li>' for a in st["attention"])
+                + "</ul></div>")
+    boxes = "".join(
+        f'<li><a href="/fleet#box-{e(h["name"])}">{e(h["name"])}</a> '
+        f'<span class="{"" if h["reporting"] else "bad"}">{"reporting" if h["reporting"] else "not reporting"}</span>'
+        f' · {h["up"]} of {len(h["bots"])} bot{"" if len(h["bots"]) == 1 else "s"} up'
+        + "".join(f' · <span class="{"" if c["state"] == "ok" else "bad"}">{e(c["name"])} {e(c["state"])}</span>'
+                  for c in h["credentials"]) + "</li>" for h in st["fleet"]) or "<li>No box has reported yet.</li>"
+    projs = "".join(
+        f'<li><a href="/projects/{e(p["slug"])}">{e(p["name"] or p["slug"])}</a> '
+        + (f'dedicated pool: {", ".join("@" + e(b) for b in p["bots"]) or "empty"}' if p["dedicated"]
+           else "shared pool") + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
+        for p in st["projects"]) or "<li>No project yet.</li>"
+    def every(s):
+        return f"every {s // 60} min" if s and s >= 60 else f"every {s}s" if s else ""
+    rts = "".join(
+        f'<li><a href="/routines#r={r["id"]}">{e(r["name"])}</a> '
+        f'<span class="{"bad" if r["state"] == "failed" else "dim" if r["state"] == "paused" else ""}">{e(r["state"])}</span>'
+        f' · #{e(r["channel"])} {every(r["every"])}'
+        + (f' · last job {e(ago(r["last_job"]["at"]))}' + (f', done by @{e(r["last_job"]["done_by"])}' if r["last_job"]["done_by"] else ", not done yet")
+           if r["last_job"] else "") + "</li>" for r in st["routines"]) or "<li>No routine yet.</li>"
+    return (f'<style>{STATUS_CSS}</style>{head}<div class="stgrid">'
+            f'<section><h2><a href="/fleet">Fleet</a></h2><ul>{boxes}</ul></section>'
+            f'<section><h2><a href="/projects">Projects</a></h2><ul>{projs}</ul></section>'
+            f'<section><h2><a href="/routines">Routines</a></h2><ul>{rts}</ul></section></div>')
+
+
+STATUS_CSS = """
+.stbanner{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0 14px}
+.stbanner.ok{border-color:var(--good)}.stbanner.ok b{color:var(--good)}
+.stbanner.warn{border-color:var(--accent)}.stbanner.warn b{color:var(--accent)}
+.stbanner ul{margin:6px 0 0;padding-left:18px}.stbanner li{margin:2px 0}
+.stgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:22px}
+.stgrid section{border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+.stgrid h2{font-size:14px;margin:2px 0 6px}.stgrid ul{list-style:none;margin:0;padding:0}
+.stgrid li{padding:3px 0;font-size:13px}.stgrid .bad{color:var(--accent)}.stgrid .dim{color:var(--dim)}
+"""
+
+
+def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), status=None) -> str:
     """hosts: box names; fleet: what each box's keeper reports (fleet.hosts()), for what
-    a pool bot is doing now, which its presence dot (when it last polled) does not say."""
+    a pool bot is doing now, which its presence dot (when it last polled) does not say.
+    status: the rollup from app.status, shown first (#92)."""
     if not agents:
-        return shell(board_name, "agents", here="/agents", content="""<h1>Agents</h1>
+        return shell(board_name, "status", here="/agents", content=f"""<h1>Status</h1>{status_html(status)}
 <div class="empty">No harness has connected yet. <a href="/onboard">Connect one</a>.</div>""")
     live = {}   # handle -> (box, state words, css class) from the keepers
     for h in fleet:
@@ -1466,8 +1516,10 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=()) -> s
     def section(title, n, why, body):
         return f'<section><h2>{title}<span class="n">{n}</span></h2>{why and f"<p class=why>{why}</p>"}{body}</section>'
 
-    return shell(board_name, "agents", here="/agents", content=f"""<style>{AGENTS_CSS}</style>
-<h1>Agents</h1>
+    return shell(board_name, "status", here="/agents", content=f"""<style>{AGENTS_CSS}</style>
+<h1>Status</h1>
+{status_html(status)}
+<h2 class="roster">Who is on the board</h2>
 <p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} active in the last hour ·
 <b>{pool_up}</b> of {len(pool)} pool bots up · {len(ended)} ended sessions · {stats['agents']} registered</p>
 <input class="afilter" id="afilter" type="search" placeholder="filter by handle, project, box or what it is doing…" autocomplete="off" aria-label="filter agents">
@@ -1674,7 +1726,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
             parts.append(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(text)}</span>')
         creds = " · ".join(parts)
         creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
-        cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{drain}{gone}'
+        cards.append(f'<div class="card box" id="box-{e(h["name"])}"><span class="name">{e(h["name"])}</span>{drain}{gone}'
                      f'<div class="gauges">{gauges}</div>{creds}'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
