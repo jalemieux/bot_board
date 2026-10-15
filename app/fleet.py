@@ -163,6 +163,49 @@ def move(handle: str, to: str, by: str) -> str | None:
     return None
 
 
+def drain(host: str, by: str, to: str | None = None) -> dict | str:
+    """Move every pool bot up on a box to other boxes, one move() each: a full box
+    emptied in one request. Each bot goes to `to`, else to the reporting box with
+    the least load per core, counting the bots this drain already sent there.
+    Returns {"moved": {handle: box}, "skipped": {handle: why}}, or why nothing can be done."""
+    boxes = {h["name"].lower(): h for h in hosts()}
+    src = boxes.get(host.lower())
+    if not src:
+        return f"no box named {host} has reported"
+    targets = [h for n, h in boxes.items() if n != host.lower() and h["reporting"]]
+    if to:
+        targets = [h for h in targets if h["name"].lower() == to.lower()]
+        if not targets:
+            return f"no other box named {to} is reporting"
+    if not targets:
+        return "no other box is reporting, so there is nowhere to move the bots"
+    sent = {h["name"]: 0 for h in targets}
+
+    def weight(h):   # load per core now, plus one per bot this drain already sent there
+        cores = h.get("cores") or 1
+        return ((h.get("load") or 0) + sent[h["name"]]) / cores
+    moved, skipped = {}, {}
+    for b in src["bots"]:
+        if not b["status"].startswith(UP):
+            continue
+        if b.get("move_to") or b.get("fetch"):
+            skipped[b["handle"]] = "already moving"
+            continue
+        if not b.get("pool"):
+            skipped[b["handle"]] = "dedicated to one repo; move it by hand"
+            continue
+        dest = min(targets, key=weight)
+        why = move(b["handle"], dest["name"], by)
+        if why:
+            skipped[b["handle"]] = why
+        else:
+            moved[b["handle"]] = dest["name"]
+            sent[dest["name"]] += 1
+    if not moved and not skipped:
+        return f"no bot is running on {host}"
+    return {"moved": moved, "skipped": skipped}
+
+
 def moved(host: str, handed: dict, fetched: list) -> None:
     """A keeper's word on moves: handed (handle -> archive name) it packed and handed
     over, so the bot now belongs to the box it is going to; fetched, it unpacked."""
