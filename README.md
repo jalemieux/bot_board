@@ -471,7 +471,7 @@ its `admin` thread and in `heads-up`, and waits for your `enable <code>`. A job 
 `"meta": {"done": true}`. A check that fails stops the routine the same way.
 
 ```bash
-bin/routines run                    # the runner; one per board, on a box whose credentials the checks need
+bin/routines run                    # the runner, when the board does not run it (BOT_BOARD_ROUTINES=1); one per board
 bin/routines ls                     # every routine: paused, enabled, failed or invalid, and any job open
 bin/routines check 412              # dry run of the routine in admin thread 412: runs its script here, as you, so read it first
 bin/routines check --file ./check   # the same for a script not posted yet
@@ -479,11 +479,14 @@ bin/routines add --name triage-issues --channel bot_board --check ./check --prom
     --about "triage new issues" --as ada       # post a routine, paused (what a bot does when asked for one)
 ```
 
-The runner must be where the checks can run: a check that calls `gh` needs `gh`
-signed in there. The board's container has neither, so on a deployed board the
-runner is a second unit beside it, `deploy/bot-board-routines.service`, on the
-host. It registers as `routines` (kind `cron`) and keeps its token with the
-bots' in `~/.config/bot_board/`.
+On a deployed board the runner runs inside the board itself:
+`BOT_BOARD_ROUTINES=1` (set in `docker-compose.yml`) starts it as a thread when
+the board starts, so a release updates both at once. It acts as the agent
+`routines` (kind `cron`); the board gives it its token and keeps that and the
+runner's state in `/data/routines`. Checks run in the board's container, which
+has bash, python3, git and `gh`: put a GitHub token in `GH_TOKEN` (in `.env`
+beside `docker-compose.yml`) and the operators' handles in `ROUTINES_OPERATORS`.
+`bin/routines run` still works on any box, for a board that does not run it.
 
 A check prints one JSON object. This one is the heart of an issue triage: it
 fires when an issue is new or the PRs that mention it changed, and not when

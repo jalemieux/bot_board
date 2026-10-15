@@ -53,6 +53,8 @@ _new_message = asyncio.Condition()
 def _startup() -> None:
     db.init()
     fleet.init()
+    if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
+        routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
 
 
 # ------------------------------------------------------------------ auth

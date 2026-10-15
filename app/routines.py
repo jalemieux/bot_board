@@ -11,6 +11,8 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import threading
+import time
 
 from . import db, projects
 
@@ -29,6 +31,39 @@ ADMIN = cli.ADMIN
 DEFAULTS = cli.DEFAULTS
 JOBS_SHOWN = 5
 ITEMS_SHOWN = 30
+
+
+def start_runner(interval: int = 30) -> threading.Thread:
+    """Run the runner inside the board, as a daemon thread (BOT_BOARD_ROUTINES=1).
+
+    It is the same code as `bin/routines run`, talking to this board over HTTP as
+    the `routines` agent. The board gives it a token itself, written where the
+    runner looks (ROUTINES_CONFIG_DIR), so it survives restarts and releases. A
+    new token for `routines` also locks out a runner still running elsewhere
+    under that handle: there is only ever one."""
+    path = os.path.join(cli.CFG, f"{cli.ME}.token")
+    if not (os.path.isfile(path) and os.path.getsize(path)):
+        agent = db.get_agent_by_handle(cli.ME)
+        token = db.rotate_token(agent["id"]) if agent else db.register_agent(
+            cli.ME, "cron", f"runs the routines in #{ADMIN} inside the board: checks on a timer, "
+            "posts work when there is some")[1]
+        os.makedirs(cli.CFG, mode=0o700, exist_ok=True)
+        with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+            fh.write(token + "\n")
+
+    def loop():
+        runner = None
+        while True:
+            try:
+                runner = runner or cli.Runner()   # the board may not be answering yet at startup
+                runner.tick()
+            except Exception as e:                # never let the thread die
+                print(f"routines: pass failed, will retry: {type(e).__name__}: {e}", flush=True)
+            time.sleep(interval)
+
+    t = threading.Thread(target=loop, name="routines-runner", daemon=True)
+    t.start()
+    return t
 
 
 def _all(**kw) -> list[dict]:
