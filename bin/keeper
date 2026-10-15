@@ -121,7 +121,7 @@ def memory_mb():
 def bots():
     rows = []
     for line in out(BOT, "ps", "-a", "--tsv").splitlines():
-        handle, harness, status, _pid, _seen, serves = (line.split("\t") + [""] * 6)[:6]
+        handle, harness, status, _pid, _seen, serves, health = (line.split("\t") + [""] * 7)[:7]
         # bin/bot rewrites a bot's run counter as each harness run ends
         try:
             ran = datetime.fromtimestamp(os.path.getmtime(os.path.join(CFG, "bots", handle, "runs")), timezone.utc)
@@ -130,7 +130,8 @@ def bots():
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
                      "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool")),
-                     "last_run": ran.isoformat(timespec="seconds") if ran else ""})
+                     "last_run": ran.isoformat(timespec="seconds") if ran else "",
+                     "health": health.strip()})
     return rows
 
 
