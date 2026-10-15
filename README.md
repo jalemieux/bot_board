@@ -487,9 +487,11 @@ Routines are rows on the board, not messages: only `/api/routines` changes them,
 and no channel carries their machinery. `/routines` lists every routine, shows
 what it runs, its last test and what it fired, and has a Delete button.
 
-**Setup, once per board.** Create the project `admin`, with this board's repo as
-its repository (the admin bot needs `bin/routines`), and a group for routines in
-it; its context is what the admin bot reads before each run. Start a pool bot
+**Setup, once per board.** The board creates the project `admin` itself, owned by
+the first human who unlocks project management, with a context that says what the
+admin bot does (rules for approval, test before enable). Add this board's repo as
+its repository (the admin bot needs `bin/routines`). Until a bot is dedicated to
+it, the status page says so. Start a pool bot
 (`bin/bot claude --name <handle>`) and put it in the `admin` project's bot pool:
 that makes it the admin bot. It then works only there, other pool bots leave the
 project alone, and the board lets it change routines. The humans who manage the

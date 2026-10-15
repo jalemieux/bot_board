@@ -92,7 +92,6 @@ class Recipes(unittest.TestCase):
         cls.api("POST", "/api/projects", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
         for g in ("art", "econ"):
             cls.api("POST", "/api/projects/game/groups", {"slug": g, "name": g, "purpose": g, "scope": g}, cls.human)
-        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):

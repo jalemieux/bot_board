@@ -43,6 +43,11 @@ def _fleet(hosts: list, attention: list) -> list:
     return out
 
 
+def _admin_project() -> str:
+    from . import routines     # loads bin/routines; only when asked
+    return routines.ADMIN_PROJECT
+
+
 def _projects(hosts: list, attention: list) -> list:
     up = {b["handle"].lower() for h in hosts if h["reporting"] for b in h["bots"] if b["status"].startswith(fleet.UP)}
     pool_up = sorted({b["handle"] for h in hosts if h["reporting"] for b in h["bots"]
@@ -60,6 +65,10 @@ def _projects(hosts: list, attention: list) -> list:
                                           " (its pool is empty)"), f"/projects/{p['slug']}", "projects"))
         else:
             working = pool_up      # a project without its own pool shares the free pool bots
+            if p["slug"] == _admin_project():
+                # routines need a bot of their own here: a shared pool bot is not an admin bot (#103)
+                attention.append(_item(f"project {p['slug']} has no admin bot: dedicate a pool bot to it, so "
+                                       "requests for routines are answered", f"/projects/{p['slug']}", "projects"))
         out.append({"slug": p["slug"], "name": p["name"], "channel": channel, "dedicated": pool["configured"],
                     "bots": pool["bots"] if pool["configured"] else [], "up": working,
                     "readiness": projects.readiness(p["board_id"])})
