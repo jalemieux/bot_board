@@ -7,6 +7,7 @@ GET /api/status returns it; /agents shows it above the roster.
 from __future__ import annotations
 
 from . import db, fleet, projects
+from .web import ago
 
 RUNNER_STALE = 15 * 60      # an enabled routine whose runner has not been seen for this long is not running
 
@@ -19,8 +20,10 @@ def _fleet(hosts: list, attention: list) -> list:
     out = []
     for h in hosts:
         if not h["reporting"]:
-            attention.append(_item(f"{h['name']} is not reporting: last heard {h['reported_at']}",
+            attention.append(_item(f"{h['name']} is not reporting: last heard {ago(h['reported_at'])}",
                                    f"/fleet#box-{h['name']}", "fleet"))
+        # a login missing here is one item, not one more per bot it holds
+        out_of = {c["name"] for c in h.get("credentials") or [] if c["kind"] == "login" and c["state"] != "ok"}
         for c in h.get("credentials") or []:
             if c["state"] in ("missing", "expired") and (c.get("held") or c["kind"] == "login"):
                 held = f", {c['held']} bot{'' if c['held'] == 1 else 's'} held" if c.get("held") else ""
@@ -29,13 +32,15 @@ def _fleet(hosts: list, attention: list) -> list:
                                        f"/fleet#box-{h['name']}", "fleet"))
         bots = []
         for b in h["bots"]:
-            up = b["status"].startswith(fleet.UP)
+            st = b.get("state") or fleet.bot_state(b, h["reporting"])
             row = {k: b.get(k) for k in ("handle", "harness", "status", "want", "problem", "project", "pool")}
-            row["up"], row["health"] = up, (b.get("health") or "") if up else ""
+            row.update(state=st, up=st["can_work"], health=b.get("health") or "")
             bots.append(row)
-            why = b.get("problem") or row["health"]
-            # a bot nobody asked for and that is simply stopped is not a problem
-            if why and (up or b.get("want")):
+            why = b.get("problem") or (row["health"] if b["status"].startswith(fleet.UP) else "")
+            # a bot nobody asked for and that is simply stopped is not a problem; neither is one on a
+            # box gone dark (the box's own item covers it) or one held by a login the box lacks (ditto)
+            held = st["state"] == "needs login" and (b.get("harness") or "") in out_of
+            if why and h["reporting"] and not held and (b["status"].startswith(fleet.UP) or b.get("want")):
                 attention.append(_item(f"@{b['handle']} on {h['name']}: {why}", f"/fleet#box-{h['name']}", "fleet"))
         out.append({"name": h["name"], "reporting": h["reporting"], "reported_at": h["reported_at"],
                     "load": h.get("load"), "cores": h.get("cores"), "credentials": h.get("credentials") or [],
@@ -44,9 +49,11 @@ def _fleet(hosts: list, attention: list) -> list:
 
 
 def _projects(hosts: list, attention: list) -> list:
-    up = {b["handle"].lower() for h in hosts if h["reporting"] for b in h["bots"] if b["status"].startswith(fleet.UP)}
-    pool_up = sorted({b["handle"] for h in hosts if h["reporting"] for b in h["bots"]
-                      if b.get("pool") and b["status"].startswith(fleet.UP) and not b.get("project")})
+    # up: can take work now (#100); a logged-out bot on a reporting box is not up
+    can = lambda h, b: (b.get("state") or fleet.bot_state(b, h["reporting"]))["can_work"]
+    up = {b["handle"].lower() for h in hosts for b in h["bots"] if can(h, b)}
+    pool_up = sorted({b["handle"] for h in hosts for b in h["bots"]
+                      if b.get("pool") and can(h, b) and not b.get("project")})
     out = []
     for p in db.conn().execute("SELECT * FROM projects WHERE archived=0 ORDER BY slug").fetchall():
         p = dict(p)
@@ -96,10 +103,11 @@ def _routines(attention: list) -> list:
     return out
 
 
-def rollup() -> dict:
-    """{ok, attention: [{text, href, where}], fleet, projects, routines}."""
+def rollup(hosts: list | None = None) -> dict:
+    """{ok, attention: [{text, href, where}], fleet, projects, routines}. hosts: fleet.hosts(),
+    when the caller has it already (each call scans the messages for last posts)."""
     attention: list = []
-    hosts = fleet.hosts()
+    hosts = fleet.hosts() if hosts is None else hosts
     out = {"fleet": _fleet(hosts, attention), "projects": _projects(hosts, attention),
            "routines": _routines(attention)}
     return {"ok": not attention, "attention": attention, **out}

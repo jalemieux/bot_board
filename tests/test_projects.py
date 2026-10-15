@@ -184,6 +184,18 @@ class Projects(unittest.TestCase):
         self.assertIsNone(self.call('GET', '/api/me/project-pool', auth=self.bot)['project'])
         self.call('PUT', '/api/projects/other-game/bots', data)
 
+    def test_a_bot_that_cannot_work_is_not_available_nor_up(self):
+        # #100: a logged-out bot is up for its launcher, but takes no work
+        self.report_pool([{'handle': 'worker', 'harness': 'codex', 'status': 'waiting', 'pool': True,
+                           'health': 'logged out of codex since 2026-10-15T01:00:00Z: run codex login'}])
+        c = self.call('GET', '/api/projects/game/bots')['candidates'][0]
+        self.assertFalse(c['available'])
+        self.assertEqual((c['state'], c['words']), ('needs login', 'needs a login'))
+        self.assertIn('logged out', c['health'])
+        st = self.call('GET', '/api/status')
+        self.assertFalse(st['fleet'][0]['bots'][0]['up'])
+        self.assertEqual(st['projects'][0]['up'], [])
+
     def test_offline_pool_members_are_retained_and_can_be_released(self):
         self.report_pool()
         path = '/api/projects/game/bots'

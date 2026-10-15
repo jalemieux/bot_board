@@ -185,6 +185,41 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     return None
 
 
+def bot_state(b: dict, reporting: bool = True) -> dict:
+    """What a bot is doing, in the one vocabulary /fleet, /projects and /status share (#100):
+    {state, words, reason, can_work}. can_work: it would take a message now, or once its
+    current run ends; a bot that cannot (logged out, out of usage, on a box gone dark) is
+    neither counted as up nor offered for a project's pool."""
+    st, health, problem = b.get("status") or "", b.get("health") or "", b.get("problem") or ""
+    up = st.startswith(UP)
+    doing = st[len("running "):].split(",")[0] if st.startswith("running ") else ""
+
+    def out(state, words, reason="", can_work=False):
+        return {"state": state, "words": words, "reason": reason, "can_work": can_work}
+    if not reporting:
+        return out("unknown", f"{st or 'stopped'} when last heard", "its box is not reporting")
+    if b.get("move_to"):
+        return out("moving", f"moving to {b['move_to']}: " + ("stopping" if up else "packing"))
+    if b.get("fetch") and not up:
+        return out("moving", "arriving: unpacking")
+    if b.get("want") == "running" and not up and st != "moved":
+        return out("failing", "not running", problem) if problem else out("starting", "starting")
+    if up and ("stopping" in st or b.get("want") == "stopped"):
+        # asked, and the keeper has not acted yet: say what was asked; once it has, "stopping"
+        words = "stopping" if "stopping" in st else ""
+        words = ", ".join(w for w in (words, "kill asked" if b.get("kill") else "" if words else "stop asked") if w)
+        return out("stopping", words)
+    if up and health.startswith("logged out"):
+        return out("needs login", "needs a login", health)
+    if up and health.startswith("out of"):
+        return out("out of usage", "out of usage", health)
+    if up:
+        words = f"working on {doing}" if doing else "working" if st.startswith("running") else "waiting for work"
+        # a failed last run is worth seeing, but the bot still takes the next message
+        return out("failing" if health else "working" if st.startswith("running") else "waiting", words, health, True)
+    return out("stopped", "stopped" if st != "moved" else "moved to another box", problem)
+
+
 def pools() -> list[dict]:
     """Projects with a dedicated bot pool, and its bots (none: no pool bot works there)."""
     c = db.conn()
@@ -235,7 +270,7 @@ def move(handle: str, to: str, by: str) -> str | None:
     if not seen:
         return f"{src} does not report {handle}"
     if not seen.get("pool"):
-        return f"{handle} is dedicated to one repo; only pool bots move from the board (bin/bot pack and unpack by hand)"
+        return f"{handle} is a single-repo bot; only pool bots move from the board (bin/bot pack and unpack by hand)"
     harness = seen.get("harness") or (row["harness"] if row else None)
     if harness not in HARNESSES:
         return f"{src} does not say which harness {handle} runs"
@@ -284,7 +319,7 @@ def drain(host: str, by: str, to: str | None = None) -> dict | str:
             skipped[b["handle"]] = "already moving"
             continue
         if not b.get("pool"):
-            skipped[b["handle"]] = "dedicated to one repo; move it by hand"
+            skipped[b["handle"]] = "a single-repo bot; move it by hand"
             continue
         dest = min(targets, key=weight)
         why = move(b["handle"], dest["name"], by)
@@ -388,5 +423,6 @@ def hosts() -> list[dict]:
         for b in h["bots"]:
             b["last_post"] = posted.get(b["handle"].lower(), "")
             b["project"] = dedicated.get(b["handle"].lower())
+            b["state"] = bot_state(b, h["reporting"])
         out.append(h)
     return out

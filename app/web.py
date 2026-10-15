@@ -17,6 +17,7 @@ import re
 from datetime import datetime, timezone
 
 from . import db
+from . import fleet as fleet_mod
 
 MENTION_RE = re.compile(r"@([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
 TAGISH_RE = re.compile(r"(?<![\w/])#([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
@@ -1381,7 +1382,10 @@ def status_html(st: dict | None) -> str:
            else "shared pool") + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
         for p in st["projects"]) or "<li>No project yet.</li>"
     def every(s):
-        return f"every {s // 60} min" if s and s >= 60 else f"every {s}s" if s else ""
+        for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):    # as /routines says it: 1d, not 1440 min
+            if s and s >= n and s % n == 0:
+                return f"every {s // n}{unit}" if unit != "min" else f"every {s // n} min"
+        return f"every {s}s" if s else ""
     rts = "".join(
         f'<li><a href="/routines#r={r["id"]}">{e(r["name"])}</a> '
         f'<span class="{"bad" if r["state"] == "failed" else "dim" if r["state"] == "paused" else ""}">{e(r["state"])}</span>'
@@ -1416,17 +1420,11 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), stat
     live = {}   # handle -> (box, state words, css class) from the keepers
     for h in fleet:
         for b in h.get("bots", []):
-            st = b.get("status") or ""
-            if not h.get("reporting"):
-                words, cls = f"{st}, but {h['name']} has not reported lately", "off"
-            elif st.startswith("running"):
-                words, cls = st, "run"
-            elif st.startswith("waiting"):
-                words, cls = "waiting for work", "wait"
-            else:
-                words, cls = st or "stopped", "off"
-            if b.get("problem"):
-                words, cls = f"{words}: {b['problem']}", "prob"
+            # the words /fleet and /projects use (#100); run and wait are the bots that can take work
+            st = b.get("state") or fleet_mod.bot_state(b, h.get("reporting", True))
+            words = st["words"] + (f": {st['reason']}" if st["reason"] and st["state"] != "unknown" else "")
+            cls = ("run" if st["state"] == "working" else "wait") if st["can_work"] else \
+                "prob" if st["reason"] or st["state"] in ("starting", "stopping", "moving") else "off"
             if b.get("project"):
                 words += f" · dedicated to {b['project']}"
             key = b["handle"].lower()
@@ -1479,7 +1477,7 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), stat
         kind = "claude" if a["kind"] == "claude-code" else a["kind"]
         _, words, cls = state(a)
         return (f'<li data-q="{q(a)} {e(words.lower())}">{presence_dot(a["last_seen_at"])}{handle_link(a)}'
-                f'<span class="k">{e(kind)}</span><span class="t">{e(ago(a["last_seen_at"]))}</span>'
+                f'<span class="k">{e(kind)}</span><span class="t" title="when it last called the board">seen {e(ago(a["last_seen_at"]))}</span>'
                 f'<span class="s {cls}">{e(words)}</span></li>')
 
     boxes = {}
@@ -1532,10 +1530,6 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), stat
 {section("Ended sessions", len(ended), "Not seen for a day or more, by project, most recent first.",
          f'<details class="ended" id="ended"><summary>Show {_plural(len(ended), "session")} across {_plural(len(by_project), "project")}</summary>{ended_html}</details>') if ended else ""}
 </div>
-<div class="cta"><div class="txt"><b>Connect your coding harness</b>
-<p>Claude Code, Codex, Gemini CLI, Cursor, Copilot. One paragraph in its instruction file
-and every session it runs joins this board.</p></div>
-<a class="btn" href="/onboard">Set it up →</a></div>
 <script>{AGENTS_JS}</script>
 """)
 
@@ -1556,18 +1550,8 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
     rows = []
     for b in bots:
         up = b["status"].startswith(("waiting", "running"))
-        status = e(b["status"])
-        if b.get("move_to"):
-            status = f'moving to {e(b["move_to"])}: ' + ("stopping" if up else "packing")
-        elif b.get("fetch") and not up:
-            status = "arriving: unpacking"
-        # asked for and not there yet: say so, the keeper acts within its next report
-        if b.get("want") == "running" and not up and b["status"] != "moved":
-            status = "starting" if not b.get("problem") else "not running"
-        elif b.get("want") == "stopped" and up and b.get("kill"):
-            status += ", kill asked"
-        elif b.get("want") == "stopped" and up and "stopping" not in b["status"]:
-            status += ", stop asked"
+        st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
+        status = e(st["words"])
         if b.get("want"):
             status += f'<div class="by">{e(asked(b))} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
         # last active: the keeper knows its last harness run, the board its last post
@@ -1577,13 +1561,10 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
             status += f'<div class="by">dedicated to project <a href="/projects/{e(b["project"])}">{e(b["project"])}</a></div>'
         if b.get("serves"):
             status += f'<div class="by">serves {e(b["serves"])}</div>'
-        if b.get("problem"):
-            status += f'<div class="prob">{e(b["problem"])}</div>'
-        # what its launcher says is wrong: the last run failed, or the harness is logged out
-        if up and b.get("health"):
-            if b["health"].startswith("logged out"):
-                status = status.replace(e(b["status"]), "waiting for a login", 1)
-            status += f'<div class="prob">{e(b["health"])}</div>'
+        # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
+        for why in dict.fromkeys(w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "",
+                                             b.get("health") if up else "") if w):
+            status += f'<div class="prob">{e(why)}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
         can = b["status"] != "moved" and (up or b.get("harness"))
         # no second start or stop for one already asked; a kill can still follow a stop
@@ -1605,7 +1586,7 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
                     + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
         rows.append(
             f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
-            f'<td class="st{" run" if b["status"].startswith("running") else ""}">{status}</td>'
+            f'<td class="st{" run" if st["state"] == "working" else ""}">{status}</td>'
             f'<td class="do">{btn}</td></tr>')
     return "".join(rows)
 
@@ -1699,6 +1680,12 @@ setInterval(function () {
 """
 
 
+def _cannot(bots: list) -> str:
+    """' (2 cannot work)': bots whose launcher is up but which take no work (#100)."""
+    n = sum(1 for b in bots if b.get("state") and not b["state"]["can_work"])
+    return f" ({n} cannot work)" if n else ""
+
+
 def fleet_page(board_name, hosts, pools=()) -> str:
     cards = []
     for h in hosts:
@@ -1741,7 +1728,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
         creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
         cards.append(f'<div class="card box" id="box-{e(h["name"])}"><span class="name">{e(h["name"])}</span>{drain}{gone}'
                      f'<div class="gauges">{gauges}</div>{creds}'
-                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{"" if h["reporting"] else " when last heard"}{" · " + e(h["os"]) if h.get("os") else ""} · '
+                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{"" if h["reporting"] else " when last heard"}{_cannot(up)}{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     # which projects keep their own bots; every other project shares the rest
     pooled = ""

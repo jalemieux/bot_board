@@ -570,10 +570,12 @@ def _pool_candidates():
             if not bot.get('pool') or not db.get_agent_by_handle(bot['handle']):
                 continue
             key = bot['handle'].lower()
-            available = bool(host['reporting'] and bot['status'].startswith(fleet.UP) and not bot.get('move_to'))
+            # the state /fleet and /status show (#100): a bot that cannot work is not available
+            st = bot.get('state') or fleet.bot_state(bot, host['reporting'])
+            available = st['can_work']
             item = {'handle': bot['handle'], 'host': host['name'], 'status': bot['status'],
-                    'available': available, 'assigned_project': assigned.get(key),
-                    'health': bot.get('health', '') if available else ''}
+                    'state': st['state'], 'words': st['words'], 'available': available,
+                    'assigned_project': assigned.get(key), 'health': st['reason']}
             if key not in candidates or available:
                 candidates[key] = item
     return candidates

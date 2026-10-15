@@ -513,10 +513,10 @@ function poolBox() {
       var shown = cands.filter(function (c) { return c.available || selected[c.handle]; });
       var rest = cands.filter(function (c) { return shown.indexOf(c) < 0; });
       add(form, shown.length ? botTable(shown, true)
-        : h('p', {'class': 'note', text: cands.length ? 'No pool bot is running right now.' : 'No pool bot is reported by a keeper yet.'}));
+        : h('p', {'class': 'note', text: cands.length ? 'No pool bot can work right now.' : 'No pool bot is reported by a keeper yet.'}));
       if (rest.length) {
         var t = h('button', {type: 'button', 'class': 'quiet', 'aria-expanded': showAll ? 'true' : 'false',
-          text: (showAll ? 'Hide ' : 'Show ') + rest.length + ' stopped or unreported bot' + (rest.length === 1 ? '' : 's'),
+          text: (showAll ? 'Hide ' : 'Show ') + rest.length + ' bot' + (rest.length === 1 ? '' : 's') + ' that cannot work now',
           onclick: function () { showAll = !showAll; draw(); }});
         add(form, t);
         if (showAll) add(form, botTable(rest, true));
@@ -548,7 +548,7 @@ function poolBox() {
           if (taken && !selected[c.handle]) cb.disabled = true;
           cell = h('td', null, cb);
         }
-        var avail = taken ? 'in project ' + c.assigned_project : !c.host || c.status === 'not reported' || c.status === 'not reporting' ? 'not reported by any keeper' : c.available ? 'available' : 'unavailable';
+        var avail = taken ? 'in project ' + c.assigned_project : !c.host || c.status === 'not reported' || c.status === 'not reporting' ? 'not reported by any keeper' : c.available ? 'available' : 'cannot work now' + (c.state ? ': ' + c.state : '');
         return h('tr', null, cell,
           h('td', null, h('a', {href: '/a/' + encodeURIComponent(c.handle), text: '@' + c.handle})),
           h('td', {'class': 'note', text: c.host || '?'}),
@@ -557,6 +557,7 @@ function poolBox() {
       })));
   }
   function state(c) {   // what the bot is doing now, in words
+    if (c.words) return c.words;     // the words /fleet and /status use (#100)
     var st = c.status || '';
     if (/^waiting/.test(st)) return 'idle';
     var m = /^running (.+)$/.exec(st);
