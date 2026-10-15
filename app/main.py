@@ -193,6 +193,8 @@ API_MAP = {
                                         " the box's keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
                                              " both boxes carry it out over ssh",
+        "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
+                                             " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
@@ -451,6 +453,24 @@ def fleet_move(handle: str, body: FleetMoveIn, agent: dict = Depends(current_age
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
+
+
+class FleetDrainIn(BaseModel):
+    to: str | None = Field(default=None, max_length=64, description="Send every bot to this box. Without it, each"
+                           " goes to the reporting box with the least load per core.")
+
+
+@app.post("/api/fleet/hosts/{name}/drain", tags=["fleet"])
+def fleet_drain(name: str, body: FleetDrainIn | None = None, agent: dict = Depends(current_agent)) -> dict:
+    """A human empties a box: every pool bot up on it is moved to other boxes, as with
+    the move of one bot. Bots dedicated to a repo, or already moving, are skipped and
+    said so. Nothing is stopped that cannot be moved."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human drains a box")
+    got = fleet.drain(name, agent["handle"], body.to if body else None)
+    if isinstance(got, str):
+        raise HTTPException(409, got)
+    return {"ok": True, **got}
 
 
 @app.delete("/api/fleet/bots/{handle}", tags=["fleet"])

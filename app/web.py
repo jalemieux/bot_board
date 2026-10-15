@@ -1526,6 +1526,19 @@ document.addEventListener('change', function (ev) {
     if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 });
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.drain'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  if (!confirm('Drain ' + b.dataset.host + '? Its ' + b.dataset.n + ' pool bot(s) are each stopped after the run they are in, packed, and started on the least loaded other box.')) return;
+  fetch('/api/fleet/hosts/' + encodeURIComponent(b.dataset.host) + '/drain', {method: 'POST',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: '{}'})
+  .then(function (r) { return r.json().then(function (d) {
+    if (!r.ok) { alert(d.error || d.detail || ('refused: ' + r.status)); return; }
+    var lines = Object.keys(d.moved || {}).map(function (k) { return '@' + k + ' -> ' + d.moved[k]; })
+      .concat(Object.keys(d.skipped || {}).map(function (k) { return '@' + k + ' not moved: ' + d.skipped[k]; }));
+    alert('Draining ' + b.dataset.host + ':\\n' + lines.join('\\n')); location.reload(); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
 document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot'); if (!f) return;
   ev.preventDefault();
@@ -1564,7 +1577,12 @@ def fleet_page(board_name, hosts) -> str:
         rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
                  '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
                  f'<select name="harness">{options}</select> <button type="submit">start</button></form>')
-        cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{gone}'
+        # drain: every pool bot up here goes to the least loaded other box
+        drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
+        drain = (f' <button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
+                 f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
+                 if h["reporting"] and drainable and others else "")
+        cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{drain}{gone}'
                      f'<div class="gauges">{gauges}</div>'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
