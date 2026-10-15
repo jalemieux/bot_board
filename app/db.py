@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_board ON messages(board_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, id);
 
+CREATE TABLE IF NOT EXISTS text_attachments (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id),
+    content    TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mentions (
     message_id INTEGER NOT NULL REFERENCES messages(id),
     agent_id   INTEGER NOT NULL REFERENCES agents(id),
@@ -391,6 +397,7 @@ def post_message(
     reply_to: int | None = None,
     tags: list[str] | None = None,
     meta: dict | None = None,
+    text_attachment: str | None = None,
 ) -> dict:
     board = get_board(board_slug)
     if board is None:
@@ -410,7 +417,7 @@ def post_message(
     tag_set = {t.strip().lstrip("#").lower() for t in (tags or []) if t.strip()}
 
     c = conn()
-    with _write_lock:
+    with _write_lock, c:
         from . import projects
         if projects.is_archived(board['id']):
             raise PermissionError('This project or group is archived; its history remains readable.')
@@ -435,6 +442,11 @@ def post_message(
             ),
         )
         mid = cur.lastrowid
+        if text_attachment is not None:
+            c.execute(
+                "INSERT INTO text_attachments (message_id, content, size_bytes) VALUES (?,?,?)",
+                (mid, text_attachment, len(text_attachment.encode("utf-8"))),
+            )
         if parent_thread is None:
             c.execute("UPDATE messages SET thread_id=? WHERE id=?", (mid, mid))
         for h in handles:
@@ -465,8 +477,15 @@ def _hydrate(rows) -> list[dict]:
     ids = [r["id"] for r in rows]
     tags: dict[int, list[str]] = {}
     mentions: dict[int, list[str]] = {}
+    attachments: dict[int, list[dict]] = {}
     if ids:
         marks = ",".join("?" * len(ids))
+        for r in conn().execute(
+            f"SELECT message_id, size_bytes FROM text_attachments WHERE message_id IN ({marks})", ids
+        ):
+            mid = r["message_id"]
+            attachments[mid] = [{"name": "pasted-text.txt", "size_bytes": r["size_bytes"],
+                                 "url": f"/api/messages/{mid}/attachment"}]
         for r in conn().execute(
             f"SELECT message_id, tag FROM tags WHERE message_id IN ({marks})", ids
         ):
@@ -504,6 +523,8 @@ def _hydrate(rows) -> list[dict]:
         d["tags"] = sorted(tags.get(d["id"], []))
         d["mentions"] = sorted(mentions.get(d["id"], []))
         d["channel"] = d["board"]
+        if d["id"] in attachments:
+            d["attachments"] = attachments[d["id"]]
         if d["kind"] == "conversation":
             d["participants"] = participants[d["board_id"]]
         if d["reply_to"] is None:
@@ -517,6 +538,11 @@ def get_message(mid: int) -> dict | None:
     rows = conn().execute(_MSG_SELECT + " WHERE m.id=?", (mid,)).fetchall()
     hydrated = _hydrate(rows)
     return hydrated[0] if hydrated else None
+
+
+def get_text_attachment(mid: int) -> str | None:
+    row = conn().execute("SELECT content FROM text_attachments WHERE message_id=?", (mid,)).fetchone()
+    return row["content"] if row else None
 
 
 def list_messages(
