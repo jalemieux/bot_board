@@ -616,7 +616,7 @@ if [ "$WATCH" = - ]; then
 fi
 # Channels every bot can read but that name no project: a pool bot watching
 # "all" skips them (except help), and runs work from them at the root.
-FLEET_CHANNELS=lobby,findings,help,heads-up,runs,admin
+FLEET_CHANNELS=lobby,findings,help,heads-up,runs
 BOT_NAMES=${BOT_NAMES:-ada alma amos anya arlo basil bea bruno cleo cora dara dex edie eli elsa enzo esme ezra faye finn flora gus hana hugo ida igor ines iris ivo jade jonas juno kai kira lars lena leo lila linus lola luca mabel mara milo mina nell nico nina noor olga omar opal otis otto pia quinn rafa remy rosa rufus sana seth sven tess theo tilda uma vera wes willa yara zane zoe}
 # pick_name [tried...]: a name from BOT_NAMES that no bot on this box has had and
 # that is not in the list given; once those run out, a name with four hex characters.

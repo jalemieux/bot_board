@@ -4,7 +4,7 @@ End to end: the real board under uvicorn on a free port, and bin/routines as a
 subprocess, as a box would run it. Needs the board's requirements (uvicorn).
 Run with python -m unittest discover -s tests.
 """
-import json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.request
+import json, os, socket, sqlite3, subprocess, sys, tempfile, time, unittest, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +27,8 @@ class RoutineTest(unittest.TestCase):
             s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
         cls.board = f"http://127.0.0.1:{port}"
         cls.srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=ROOT,
-                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db")),
+                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db"),
+                                            BOT_BOARD_PROJECT_ADMIN_KEY="k"),
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -41,6 +42,10 @@ class RoutineTest(unittest.TestCase):
         cls.bot = cls.register("ada", "claude-code")
         with open(os.path.join(cls.cfg, "ada.token"), "w") as fh:
             fh.write(cls.bot)
+        cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
+        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
+        cls.api("POST", "/api/projects/admin/groups", {"slug": "routine", "name": "Routines", "purpose": "Recurring work",
+                                                       "scope": "routines"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -74,11 +79,11 @@ class RoutineTest(unittest.TestCase):
                 fh.write(text)
         self.routines("add", "--as", "ada", "--name", name, "--channel", "proj", "--check", files["check"],
                       "--prompt", files["prompt"])
-        return max(m["id"] for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+        return max(m["id"] for m in self.api("GET", "/api/messages?channel=admin.routine", token=self.human)["messages"]
                    if m["meta"].get("routine", {}).get("name") == name)
 
     def say(self, thread, body, token=None):
-        return self.api("POST", "/api/messages", {"channel": "admin", "body": body, "reply_to": thread},
+        return self.api("POST", "/api/messages", {"channel": "admin.routine", "body": body, "reply_to": thread},
                         token or self.human)["message"]["id"]
 
     def answers(self, thread):
@@ -115,7 +120,7 @@ class RoutineTest(unittest.TestCase):
 
     def test_enabled_routine_uses_the_current_watermark_and_keeps_it(self):
         t = self.add("enabled-one")
-        code = self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+        code = self.api("GET", "/api/messages?channel=admin.routine", token=self.human)["messages"]
         code = next(m for m in code if m["id"] == t)["body"].split("enable ")[1].split("`")[0]
         self.say(t, f"enable {code}")
         st = self.state(); st[str(t)] = {"watermark": {"n": 5}, "version": t, "checked_at": time.time()}
@@ -135,7 +140,7 @@ class RoutineTest(unittest.TestCase):
         t = self.add("broken", check=BROKEN)
         open(os.path.join(self.home, "fail"), "w").close()
         self.say(t, "test")
-        bad = self.api("POST", "/api/messages", {"channel": "admin", "body": "not what routines add writes",
+        bad = self.api("POST", "/api/messages", {"channel": "admin.routine", "body": "not what routines add writes",
                        "meta": {"routine": {"name": "hand-made"}}}, self.human)["message"]["id"]
         self.say(bad, "test")
         self.routines("once")
@@ -146,6 +151,19 @@ class RoutineTest(unittest.TestCase):
         self.assertFalse(any("Routine `broken` stopped" in m["body"]
                              for m in self.api("GET", f"/api/threads/{t}", token=self.human)["messages"]),
                          "a failed test must not fail the routine")
+
+    def test_an_admin_bot_test_counts_only_with_a_human_yes_after_the_definition(self):
+        t = self.add("asked-for")
+        self.assertEqual(self.answers(t), [])
+        with sqlite3.connect(os.path.join(self.tmp.name, "b.db")) as c:   # ada joins the admin project's bot pool
+            c.execute("INSERT OR IGNORE INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p,"
+                      " agents a WHERE p.slug='admin' AND a.handle='ada'")
+        unapproved = self.api("POST", "/api/messages", {"channel": "admin.routine", "body": "test", "reply_to": t,
+                              "meta": {"approved_by": t}}, self.bot)["message"]["id"]
+        yes = self.say(t, "yes")
+        asked = self.api("POST", f"/api/routines/{t}/test", {"approved_by": yes}, self.bot)["message"]["id"]
+        self.routines("once")
+        self.assertEqual([a["for"] for a in self.answers(t)], [asked], f"not {unapproved}: it cites no yes")
 
 
 if __name__ == "__main__":
