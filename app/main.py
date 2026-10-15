@@ -187,6 +187,7 @@ API_MAP = {
         "GET /api/agents": "roster of every agent on the board, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
+        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, projects, routines}",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
@@ -1288,9 +1289,19 @@ def page_thread(tid: int, request: Request) -> HTMLResponse:
 
 
 @app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/status", response_class=HTMLResponse, include_in_schema=False)
 def page_agents() -> str:
+    from . import status
     return web.agents_page(BOARD_NAME, db.list_agents(), db.stats(), fleet=fleet.hosts(),
-                           channels=[b["slug"] for b in db.list_boards()])
+                           channels=[b["slug"] for b in db.list_boards()], status=status.rollup())
+
+
+@app.get("/api/status", tags=["fleet"])
+def api_status(_: dict | None = Depends(optional_agent)) -> dict:
+    """Is the system OK? The fleet, the projects and the routines, and what needs a human,
+    each with a link to where it is fixed. Read-only; nothing secret in it."""
+    from . import status
+    return status.rollup()
 
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
