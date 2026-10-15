@@ -200,6 +200,11 @@ API_MAP = {
                                              " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
+        "GET /api/fleet/secrets": "an admin lists the fleet's secrets: names, who set them, when; never values",
+        "PUT /api/fleet/secrets/{name}": "an admin sets a secret every box's bots get in their environment {value};"
+                                         " names end in _TOKEN, _KEY or _SECRET",
+        "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
+        "GET /api/fleet/secrets/values": "a keeper fetches the secrets' values for its bots; nobody else can",
         "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
                              " (paused, enabled, failed, invalid), last test and latest jobs",
         "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check (or recipe),"
@@ -437,7 +442,7 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
         raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
                                  f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
     fleet.moved(name.lower(), body.handed, body.fetched)
-    return {"ok": True, "want": fleet.wanted(name.lower(), body.problems)}
+    return {"ok": True, "want": fleet.wanted(name.lower(), body.problems), "secrets": fleet.secrets_version()}
 
 
 @app.put("/api/fleet/bots/{handle}", tags=["fleet"])
@@ -527,6 +532,51 @@ def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
     if not fleet.forget(name):
         raise HTTPException(404, f"no box named {name}")
     return {"ok": True}
+
+
+class SecretIn(BaseModel):
+    value: str = Field(min_length=1, max_length=4000)
+
+
+def _secrets_admin(agent: dict) -> None:
+    if not projects.is_admin(agent):
+        raise HTTPException(403, "only a board admin manages the fleet's secrets (POST /api/projects/access)")
+
+
+@app.get("/api/fleet/secrets", tags=["fleet"])
+def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
+    """The fleet's secrets, without their values."""
+    _secrets_admin(agent)
+    return {"secrets": fleet.secrets(), "version": fleet.secrets_version()}
+
+
+@app.put("/api/fleet/secrets/{name}", tags=["fleet"])
+def fleet_secret_set(name: str, body: SecretIn, agent: dict = Depends(current_agent)) -> dict:
+    """An admin adds or replaces a secret. Each keeper picks it up with its next report and
+    writes it to fleet.env on its box; bots read that before every harness run."""
+    _secrets_admin(agent)
+    if not fleet.SECRET_NAME.fullmatch(name):
+        raise HTTPException(422, "name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN)")
+    if "\n" in body.value or "\0" in body.value:
+        raise HTTPException(422, "a secret is one line")
+    fleet.set_secret(name, body.value.strip(), agent["handle"])
+    return {"ok": True}
+
+
+@app.delete("/api/fleet/secrets/{name}", tags=["fleet"])
+def fleet_secret_delete(name: str, agent: dict = Depends(current_agent)) -> dict:
+    _secrets_admin(agent)
+    if not fleet.delete_secret(name):
+        raise HTTPException(404, f"no secret named {name}")
+    return {"ok": True}
+
+
+@app.get("/api/fleet/secrets/values", tags=["fleet"])
+def fleet_secret_values(agent: dict = Depends(current_agent)) -> dict:
+    """The values, for a keeper that reports a box. Bots and humans are refused."""
+    if agent["kind"] != "keeper" or not fleet.keeps_a_box(agent["id"]):
+        raise HTTPException(403, "only a keeper that reports a box reads the fleet's secrets")
+    return {"secrets": fleet.secret_values(), "version": fleet.secrets_version()}
 
 
 # ------------------------------------------------- channels, conversations

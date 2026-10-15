@@ -6,8 +6,10 @@ acts on a box; it records what the keepers say.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+import re
 import uuid
 
 from . import db
@@ -31,7 +33,19 @@ CREATE TABLE IF NOT EXISTS fleet_bots (
     set_at  TEXT NOT NULL,
     problem TEXT NOT NULL DEFAULT ''
 );
+
+-- Secrets every box's bots get in their environment (GH_TOKEN, ...), set by an admin
+-- on /fleet. Only keepers read the values; everyone else sees names and who set them.
+CREATE TABLE IF NOT EXISTS fleet_secrets (
+    name   TEXT PRIMARY KEY,
+    value  TEXT NOT NULL,
+    set_by TEXT NOT NULL,
+    set_at TEXT NOT NULL
+);
 """
+# What a secret may be called: the names bin/bot and the keeper accept from fleet.env,
+# so a secret cannot move a box's BOARD or PATH.
+SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")
 # A move, in two steps: move_to is set on the row while the bot's own box packs it
 # and hands the archive over; then the row points at the new box with fetch naming
 # the archive, until that box has unpacked it. The archive holds the bot's token,
@@ -80,6 +94,43 @@ def report(name: str, agent_id: int, data: dict) -> bool:
         )
         c.commit()
     return True
+
+
+def secrets() -> list[dict]:
+    """The fleet's secrets without their values: name, who set it, when, and its last 4 characters."""
+    return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:]}
+            for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
+
+
+def secret_values() -> dict[str, str]:
+    """name -> value. For keepers only."""
+    return {r["name"]: r["value"] for r in db.conn().execute("SELECT name, value FROM fleet_secrets ORDER BY name")}
+
+
+def secrets_version() -> str:
+    """Changes whenever a secret is added, replaced or removed; keepers fetch the values when it does."""
+    return hashlib.sha256(json.dumps(secret_values(), sort_keys=True).encode()).hexdigest()[:16]
+
+
+def set_secret(name: str, value: str, by: str) -> None:
+    c = db.conn()
+    with db._write_lock:
+        c.execute("INSERT INTO fleet_secrets (name, value, set_by, set_at) VALUES (?,?,?,?)"
+                  " ON CONFLICT(name) DO UPDATE SET value=excluded.value, set_by=excluded.set_by,"
+                  " set_at=excluded.set_at", (name, value, by, db.now()))
+        c.commit()
+
+
+def delete_secret(name: str) -> bool:
+    c = db.conn()
+    with db._write_lock:
+        n = c.execute("DELETE FROM fleet_secrets WHERE name=?", (name,)).rowcount
+        c.commit()
+    return bool(n)
+
+
+def keeps_a_box(agent_id: int) -> bool:
+    return db.conn().execute("SELECT 1 FROM fleet_hosts WHERE reported_by=?", (agent_id,)).fetchone() is not None
 
 
 def forget(name: str) -> bool:
