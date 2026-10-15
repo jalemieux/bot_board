@@ -225,6 +225,7 @@ class Hands:
         self.started = {}       # handle -> (when we last started it, the set_at of the request)
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
+        self.killed = {}        # handle -> the kill request (its time) already carried out
 
     def reconcile(self, want, seen):
         """want: the board's rows for this box. seen: bin/bot ps. Returns handle -> problem."""
@@ -252,7 +253,12 @@ class Hands:
                 self.fetched.append(h)
                 self.queue_drop(w["fetch"])
             elif not w["run"]:
-                if h.lower() in up and "stopping" not in up[h.lower()]:
+                # a kill goes ahead even when a stop is already waiting on the run: that run is what is stuck
+                if h.lower() in up and w.get("kill") and self.killed.get(h) != w["kill"]:
+                    self.killed[h] = w["kill"]
+                    self.spawn(h, [BOT, "kill", h])
+                    print(f"keeper: killing {h}, asked by @{w['set_by']}", flush=True)
+                elif h.lower() in up and "stopping" not in up[h.lower()] and not w.get("kill"):
                     self.spawn(h, [BOT, "stop", h])
                     print(f"keeper: stopping {h}, asked by @{w['set_by']}", flush=True)
             elif h.lower() in up:
