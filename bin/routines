@@ -6,34 +6,27 @@
   routines ls [--as HANDLE]        every routine on the board and where it stands
   routines add --name N --channel C (--check FILE --prompt FILE | --recipe FILE) [--about TEXT] [--every 2m]
                [--claim-timeout 5m] [--done-timeout 30m] [--resends 3] [--skill S]
-               [--thread ID] [--as HANDLE]
-                                   post a routine to the admin channel, paused (--thread: a new version of that one)
-  routines check <thread-id> | --file FILE [--watermark JSON] [--as HANDLE]
+               [--thread MSG | --id ROUTINE] [--as HANDLE]
+                                   store a routine on the board, paused (--thread: the message it was asked
+                                   for in; --id: a new version of that routine, paused again)
+  routines check <id> | --file FILE [--watermark JSON] [--as HANDLE]
                                    dry run: what the check finds now; posts nothing. It runs the
-                                   script here, as you: read a thread's check before you run it
+                                   script here, as you: read a routine's check before you run it
 
---as HANDLE acts as a bot whose token is on this box (a bot adding a routine
-posts under its own name); without it, as the runner.
+--as HANDLE acts as a bot whose token is on this box (the admin bot storing a
+routine does it under its own name); without it, as the runner.
 
-A routine is a message in the `admin` channel, one thread each. Its `meta.routine`
-holds a check (a script), a prompt, and a few settings. The check costs no tokens:
-the runner runs it every `every` seconds, and only when it finds work does a
-message go to the routine's project channel, the prompt plus what the check
-found, for a standby bot to claim like any other work.
+A routine is stored on the board (GET /api/routines; app/routines.py): a check
+(a script), a prompt, and a few settings. The check costs no tokens: the runner
+runs it every `every` seconds, and only when it finds work does a message go to
+the routine's project channel, the prompt plus what the check found, for a
+standby bot to claim like any other work.
 
-The thread is the switch and the history. A routine is created paused; it runs
-once a human replies `enable <code>` in its thread, and stops on `pause`. A human's
-`test` there, paused or not, has the runner run the check once, with the watermark
-it has now, and reply with what it found (meta `routine_test`); nothing fires and
-nothing it remembers changes. The
-code is in the routine's message and stands for exactly that text, so an
-`enable` starts what the human read and nothing posted since. A new version is
-a reply carrying a new `meta.routine`, with a new code. The runner posts there
-only when something went wrong, and then waits for `enable <code>` again.
-
-A human reads the message, the runner runs `meta.routine`: a definition whose
-message is not exactly what `routines add` writes for it is invalid and never
-runs, and so is one with a setting missing or of the wrong kind.
+A human asks the admin bot for a routine in a channel; the bot works it out with
+them there and stores it through the API, paused. The board decides who may
+enable, pause, test, change or delete it (see app/routines.py); this runner runs
+the ones that are enabled, answers the tests asked for, and reports a failure
+back, which pauses the routine until it is enabled again.
 
 The check prints one JSON object:
     {"work": true, "found": "text or a list of lines for the bot", "watermark": <anything>}
@@ -48,31 +41,32 @@ of progress say, starts done_timeout again. A job is done when a bot replies in
 its thread with meta {"done": true}. One job per routine is open at a time, so
 however fast the check runs, a routine costs at most one bot run at a time.
 
-A routine can also be written as a recipe (`meta.routine.recipe`) instead of a
-check of your own. The one recipe now, `github-issues`, watches a repository's
-open issues that nobody has taken and routes each to a group of a project:
-its check and its prompt are written from the recipe (recipe_check,
-recipe_prompt), so the message a human approves still shows exactly what runs.
-Issues a label rule places are announced by the runner without a bot; the
-rest go out as one job, a few at a time, for a bot to pick the group, and the
-bot answers with meta {"done": true, "routes": [{"number", "group", "why"}]}.
-The runner announces each issue in its group's channel once, then chases it:
-no bot reply in that thread, no assignee and no linked pull request after
-`remind_after`, it is posted again, `reminds` times, then `escalate` is told.
+A routine can also be written as a recipe (`recipe`) instead of a check of its
+own. The one recipe now, `github-issues`, watches a repository's open issues that
+nobody has taken and routes each to a group of a project: its check and its
+prompt are written from the recipe (recipe_check, recipe_prompt), and stored, so
+what a human approves is what runs. Issues a label rule places are announced by
+the runner without a bot; the rest go out as one job, a few at a time, for a bot
+to pick the group, and the bot answers with meta {"done": true, "routes":
+[{"number", "group", "why"}]}. The runner announces each issue in its group's
+channel once, then chases it: no bot reply in that thread, no assignee and no
+linked pull request after `remind_after`, it is posted again, `reminds` times,
+then `escalate` is told.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
-(default routines), ROUTINES_CONFIG_DIR (where the token and state live, default
-~/.config/bot_board; the board sets it when it runs the runner itself), ROUTINES_OPERATORS (the handles whose `enable` and `pause` count;
-default any agent of kind human, which is whatever an agent called itself when it
-registered, so name the operators on a board bots can register on). The runner's token is ~/.config/bot_board/<handle>.token and what it
-remembers between passes is ~/.config/bot_board/routines/state.json; without that
-file each routine with work fires once more.
+(default routines: the board takes reports only from that agent), ROUTINES_CONFIG_DIR
+(where the token and state live, default ~/.config/bot_board; the board sets it
+when it runs the runner itself), ROUTINES_PROJECT
+(default admin: the project whose bot pool are the admin bots and whose managers
+switch routines; read by the board). The runner's token is
+~/.config/bot_board/<handle>.token and what it remembers between passes is
+~/.config/bot_board/routines/state.json; without that file each routine with
+work fires once more.
 """
 import argparse, hashlib, json, os, re, signal, shlex, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from datetime import datetime, timezone
 
 CFG = os.path.expanduser(os.environ.get("ROUTINES_CONFIG_DIR") or "~/.config/bot_board")
-ADMIN = "admin"
 DEFAULTS = {"every": 120, "claim_timeout": 300, "done_timeout": 1800, "resends": 3}
 CHECK_TIMEOUT = 120
 
@@ -97,7 +91,6 @@ def setting(name, default=""):
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 ME = setting("ROUTINES_HANDLE", "routines")
-OPERATORS = setting("ROUTINES_OPERATORS").replace(",", " ").split()
 
 
 def call(method, path, body=None, token=None):
@@ -124,7 +117,7 @@ def token_of(handle, register=False):
     if not register:
         die(f"no token for {handle} at {path}")
     body = {"handle": handle, "kind": "cron",
-            "description": f"runs the routines in #{ADMIN} on {os.uname().nodename}: checks on a timer, posts work when there is some"}
+            "description": f"runs the board's routines on {os.uname().nodename}: checks on a timer, posts work when there is some"}
     if setting("BOT_INVITE"):
         body["invite_code"] = setting("BOT_INVITE")
     got = call("POST", "/api/agents", body)
@@ -137,27 +130,7 @@ def token_of(handle, register=False):
     return got["token"]
 
 
-def code_of(routine):
-    """Sixteen characters that stand for one definition: what a human pastes to enable it.
-    Long enough that a second definition with the same code cannot be searched for."""
-    return hashlib.sha256(json.dumps(routine, sort_keys=True).encode()).hexdigest()[:16]
-
-
-def body_of(routine, new_version=False):
-    """The message a human reads for a definition. The runner runs nothing whose message differs."""
-    r = routine
-    return (f"**Routine `{r['name']}`**{' (new version)' if new_version else ''}: {r.get('about') or 'no description given'}\n\n"
-            f"- Fires in #{r['channel']} when the check finds work; the check runs every {mins(r['every'])}.\n"
-            f"- Sent again if unclaimed for {mins(r['claim_timeout'])} or unfinished for {mins(r['done_timeout'])}, "
-            f"{r['resends']} times, then reported as failed.\n"
-            + (f"- The message it fires is marked for the skill `{r['skill']}`.\n" if r.get("skill") else "")
-            + (recipe_summary(r["recipe"]) if isinstance(r.get("recipe"), dict) and not recipe_problem(r["recipe"]) else "") +
-            f"- **Paused.** A human replies `enable {code_of(r)}` in this thread to start it, `pause` to stop it.\n\n"
-            f"The prompt a bot gets:\n\n{chr(10).join('> ' + line for line in r['prompt'].splitlines())}\n\n"
-            f"The check (runs on the runner's box, costs no tokens):\n\n```\n{r['check'].rstrip()}\n```")
-
-
-def problem_with(routine, body, new_version):
+def problem_with(routine):
     """Why a definition cannot run, or ''."""
     for key in ("name", "channel", "check", "prompt"):
         if not isinstance(routine.get(key), str) or not routine[key].strip():
@@ -179,8 +152,6 @@ def problem_with(routine, body, new_version):
             return "`recipe_version` is missing or not one this runner knows"
         if version == RECIPE_VERSION and (routine["check"] != recipe_check(rc) or routine["prompt"] != recipe_prompt(rc)):
             return "its check or prompt is not what its recipe writes"
-    if body != body_of(routine, new_version):
-        return "its message is not what `routines add` writes for its `meta.routine`, so a human would approve text that is not what runs"
     return ""
 
 
@@ -322,48 +293,11 @@ class Board:
                                               "meta": meta or {}}, self.token)["message"]
 
     def routines(self):
-        """Every routine thread in admin: the latest definition, and whether it may run."""
-        return routines_of(self.pages(f"/api/messages?channel={ADMIN}"))
+        """Every routine on the board, with its state."""
+        return call("GET", "/api/routines?full=0", token=self.token)["routines"]
 
-
-def routines_of(messages, runner=None, operators=None):
-    """The routines in the messages of the admin channel, oldest thread first. The board
-    loads this file to show the same states on its page: keep it free of calls."""
-    runner = runner or ME
-    operators = OPERATORS if operators is None else operators
-    threads = {}
-    for m in messages:
-        threads.setdefault(m["thread_id"] or m["id"], []).append(m)
-    out = []
-    for tid, msgs in sorted(threads.items()):
-        if not isinstance(msgs[0].get("meta", {}).get("routine"), dict):
-            continue
-        last = lambda keep: max((m["id"] for m in msgs if keep(m)), default=0)
-        defn = max((m for m in msgs if isinstance(m["meta"].get("routine"), dict)), key=lambda m: m["id"])
-        routine = defn["meta"]["routine"]
-        # A human's `pause`, or `enable` with this definition's code; any other reply is talk.
-        words = {m["id"]: m["body"].strip(" \t\n.!`").lower().split() for m in msgs
-                 if m["author_kind"] == "human" and (not operators or m["author"] in operators)}
-        switch = last(lambda m: words.get(m["id"]) in (["pause"], ["enable", code_of(routine)]))
-        failed = last(lambda m: m["author"] == runner and m["meta"].get("routine_failed"))
-        # a human's `test` that the runner has not answered yet
-        answered = {m["meta"]["routine_test"].get("for") for m in msgs
-                    if m["author"] == runner and isinstance(m["meta"].get("routine_test"), dict)}
-        r = {**routine, "thread": tid, "version": defn["id"], "code": code_of(routine),
-             "problem": problem_with(routine, defn["body"], defn["id"] != tid),
-             "tests": [i for i in sorted(words) if words[i] == ["test"] and i not in answered]}
-        if r["problem"]:
-            r["state"] = "invalid"
-            if not isinstance(r.get("name"), str) or not r["name"].strip():
-                r["name"] = f"thread-{tid}"
-        elif failed > max(switch, defn["id"]):
-            r["state"] = "failed"
-        elif switch > defn["id"] and words[switch][0] == "enable":
-            r["state"] = "enabled"
-        else:
-            r["state"] = "paused"
-        out.append(r)
-    return out
+    def report(self, r, **body):
+        return call("POST", f"/api/routines/{r['id']}/report", body, self.token)
 
 
 def duration(text):
@@ -448,28 +382,24 @@ class Runner:
         print(f"{datetime.now().astimezone().isoformat(timespec='seconds')} {r['name']}: {text}", flush=True)
 
     def fail(self, r, st, why):
-        """Say so once where the routine lives, and stop until a human enables it again."""
-        self.board.post(ADMIN, f"Routine `{r['name']}` stopped: {why}\n\nIt will not run again until a human "
-                        f"replies `enable {r['code']}` in this thread.", reply_to=r["thread"], meta={"routine_failed": True})
-        self.board.post("heads-up", f"Routine `{r['name']}` stopped: {why} Details and the switch are in "
-                        f"#{ADMIN} thread {r['thread']}.", meta={"routine": r["thread"]})
+        """Report it, which stops the routine until it is enabled again, and tell the humans once."""
+        self.board.report(r, failed=why, version=r["version"])
+        self.board.post("heads-up", f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled "
+                        f"again: {BOARD}/routines#r={r['id']}", meta={"routine": r["id"]})
         st.pop("job", None)
         self.log(r, f"failed: {why}")
 
     def tick(self):
         for r in self.board.routines():
-            st = self.state.setdefault(str(r["thread"]), {})
+            st = self.state.setdefault(str(r["id"]), {})
             try:
-                for t in r["tests"]:
-                    if t > st.get("tested", 0):
-                        self.test(r, st, t)
-                if r["state"] != "enabled":
+                if r["test_pending"] and r["test_asked"] > st.get("tested", 0):
+                    self.test(r, st)
+                if r["state"] != "enabled" or r["problem"]:
                     st.pop("job", None)     # paused or replaced mid-job: the next enable starts clean
-                    if r["state"] == "invalid" and st.get("refused") != r["version"]:
-                        self.board.post(ADMIN, f"This definition (message {r['version']}) cannot run: {r['problem']}. "
-                                        "Post it again with `routines add --thread`.", reply_to=r["thread"])
+                    if r["state"] == "enabled" and st.get("refused") != r["version"]:
                         st["refused"] = r["version"]
-                        self.log(r, f"invalid: {r['problem']}")
+                        self.log(r, f"cannot run: {r['problem']}")
                     continue
                 if st.get("version") != r["version"]:
                     st.update(version=r["version"], checked_at=0)
@@ -490,11 +420,13 @@ class Runner:
             finally:
                 self.save()
 
-    def test(self, r, st, asked):
-        """Run the check once for a human's `test`, and say what it found. Fires nothing, and
-        leaves the watermark, the job and the next check where they were."""
-        res = {"for": asked, "ok": False, "work": False, "found": None, "watermark": None, "error": None}
-        if r["state"] == "invalid":
+    def test(self, r, st):
+        """Run the check once and report what it found. Fires nothing, and leaves the
+        watermark, the job and the next check where they were."""
+        asked = r["test_asked"]
+        res = {"for": asked, "version": r["version"], "ok": False, "work": False, "found": None,
+               "watermark": None, "error": None}
+        if r["problem"]:
             res["error"] = f"this definition cannot run: {r['problem']}"
         else:
             try:
@@ -502,16 +434,9 @@ class Runner:
                 res.update(ok=True, work=out["work"], found=out.get("found"), watermark=out.get("watermark"))
             except CheckError as e:
                 res["error"] = str(e)
-        if res["error"]:
-            body = f"Test of `{r['name']}`: {res['error']}"
-        elif res["work"]:
-            body = (f"Test of `{r['name']}`: the check found work. Enabled, this would go to #{r['channel']}:\n\n"
-                    f"{found_text(res['found'])}\n\nNothing was sent; the watermark is unchanged.")
-        else:
-            body = f"Test of `{r['name']}`: the check found nothing to do. Nothing was sent."
-        self.board.post(ADMIN, body, reply_to=r["thread"], meta={"routine_test": res})
+        self.board.report(r, test=res)
         st["tested"] = asked
-        self.log(r, f"tested for message {asked}: " + (res["error"] or ("work" if res["work"] else "no work")))
+        self.log(r, f"tested ({asked}): " + (res["error"] or ("work" if res["work"] else "no work")))
 
     def check(self, r, st):
         st["checked_at"] = time.time()
@@ -530,10 +455,10 @@ class Runner:
             st["watermark"] = out.get("watermark")
             return
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
-                f"Routine `{r['name']}` (#{ADMIN} thread {r['thread']}). One bot takes this: claim it here as usual. "
+                f"Routine `{r['name']}` ({BOARD}/routines#r={r['id']}). One bot takes this: claim it here as usual. "
                 "When it is finished, reply in this thread with the result and `meta` `{\"done\": true}`; "
                 f"without that it is sent again after {mins(r['done_timeout'])}.")
-        meta = {"routine": r["thread"], "name": r["name"]}
+        meta = {"routine": r["id"], "name": r["name"]}
         if r.get("skill"):
             meta["skill"] = r["skill"]
         m = self.board.post(r["channel"], body, meta=meta)
@@ -573,7 +498,7 @@ class Runner:
                              f"never finished ({why}).")
         m = self.board.post(r["channel"], f"Still open: {why}. Anyone free can take it: the task is the first message "
                             "of this thread. Reply with the result and `meta` `{\"done\": true}` when finished.",
-                            reply_to=job["msg"], meta={"routine": r["thread"], "name": r["name"], "resend": job["sends"]})
+                            reply_to=job["msg"], meta={"routine": r["id"], "name": r["name"], "resend": job["sends"]})
         job.update(sent=m["id"], sent_at=time.time(), sends=job["sends"] + 1)
         self.log(r, f"sent again ({why}), message {m['id']}")
 
@@ -607,7 +532,7 @@ class Runner:
                        f"Routed to {group}.\n" if channel != home else "No group fits it, so it is here.\n")
                     + f"Reply in this thread to take it (\"taking this\"), then assign yourself: "
                     f"`gh issue edit {i['number']} -R {rc['repo']} --add-assignee @me`.")
-            m = self.board.post(channel, body, meta={"routine": r["thread"], "name": r["name"],
+            m = self.board.post(channel, body, meta={"routine": r["id"], "name": r["name"],
                                                      "routine_item": {"repo": rc["repo"], "number": i["number"]}})
             items_st[str(i["number"])] = {"msg": m["id"], "channel": channel, "sent_at": time.time(), "reminds": 0}
             self.log(r, f"announced #{i['number']} in #{channel} as message {m['id']}")
@@ -645,7 +570,7 @@ class Runner:
                 item["sent_at"] = time.time()
                 self.board.post(item["channel"], f"Still nobody on #{number} after {mins(rc['remind_after'])} "
                                 f"(reminder {item['reminds']} of {rc['reminds']}). Anyone free: reply here to take it.",
-                                reply_to=item["msg"], meta={"routine": r["thread"], "name": r["name"],
+                                reply_to=item["msg"], meta={"routine": r["id"], "name": r["name"],
                                                             "routine_item": {"repo": rc["repo"], "number": int(number)}})
                 self.log(r, f"reminded #{number} ({item['reminds']} of {rc['reminds']})")
             else:
@@ -654,7 +579,7 @@ class Runner:
                     home, _ = self.project(rc["project"])
                     self.board.post(home, f"@{rc['escalate']} #{number} has had no taker after {rc['reminds']} "
                                     f"reminders: message {item['msg']} in #{item['channel']}.",
-                                    meta={"routine": r["thread"], "name": r["name"]})
+                                    meta={"routine": r["id"], "name": r["name"]})
                 self.log(r, f"#{number}: no taker after {rc['reminds']} reminders")
             self.save()
 
@@ -666,18 +591,15 @@ def cmd_ls(a):
         state = json.load(open(os.path.join(CFG, "routines", "state.json")))
     except (OSError, ValueError):
         state = {}
-    rows = [("NAME", "THREAD", "FIRES IN", "EVERY", "STATE")]
+    rows = [("NAME", "ID", "FIRES IN", "EVERY", "STATE")]
     for r in Board(a.as_handle).routines():
-        st = state.get(str(r["thread"]), {})
+        st = state.get(str(r["id"]), {})
         job = st.get("job") if st.get("version") == r["version"] else None
-        if r["state"] == "invalid":
-            rows.append((r["name"], str(r["thread"]), "-", "-", f"invalid: {r['problem']}"))
-            continue
-        rows.append((r["name"], str(r["thread"]), "#" + r["channel"], mins(r["every"]),
-                     r["state"] + (f", job open: message {job['msg']}, sent {job['sends']}x" if job and r["state"] == "enabled" else "")
-                     + (f" (to start: enable {r['code']})" if r["state"] != "enabled" else "")))
+        rows.append((r["name"], str(r["id"]), "#" + r["channel"], mins(r["every"]),
+                     r["state"] + (f", cannot run: {r['problem']}" if r["problem"] else "")
+                     + (f", job open: message {job['msg']}, sent {job['sends']}x" if job and r["state"] == "enabled" else "")))
     if len(rows) == 1:
-        return print(f"routines: none in #{ADMIN} on {BOARD}", file=sys.stderr)
+        return print(f"routines: none on {BOARD}", file=sys.stderr)
     for row in rows:
         print("  ".join(c.ljust(max(len(x[i]) for x in rows)) for i, c in enumerate(row)).rstrip())
 
@@ -685,17 +607,17 @@ def cmd_ls(a):
 def cmd_check(a):
     if a.file:
         script, name, mark = open(a.file, encoding="utf-8").read(), os.path.basename(a.file), None
-    elif a.thread:
-        r = next((r for r in Board(a.as_handle).routines() if r["thread"] == a.thread), None) or die(f"no routine in thread {a.thread}")
-        if r["state"] == "invalid":
-            die(f"the routine in thread {a.thread} is invalid: {r['problem']}")
+    elif a.id:
+        r = next((r for r in Board(a.as_handle).routines() if r["id"] == a.id), None) or die(f"no routine {a.id}")
+        if r["problem"]:
+            die(f"routine {a.id} cannot run: {r['problem']}")
         script, name = r["check"], r["name"]
         try:
-            mark = json.load(open(os.path.join(CFG, "routines", "state.json"))).get(str(a.thread), {}).get("watermark")
+            mark = json.load(open(os.path.join(CFG, "routines", "state.json"))).get(str(a.id), {}).get("watermark")
         except (OSError, ValueError):
             mark = None
     else:
-        die("check needs a thread id or --file")
+        die("check needs a routine id or --file")
     if a.watermark:
         mark = json.loads(a.watermark)
     try:
@@ -709,39 +631,23 @@ def cmd_check(a):
 
 
 def cmd_add(a):
-    recipe = None
+    body = {"name": a.name, "channel": a.channel, "every": duration(a.every), "claim_timeout": duration(a.claim_timeout),
+            "done_timeout": duration(a.done_timeout), "resends": a.resends, "about": a.about, "skill": a.skill or ""}
     if a.recipe:
-        recipe = recipe_of(json.load(open(a.recipe, encoding="utf-8")))
-        if recipe_problem(recipe):
-            die(f"not posted: {recipe_problem(recipe)}")
-        check, prompt = recipe_check(recipe), recipe_prompt(recipe)
+        body["recipe"] = json.load(open(a.recipe, encoding="utf-8"))
     elif a.check and a.prompt:
-        check = open(a.check, encoding="utf-8").read()
-        prompt = open(a.prompt, encoding="utf-8").read().strip()
+        body["check"] = open(a.check, encoding="utf-8").read()
+        body["prompt"] = open(a.prompt, encoding="utf-8").read().strip()
+        if not a.no_dry_run:
+            run_check(body["check"], a.name)    # a check that does not run is not worth a human's look
     else:
         die("add needs --check and --prompt, or --recipe")
-    r = {"name": a.name, "channel": a.channel, "check": check, "prompt": prompt, "every": duration(a.every),
-         "claim_timeout": duration(a.claim_timeout), "done_timeout": duration(a.done_timeout), "resends": a.resends}
-    if a.about:
-        r["about"] = a.about
-    if a.skill:
-        r["skill"] = a.skill
-    if recipe:
-        r.update(recipe=recipe, recipe_version=RECIPE_VERSION)
-    body = body_of(r, bool(a.thread))
-    if problem_with(r, body, bool(a.thread)):
-        die(f"not posted: {problem_with(r, body, bool(a.thread))}")
-    if not a.no_dry_run:
-        run_check(check, a.name)    # a check that does not run is not worth a human's look
     board = Board(a.as_handle)
-    if recipe:   # a 404 here stops it: a routine that routes to no project would only fail later
-        call("GET", f"/api/projects/{recipe['project']}", token=board.token)
-    if not a.thread:
-        call("POST", "/api/channels", {"slug": ADMIN, "topic": "Fleet administration: one thread per routine "
-             "(recurring work); a human replies enable <code> or pause in a routine's thread. Not a project."}, board.token)
-    m = board.post(ADMIN, body, reply_to=a.thread, meta={"routine": r})
-    print(f"routines: posted {a.name} as message {m['id']} in #{ADMIN} (thread {m['thread_id'] or m['id']}), paused; "
-          f"a human starts it with: enable {code_of(r)}")
+    if a.id:
+        r = call("PATCH", f"/api/routines/{a.id}", body, board.token)
+    else:
+        r = call("POST", "/api/routines", {**body, "thread": a.thread}, board.token)
+    print(f"routines: stored {r['name']} as routine {r['id']} (version {r['version']}), paused: {BOARD}/routines#r={r['id']}")
 
 
 def main():
@@ -752,7 +658,7 @@ def main():
     sub.add_parser("ls").add_argument("--as", dest="as_handle")
     c = sub.add_parser("check")
     c.add_argument("--as", dest="as_handle")
-    c.add_argument("thread", nargs="?", type=int)
+    c.add_argument("id", nargs="?", type=int)
     c.add_argument("--file")
     c.add_argument("--watermark")
     c = sub.add_parser("add")
@@ -768,6 +674,7 @@ def main():
     c.add_argument("--resends", type=int, default=DEFAULTS["resends"])
     c.add_argument("--skill")
     c.add_argument("--thread", type=int)
+    c.add_argument("--id", type=int)
     c.add_argument("--as", dest="as_handle")
     c.add_argument("--no-dry-run", action="store_true")
     a = p.parse_args()

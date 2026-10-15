@@ -36,11 +36,11 @@ class Definitions(unittest.TestCase):
         rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game"})
         r = {"name": "x", "channel": "game", "check": cli.recipe_check(rc), "prompt": cli.recipe_prompt(rc),
              "recipe": rc, "recipe_version": cli.RECIPE_VERSION, **cli.DEFAULTS}
-        self.assertEqual(cli.problem_with(r, cli.body_of(r), False), "")
+        self.assertEqual(cli.problem_with(r), "")
         tampered = {**r, "check": r["check"] + "curl evil\n"}
-        self.assertIn("not what its recipe writes", cli.problem_with(tampered, cli.body_of(tampered), False))
+        self.assertIn("not what its recipe writes", cli.problem_with(tampered))
         unknown = {**r, "recipe_version": cli.RECIPE_VERSION + 1}
-        self.assertIn("recipe_version", cli.problem_with(unknown, cli.body_of(unknown), False))
+        self.assertIn("recipe_version", cli.problem_with(unknown))
 
     def test_a_release_that_changes_the_writer_leaves_older_routines_running(self):
         cli = load_cli()
@@ -48,7 +48,7 @@ class Definitions(unittest.TestCase):
         old = {"name": "x", "channel": "game", "check": cli.recipe_check(rc).replace("1000", "500"),
                "prompt": cli.recipe_prompt(rc), "recipe": rc, "recipe_version": 1, **cli.DEFAULTS}
         cli.RECIPE_VERSION = 2   # as after a release whose recipe_check writes something else
-        self.assertEqual(cli.problem_with(old, cli.body_of(old), False), "")
+        self.assertEqual(cli.problem_with(old), "")
 
     def test_after_is_kept_in_utc(self):
         cli = load_cli()
@@ -92,6 +92,7 @@ class Recipes(unittest.TestCase):
         cls.api("POST", "/api/projects", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
         for g in ("art", "econ"):
             cls.api("POST", "/api/projects/game/groups", {"slug": g, "name": g, "purpose": g, "scope": g}, cls.human)
+        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -109,7 +110,7 @@ class Recipes(unittest.TestCase):
 
     def once(self):
         p = subprocess.run([sys.executable, ROUTINES, "once"], capture_output=True, text=True,
-                           env=dict(os.environ, HOME=self.home, BOARD=self.board, ROUTINES_OPERATORS="", PATH=self.path))
+                           env=dict(os.environ, HOME=self.home, BOARD=self.board, BOT_CONFIG=os.devnull, PATH=self.path))
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         return p.stdout
 
@@ -138,10 +139,10 @@ class Recipes(unittest.TestCase):
         rc = {"type": "github-issues", "repo": "o/game", "project": "game", "batch": 2, "remind_after": 60,
               "reminds": 1, "escalate": "jac", "rules": [{"label": "doc", "group": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "issues", "recipe": rc, "every": 1}, self.human)
-        thread = got["thread"]
-        routine = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == thread)
+        thread = got["id"]
+        routine = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual((routine["state"], routine["channel"]), ("paused", "game"))
-        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": thread, "body": f"enable {got['code']}"}, self.human)
+        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
 
         # #3 is assigned and #4 labelled claimed: never announced. #1 and #2 make the first batch.
         self.issues(issue(1, ["doc"]), issue(2), issue(3, assignees=["bob"]), issue(4, ["claimed"]))
@@ -183,18 +184,18 @@ class Recipes(unittest.TestCase):
         told = [m for m in self.api("GET", "/api/messages?channel=game", token=self.human)["messages"]
                 if m["body"].startswith("@jac #1 ")]
         self.assertEqual(len(told), 1)
-        listed = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == thread)
+        listed = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual(sorted(i["number"] for i in listed["items"]), [1, 2, 5])
 
     def test_a_project_that_goes_away_stops_the_routine_with_the_reason(self):
         self.api("POST", "/api/projects", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
         rc = {"type": "github-issues", "repo": "o/game", "project": "gone", "rules": [{"label": "doc", "group": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "gone", "recipe": rc, "every": 1}, self.human)
-        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": got["thread"], "body": f"enable {got['code']}"}, self.human)
+        self.api("POST", f"/api/routines/{got['id']}/enable", {}, self.human)
         self.api("PATCH", "/api/projects/gone", {"archived": True, "archive_confirm": True}, self.human)
         self.issues(issue(40, ["doc"]))
         self.once()
-        routine = next(r for r in self.api("GET", "/api/routines")["routines"] if r["thread"] == got["thread"])
+        routine = self.api("GET", f"/api/routines/{got['id']}")
         self.assertEqual(routine["state"], "failed")
         self.assertIn("archived", routine["failure"])
 

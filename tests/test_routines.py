@@ -1,4 +1,4 @@
-"""Routines on the board: /api/routines reads #admin as the runner does and writes as `routines add` does.
+"""Routines on the board: stored rows, changed only through /api/routines, by the right people.
 Run with python -m unittest discover -s tests."""
 import os
 import sys
@@ -19,11 +19,15 @@ class Routines(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
+        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('jac', 'human')
+        self.stranger = self.register('visitor', 'human')
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
+        self.call('POST', '/api/projects/access', {'key': 'k'})
+        self.call('POST', '/api/projects', {'slug': 'admin', 'name': 'Admin', 'purpose': 'Running the fleet'}, expected=201)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -45,75 +49,101 @@ class Routines(unittest.TestCase):
         return self.call('POST', '/api/messages', {'channel': channel, 'body': body, 'reply_to': reply_to,
                                                    'meta': meta or {}}, auth=auth, expected=201)['message']
 
-    def add(self, **kw):
+    def add(self, auth=None, expected=201, **kw):
         data = {'name': 'triage', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'Triage these.\r\n',
                 'every': 60, 'about': 'triage new issues', **kw}
-        return self.call('POST', '/api/routines', data, expected=201)
+        return self.call('POST', '/api/routines', data, auth=auth, expected=expected)
 
-    def only(self):
-        rs = self.call('GET', '/api/routines')['routines']
-        self.assertEqual(len(rs), 1)
-        return rs[0]
+    def make_admin(self, handle='ada'):
+        """As a human does with Bot pool controls on the admin project, without a keeper to report the bot."""
+        c = db.conn()
+        c.execute('INSERT INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p, agents a'
+                  ' WHERE p.slug=? AND a.handle=?', ('admin', handle))
+        c.commit()
 
-    def test_a_routine_posted_from_the_page_is_what_routines_add_writes(self):
-        out = self.add()
-        r = self.only()
-        self.assertEqual((r['state'], r['problem'], r['thread'], r['code']), ('paused', '', out['thread'], out['code']))
-        self.assertEqual(r['prompt'], 'Triage these.')
-        defn = {k: r[k] for k in ('name', 'channel', 'check', 'prompt', 'every', 'claim_timeout',
-                                  'done_timeout', 'resends', 'about')}
-        self.assertEqual(out['message']['body'], routines.cli.body_of(defn))
-        self.assertEqual(out['code'], routines.cli.code_of(defn))
+    def test_a_stored_routine_is_paused_and_posts_nothing(self):
+        before = db.cursor()
+        r = self.add()
+        self.assertEqual((r['state'], r['version'], r['problem'], r['prompt'], r['every']),
+                         ('paused', 1, '', 'Triage these.', 60))
+        self.assertEqual(self.call('GET', f"/api/routines/{r['id']}")['name'], 'triage')
+        self.assertEqual([x['id'] for x in self.call('GET', '/api/routines')['routines']], [r['id']])
+        self.assertEqual(db.cursor(), before, 'storing a routine posts no message')
 
-    def test_only_a_human_switches_it_and_only_with_the_current_code(self):
-        out = self.add()
-        self.post(f"enable {out['code']}", out['thread'], auth=self.bot)
-        self.assertEqual(self.only()['state'], 'paused')
-        self.post(f"enable {out['code']}", out['thread'])
-        self.assertEqual(self.only()['state'], 'enabled')
-        self.post('pause', out['thread'])
-        self.assertEqual(self.only()['state'], 'paused')
-        v2 = self.add(every=300, thread=out['thread'])
-        self.assertNotEqual(v2['code'], out['code'])
-        self.post(f"enable {out['code']}", out['thread'])
-        r = self.only()
-        self.assertEqual((r['state'], r['every'], r['version']), ('paused', 300, v2['message']['id']))
-        self.post(f"enable {v2['code']}", out['thread'])
-        self.assertEqual(self.only()['state'], 'enabled')
+    def test_only_admin_managers_and_admin_bots_change_routines(self):
+        self.add(auth=self.bot, expected=403)
+        self.add(auth=self.stranger, expected=403)     # kind human is not authority
+        r = self.add()
+        self.call('POST', f"/api/routines/{r['id']}/pause", auth=self.stranger, expected=403)
+        self.call('DELETE', f"/api/routines/{r['id']}", auth=self.bot, expected=403)
+        self.make_admin()
+        self.call('POST', f"/api/routines/{r['id']}/pause", auth=self.bot)
+        self.call('POST', f"/api/routines/{r['id']}/enable")          # a manager needs no cited yes
+        self.assertEqual(self.call('GET', f"/api/routines/{r['id']}")['state'], 'enabled')
+
+    def test_an_admin_bot_enables_only_on_a_managers_yes_to_the_current_version(self):
+        self.make_admin()
+        ask = self.post('Every new issue on bot_board should be triaged')
+        early = self.post('sounds right', ask['id'])          # before the definition: approves nothing
+        r = self.add(auth=self.bot, thread=ask['id'])
+        self.assertEqual(r['thread'], ask['id'])
+        enable = f"/api/routines/{r['id']}/enable"
+        self.call('POST', enable, {}, auth=self.bot, expected=422)
+        self.call('POST', enable, {'approved_by': early['id']}, auth=self.bot, expected=422)
+        for who in (self.bot, self.stranger):                    # a yes must come from a manager
+            other = self.post('yes', ask['id'], auth=who)
+            self.call('POST', enable, {'approved_by': other['id']}, auth=self.bot, expected=422)
+        elsewhere = self.post('yes', channel='lobby')
+        self.call('POST', enable, {'approved_by': elsewhere['id']}, auth=self.bot, expected=422)
+        yes = self.post('yes, go', ask['id'])
+        tested = self.call('POST', f"/api/routines/{r['id']}/test", {'approved_by': yes['id']}, auth=self.bot)
+        self.assertTrue(tested['test_pending'])
+        on = self.call('POST', enable, {'approved_by': yes['id']}, auth=self.bot)
+        self.assertEqual((on['state'], on['approved_by']), ('enabled', yes['id']))
+        v2 = self.call('PATCH', f"/api/routines/{r['id']}", {'every': 300}, auth=self.bot)
+        self.assertEqual((v2['state'], v2['version'], v2['every'], v2['check']), ('paused', 2, 300, CHECK))
+        self.call('POST', enable, {'approved_by': yes['id']}, auth=self.bot, expected=422)   # a yes approves one version
+        yes2 = self.post('ok', ask['id'])
+        self.assertEqual(self.call('POST', enable, {'approved_by': yes2['id']}, auth=self.bot)['state'], 'enabled')
+
+    def test_delete_stops_it_for_good(self):
+        r = self.add()
+        self.call('DELETE', f"/api/routines/{r['id']}")
+        self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
+        self.call('POST', f"/api/routines/{r['id']}/enable", expected=404)
+        self.call('DELETE', f"/api/routines/{r['id']}", expected=404)
+
+    def test_only_the_runner_reports_and_a_failure_only_fails_the_version_it_ran(self):
+        r = self.add()
+        report = f"/api/routines/{r['id']}/report"
+        self.call('POST', report, {'failed': 'x'}, expected=403)
+        self.call('POST', f"/api/routines/{r['id']}/test")
+        got = self.call('POST', report, {'test': {'for': 1, 'version': 1, 'ok': True, 'work': False}}, auth=self.runner)
+        self.assertFalse(got['test_pending'])
+        self.assertEqual(got['last_test']['ok'], True)
+        self.call('POST', f"/api/routines/{r['id']}/enable")
+        self.call('PATCH', f"/api/routines/{r['id']}", {'every': 90})
+        self.call('POST', f"/api/routines/{r['id']}/enable")
+        self.assertEqual(self.call('POST', report, {'failed': 'old', 'version': 1}, auth=self.runner)['state'], 'enabled')
+        got = self.call('POST', report, {'failed': 'the check exited 1', 'version': 2}, auth=self.runner)
+        self.assertEqual((got['state'], got['failure']), ('failed', 'the check exited 1'))
 
     def test_bad_definitions_are_refused(self):
-        self.call('POST', '/api/routines', {'name': 'x', 'channel': 'bot_board', 'check': '  ', 'prompt': 'p'},
-                  expected=422)
-        self.call('POST', '/api/routines', {'name': 'x', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'p',
-                                            'every': 0}, expected=422)
-        lobby = self.post('hello', channel='lobby')
-        self.call('POST', '/api/routines', {'name': 'x', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'p',
-                                            'thread': lobby['id']}, expected=404)
-        self.call('POST', '/api/routines', {'name': 'x', 'channel': 'bot_board', 'check': 'x' * main.MAX_BODY,
-                                            'prompt': 'p'}, expected=422)
+        self.add(check='  ', expected=422)
+        self.add(every=0, expected=422)
+        self.add(name=None, expected=422)
+        self.add(check='x' * 10, recipe={'type': 'github-issues', 'repo': 'o/r', 'project': 'nope'}, expected=404)
+        self.add(thread=999999, expected=404)
         self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
 
-    def test_jobs_failures_and_tests_are_reported(self):
-        out = self.add()
-        self.post(f"enable {out['code']}", out['thread'])
+    def test_jobs_are_reported_from_the_messages_the_runner_fired(self):
+        r = self.add()
         job = self.post('Triage these. found: #1', channel='bot_board', auth=self.runner,
-                        meta={'routine': out['thread'], 'name': 'triage'})
-        self.post('Still open', job['id'], channel='bot_board', auth=self.runner,
-                  meta={'routine': out['thread'], 'resend': 1})
-        self.post('taking this', job['id'], channel='bot_board', auth=self.bot)
+                        meta={'routine': r['id'], 'name': 'triage'})
+        self.post('Still open', job['id'], channel='bot_board', auth=self.runner, meta={'routine': r['id'], 'resend': 1})
         self.post('done: labelled #1', job['id'], channel='bot_board', auth=self.bot, meta={'done': True})
-        self.post('test', out['thread'])
-        self.post('Test: no work.', out['thread'], auth=self.runner,
-                  meta={'routine_test': {'ok': True, 'work': False, 'error': None}})
-        self.post('Routine `triage` stopped: the check exited 1', out['thread'], auth=self.runner,
-                  meta={'routine_failed': True})
-        r = self.only()
-        self.assertEqual(r['state'], 'failed')
-        self.assertIn('the check exited 1', r['failure'])
-        self.assertEqual((r['last_test']['ok'], r['last_test']['work']), (True, False))
-        self.assertEqual(len(r['jobs']), 1)
-        self.assertEqual({k: r['jobs'][0][k] for k in ('id', 'sends', 'done_by')},
-                         {'id': job['id'], 'sends': 2, 'done_by': 'ada'})
+        (j,) = self.call('GET', '/api/routines')['routines'][0]['jobs']
+        self.assertEqual({k: j[k] for k in ('id', 'sends', 'done_by')}, {'id': job['id'], 'sends': 2, 'done_by': 'ada'})
 
 
 if __name__ == '__main__':

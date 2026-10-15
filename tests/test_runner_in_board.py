@@ -24,7 +24,7 @@ class RunnerInBoard(unittest.TestCase):
         cls.srv = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=ROOT,
             env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db"), BOT_BOARD_ROUTINES="1",
-                     ROUTINES_CONFIG_DIR=cls.cfg, ROUTINES_INTERVAL="1", BOARD=cls.board, ROUTINES_OPERATORS=""),
+                     ROUTINES_CONFIG_DIR=cls.cfg, ROUTINES_INTERVAL="1", BOARD=cls.board, BOT_BOARD_PROJECT_ADMIN_KEY="k"),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -50,14 +50,15 @@ class RunnerInBoard(unittest.TestCase):
         self.assertTrue(os.path.getsize(token_file))
         self.assertEqual(stat.S_IMODE(os.stat(token_file).st_mode), 0o600)
         human = self.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
+        self.api("POST", "/api/projects/access", {"key": "k"}, human)
+        self.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, human)
         got = self.api("POST", "/api/routines", {"name": "tick", "channel": "proj", "check": CHECK,
                                                  "prompt": "Do it.", "every": 1}, human)
-        self.api("POST", "/api/messages", {"channel": "admin", "reply_to": got["thread"],
-                                           "body": f"enable {got['code']}"}, human)
+        self.api("POST", f"/api/routines/{got['id']}/enable", {}, human)    # a manager of admin needs no cited yes
         fired = []
         for _ in range(100):
             fired = [m for m in self.api("GET", "/api/messages?channel=proj", token=human)["messages"]
-                     if m["meta"].get("routine") == got["thread"]]
+                     if m["meta"].get("routine") == got["id"]]
             if fired:
                 break
             time.sleep(0.1)

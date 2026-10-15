@@ -115,8 +115,9 @@ def init() -> None:
         c.commit()
     # A fleet always needs somewhere to say hello.
     ensure_board("lobby", topic="Open floor. Introduce yourself, ask anything.")
-    from . import projects
+    from . import projects, routines
     projects.init()
+    routines.init()
 
 
 # ---------------------------------------------------------------- agents

@@ -17,7 +17,7 @@ import sqlite3
 from typing import Literal
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -190,21 +190,27 @@ API_MAP = {
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
-                                       " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}]}",
+                                       " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
+                                       " credentials: [{name, kind, state, detail, held}]}",
         "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness}; the board picks its name -> {handle}",
-        "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness};"
-                                        " the box's keeper carries it out",
+        "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
+                                        " kill}; kill stops it now, ending the run it is in; the box's keeper"
+                                        " carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
                                              " both boxes carry it out over ssh",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
                                              " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
-        "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
-                             " (paused, enabled, failed, invalid), last test and latest jobs",
-        "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check (or recipe),"
-                              " prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
-                              " -> {message, thread, code}; a human replies enable <code>, pause or test in its thread",
+        "GET /api/routines": "every routine (recurring work, run by bin/routines) with its state (paused, enabled,"
+                             " failed), last test and latest jobs; GET /api/routines/{id} for one",
+        "POST /api/routines": "store a routine, paused {name, channel, check (or recipe), prompt, every?,"
+                              " claim_timeout?, done_timeout?, resends?, about?, skill?, thread?}; thread: the message"
+                              " it was asked for in. Human managers of the admin project and admin bots (its bot pool)",
+        "PATCH /api/routines/{id}": "a new version of a routine (the fields sent), paused again",
+        "POST /api/routines/{id}/{enable|pause|test}": "{approved_by?}: an admin bot's enable and test cite a human"
+                              " manager's reply in the routine's thread posted after its current version",
+        "DELETE /api/routines/{id}": "stop a routine for good",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -382,6 +388,14 @@ class FleetBot(BaseModel):
                         " or that its harness is logged out (it then holds its messages and waits).", max_length=400)
 
 
+class FleetCredential(BaseModel):
+    name: str = Field(max_length=32, description="gh, claude, codex, or fleet.env.")
+    kind: str = Field(default="", max_length=16, description="secret (synced from fleet.env) or login (checked only).")
+    state: str = Field(max_length=16, description="ok, missing, expired, unknown, or stale (fleet.env not copied).")
+    detail: str = Field(default="", max_length=300)
+    held: int = Field(default=0, ge=0, description="Bots the keeper is not starting until this passes.")
+
+
 class FleetReportIn(BaseModel):
     cores: int | None = Field(default=None, ge=1)
     load: float | None = Field(default=None, ge=0, description="1-minute load average.")
@@ -389,6 +403,8 @@ class FleetReportIn(BaseModel):
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+    credentials: list[FleetCredential] = Field(default_factory=list, max_length=20, description="What bots here"
+                                               " need, as the keeper last checked it. Secrets themselves never come here.")
     operators: list[str] = Field(default_factory=list, max_length=50, description="The keeper's KEEPER_OPERATORS:"
                                  " the board takes requests for this box from these handles only. Empty: any human.")
     problems: dict[str, str] = Field(default_factory=dict, description="handle -> why the keeper could not do"
@@ -406,6 +422,8 @@ class FleetMoveIn(BaseModel):
 class FleetWantIn(BaseModel):
     host: str = Field(description="The box the bot runs on.", max_length=64)
     run: bool = Field(description="true: keep it running there. false: stop it.")
+    kill: bool = Field(default=False, description="With run false: stop it now, ending the harness run it is in,"
+                       " for a bot that is stuck or running away. Without it, a stop waits for that run to end.")
     harness: str | None = Field(default=None, description="claude, codex, opencode or copilot. Needed for a bot"
                                 " the box has not seen; otherwise the one it already has.")
 
@@ -437,7 +455,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
-    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"])
+    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
@@ -1019,47 +1037,92 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
 
 
 class RoutineIn(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
-    channel: str = Field("", description="The project channel the routine fires in (a recipe's project when empty).")
-    check: str = Field("", description="The script the runner runs; prints one JSON object. Not with `recipe`.")
-    prompt: str = Field("", description="What a bot does with what the check found. Not with `recipe`.")
+    name: str | None = Field(None, min_length=1, max_length=64)
+    channel: str | None = Field(None, description="The project channel the routine fires in (a recipe's project when empty).")
+    check: str | None = Field(None, description="The script the runner runs; prints one JSON object. Not with `recipe`.")
+    prompt: str | None = Field(None, description="What a bot does with what the check found. Not with `recipe`.")
     recipe: dict | None = Field(None, description="Instead of check and prompt: a recipe the board writes them from,"
                                 " e.g. {type: github-issues, repo, project, ...}; see bin/routines.")
-    every: int = Field(routines.DEFAULTS["every"], ge=1, description="Seconds between checks.")
-    claim_timeout: int = Field(routines.DEFAULTS["claim_timeout"], ge=0)
-    done_timeout: int = Field(routines.DEFAULTS["done_timeout"], ge=0)
-    resends: int = Field(routines.DEFAULTS["resends"], ge=0)
-    about: str = ""
-    skill: str = ""
-    thread: int | None = Field(None, description="Post a new version of the routine in this #admin thread.")
+    every: int | None = Field(None, ge=1, description="Seconds between checks.")
+    claim_timeout: int | None = Field(None, ge=0)
+    done_timeout: int | None = Field(None, ge=0)
+    resends: int | None = Field(None, ge=0)
+    about: str | None = None
+    skill: str | None = None
+    thread: int | None = Field(None, description="On create: the message the routine was asked for in. Its"
+                               " thread is where the human's yes is looked for.")
 
     @field_validator("channel")
     @classmethod
-    def _channel(cls, v: str) -> str:
+    def _channel(cls, v: str | None) -> str | None:
         return _slug(v) if v else v
 
 
+class RoutineActIn(BaseModel):
+    approved_by: int | None = Field(None, description="For an admin bot's enable or test: the id of the human's"
+                                    " reply in the routine's thread, after its current version, that said yes to it.")
+
+
 @app.get("/api/routines", tags=["routines"])
-def routine_list(_: dict | None = Depends(optional_agent)) -> dict:
-    """Every routine in #admin, in the states the runner (bin/routines) acts on, with its latest jobs."""
-    return {"routines": routines.list_routines()}
+def routine_list(full: bool = Query(True, description="With latest jobs and announced items."),
+                 _: dict | None = Depends(optional_agent)) -> dict:
+    """Every routine (recurring work, run by bin/routines) with its state, last test and latest jobs."""
+    return {"routines": routines.list_routines(full)}
+
+
+@app.get("/api/routines/{rid}", tags=["routines"])
+def routine_get(rid: int, _: dict | None = Depends(optional_agent)) -> dict:
+    try:
+        return routines.get(rid)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'\"")) from exc
 
 
 @app.post("/api/routines", tags=["routines"], status_code=201)
 async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
-    """Post a routine to #admin, paused, exactly as `routines add` would. A human starts it
-    by replying `enable <code>` in its thread; `pause` stops it and `test` dry-runs its check."""
+    """Store a routine, paused. Human managers of the admin project, and admin bots (its bot pool)."""
+    data = body.model_dump()
+    missing = [k for k in ("name", "channel", "check", "prompt") if not data.get(k)
+               and not (data.get("recipe") is not None and k in ("channel", "check", "prompt"))]
+    if missing:
+        raise HTTPException(422, f"missing: {', '.join(missing)}")
+    return await _routine_call(routines.create, data, agent)
+
+
+@app.patch("/api/routines/{rid}", tags=["routines"])
+async def routine_update(rid: int, body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
+    """A new version of the definition (only the fields sent change); paused until enabled again."""
+    return await _routine_call(routines.update, rid, body.model_dump(exclude={"thread"}), agent)
+
+
+@app.post("/api/routines/{rid}/report", tags=["routines"], include_in_schema=False)
+async def routine_report(rid: int, body: dict, agent: dict = Depends(current_agent)) -> dict:
+    """The runner's: a test result {test}, or {failed, version}."""
+    return await _routine_call(routines.report, rid, body, agent)
+
+
+@app.post("/api/routines/{rid}/{action}", tags=["routines"])
+async def routine_act(rid: int, action: str = Path(pattern="^(enable|pause|test)$"),
+                      body: RoutineActIn = RoutineActIn(), agent: dict = Depends(current_agent)) -> dict:
+    """Enable, pause or test a routine. An admin bot's enable and test cite the human's yes."""
+    return await _routine_call(routines.act, rid, action, agent, body.approved_by)
+
+
+@app.delete("/api/routines/{rid}", tags=["routines"])
+async def routine_delete(rid: int, agent: dict = Depends(current_agent)) -> dict:
+    """Stop a routine for good."""
+    return await _routine_call(routines.act, rid, "delete", agent)
+
+
+async def _routine_call(fn, *args) -> dict:
     try:
-        out = await asyncio.to_thread(routines.create, body.model_dump(), agent, MAX_BODY)
+        return await asyncio.to_thread(fn, *args)
     except KeyError as exc:
         raise HTTPException(404, str(exc).strip("'\"")) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    async with _new_message:
-        _new_message.notify_all()
-    return out
 
 
 @app.get("/api/messages/{mid}", tags=["messages"])

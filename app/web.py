@@ -1509,10 +1509,12 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         # asked for and not there yet: say so, the keeper acts within its next report
         if b.get("want") == "running" and not up and b["status"] != "moved":
             status = "starting" if not b.get("problem") else "not running"
+        elif b.get("want") == "stopped" and up and b.get("kill"):
+            status += ", kill asked"
         elif b.get("want") == "stopped" and up and "stopping" not in b["status"]:
             status += ", stop asked"
         if b.get("want"):
-            status += f'<div class="by">{e(b["want"])} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+            status += f'<div class="by">{"killed" if b.get("kill") else e(b["want"])} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
         # last active: the keeper knows its last harness run, the board its last post
         seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
         status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
@@ -1529,6 +1531,10 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         can = b["status"] != "moved" and (up or b.get("harness"))
         btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
                f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can else ""
+        # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
+        if up and can:
+            btn += (f' <button type="button" class="act kill" data-handle="{e(b["handle"])}" data-host="{e(host)}"'
+                    f' data-run="0" data-kill="1" title="stop now, ending the run it is in">kill</button>')
         # a pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
         if can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
             btn += (f' <select class="move" data-handle="{e(b["handle"])}"><option value="">move to…</option>'
@@ -1545,18 +1551,19 @@ FLEET_JS = """
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
   : 'To start or stop a bot, sign in on the board page first, then come back.';
-function ask(handle, host, run, harness) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null} : {host: host, harness: harness})})
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill} : {host: host, harness: harness})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 }
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.act'); if (!b) return;
-  ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1');
+  if (b.dataset.kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
+  ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1', null, b.dataset.kill === '1');
 });
 document.addEventListener('change', function (ev) {
   var s = ev.target.closest('select.move'); if (!s || !s.value) return;
@@ -1626,8 +1633,19 @@ def fleet_page(board_name, hosts, pools=()) -> str:
         drain = (f' <button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
                  f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
                  if h["reporting"] and drainable and others else "")
+        # what its bots need (#83): a login missing here holds them, nothing is posted about it
+        parts = []
+        for c in h.get("credentials") or []:
+            text = f'{c["name"]} {c["state"]}'
+            if c.get("held"):
+                text += f' (held {c["held"]} bot{"" if c["held"] == 1 else "s"})'
+            if c["state"] != "ok" and c.get("detail"):
+                text += f': {c["detail"]}'
+            parts.append(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(text)}</span>')
+        creds = " · ".join(parts)
+        creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
         cards.append(f'<div class="card box"><span class="name">{e(h["name"])}</span>{drain}{gone}'
-                     f'<div class="gauges">{gauges}</div>'
+                     f'<div class="gauges">{gauges}</div>{creds}'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     # which projects keep their own bots; every other project shares the rest
@@ -1642,7 +1660,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <h1>Fleet</h1>
 <p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
-carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in.
+carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in, kill cuts it short.
 <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
 {body}
 <script>{FLEET_JS}</script>""")

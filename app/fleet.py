@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS fleet_bots (
 # the archive, until that box has unpacked it. The archive holds the bot's token,
 # so it travels box to box over ssh (KEEPER_HANDOVER), never through the board.
 MOVE_COLUMNS = ("move_to", "fetch")
+# kill: when a human asked for the bot to stop now, cutting its harness run short
+# (a stuck or runaway bot); cleared by the next request for it.
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill",)
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
 HARNESSES = ("claude", "codex", "opencode", "copilot")
@@ -56,7 +59,7 @@ def init() -> None:
     with db._write_lock:
         c.executescript(SCHEMA)
         have = {r["name"] for r in c.execute("PRAGMA table_info(fleet_bots)")}
-        for col in MOVE_COLUMNS:
+        for col in EXTRA_COLUMNS:
             if col not in have:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
@@ -89,10 +92,13 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str | None:
+def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
-    bot unpacked on a new box is started. Returns None, or why not."""
+    bot unpacked on a new box is started. kill: stop it now, without waiting for the
+    harness run it is in. Returns None, or why not."""
+    if kill and run:
+        return "a kill stops the bot: ask for run false"
     c = db.conn()
     boxes = {h["name"].lower(): h for h in hosts()}
     if host.lower() not in boxes:
@@ -115,13 +121,14 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str) -> str
     with db._write_lock:
         row = c.execute("SELECT harness FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
         harness = harness or (row["harness"] if row else None)
+        now = db.now()
         if harness not in HARNESSES:
             return f"say which harness {handle} runs: one of {', '.join(HARNESSES)}"
         c.execute(
-            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at) VALUES (?,?,?,?,?,?)"
+            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill) VALUES (?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL",
-            (handle, host.lower(), harness, int(run), by, db.now()),
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill",
+            (handle, host.lower(), harness, int(run), by, now, now if kill else None),
         )
         c.commit()
     return None
@@ -189,7 +196,7 @@ def move(handle: str, to: str, by: str) -> str | None:
         c.execute(
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL",
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL, kill=NULL",
             # a bot that was stopped stays stopped on the new box
             (handle, src, harness, int(seen["status"].startswith(UP) or bool(row and row["run"])), by, db.now(), to),
         )
@@ -323,7 +330,7 @@ def hosts() -> list[dict]:
             if w:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
-                         move_to=w["move_to"], fetch=w["fetch"])
+                         move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
