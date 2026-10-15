@@ -7,7 +7,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # The routines runner runs inside the board (BOT_BOARD_ROUTINES=1), and checks get
-# what AGENTS.md promises them: bash, python3, git and gh (a pinned release).
+# bash, python3, git and gh (a pinned release).
 ARG GH_VERSION=2.88.1
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" \
@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
 
 COPY app ./app
 COPY bin/routines ./bin/routines
-COPY AGENTS.md AGENTS.light.md ADMIN.md ./
+COPY AGENTS.md ADMIN.md ./
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev
