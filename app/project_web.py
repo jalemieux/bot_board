@@ -88,7 +88,7 @@ display:flex;flex-direction:column;box-shadow:-10px 0 40px rgba(0,0,0,.15);font-
 .drawer textarea{resize:vertical;min-height:4em}
 .drawer .slugline{font:12px var(--mono);color:var(--dim)}
 .drawer .notice{border-radius:8px;padding:9px 12px;font-size:13px;background:var(--accent-soft)}
-.drawer .repos{display:grid;gap:8px}.drawer .repo{display:flex;gap:8px}.drawer .repo input{flex:1;min-width:0;font-family:var(--mono);font-size:13px}
+.drawer .repos,.pj .repos{display:grid;gap:8px}.drawer .repo,.pj .repo{display:flex;gap:8px}.drawer .repo input,.pj .repo input{flex:1;min-width:0;font-family:var(--mono);font-size:13px}
 .drawer .repo button{background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;padding:0 11px;font-size:16px;cursor:pointer}
 .drawer button.link{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font:inherit;justify-self:start}
 .drawer footer{display:flex;gap:10px;justify-content:flex-end;padding:14px 20px;border-top:1px solid var(--line)}
@@ -304,6 +304,32 @@ function repoFromInput(v) {
   var name = slugify(v.replace(/^.*\//, '')).replace(/^[._-]+/, '');
   return {name: name.length < 2 ? name + '_repo' : name.slice(0, 48), url: v};
 }
+function repositoryEditor(repositories) {
+  var repos = h('div', {'class': 'repos'});
+  function repoRow(repository) {
+    var r = repository || {};
+    var input = h('input', {type: 'text', placeholder: 'https://github.com/owner/repo  or  owner/repo', 'aria-label': 'repository',
+      value: r.url || '', 'data-repository-name': r.name, 'data-repository-url': r.url});
+    var row = h('div', {'class': 'repo'}, input, h('button', {type: 'button', 'class': 'quiet', 'aria-label': 'remove repository', text: '×', onclick: function () {
+      if (repos.children.length > 1) row.remove(); else input.value = '';
+    }}));
+    add(repos, row);
+  }
+  if (repositories.length) repositories.forEach(repoRow); else repoRow();
+  return {
+    element: h('div', {'class': 'f'}, h('span', {'class': 'flabel', text: 'Repositories'}), repos,
+      h('button', {type: 'button', 'class': 'link', text: '+ add another repository', onclick: function () { repoRow(); }}),
+      h('span', {'class': 'note', text: "GitHub URLs or owner/repo. Pool bots clone from here; private repositories require access on each bot's machine."})),
+    value: function () {
+      return Array.prototype.filter.call(repos.querySelectorAll('input'), function (i) { return i.value.trim(); })
+        .map(function (i) {
+          var repo = repoFromInput(i.value);
+          if (i.getAttribute('data-repository-name') && i.getAttribute('data-repository-url') === repo.url) repo.name = i.getAttribute('data-repository-name');
+          return repo;
+        });
+    }
+  };
+}
 function createDrawer(channel, channels) {
   var old = document.getElementById('pdrawer'); if (old) old.remove();
   var scrim = h('div', {'class': 'scrim'});
@@ -314,16 +340,8 @@ function createDrawer(channel, channels) {
   var adopt = h('div', {'class': 'notice', hidden: true});
   var purpose = h('textarea', {required: true, rows: 2, placeholder: 'A Godot 4 space sandbox: trade, factions, ship combat.',
     value: channel && channel.topic ? channel.topic.replace(/,?\s*repo\s.*$/i, '') : ''});
-  var repos = h('div', {'class': 'repos'});
   var out = h('div', {role: 'status', 'aria-live': 'polite'});
   var touched = false, existing = null;
-  function repoRow(v) {
-    var input = h('input', {type: 'text', placeholder: 'https://github.com/owner/repo  or  owner/repo', 'aria-label': 'repository', value: v || ''});
-    var row = h('div', {'class': 'repo'}, input, h('button', {type: 'button', 'class': 'quiet', 'aria-label': 'remove repository', text: '×', onclick: function () {
-      if (repos.children.length > 1) row.remove(); else input.value = '';
-    }}));
-    add(repos, row);
-  }
   function sync() {
     if (!touched) slug.value = slugify(name.value);
     var s = slug.value;
@@ -335,13 +353,11 @@ function createDrawer(channel, channels) {
   function close() { scrim.remove(); drawer.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(ev) { if (ev.key === 'Escape') close(); }
   var m = channel && channel.topic && /repo\s+(?:https:\/\/github\.com\/)?([\w.-]+\/[\w.-]+)/i.exec(channel.topic);
-  repoRow(m ? 'https://github.com/' + m[1].replace(/\.git$|[.,)]+$/g, '') : '');
+  var repos = repositoryEditor(m ? [repoFromInput('https://github.com/' + m[1].replace(/\.git$|[.,)]+$/g, ''))] : []);
   var form = h('form', {id: 'pform', onsubmit: function (ev) {
     ev.preventDefault();
-    var repositories = Array.prototype.map.call(repos.querySelectorAll('input'), function (i) { return i.value; })
-      .filter(function (v) { return v.trim(); }).map(repoFromInput);
     api('POST', '/api/projects', {slug: slug.value.trim(), name: name.value.trim(), purpose: purpose.value.trim(),
-                                  repositories: repositories, adopt_channel: !!existing})
+                                  repositories: repos.value(), adopt_channel: !!existing})
       .then(function (res) {
         if (res.ok) location.href = '/projects/' + encodeURIComponent(slug.value.trim());
         else status(out, false, why(res));   // the form keeps what was typed
@@ -350,9 +366,7 @@ function createDrawer(channel, channels) {
     h('div', {'class': 'f'}, field('Name', name), h('div', {'class': 'slugline'}, 'link ', slugShow, ' ', slugEdit), slug),
     adopt,
     h('div', {'class': 'f'}, field('What is it for?', purpose, 'One or two sentences. Every bot that joins reads this first.')),
-    h('div', {'class': 'f'}, h('span', {'class': 'flabel', text: 'Repositories'}), repos,
-      h('button', {type: 'button', 'class': 'link', text: '+ add another repository', onclick: function () { repoRow(''); }}),
-      h('span', {'class': 'note', text: 'GitHub URLs. Pool bots clone from here.'})),
+    repos.element,
     out);
   var drawer = h('aside', {'class': 'drawer', id: 'pdrawer', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'new project'},
     h('header', null, h('h2', {text: channel ? 'Make #' + channel.slug + ' a project' : 'New project'}),
@@ -443,13 +457,16 @@ function projectEditBox() {
   var p = proj, out = h('div', {role: 'status', 'aria-live': 'polite'});
   var name = h('input', {type: 'text', value: p.name || '', required: true});
   var purpose = h('textarea', {value: p.purpose || '', required: true});
+  var repos = repositoryEditor(p.repositories || []);
   return h('section', null, h('h3', {text: 'Project'}),
     h('form', {onsubmit: function (ev) {
       ev.preventDefault();
-      api('PATCH', P(p.slug), {name: name.value.trim(), purpose: purpose.value.trim()}).then(function (res) {
+      api('PATCH', P(p.slug), {name: name.value.trim(), purpose: purpose.value.trim(), repositories: repos.value()}).then(function (res) {
         if (res.ok) { status(out, true, 'Saved.'); reloadProject(true); } else status(out, false, why(res));
       });
-    }}, field('Name', name), field('Purpose', purpose), h('button', {type: 'submit', text: 'Save'}), out),
+    }}, field('Name', name), field('Purpose', purpose), repos.element,
+      h('p', {'class': 'note', text: 'Without a repository, pool bots do not pick up unassigned requests. Removing a repository here does not delete it or its local checkout.'}),
+      h('button', {type: 'submit', text: 'Save'}), out),
     p.archived ? null : archiveControl(P(p.slug), 'project', p.name || p.slug, function () { reloadProject(true); }));
 }
 
