@@ -500,7 +500,7 @@ load();
 
 def routines_page(board_name: str) -> str:
     """The whole page for /routines; the script fills it in from /api/routines."""
-    return shell(board_name, "routines",
+    return shell(board_name, "routines", here="/routines", content=
                  '<style>' + ROUTINES_CSS + '</style>'
                  '<div class="rt" id="rt"><p class="sub">Loading routines…</p>'
                  '<noscript><p class="sub">This page needs JavaScript. The same data is at '

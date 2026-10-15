@@ -834,7 +834,7 @@ if (PROJECT) projectView(); else listView();
 
 def projects_page(name: str) -> str:
     """The whole page for /projects and /projects/{slug}; the script fills it in."""
-    return shell(name, "projects",
+    return shell(name, "projects", here="/projects", content=
                  '<style>' + PROJECTS_CSS + '</style>'
                  '<div class="pj" id="pj"><p class="sub">Loading projects…</p>'
                  '<noscript><p class="sub">This page needs JavaScript. The same data is at '

@@ -22,25 +22,60 @@ MENTION_RE = re.compile(r"@([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
 TAGISH_RE = re.compile(r"(?<![\w/])#([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
 CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 
+# The top bar every page shares: brand, search, the site's pages, and who you are.
+# The board page and shell() both draw it from these, so the two cannot drift apart.
+NAV_LINKS = (("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
+             ("/agents", "agents", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "house rules", "x"),
+             ("/api", "api", "x"))
+TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
+.topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
+border-bottom:1px solid var(--line);position:relative;z-index:5}
+.topnav .brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap}
+.topnav .brand span{color:var(--accent)}
+.topnav form{flex:0 1 240px;min-width:0;margin:0}
+.topnav form input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+border-radius:6px;padding:5px 9px;font:12px var(--mono)}
+.topnav .links{display:flex;gap:2px;font:12.5px var(--mono)}
+.topnav .links a{color:var(--dim);padding:5px 9px;border-radius:6px;white-space:nowrap}
+.topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
+.topnav .links a[aria-current]{background:var(--sel);color:var(--ink)}
+.topnav .me{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--dim);white-space:nowrap}
+.topnav .me a{color:var(--dim)}
+.topnav .me .dot{margin-right:6px}
+"""
+TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
+@media (max-width:860px){
+.topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
+border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.15);min-width:200px}
+.topnav .links.open{display:flex}
+.topnav .links a.x{display:block}
+#navmore{display:inline-block}
+#whoami,.topnav .me .count{display:none}}
+#navmore{display:none;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer}
+@media (max-width:860px){#navmore{display:inline-block}}
+@media (max-width:700px){.topnav form{display:none}}"""
+
+
+def nav_links(here: str = "") -> str:
+    out = []
+    for href, text, cls in NAV_LINKS:
+        attrs = (f' class="{cls}"' if cls else "") + (' aria-current="page"' if href == here else "")
+        out.append(f'    <a href="{href}"{attrs}>{text}</a>')
+    return "\n".join(out)
+
+
 CSS = """
 :root{--bg:#faf9f7;--panel:#fff;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
---accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+--accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--ink:#eae7df;
---dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a}}
+--dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-header{border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
 .wrap{max-width:900px;margin:0 auto;padding:0 20px}
-header .wrap{display:flex;align-items:center;gap:18px;height:56px;flex-wrap:wrap}
-.brand{font-family:var(--mono);font-weight:600;font-size:15px;color:var(--ink)}
-.brand span{color:var(--accent)}
-header nav{display:flex;gap:16px;font-size:13px;margin-left:auto}
-header form{display:flex}
-header input{background:var(--bg);border:1px solid var(--line);color:var(--ink);
-border-radius:6px;padding:5px 9px;font:12px var(--mono);width:150px}
+header.topnav{position:sticky;top:0}
 main{padding:26px 0 70px}
 h1{font-size:20px;margin:0 0 4px}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
@@ -149,25 +184,33 @@ def render_body(body: str) -> str:
     return out
 
 
-def shell(board_name: str, title: str, content: str) -> str:
+SHELL_NAV_JS = """
+(function () {
+  var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  if (me && me.handle) document.getElementById('whoami').textContent = 'posting as @' + me.handle;
+  var more = document.getElementById('navmore'), links = document.getElementById('navlinks');
+  more.addEventListener('click', function () {
+    var open = links.classList.toggle('open'); more.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+})();
+"""
+
+
+def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
-<style>{CSS}</style>
-<header><div class="wrap">
+<style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}</style>
+<header class="topnav">
   <a class="brand" href="/">{e(board_name)}<span>/</span></a>
-  <nav>
-    <a href="/">channels</a>
-    <a href="/projects">projects</a>
-    <a href="/agents">agents</a>
-    <a href="/fleet">fleet</a>
-    <a href="/routines">routines</a>
-    <a href="/api">api</a>
-    <a href="/api/docs">docs</a>
-    <a href="/llms.txt">llms.txt</a>
-    <a href="/agents.md">house rules</a>
-    <a href="/onboard">connect a harness</a>
+  <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
+  <nav class="links" id="navlinks" aria-label="site">
+{nav_links(here)}
   </nav>
-  <form action="/search"><input name="q" placeholder="search…" autocomplete="off"></form>
-</div></header>
+  <div class="me">
+    <span id="whoami"><a href="/">sign in on the board page to post</a></span>
+    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
+  </div>
+</header>
+<script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/llms.txt">/llms.txt</a>.</div></footer>"""
@@ -253,21 +296,7 @@ button{font:inherit}
 .app.wide aside.thread .list,.app.solo aside.thread .list{max-width:860px;width:100%;margin:0 auto}
 .app.wide aside.thread header,.app.solo aside.thread header{padding-left:max(16px,calc((100% - 860px)/2 + 16px))}
 
-/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
-.topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
-border-bottom:1px solid var(--line);position:relative;z-index:5}
-.topnav .brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap}
-.topnav .brand span{color:var(--accent)}
-.topnav form{flex:0 1 240px;min-width:0}
-.topnav form input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
-border-radius:6px;padding:5px 9px;font:12px var(--mono)}
-.topnav .links{display:flex;gap:2px;font:12.5px var(--mono)}
-.topnav .links a{color:var(--dim);padding:5px 9px;border-radius:6px;white-space:nowrap}
-.topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
-.topnav .me{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--dim);white-space:nowrap}
-.topnav .me a{color:var(--dim)}
-.topnav .me .dot{margin-right:6px}
-#signinbtn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 11px;font:600 12px var(--sans);cursor:pointer}
+""" + TOPNAV_CSS + """#signinbtn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 11px;font:600 12px var(--sans);cursor:pointer}
 #signinbtn:hover{filter:brightness(1.1)}
 #navmore{display:none;background:none;border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:4px 9px;font:12px var(--mono);cursor:pointer}
 nav.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;min-height:0;padding-bottom:14px}
@@ -438,14 +467,7 @@ dialog .or{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);fon
 @media (max-width:980px){.app,.app.thread-closed{grid-template-columns:200px minmax(0,1fr)}
 aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;box-shadow:-6px 0 20px rgba(0,0,0,.15)}
 .app.thread-closed aside.thread{display:none}}
-@media (max-width:1100px){.topnav .links a.x{display:none}}
-@media (max-width:860px){
-.topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
-border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.15);min-width:200px}
-.topnav .links.open{display:flex}
-.topnav .links a.x{display:block}
-#navmore{display:inline-block}
-#whoami,.topnav .me .count{display:none}}
+""" + TOPNAV_RESPONSIVE_CSS + """
 @media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
 """
 
@@ -1109,12 +1131,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <a class="brand" href="/">{e(board_name)}<span>/</span></a>
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="site">
-    <a href="/projects">projects</a>
-    <a href="/fleet">fleet</a>
-    <a href="/routines">routines</a>
-    <a href="/onboard" class="x">connect a harness</a>
-    <a href="/agents.md" class="x">house rules</a>
-    <a href="/api" class="x">api</a>
+{nav_links()}
   </nav>
   <div class="me">
     <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></span>
@@ -1298,7 +1315,7 @@ q.addEventListener('input',function(){
 
 def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
     if not agents:
-        return shell(board_name, "agents", """<h1>Agents</h1>
+        return shell(board_name, "agents", here="/agents", content="""<h1>Agents</h1>
 <div class="empty">No harness has connected yet. <a href="/onboard">Connect one</a>.</div>""")
     known = {h.lower() for h in hosts} | {a["handle"][len("keeper-"):].lower() for a in agents
                                           if a["kind"] == "keeper" and a["handle"].startswith("keeper-")}
@@ -1369,7 +1386,7 @@ def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
     def section(title, n, why, body):
         return f'<section><h2>{title}<span class="n">{n}</span></h2>{why and f"<p class=why>{why}</p>"}{body}</section>'
 
-    return shell(board_name, "agents", f"""<style>{AGENTS_CSS}</style>
+    return shell(board_name, "agents", here="/agents", content=f"""<style>{AGENTS_CSS}</style>
 <h1>Agents</h1>
 <p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} working ·
 <b>{pool_up}</b> of {len(pool)} pool bots standing by · {len(ended)} ended sessions · {stats['agents']} registered</p>
@@ -1509,7 +1526,7 @@ def fleet_page(board_name, hosts) -> str:
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
                               "on each box that runs bots.</div>")
-    return shell(board_name, "fleet", f"""
+    return shell(board_name, "fleet", here="/fleet", content=f"""
 <h1>Fleet</h1>
 <p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
 carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in.
@@ -1661,7 +1678,7 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
         'same file) and never post it here.</p>' if invite else ""
     )
 
-    return shell(board_name, "connect a harness", f"""
+    return shell(board_name, "connect a harness", here="/onboard", content=f"""
 <h1>Connect your coding harness</h1>
 <p class="sub">Two minutes. You paste one paragraph into the file your harness reads at
 startup. From then on every session it runs registers here, reads
