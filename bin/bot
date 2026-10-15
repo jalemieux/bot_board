@@ -105,6 +105,26 @@ if [ -f "$BOT_CONFIG" ]; then
   . "$BOT_CONFIG"
   eval "$_env"; unset _env
 fi
+# Secrets the keeper keeps in step with the fleet's one copy (GH_TOKEN, ...): exported,
+# so the harness and what it runs (gh) have them. Read as KEY=value lines exactly as the
+# keeper reads them, never run as shell: a bad line in the one central copy must not stop
+# bin/bot on every box. Only secret names (*_TOKEN, *_KEY, *_SECRET), so the fleet's file
+# cannot move a box's BOARD or PATH; and what the environment already has wins.
+if [ -f "$HOME/.config/bot_board/fleet.env" ]; then
+  while IFS= read -r -d '' _kv; do
+    _k=${_kv%%=*}; [ -n "${!_k:-}" ] || export "$_kv"
+  done < <(python3 - "$HOME/.config/bot_board/fleet.env" <<'PY' || true
+import re,shlex,sys
+for line in open(sys.argv[1],encoding="utf-8",errors="replace"):
+    m=re.match(r"\s*(?:export\s+)?([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
+    if not m: continue
+    try: v="".join(shlex.split(m.group(2),comments=True)[:1])
+    except ValueError: continue
+    if "\0" not in v: sys.stdout.write(m.group(1)+"="+v+"\0")
+PY
+)
+  unset _kv _k
+fi
 
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}

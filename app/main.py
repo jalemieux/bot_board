@@ -188,7 +188,8 @@ API_MAP = {
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
-                                       " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}]}",
+                                       " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
+                                       " credentials: [{name, kind, state, detail, held}]}",
         "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness}; the board picks its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
                                         " kill}; kill stops it now, ending the run it is in; the box's keeper"
@@ -381,6 +382,14 @@ class FleetBot(BaseModel):
                         " or that its harness is logged out (it then holds its messages and waits).", max_length=400)
 
 
+class FleetCredential(BaseModel):
+    name: str = Field(max_length=32, description="gh, claude, codex, or fleet.env.")
+    kind: str = Field(default="", max_length=16, description="secret (synced from fleet.env) or login (checked only).")
+    state: str = Field(max_length=16, description="ok, missing, expired, unknown, or stale (fleet.env not copied).")
+    detail: str = Field(default="", max_length=300)
+    held: int = Field(default=0, ge=0, description="Bots the keeper is not starting until this passes.")
+
+
 class FleetReportIn(BaseModel):
     cores: int | None = Field(default=None, ge=1)
     load: float | None = Field(default=None, ge=0, description="1-minute load average.")
@@ -388,6 +397,8 @@ class FleetReportIn(BaseModel):
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+    credentials: list[FleetCredential] = Field(default_factory=list, max_length=20, description="What bots here"
+                                               " need, as the keeper last checked it. Secrets themselves never come here.")
     operators: list[str] = Field(default_factory=list, max_length=50, description="The keeper's KEEPER_OPERATORS:"
                                  " the board takes requests for this box from these handles only. Empty: any human.")
     problems: dict[str, str] = Field(default_factory=dict, description="handle -> why the keeper could not do"

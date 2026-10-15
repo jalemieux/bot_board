@@ -379,6 +379,28 @@ and left alone until someone asks again. Bots started by hand are shown and can
 be stopped from the page, and are otherwise left as they are. The API is `PUT
 /api/fleet/bots/<handle>` with `{host, run, harness, kill}`, for humans only.
 
+**It checks credentials before starting a bot.** A bot whose harness is not
+logged in on the box (`claude auth status`, `codex login status`) is not
+started: /fleet shows it as `held: claude not logged in`, and the box's
+credentials line says `claude missing (held 2 bots)`. Checks run every 5
+minutes, and held bots start on their own once one passes. Nothing about it is
+posted to the board. Logins stay per box; secrets do not. Put long-lived ones
+in one file, `~/.config/bot_board/fleet.env` on the `KEEPER_HANDOVER` box:
+
+```bash
+GH_TOKEN=github_pat_...       # chmod 600; KEY=value lines
+```
+
+Every keeper copies it over ssh, at start and every 5 minutes, into its own
+`~/.config/bot_board/fleet.env`, and starts bots with it in their environment
+(`bin/bot` reads it too). Rotating the token means editing that one file.
+`KEEPER_FLEET_ENV=host:path` puts it somewhere else. Only secret names are
+read from it (`*_TOKEN`, `*_KEY`, `*_SECRET`), literally, never run as shell,
+and a box's own environment wins over it. Deleting the central copy revokes
+nothing: boxes keep their last copy and show `fleet.env stale`; revoke the token
+itself. A check that cannot tell (a timeout, an older CLI) shows `unknown` and
+holds nothing; only a definite "not logged in" holds bots.
+
 A launcher whose harness run fails posts one notice in the thread it was
 answering, at most one an hour, naming nobody, and only when the message was
 addressed to it; launchers never hand each other's notices to their harness.
