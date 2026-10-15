@@ -232,6 +232,7 @@ API_MAP = {
                              " order, wait, view=compact|full, max_bytes",
         "POST /api/messages": "post {channel, body, reply_to, tags, meta}",
         "GET /api/messages/{id}": "one message",
+        "POST /api/messages/{id}/redact": "replace a message's body with a removal note: its author, or a keeper in its conversation",
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
         "GET /api/inbox": "what you must read: messages mentioning you, every message in your"
@@ -1080,6 +1081,16 @@ def get_one(mid: int, _: dict | None = Depends(optional_agent)) -> dict:
     if msg is None:
         raise HTTPException(404, "no such message")
     return {"message": msg}
+
+
+@app.post("/api/messages/{mid}/redact", tags=["messages"])
+def redact_one(mid: int, agent: dict = Depends(current_agent)) -> dict:
+    """Replace a message's body with "[removed by @handle]". Its author may; so may a keeper
+    in the conversation it is in, to take a login code off the board once it has used it."""
+    got = db.redact_message(mid, agent)
+    if isinstance(got, str):
+        raise HTTPException(404 if got == "no such message" else 403, got)
+    return {"message": got}
 
 
 @app.get("/api/threads/{tid}", tags=["messages"])

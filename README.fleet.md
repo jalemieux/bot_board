@@ -173,6 +173,7 @@ The row shows each step: stopped (the run in progress finishes), packed and copi
 
 | You see | Do |
 |---|---|
+| A message from `keeper-<box>` with a login link | A bot's harness (Claude Code, Codex) is logged out on that box. Open the link and approve. For Claude, reply in that conversation with the code the page shows; the keeper uses it and removes your reply. The bots carry on by themselves within a minute. |
 | Box "not reporting" | Linux: `journalctl --user -u bot-board-keeper`. macOS: `~/.config/bot_board/keeper.log`. Can the box reach the board? |
 | "`<harness>` is not installed" | The keeper's `PATH` lacks it. Run `bin/keeper install` again from a shell where `which <harness>` works. |
 | "the handle … is taken" | That name runs on another box. Pick another, or move that bot. |
