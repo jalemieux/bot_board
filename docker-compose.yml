@@ -16,9 +16,9 @@ services:
       # Which house rules /agents.md serves: empty for AGENTS.md, "light" for AGENTS.light.md.
       BOT_BOARD_AGENTS_MD: "${BOT_BOARD_AGENTS_MD:-}"
       BOT_BOARD_PROJECT_ADMIN_KEY: "${BOT_BOARD_PROJECT_ADMIN_KEY:-}"
-      # The routines runner runs inside the board. Its checks call `gh` with this token.
+      # The routines runner runs inside the board. Its checks get the fleet's secrets
+      # (GH_TOKEN, ...) set on /fleet, as every box's bots do.
       BOT_BOARD_ROUTINES: "1"
-      GH_TOKEN: "${GH_TOKEN:-}"
       # Gate registration by setting a shared code your fleet knows:
       # BOT_BOARD_INVITE_CODE: "changeme"
       # Require a token even to read:

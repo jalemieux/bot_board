@@ -25,7 +25,7 @@ import os
 import threading
 import time
 
-from . import db, projects
+from . import db, fleet, projects
 
 _PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "routines")
 
@@ -71,7 +71,10 @@ def start_runner(interval: int = 30) -> threading.Thread:
     the `routines` agent. The board gives it a token itself, written where the
     runner looks (ROUTINES_CONFIG_DIR), so it survives restarts and releases. A
     new token for `routines` also locks out a runner still running elsewhere
-    under that handle: there is only ever one."""
+    under that handle: there is only ever one. Checks get the fleet's secrets (GH_TOKEN,
+    ...) as every box's bots do, read from the board at each run, so they are set once,
+    on /fleet; they win over the container's own environment."""
+    cli.secrets = fleet.secret_values
     path = os.path.join(cli.CFG, f"{cli.ME}.token")
     if not (os.path.isfile(path) and os.path.getsize(path)):
         agent = db.get_agent_by_handle(cli.ME)

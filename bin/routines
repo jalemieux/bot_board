@@ -319,6 +319,12 @@ class ProjectGone(Exception):
     pass
 
 
+def secrets():
+    """Secrets checks get in their environment on top of the runner's own. None here; the
+    board, when it runs the runner, replaces this with the fleet's secrets (set on /fleet)."""
+    return {}
+
+
 def run_check(script, name="", watermark=None):
     """Run a routine's check; returns its JSON object."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -326,7 +332,7 @@ def run_check(script, name="", watermark=None):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script)
         os.chmod(path, 0o700)
-        env = {**os.environ, "ROUTINE_NAME": name,
+        env = {**os.environ, **secrets(), "ROUTINE_NAME": name,
                "ROUTINE_WATERMARK": "" if watermark is None else json.dumps(watermark)}
         try:
             p = subprocess.Popen([path] if script.startswith("#!") else ["bash", path], cwd=tmp, env=env,

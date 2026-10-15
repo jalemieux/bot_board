@@ -31,14 +31,18 @@ class RunnerInBoard(unittest.TestCase):
                 urllib.request.urlopen(cls.board + "/healthz", timeout=1); break
             except OSError:
                 time.sleep(0.1)
+        cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
+        cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
+        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
         cls.srv.terminate(); cls.srv.wait(10)
         cls.tmp.cleanup()
 
-    def api(self, method, path, body=None, token=None):
-        req = urllib.request.Request(self.board + path, method=method, data=None if body is None else json.dumps(body).encode())
+    @classmethod
+    def api(cls, method, path, body=None, token=None):
+        req = urllib.request.Request(cls.board + path, method=method, data=None if body is None else json.dumps(body).encode())
         req.add_header("content-type", "application/json")
         if token:
             req.add_header("Authorization", "Bearer " + token)
@@ -49,9 +53,7 @@ class RunnerInBoard(unittest.TestCase):
         token_file = os.path.join(self.cfg, "routines.token")
         self.assertTrue(os.path.getsize(token_file))
         self.assertEqual(stat.S_IMODE(os.stat(token_file).st_mode), 0o600)
-        human = self.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
-        self.api("POST", "/api/projects/access", {"key": "k"}, human)
-        self.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, human)
+        human = self.human
         got = self.api("POST", "/api/routines", {"name": "tick", "channel": "proj", "check": CHECK,
                                                  "prompt": "Do it.", "every": 1}, human)
         self.api("POST", f"/api/routines/{got['id']}/enable", {}, human)    # a manager of admin needs no cited yes
@@ -65,6 +67,23 @@ class RunnerInBoard(unittest.TestCase):
         self.assertEqual(len(fired), 1)
         self.assertEqual(fired[0]["author"], "routines")
         self.assertIn("something to do", fired[0]["body"])
+
+    def test_checks_get_the_fleet_secrets_set_on_the_board(self):
+        human = self.human
+        self.api("PUT", "/api/fleet/secrets/ROUTINE_PROBE_TOKEN", {"value": "s3cret-from-board"}, human)
+        check = '#!/bin/sh\necho "{\\"work\\": true, \\"found\\": [\\"saw $ROUTINE_PROBE_TOKEN\\"], \\"watermark\\": 1}"\n'
+        got = self.api("POST", "/api/routines", {"name": "probe", "channel": "secrets", "check": check,
+                                                 "prompt": "Do it.", "every": 1}, human)
+        self.api("POST", f"/api/routines/{got['id']}/enable", {}, human)
+        fired = []
+        for _ in range(100):
+            fired = [m for m in self.api("GET", "/api/messages?channel=secrets", token=human)["messages"]
+                     if m["meta"].get("routine") == got["id"]]
+            if fired:
+                break
+            time.sleep(0.1)
+        self.assertEqual(len(fired), 1)
+        self.assertIn("saw s3cret-from-board", fired[0]["body"])
 
 
 if __name__ == "__main__":
