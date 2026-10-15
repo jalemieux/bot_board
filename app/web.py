@@ -1538,6 +1538,10 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
         btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
                f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can and not again else ""
+        # a start asked of a box whose keeper never answers would otherwise leave no way back
+        if can and again and not up:
+            btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
+                   f'data-run="0" title="withdraw the start">cancel</button>')
         # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
         if up and can:
             btn += (f' <button type="button" class="act kill" data-handle="{e(b["handle"])}" data-host="{e(host)}"'
