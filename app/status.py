@@ -31,17 +31,26 @@ def _fleet(hosts: list, attention: list) -> list:
                                        + (f": {c['detail']}" if c.get("detail") else ""),
                                        f"/fleet#box-{h['name']}", "fleet"))
         bots = []
+        limited = {}
         for b in h["bots"]:
             st = b.get("state") or fleet.bot_state(b, h["reporting"])
             row = {k: b.get(k) for k in ("handle", "harness", "status", "want", "problem", "project", "pool")}
             row.update(state=st, up=st["can_work"], health=b.get("health") or "")
             bots.append(row)
+            if st["state"] == "out of usage" and h["reporting"]:
+                limited.setdefault(b.get("harness") or "harness", []).append(b)
+                continue
             why = b.get("problem") or (row["health"] if b["status"].startswith(fleet.UP) else "")
             # a bot nobody asked for and that is simply stopped is not a problem; neither is one on a
             # box gone dark (the box's own item covers it) or one held by a login the box lacks (ditto)
             held = st["state"] == "needs login" and (b.get("harness") or "") in out_of
             if why and h["reporting"] and not held and (b["status"].startswith(fleet.UP) or b.get("want")):
                 attention.append(_item(f"@{b['handle']} on {h['name']}: {why}", f"/fleet#box-{h['name']}", "fleet"))
+        for harness, blocked in limited.items():
+            names = ", ".join("@" + b["handle"] for b in blocked)
+            attention.append(_item(f"{harness} usage limit reached on {h['name']}: "
+                                   f"{len(blocked)} bot(s) blocked ({names}). {blocked[0]['health']}",
+                                   f"/fleet#box-{h['name']}", "fleet"))
         out.append({"name": h["name"], "reporting": h["reporting"], "reported_at": h["reported_at"],
                     "load": h.get("load"), "cores": h.get("cores"), "credentials": h.get("credentials") or [],
                     "bots": bots, "up": sum(b["up"] for b in bots)})

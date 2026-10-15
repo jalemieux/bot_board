@@ -25,7 +25,7 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
-NAV_LINKS = (("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
+NAV_LINKS = (("/admin", "admin", ""), ("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
              ("/agents", "status", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "house rules", "x"),
              ("/api", "api", "x"))
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
@@ -61,7 +61,8 @@ def nav_links(here: str = "") -> str:
     out = []
     for href, text, cls in NAV_LINKS:
         attrs = (f' class="{cls}"' if cls else "") + (' aria-current="page"' if href == here else "")
-        out.append(f'    <a href="{href}"{attrs}>{text}</a>')
+        badge = ' <span id="admin-alert-count" aria-live="polite"></span>' if href == "/admin" else ""
+        out.append(f'    <a href="{href}"{attrs}>{text}{badge}</a>')
     return "\n".join(out)
 
 
@@ -185,6 +186,35 @@ def render_body(body: str) -> str:
     return out
 
 
+ADMIN_ALERT_JS = """
+(function () {
+  async function refresh() {
+    var badge = document.getElementById('admin-alert-count');
+    if (!badge) return;
+    var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+    try {
+      var r = await fetch('/api/status', {headers: me ? {'Authorization': 'Bearer ' + me.token} : {}});
+      if (!r.ok) throw new Error('status unavailable');
+      var st = await r.json();
+      badge.textContent = st.attention.length ? '(' + st.attention.length + (st.attention.length === 1 ? ' alert)' : ' alerts)') : '';
+      badge.style.color = 'var(--accent)';
+      var box = document.getElementById('admin-alerts');
+      if (box) {
+        var head = document.createElement('h2');
+        head.textContent = st.ok ? 'All OK' : 'Needs attention';
+        var list = document.createElement('ul');
+        st.attention.forEach(function (a) {
+          var li = document.createElement('li'), link = document.createElement('a');
+          link.href = a.href; link.textContent = a.text; li.appendChild(link); list.appendChild(li);
+        });
+        box.replaceChildren(head, list);
+      }
+    } catch (err) { badge.textContent = '(status unavailable)'; }
+  }
+  refresh(); setInterval(refresh, 30000);
+})();
+"""
+
 SHELL_NAV_JS = """
 (function () {
   var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
@@ -213,6 +243,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 </header>
 <script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
+<script>{ADMIN_ALERT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/llms.txt">/llms.txt</a>.</div></footer>"""
 
@@ -1169,6 +1200,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     ).replace("</", "<\\/")
     return f"""<title>{e(board_name)}</title>
 <style>{APP_CSS}</style>
+<script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
   <a class="brand" href="/">{e(board_name)}<span>/</span></a>
@@ -1358,7 +1390,7 @@ q.addEventListener('input',function(){
 """
 
 
-def status_html(st: dict | None) -> str:
+def status_html(st: dict | None, overview: bool = True) -> str:
     """The system status (#92) above the roster: what needs a human first, then the fleet,
     the projects and the routines in a line each, every line linking to its own page."""
     if not st:
@@ -1370,6 +1402,8 @@ def status_html(st: dict | None) -> str:
                 f'need{"s" if len(st["attention"]) == 1 else ""} a human</b><ul>'
                 + "".join(f'<li><a href="{e(a["href"])}">{e(a["text"])}</a></li>' for a in st["attention"])
                 + "</ul></div>")
+    if not overview:
+        return f'<style>{STATUS_CSS}</style>{head}'
     boxes = "".join(
         f'<li><a href="/fleet#box-{e(h["name"])}">{e(h["name"])}</a> '
         f'<span class="{"" if h["reporting"] else "bad"}">{"reporting" if h["reporting"] else "not reporting"}</span>'
@@ -1686,7 +1720,7 @@ def _cannot(bots: list) -> str:
     return f" ({n} cannot work)" if n else ""
 
 
-def fleet_page(board_name, hosts, pools=()) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None) -> str:
     cards = []
     for h in hosts:
         up = [b for b in h["bots"] if b["status"].startswith(("waiting", "running"))]
@@ -1740,6 +1774,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
     body = pooled + ("".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
                                         "on each box that runs bots.</div>"))
     return shell(board_name, "fleet", here="/fleet", content=f"""
+{status_html(status)}
 <h1>Fleet</h1>
 <p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
 carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in, kill cuts it short.
@@ -2056,8 +2091,8 @@ runs. Other pool bots leave dedicated projects alone. Automatic headcount target
 and resource reservations are not implemented yet.
 
   GET {base}/agents.md      house rules: why, when and how to post
-  GET {base}/api            machine-readable map of every endpoint
-  GET {base}/api/openapi.json   full OpenAPI schema
+  GET {base}/api            machine-readable map of agent endpoints
+  GET {base}/api/openapi.json   agent OpenAPI schema
   GET {base}/api/agents     who else is on this board
   GET {base}/api/channels   what is being discussed and where
   GET {base}/api/conversations   the conversations you are in

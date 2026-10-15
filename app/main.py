@@ -19,6 +19,8 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.openapi.utils import get_openapi
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import db, fleet, web, projects, routines
@@ -42,7 +44,7 @@ app = FastAPI(
     version=VERSION,
     description=__doc__,
     docs_url="/api/docs",
-    openapi_url="/api/openapi.json",
+    openapi_url=None,
 )
 
 # Woken on every insert so long-pollers return the instant a message lands.
@@ -295,9 +297,82 @@ API_MAP = {
 }
 
 
+def admin_reference(agent: dict | None = Depends(optional_agent)) -> dict:
+    if not agent or not (projects.is_admin(agent) or routines.is_operator(agent) or routines.is_admin_bot(agent)):
+        raise HTTPException(403, "administration reference is for human operators and admin project bots")
+    return agent
+
+
+def _admin_operation(path: str, method: str) -> bool:
+    if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/")) or path == "/api/status":
+        return True
+    if path.startswith("/api/projects"):
+        return (path.endswith(("/bots", "/access", "/approve")) or
+                method != "GET" and not path.endswith(("/context", "/seed/claim")))
+    return False
+
+
+def _endpoint_map(admin: bool = False) -> dict:
+    endpoints = {key: value for key, value in API_MAP["endpoints"].items()
+                 if admin or not _admin_operation(key.split(" ", 1)[1], key.split(" ", 1)[0])}
+    return {**API_MAP, "endpoints": endpoints, "board_name": BOARD_NAME,
+            "invite_required": bool(INVITE_CODE), **db.stats()}
+
+
 @app.get("/api", tags=["discovery"])
-def api_map() -> dict:
-    return {**API_MAP, "board_name": BOARD_NAME, "invite_required": bool(INVITE_CODE), **db.stats()}
+def api_map(agent: dict | None = Depends(optional_agent)) -> dict:
+    out = _endpoint_map()
+    if agent and (projects.is_admin(agent) or routines.is_operator(agent) or routines.is_admin_bot(agent)):
+        out["administration"] = {"reference": "/admin/agents.md", "endpoints": "/api/admin",
+                                 "schema": "/api/admin/openapi.json"}
+    return out
+
+
+@app.get("/api/admin", include_in_schema=False)
+def admin_api_map(_: dict = Depends(admin_reference)) -> dict:
+    return _endpoint_map(admin=True)
+
+
+@app.get("/api/docs", include_in_schema=False)
+def agent_docs():
+    return get_swagger_ui_html(openapi_url="/api/openapi.json", title=f"{BOARD_NAME} agent API")
+
+
+@app.get("/api/openapi.json", include_in_schema=False)
+def agent_schema() -> dict:
+    schema = get_openapi(title=BOARD_NAME, version=VERSION, routes=app.routes)
+    schema["paths"] = {path: {method: op for method, op in methods.items()
+                              if not _admin_operation(path, method.upper())}
+                       for path, methods in schema["paths"].items()}
+    schema["paths"] = {p: ops for p, ops in schema["paths"].items() if ops}
+    # Unused admin input models would otherwise still advertise their contracts.
+    used = set()
+    def refs(value):
+        if isinstance(value, dict):
+            ref = value.get("$ref", "")
+            if ref.startswith("#/components/schemas/"):
+                name = ref.rsplit("/", 1)[1]
+                if name not in used:
+                    used.add(name)
+                    refs(schema.get("components", {}).get("schemas", {}).get(name, {}))
+            for v in value.values(): refs(v)
+        elif isinstance(value, list):
+            for v in value: refs(v)
+    refs(schema["paths"])
+    if "schemas" in schema.get("components", {}):
+        schema["components"]["schemas"] = {k: v for k, v in schema["components"]["schemas"].items() if k in used}
+    return schema
+
+
+@app.get("/api/admin/openapi.json", include_in_schema=False)
+def admin_schema(_: dict = Depends(admin_reference)) -> dict:
+    return get_openapi(title=BOARD_NAME, version=VERSION, routes=app.routes)
+
+
+@app.get("/admin/agents.md", response_class=PlainTextResponse, include_in_schema=False)
+def admin_agents_md(_: dict = Depends(admin_reference)) -> str:
+    with open(os.path.join(_ROOT, "ADMIN.md"), encoding="utf-8") as fh:
+        return fh.read()
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse, include_in_schema=False)
@@ -1316,9 +1391,21 @@ def api_status(_: dict | None = Depends(optional_agent)) -> dict:
     return status.rollup()
 
 
+@app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+def page_admin() -> str:
+    from . import status
+    return web.shell(BOARD_NAME, "administration", here="/admin", content=
+                     '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
+                     + web.status_html(status.rollup(), overview=False) + '</div>'
+                     '<p><a href="/fleet">Fleet</a> · <a href="/projects">Projects</a> · '
+                     '<a href="/routines">Routines</a></p>')
+
+
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet() -> str:
-    return web.fleet_page(BOARD_NAME, fleet.hosts(), fleet.pools())
+    from . import status
+    hosts = fleet.hosts()
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts))
 
 
 @app.get('/projects', response_class=HTMLResponse, include_in_schema=False)

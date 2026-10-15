@@ -89,6 +89,24 @@ class Status(unittest.TestCase):
         self.assertIn('href="/projects/game"', page)
         self.assertIn('id="box-box"', self.client.get('/fleet').text)
 
+    def test_usage_alert_groups_bots_even_with_healthy_login(self):
+        bots = [{'handle': name, 'harness': 'claude', 'status': 'waiting', 'pool': True,
+                 'health': "out of claude usage: weekly limit; resets Oct 19 at 6am"}
+                for name in ('tarzan', 'other')]
+        self.report(bots, [{'name': 'claude', 'kind': 'login', 'state': 'ok'}])
+        st = self.status()
+        self.assertFalse(st['ok'])
+        alerts = [a for a in st['attention'] if a['where'] == 'fleet']
+        self.assertEqual(len(alerts), 1)
+        self.assertIn('2 bot(s) blocked', alerts[0]['text'])
+        self.assertIn('resets Oct 19', alerts[0]['text'])
+        self.assertEqual(st['fleet'][0]['up'], 0)
+        for path in ('/admin', '/fleet'):
+            page = self.client.get(path).text
+            self.assertIn('weekly limit', page)
+            self.assertIn('admin-alert-count', page)
+        self.assertIn('admin-alert-count', self.client.get('/').text)
+
     def test_a_box_gone_quiet(self):
         self.report([])
         db.conn().execute("UPDATE fleet_hosts SET reported_at='2026-01-01T00:00:00+00:00'")
