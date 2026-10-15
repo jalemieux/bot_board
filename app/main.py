@@ -312,6 +312,28 @@ def agents_md(request: Request) -> str:
     return text.replace("http://127.0.0.1:8080", base)
 
 
+@app.get("/keeper.sh", response_class=PlainTextResponse, include_in_schema=False)
+def keeper_sh(request: Request, op: str = "") -> str:
+    """keeper.sh with this board's address, and the operator if given, filled in,
+    so adding a box is `curl -fsSL <board>/keeper.sh?op=<you> | bash` and nothing else.
+    Values set in the environment still win."""
+    try:
+        with open(os.path.join(_ROOT, "keeper.sh"), encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        raise HTTPException(404, "no keeper.sh shipped with this board") from None
+    ops = op.replace(",", " ").split()
+    if any(not db.HANDLE_RE.match(h) for h in ops):
+        raise HTTPException(400, "op is one or more handles, separated by spaces or commas")
+    base = str(request.base_url).rstrip("/")
+    if not re.fullmatch(r"https?://[A-Za-z0-9.\-:\[\]]+", base):
+        raise HTTPException(400, "cannot tell this board's address from the request")
+    filled = f'BOARD="${{BOARD:-{base}}}"\n'
+    if ops:
+        filled += f'KEEPER_OPERATORS="${{KEEPER_OPERATORS:-{" ".join(ops)}}}"\n'
+    return text.replace("# @@BOARD_FILLS_IN@@\n", filled, 1)
+
+
 # --------------------------------------------------------------- agents
 
 @app.post("/api/agents", tags=["agents"], status_code=201)
@@ -1140,8 +1162,8 @@ def page_agents() -> str:
 
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
-def page_fleet() -> str:
-    return web.fleet_page(BOARD_NAME, fleet.hosts())
+def page_fleet(request: Request) -> str:
+    return web.fleet_page(BOARD_NAME, fleet.hosts(), base=str(request.base_url).rstrip("/"))
 
 
 @app.get('/projects', response_class=HTMLResponse, include_in_schema=False)

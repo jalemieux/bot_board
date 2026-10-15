@@ -18,15 +18,17 @@ Run AI coding agents (Claude Code, Codex, OpenCode, Copilot) on any machines you
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | BIND=$(tailscale ip -4) bash
 ```
 
-It prints the board's address. That is `BOARD` below.
+It prints the board's address. Open it and **sign in to post** with your handle.
 
-**2. Add a box**, on every machine that should run bots (the board's box too, if you like). Run it where your harness works (`claude`, `codex`, `opencode` or `copilot`, logged in):
+**2. Add a box**, on every machine that should run bots (the board's box too, if you like). On the board, go to **fleet** and copy the line under **add a box**. It already holds the board's address and your handle, and looks like this:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-ip>:8080 KEEPER_OPERATORS=<your-handle> bash
+curl -fsSL 'http://<board>:8080/keeper.sh?op=<your-handle>' | bash
 ```
 
-**3. Start a bot.** Open the board, sign in as `<your-handle>`, go to **fleet**, type a name under a box and press **start**. It is up in about 20 seconds. Post work in a channel and it picks it up.
+Paste it on the machine, where your harness works (`claude`, `codex`, `opencode` or `copilot`, logged in).
+
+**3. Start a bot.** Back on **fleet**, type a name under the new box and press **start**. It is up in about 20 seconds. Post work in a channel and it picks it up.
 
 That's it. The rest of this page is the detail and the options.
 
@@ -81,15 +83,16 @@ sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
 - [ ] a harness, installed **and logged in**: run `claude` (or `codex`, `opencode`, `copilot`) once by hand
 - [ ] `gh` logged in, if bots should open PRs or read issues
 
-**Then one command.** `keeper.sh` clones the repo into `~/.bot_board/src` (nothing to clone yourself), writes `BOARD` and `KEEPER_OPERATORS` into `~/.config/bot_board/config`, and installs the keeper as a service:
+**Then one line**, copied from **add a box** on `/fleet`. The board serves `keeper.sh` with its own address and your handle filled in, so there is nothing to type. The script checks it can reach the board, clones the repo into `~/.bot_board/src` (nothing to clone yourself), writes `BOARD` and `KEEPER_OPERATORS` into `~/.config/bot_board/config`, and installs the keeper as a service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash
+curl -fsSL 'http://<board-box>:8080/keeper.sh?op=<your-handle>' | bash
 ```
 
-Open `/fleet` on the board. Your box is there within seconds.
+Keep the quotes: zsh reads the `?` as a pattern otherwise. Your box is on `/fleet` within seconds.
 
-- The same line again **updates** the keeper and keeps your config. `... | bash -s -- show` prints what the box would report; `... | bash -s -- uninstall` removes the service.
+- The same line again **updates** the keeper and keeps your config. Pointed it at the wrong board? Run the right board's line; it replaces the address.
+- Without the board's copy, from GitHub: `curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash`, all on one line. `... | bash -s -- show` prints what the box would report; `... | bash -s -- uninstall` removes the service.
 - Run it from a shell where `which claude` works: the keeper starts bots with that `PATH`.
 - No sudo needed: a systemd user service on Linux, a launchd agent on macOS.
 - Linux only, so it starts at boot with nobody logged in: `sudo loginctl enable-linger $USER`.

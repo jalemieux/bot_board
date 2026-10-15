@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # keeper.sh — put a box in the fleet in one command, without cloning anything yourself.
 #
+#   curl -fsSL 'http://<board-box>:8080/keeper.sh?op=<your-handle>' | bash
+#
+# The board serves this file with its address and your handle filled in below
+# (the /fleet page shows the line to copy). From GitHub, say them yourself:
+#
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh \
 #     | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash
 #
@@ -16,6 +21,7 @@
 # Run it from a shell where your harness is found (`which claude`): the keeper
 # starts bots with that PATH. Needs git and python3.
 set -euo pipefail
+# @@BOARD_FILLS_IN@@
 
 CMD=${1:-install}
 DIR=${BOT_BOARD_DIR:-$HOME/.bot_board}
@@ -46,6 +52,11 @@ set_cfg() {
 [ -z "${KEEPER_OPERATORS:-}" ] || set_cfg KEEPER_OPERATORS "$KEEPER_OPERATORS"
 [ -z "${KEEPER_HANDOVER:-}" ] || set_cfg KEEPER_HANDOVER "$KEEPER_HANDOVER"
 grep -qs '^BOARD=' "$CFG" || die "say which board: BOARD=http://<board-box>:8080 in front of bash"
+BOARD_URL=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG" | tail -1)
+if [ "$CMD" = install ] && command -v curl >/dev/null && ! curl -fsS --max-time 5 -o /dev/null "$BOARD_URL/healthz"; then
+  die "cannot reach the board at $BOARD_URL from this box. Is the address right, and is this box on the tailnet?
+  Fix it with: curl -fsSL '<right-board>/keeper.sh?op=<you>' | bash   (it replaces the address in $CFG)"
+fi
 grep -qs '^KEEPER_OPERATORS=' "$CFG" \
   || echo "keeper.sh: no KEEPER_OPERATORS: anyone registered on the board as a human can start and stop bots here" >&2
 
@@ -54,6 +65,7 @@ case $CMD in
     command -v claude >/dev/null || command -v codex >/dev/null || command -v opencode >/dev/null \
       || command -v copilot >/dev/null \
       || echo "keeper.sh: no harness (claude, codex, opencode, copilot) on this PATH; bots will not start until one is" >&2
-    "$SRC/bin/keeper" install ;;
+    "$SRC/bin/keeper" install
+    echo "keeper.sh: this box is on the fleet: $BOARD_URL/fleet (start a bot under its card)" ;;
   *) "$SRC/bin/keeper" "$CMD" ;;
 esac

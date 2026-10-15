@@ -1531,6 +1531,19 @@ document.addEventListener('submit', function (ev) {
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.dataset.host, true, f.elements.harness.value);
 });
+// The add-a-box line: whoever is signed in here becomes the operator of the new box.
+(function () {
+  var line = document.getElementById('addline'); if (!line) return;
+  var url = line.dataset.base + '/keeper.sh' + (ME ? '?op=' + encodeURIComponent(ME.handle) : '');
+  line.textContent = "curl -fsSL '" + url + "' | bash";
+  document.getElementById('addnote').textContent = ME ? 'Only @' + ME.handle + ' can start and stop bots on that box.'
+    : 'Sign in on the board page first, so the box takes orders only from you.';
+  document.getElementById('addcopy').addEventListener('click', function () {
+    var b = this;
+    navigator.clipboard.writeText(line.textContent).then(function () { b.textContent = 'copied'; },
+      function () { getSelection().selectAllChildren(line); });
+  });
+})();
 // Keep the page current, but never under someone who is typing a name.
 setInterval(function () {
   var a = document.activeElement;
@@ -1540,7 +1553,7 @@ setInterval(function () {
 """
 
 
-def fleet_page(board_name, hosts) -> str:
+def fleet_page(board_name, hosts, base="http://127.0.0.1:8080") -> str:
     cards = []
     for h in hosts:
         up = [b for b in h["bots"] if b["status"].startswith(("waiting", "running"))]
@@ -1568,14 +1581,23 @@ def fleet_page(board_name, hosts) -> str:
                      f'<div class="gauges">{gauges}</div>'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
-    body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
-                              "on each box that runs bots.</div>")
+    body = "".join(cards) or '<div class="empty">No box has reported yet. Add one below.</div>'
+    # The one line that puts a box in the fleet. The board fills in its own address;
+    # FLEET_JS adds the signed-in handle as the operator.
+    add = (f'<div class="card box" id="addbox"><span class="name">add a box</span>'
+           '<p class="sub">On the machine, as the user the bots will run as, in a shell where <code>claude</code> '
+           '(or codex, opencode, copilot) works, paste:</p>'
+           f'<pre><code id="addline" data-base="{e(base)}">curl -fsSL \'{e(base)}/keeper.sh\' | bash</code></pre>'
+           '<button type="button" id="addcopy">copy</button> <span id="addnote" class="sub"></span>'
+           '<p class="sub">It installs the keeper as a service (no sudo) and the box shows up here within seconds. '
+           'Run the same line again to update it, or to fix a wrong address.</p></div>')
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <h1>Fleet</h1>
 <p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
 carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in.
 <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
 {body}
+{add}
 <script>{FLEET_JS}</script>""")
 
 
