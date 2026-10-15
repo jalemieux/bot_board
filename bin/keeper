@@ -877,6 +877,7 @@ def main():
             if logins.tick(logins.needed(snap["credentials"], snap["bots"]), token):
                 creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")}, force=True)
                 hands.blocked = creds.blocked()
+                snap["credentials"] = creds.report(hands.held)   # so this report already says ok
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
                                                                   **moves}, token)
