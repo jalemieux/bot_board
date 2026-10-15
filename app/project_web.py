@@ -40,6 +40,8 @@ PROJECTS_CSS = """
 .pj th{font-weight:600;color:var(--dim);font:600 12px var(--mono)}
 .pj .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 .pj details summary{cursor:pointer;color:var(--dim);font-size:13px}
+.pj tr.gctx td{border-top:0;padding-top:0}
+.pj .peek{max-height:28em;overflow:auto;margin:4px 0 6px;padding-right:8px}
 .pj .phead{display:flex;gap:14px 20px;align-items:flex-start;flex-wrap:wrap}
 .pj .phead .t{flex:1 1 420px;min-width:0}.pj .phead .act{display:flex;gap:14px;align-items:center;font-size:13px;color:var(--dim);padding-top:4px}
 .pj h2 .n{font-weight:400}
@@ -410,11 +412,12 @@ function drawProject() {
     if (!gs.length) { add(gtable, h('p', {'class': 'note', text: 'No group yet.'})); return; }
     add(gtable, h('table', null, h('thead', null, h('tr', null, h('th', {text: 'group'}), h('th', {text: 'purpose and scope'}), h('th', {text: 'related'}))),
       h('tbody', null, gs.map(function (g) {
-        return h('tr', null,
+        return [h('tr', null,
           h('td', null, h('a', {href: '#group=' + encodeURIComponent(g.slug), text: g.name || g.slug}), g.archived ? badge('archived') : null, g.readiness ? badge(g.readiness) : null,
             g.channel ? h('div', null, h('a', {href: '/c/' + encodeURIComponent(g.channel), 'class': 'note', text: '#' + g.channel})) : null),
           h('td', null, h('div', {text: g.purpose || ''}), g.scope ? h('div', {'class': 'note', text: g.scope}) : null),
-          h('td', {'class': 'note', text: (g.related_groups || []).join(', ')}));
+          h('td', {'class': 'note', text: (g.related_groups || []).join(', ')})),
+          h('tr', {'class': 'gctx'}, h('td', {colspan: 3}, groupContextPeek(g)))];
       }))));
   }
   showArchived.addEventListener('change', drawGroups);
@@ -626,6 +629,28 @@ function createGroupForm() {
     }}, field('Slug (stable id)', slug), field('Name', name), field('Purpose', purpose), field('Scope', scope), rel,
       h('p', {'class': 'note', text: 'After creating it, seed its context: curate earlier work, write a seed with references, or approve it as empty.'}),
       h('button', {type: 'submit', text: 'Create group'}), out));
+}
+
+// Collapsed under each group row; fetches and shows the full context on first open.
+function groupContextPeek(g) {
+  var body = h('div', {'class': 'peek'}), loaded = false;
+  var d = h('details', null, h('summary', {text: g.readiness === 'unseeded' ? 'context: none yet' : 'context'}), body);
+  d.addEventListener('toggle', function () {
+    if (!d.open || loaded) return;
+    loaded = true;
+    add(body, h('p', {'class': 'note', text: 'Loading…'}));
+    api('GET', G(proj.slug, g.slug)).then(function (res) {
+      clear(body);
+      if (!res.ok) { loaded = false; add(body, h('p', {'class': 'msg-err', text: 'Could not load the context: ' + why(res)})); return; }
+      var c = res.data.group.context || {};
+      if (!c.revision) { add(body, h('p', {'class': 'note', text: 'No context yet.'})); return; }
+      add(body, h('div', {'class': 'ctx', text: c.body || '(empty, approved as such)'}),
+        (c.sources || []).length ? h('div', {'class': 'note'}, 'Sources:', h('ul', {'class': 'plain'}, c.sources.map(srcItem))) : null,
+        h('p', {'class': 'note'}, 'Revision ' + c.revision + (c.author ? ' by @' + c.author : '') + (c.created_at ? ', ' + when(c.created_at) : '') + ' · ',
+          h('a', {href: '#group=' + encodeURIComponent(g.slug), text: 'open group'})));
+    });
+  });
+  return d;
 }
 
 // ================================================================= a group
