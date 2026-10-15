@@ -148,7 +148,7 @@ BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
-BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all-tools}
+BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all}
 
 usage() { sed -n '2,95p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
@@ -734,7 +734,7 @@ if [ ! -s "$TOKFILE" ]; then
   done
   echo "$REG" > "$TOKFILE"
   chmod 600 "$TOKFILE"
-  # start from now: a new bot is not responsible for the past
+  # Live delivery starts now; startup catch-up discovers recent older work separately.
   SEEN=$(api "$BOARD/api/me" | python3 -c 'import sys,json;print(json.load(sys.stdin)["cursor"])')
   echo "$SEEN" > "$STATE/seen"
 else
@@ -922,14 +922,16 @@ def ctx(label,scope):
     head="%s (readiness: %s, %s)"%(label,scope.get("readiness") or "?",rev)
     src=", ".join(c.get("sources") or [])
     return head+(":\n"+body if body else ": no context written yet")+("\nSources: "+src if src else "")
-seen={}; out=[]; held=[]
+seen={}; out=[]; held=[]; ids=set()
 for line in sys.stdin.read().splitlines():
     f=line.split("\t",6)
     if len(f)<7: continue
     mid,ch,thread,author,why,kind,body=f
+    if mid in ids: continue
+    ids.add(mid)
     if kind=="context_update":
         say("message %s in #%s is a context update: nothing to run"%(mid,ch)); continue
-    if pool and not assigned and not assignment_error and why=="channel" and "all" not in watch and ch not in watch:
+    if pool and not assigned and not assignment_error and why in ("channel","backlog") and "all" not in watch and ch not in watch:
         continue
     if pool and assignment_error and ch not in fleet and not ch.startswith("dm-"):
         held.append(line); say("message %s held: pool assignment lookup failed (%s)"%(mid,assignment_error)); continue
@@ -1014,6 +1016,63 @@ You are equipped with these skills, installed where your harness loads skills fr
 $SKILL_BRIEF}"
 }
 # ---- the loop ----------------------------------------------------------------------
+fetch_backlog() {  # One descending page of recent thread activity; never advances SEEN.
+  python3 - "$BOARD" "$TOKFILE" "$STATE" "$HANDLE" "$WATCH" "$FLEET_CHANNELS" "$POOL" "$GOAL" "$BACKLOG_BEFORE" "$BACKLOG_CUTOFF" <<'PY'
+import datetime,json,os,sys,urllib.request
+board,tokfile,state,handle,watch,fleet,pool,goal,before,cutoff=sys.argv[1:]
+watch=set(filter(None,watch.split(","))); fleet=set(fleet.split(","))
+before=int(before); cutoff=float(cutoff)
+req=urllib.request.Request(board+"/api/messages?kind=channel&order=desc&before="+str(before),
+                           headers={"Authorization":"Bearer "+open(tokfile).read().strip()})
+with urllib.request.urlopen(req,timeout=20) as response:
+    page=json.load(response)
+messages=page["messages"]
+next_before=0
+if page.get("has_more"):
+    next_before=int(page["next_before"])
+    if not messages or not 0 < next_before < before:
+        raise ValueError("startup catch-up pagination did not advance")
+threads_path=os.path.join(state,"backlog.threads")
+threads=set()
+if os.path.exists(threads_path):
+    with open(threads_path) as saved:
+        threads=set(saved.read().splitlines())
+out=[]
+for m in messages:
+    if m["id"] >= before:
+        raise ValueError("startup catch-up returned a message outside its cursor")
+    created=datetime.datetime.fromisoformat(m["created_at"].replace("Z","+00:00"))
+    if created.tzinfo is None:
+        raise ValueError("startup catch-up timestamp has no timezone")
+    if created.timestamp() < cutoff:
+        next_before=0
+        break
+    ch=m["board"]; tid=m.get("thread_id") or m["id"]
+    project_channel=ch not in fleet and not ch.startswith("dm-")
+    watched=(bool(pool) and project_channel) or ((ch=="help" or project_channel) if "all" in watch else ch in watch)
+    if not watched and str(tid)!=goal:
+        continue
+    meta=m.get("meta") or {}
+    if m["author"]==handle or meta.get("launcher")=="bin/bot":
+        continue
+    kind=str(meta.get("kind") or "")
+    if kind=="context_update":
+        continue
+    if str(tid) in threads:
+        continue
+    threads.add(str(tid))
+    if meta.get("done") is True:
+        continue
+    kind=kind if kind.replace("_","").isalnum() else ""
+    out.append("\t".join([str(m["id"]),ch,str(tid),m["author"],"backlog",kind,m["body"].replace("\n","\\n")]))
+with open(os.path.join(state,"backlog.next"),"w") as output:
+    output.write(str(next_before))
+with open(threads_path,"w") as output:
+    output.write("\n".join(sorted(threads)))
+print("\n".join(out))
+PY
+}
+
 fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>body per message; advances SEEN
   # Wait on the whole board, then sort what arrived: what the inbox says is ours
   # (mentions, conversations, threads we posted in) and the goal thread are
@@ -1091,6 +1150,10 @@ fi
 
 OUTAGE_BY_OUTPUT=""   # the outage was read off a run's output, not from the harness's auth status
 OUTAGE=""        # set while the harness is logged out: the time it was found so
+BACKLOG_BEFORE=$((SEEN + 1))
+BACKLOG_CUTOFF=$(python3 -c 'import time;print(time.time()-7*24*60*60)')
+: > "$STATE/backlog.threads"
+log "startup catch-up: checking the last seven days without rewinding seen=$SEEN"
 if [ -s "$STATE/health" ]; then
   if grep -qE '^(logged out|out of)' "$STATE/health"; then OUTAGE=$(date -u +%FT%TZ); OUTAGE_BY_OUTPUT=1; fi
 fi
@@ -1105,8 +1168,17 @@ while :; do
     if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then sleep 60; continue; fi
     log "retrying $HARNESS; keeping its last failure visible until a run succeeds"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
   fi
-  NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
-  SEEN=$(cat "$STATE/seen")
+  if [ "$BACKLOG_BEFORE" -gt 1 ]; then
+    if NEW=$(fetch_backlog 2>>"$LOG"); then
+      BACKLOG_BEFORE=$(cat "$STATE/backlog.next")
+    else
+      log "startup catch-up failed; retrying without advancing its cursor"
+      sleep 5; continue
+    fi
+  else
+    NEW=$(fetch_new)               # runs in a subshell, so pick the cursor up from disk
+    SEEN=$(cat "$STATE/seen")
+  fi
   if [ -s "$STATE/held" ]; then      # held last time: their channel's project could not be looked up
     NEW=$(cat "$STATE/held"; if [ -n "$NEW" ]; then echo "$NEW"; fi); rm -f "$STATE/held"
   fi
@@ -1145,7 +1217,8 @@ while :; do
     PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${SKILL_PATHS:+ Skills you are equipped with, to use when a message asks for what one covers: $SKILL_PATHS.}${NOREPO:+ $NOREPO}"$'\n'
     if [ -n "$proj" ] && [ -s "$STATE/route/$proj.ctx" ]; then PROMPT+=$'\n'"$(cat "$STATE/route/$proj.ctx")"$'\n\n'; fi
     PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
-    PROMPT+="- Marked 'channel': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
+    PROMPT+="- Marked 'backlog': a historical thread active in the last seven days, discovered at startup, not a new request. Read its entire current thread first (paginate with next_since while has_more). Do nothing on completed or answered requests; skip any piece already claimed and not released. Only take unfinished, unclaimed work; use the same claim-and-recheck rules below, including atomic seed claims where required. Never replay completed actions just because this bot is new."$'\n'
+    PROMPT+="- Marked 'channel' or 'backlog': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
     while IFS=$'\t' read -r id board thread author why kind note body; do
       if [ "$kind" = - ]; then kind=""; fi
       if [ "$note" = - ]; then note=""; fi
