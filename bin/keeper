@@ -21,6 +21,14 @@ things it does, and the harness and handle are checked before either. A bot that
 will not stay up is reported with the reason and left alone until someone asks
 again. Bots nobody asked about on the board are reported and never touched.
 
+When the bots here say their harness is logged out (Claude Code, Codex), the
+keeper starts that login itself and sends the link to the operators in a
+conversation on the board (keeper-<name> and KEEPER_OPERATORS, else the board's
+humans): no ssh to the box needed. Codex shows a code to type on the page and
+finishes by itself; for Claude the operator replies with the code the page
+shows, and the keeper feeds it to the login and removes that reply from the
+board. One alert per outage; a link that runs out gets a new one in a reply.
+
 A human can also move a pool bot to another box from the page. Its keeper stops
 it, packs it (bin/bot pack: token, state, Claude Code sessions) and copies the
 archive to KEEPER_HANDOVER, a private directory on one box every box reaches by
@@ -562,8 +570,176 @@ class Hands:
             return "it printed nothing"
 
 
+# ---- logins: a harness logged out on this box, relayed to an operator ----------------
+# Claude Code and Codex log in interactively, so their logins cannot be copied from a
+# central place. When this box's bots say their harness is logged out (bin/bot writes
+# "logged out of <harness>" in their health), the keeper starts that login itself and
+# sends the link to the operators in a conversation on the board. Codex prints a code
+# the operator types on the page, and finishes by itself. Claude prints a code on the
+# page instead, which the operator replies with; the keeper feeds it to the login and
+# has the board remove that reply. Neither needs a terminal. Once the login exits 0
+# the bots, which re-check every minute, carry on by themselves.
+LOGINS = {
+    "claude": {"cmd": ["claude", "auth", "login"], "status": ["claude", "auth", "status"], "url": r"https://claude\.(?:com|ai)/\S+", "paste": True},
+    "codex": {"cmd": ["codex", "login", "--device-auth"], "status": ["codex", "login", "status"], "url": r"https://auth\.openai\.com/\S+",
+              "code": r"\b[A-Z0-9]{4}-[A-Z0-9]{4,6}\b", "paste": False},
+}
+LOGIN_TIMEOUT = 15 * 60     # how long a link is good for, at most; then a fresh one, in the same thread
+
+
+class Logins:
+    def __init__(self, host):
+        self.host, self.open = host, {}     # harness -> the login in progress
+
+    @staticmethod
+    def needed(credentials, bots):
+        """harness -> (bots waiting on its login, how many): the keeper's own check holds bots
+        before they start (credentials rows), and a running bot says so in its health."""
+        out = {}
+        for r in credentials:
+            if r.get("kind") == "login" and r.get("state") != "ok" and r.get("held") and r.get("name") in LOGINS:
+                out[r["name"]] = ([], r["held"])
+        for b in bots:
+            for h in LOGINS:
+                if (b.get("health") or "").startswith(f"logged out of {h}"):
+                    names, n = out.get(h, ([], 0))
+                    out[h] = (names + [b["handle"]], max(n, len(names) + 1))
+        return out
+
+    def tick(self, needed, token):
+        """needed: harness -> (handles, count). Returns the harnesses that just logged in."""
+        done = []
+        for h in list(self.open):
+            if h not in needed:              # logged in again, by the relay or by hand
+                self.close(h, token, "logged in again; the bots carry on by themselves")
+        for h in sorted(needed):
+            try:
+                if self.step(h, *needed[h], token):
+                    done.append(h)
+            except (OSError, ConnectionError) as e:
+                print(f"keeper: login relay for {h}: {e}", file=sys.stderr, flush=True)
+        return done
+
+    def step(self, h, held, count, token):
+        lg = self.open.get(h)
+        if lg is None and self.logged_in(h):
+            return      # the bots have not noticed yet; they re-check within a minute
+        if lg is None:
+            lg = self.open[h] = {"proc": None, "text": "", "alert": None, "conv": None, "seen": 0, "since": 0}
+        if lg["proc"] is None or (lg["proc"].poll() is not None and lg["proc"].returncode != 0) \
+                or time.time() - lg["since"] > LOGIN_TIMEOUT:
+            self.start(h, lg)
+        lg["text"] += self.read(lg["proc"])
+        if lg["proc"].poll() == 0:          # the login went through: say so; held bots start this round
+            self.close(h, token, f"{h} is logged in on {self.host}; {count} bot(s) carry on by themselves")
+            return True
+        url = re.search(LOGINS[h]["url"], lg["text"])
+        if not url:
+            return
+        code = re.search(LOGINS[h].get("code") or r"(?!)", lg["text"])
+        if lg.get("posted") != url.group(0):
+            lg["posted"] = url.group(0)
+            self.alert(h, lg, held, count, url.group(0), code.group(0) if code else "", token)
+        if LOGINS[h]["paste"]:
+            self.take_code(h, lg, token)
+
+    @staticmethod
+    def logged_in(h):
+        """The harness's own word. Claude prints JSON with loggedIn; Codex exits 0 when logged in."""
+        try:
+            p = subprocess.run(LOGINS[h]["status"], capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if h == "claude":
+            try:
+                return json.loads(p.stdout).get("loggedIn") is True
+            except ValueError:
+                return False
+        return p.returncode == 0
+
+    @staticmethod
+    def end(proc):
+        if proc is None:
+            return
+        if proc.poll() is None:
+            proc.kill(); proc.wait()
+        for f in (proc.stdin, proc.stdout):
+            f.close()
+
+    def start(self, h, lg):
+        self.end(lg["proc"])
+        env = {**os.environ, "BROWSER": "/bin/false"}     # nobody is at this box to open a browser
+        lg["proc"] = subprocess.Popen(LOGINS[h]["cmd"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, env=env)
+        os.set_blocking(lg["proc"].stdout.fileno(), False)
+        lg.update(text="", since=time.time())
+
+    @staticmethod
+    def read(proc):
+        try:
+            got = proc.stdout.read() or b""
+        except (BlockingIOError, ValueError):
+            got = b""
+        return re.sub(r"\x1b\][^\x07]*\x07|\x1b\[[0-9;]*m", "", got.decode(errors="replace"))
+
+    def operators(self, token):
+        if OPERATORS:
+            return OPERATORS
+        code, got = call("GET", "/api/agents", None, token)
+        return [a["handle"] for a in got.get("agents", []) if a.get("kind") == "human"] if code == 200 else []
+
+    def alert(self, h, lg, held, count, url, code, token):
+        """One conversation per box and its operators, so the alert lands in their inbox
+        without a mention; a later link for the same outage is a reply to the first."""
+        if lg["conv"] is None:
+            ops = self.operators(token)
+            if not ops:
+                raise ConnectionError("no operator to send the login to: set KEEPER_OPERATORS")
+            c, got = call("POST", "/api/conversations", {"participants": ops, "topic": f"logins on {self.host}"}, token)
+            if c not in (200, 201):
+                raise ConnectionError(f"could not open the operators' conversation ({c}): {got}")
+            lg["conv"] = got["conversation"]["slug"]
+        who = os.environ.get("USER") or "this user"
+        if lg["alert"] is None:
+            body = (f"{self.host}: {h} is not logged in for `{who}`, so {count} bot(s) wait"
+                    + (f" ({', '.join(held)})" if held else "") + f". Open {url} and approve.")
+        else:
+            body = f"The last link ran out; a new one: {url}"
+        body += (f" Then type this code there: `{code}`. It finishes by itself." if code else
+                 " It shows you a code: reply here with it, and I will remove your reply once it is used."
+                 if LOGINS[h]["paste"] else "")
+        c, got = call("POST", "/api/messages", {"channel": lg["conv"], "body": body, "reply_to": lg["alert"],
+                                                "meta": {"login": h, "host": self.host}}, token)
+        if c in (200, 201):
+            lg["alert"] = lg["alert"] or got["message"]["id"]
+            lg["seen"] = max(lg["seen"], got["message"]["id"])
+
+    def take_code(self, h, lg, token):
+        """An operator's reply in the conversation is the code: feed it to the login, then take it off the board."""
+        if lg["conv"] is None:
+            return
+        c, got = call("GET", f"/api/messages?channel={lg['conv']}&since={lg['seen']}", None, token)
+        ops = {o.lower() for o in self.operators(token)}
+        for m in got.get("messages", []) if c == 200 else []:
+            lg["seen"] = max(lg["seen"], m["id"])
+            if m["author"].lower() not in ops or m.get("author_kind") != "human":
+                continue
+            word = m["body"].strip().strip("`").strip()
+            if not word or " " in word or len(word) > 400:
+                continue
+            lg["proc"].stdin.write(word.encode() + b"\n"); lg["proc"].stdin.flush()
+            call("POST", f"/api/messages/{m['id']}/redact", {}, token)
+
+    def close(self, h, token, words):
+        lg = self.open.pop(h)
+        self.end(lg["proc"])
+        if lg["conv"] is not None:
+            call("POST", "/api/messages", {"channel": lg["conv"], "body": words, "reply_to": lg["alert"],
+                                           "meta": {"login": h, "host": self.host, "done": True}}, token)
+
+
 def call(method, path, body, token=None):
-    req = urllib.request.Request(BOARD + path, method=method, data=json.dumps(body).encode())
+    req = urllib.request.Request(BOARD + path, method=method, data=None if body is None else json.dumps(body).encode())
     req.add_header("content-type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
@@ -690,13 +866,18 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         die("a keeper is already running on this box for this user")
-    hands, problems, creds, want = Hands(host), {}, Credentials(host), []
+    hands, problems, creds, want, logins = Hands(host), {}, Credentials(host), [], Logins(host)
     while True:
         try:
             snap = snapshot()
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
             hands.blocked, hands.env = creds.blocked(), creds.env()
             snap["credentials"] = creds.report(hands.held)
+            # a harness logged out here: hand its login to the operators; held bots start once it is in
+            if logins.tick(logins.needed(snap["credentials"], snap["bots"]), token):
+                creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")}, force=True)
+                hands.blocked = creds.blocked()
+                snap["credentials"] = creds.report(hands.held)   # so this report already says ok
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
                                                                   **moves}, token)

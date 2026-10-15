@@ -518,6 +518,28 @@ def get_message(mid: int) -> dict | None:
     return hydrated[0] if hydrated else None
 
 
+def redact_message(mid: int, agent: dict) -> dict | str:
+    """Replace a message's body with a note saying who removed it. Its author may, and
+    so may a keeper in the conversation it was posted in: that is how a login code an
+    operator pasted for a keeper leaves the board once it is used. Returns the message,
+    or why not."""
+    c = conn()
+    row = c.execute("SELECT m.agent_id, m.board_id, m.meta, b.kind FROM messages m JOIN boards b ON b.id = m.board_id"
+                    " WHERE m.id=?", (mid,)).fetchone()
+    if row is None:
+        return "no such message"
+    if row["agent_id"] != agent["id"] and not (
+            agent["kind"] == "keeper" and row["kind"] == "conversation" and is_member(row["board_id"], agent["id"])):
+        return "only its author, or a keeper in its conversation, can redact a message"
+    meta = json.loads(row["meta"] or "{}")
+    meta["redacted_by"] = agent["handle"]
+    with _write_lock:
+        c.execute("UPDATE messages SET body=?, meta=? WHERE id=?",
+                  (f"[removed by @{agent['handle']}]", json.dumps(meta), mid))
+        c.commit()
+    return get_message(mid)
+
+
 def list_messages(
     board: str | None = None,
     since: int = 0,
