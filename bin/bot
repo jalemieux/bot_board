@@ -18,9 +18,8 @@
 # with one it is dedicated to that repo.
 #
 # The script does the waiting, not the model. It registers one handle, then
-# long-polls the board; each time a message mentions the bot, lands on its goal
-# thread, or is posted in a watched channel (default: the project's own channel
-# and help; --watch '' for none) it prompts the harness with it, resuming the same
+# long-polls the board, atomically claims new threads in watched channels, and
+# wakes the harness only for its worker threads or explicit mentions, resuming the same
 # harness session every time so the bot keeps its context, and waits for the
 # harness to return before polling again. A bot is: this loop + that session.
 # Claude Code and Copilot CLI resume by session id, Codex by thread id, OpenCode by
@@ -89,7 +88,6 @@
 #
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
-#      BOT_JITTER (max secs to wait before acting on an unaddressed post),
 #      BOT_POOL (workspace root of a pool bot when --pool is not given),
 #      BOT_SKILLS (skill sources, space-separated; same as repeating --skill),
 #      BOT_NAMES (the names new bots are drawn from, space-separated),
@@ -138,9 +136,6 @@ load_fleet_env
 
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
-# Several bots see the same channel post at once; a random pause spreads them
-# out so the first one's claim is usually on the thread before the others look.
-BOT_JITTER=${BOT_JITTER:-20}
 # Headless runs cannot answer permission prompts, so the harness must be told
 # up front what it may do. Override these if your box wants something tighter.
 BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
@@ -1000,6 +995,68 @@ print("\n".join(out))
 ' "$BOARD" "$TOKFILE" "$POOL" "$FLEET_CHANNELS" "$PROJECT" "$STATE" "$REPO" "$HANDLE" "$WATCH"
 }
 
+# Only the winning launcher wakes a model for open work. A mention in a reply
+# invites a helper without making it a worker or a subscriber.
+claim_batch() {
+  python3 -c '
+import sys,json,urllib.request,urllib.error,os
+board,tokfile,state,norepo,handle,seen=sys.argv[1:]
+seen=int(seen)
+token=open(tokfile).read().strip()
+def request(path,method="GET"):
+    req=urllib.request.Request(board+path,method=method,headers={"Authorization":"Bearer "+token})
+    with urllib.request.urlopen(req,timeout=20) as response: return json.load(response)
+delivered=set()
+for line in sys.stdin.read().splitlines():
+    f=line.split("\t",7)
+    if len(f)!=8: continue
+    mid,ch,tid,author,why,kind,note,body=f
+    if mid in delivered: continue
+    if why=="for you" and (mid!=tid or (note!="-" and kind!="context_seed") or norepo):
+        print(line); delivered.add(mid); continue
+    if norepo: continue
+    try:
+        claim=request("/api/threads/"+tid+"/worker","POST")
+        if claim.get("worker")!=handle or claim.get("thread_id")!=int(tid):
+            raise ValueError("invalid thread-worker response")
+        # Replies fetched before pickup were not yet in our inbox. Include them
+        # now so advancing the live cursor cannot lose a fast human follow-up.
+        updates=[]; since=int(mid)
+        while True:
+            page=request("/api/threads/"+tid+"?since="+str(since))
+            if page.get("worker")!=handle:
+                updates=None; break
+            updates.extend(m for m in page["messages"] if m["id"]<=seen)
+            if not page.get("has_more") or any(m["id"]>=seen for m in page["messages"]): break
+            next_since=int(page["next_since"])
+            if next_since<=since: raise ValueError("thread catch-up pagination did not advance")
+            since=next_since
+    except urllib.error.HTTPError as exc:
+        if exc.code==409: continue
+        if exc.code==403:
+            print("thread %s claim refused: HTTP 403; skipping message %s"%(tid,mid),file=sys.stderr)
+            continue
+        print("thread %s claim failed: HTTP %s; holding message %s"%(tid,exc.code,mid),file=sys.stderr)
+        with open(os.path.join(state,"held"),"a") as held: held.write("\t".join(f[:6]+[body])+"\n")
+        continue
+    except (OSError,ValueError,KeyError) as exc:
+        print("thread %s claim failed: %s; holding message %s"%(tid,exc,mid),file=sys.stderr)
+        with open(os.path.join(state,"held"),"a") as held: held.write("\t".join(f[:6]+[body])+"\n")
+        continue
+    if updates is None: continue
+    print(line)
+    delivered.add(mid)
+    for message in updates:
+        uid=str(message["id"])
+        meta=message.get("meta") or {}
+        if uid in delivered or message["author"]==handle or meta.get("launcher")=="bin/bot" or meta.get("kind")=="context_update":
+            continue
+        print("\t".join([uid,message["board"],tid,message["author"],"for you",
+            str(meta.get("kind") or "-"),"-",message["body"].replace("\n","\\n")]))
+        delivered.add(uid)
+' "$BOARD" "$TOKFILE" "$STATE" "$1" "$HANDLE" "$SEEN"
+}
+
 # ---- first turn: read the rules ---------------------------------------------------
 # No lobby introduction: a standby bot is found through its registration
 # description and the channels it watches, not through a post nobody reads.
@@ -1074,39 +1131,40 @@ PY
 }
 
 fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>body per message; advances SEEN
-  # Wait on the whole board, then sort what arrived: what the inbox says is ours
-  # (mentions, conversations, threads we posted in) and the goal thread are
-  # "for you"; everything else posted in a watched channel is "channel", and
-  # every bot watching it gets it. The model decides what, if anything, to do.
+  # Watching discovers roots, not other workers conversations. Claims happen
+  # after project routing and before a model is woken.
   api "$BOARD/api/messages?since=$SEEN&limit=200&wait=$BOT_WAIT" >"$STATE/all.json" || { sleep 5; return 0; }
   grep -q '"messages":\[{' "$STATE/all.json" || return 0
-  api "$BOARD/api/inbox?since=$SEEN&limit=200" >"$STATE/inbox.json" || return 0
   python3 -c '
 import sys,json
 me,seen,goal,watch=sys.argv[1],int(sys.argv[2]),sys.argv[3],set(filter(None,sys.argv[4].split(",")))
-fleet=set(sys.argv[7].split(","))
+fleet=set(sys.argv[6].split(","))
 # "all" = every project channel plus help; fleet channels and conversations are not watched
 def watched(b):
     # Pool assignment is checked before a harness runs. Intake project messages
     # even with custom watches so an explicit human assignment can take effect.
     project_channel=b not in fleet and not b.startswith("dm-")
-    return (bool(sys.argv[8]) and project_channel) or ((b=="help" or project_channel) if "all" in watch else b in watch)
+    return (bool(sys.argv[7]) and project_channel) or ((b=="help" or project_channel) if "all" in watch else b in watch)
 alld=json.load(open(sys.argv[5])); msgs=alld.get("messages",[])
 hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have not looked at
-mine={m["id"] for m in json.load(open(sys.argv[6])).get("messages",[])}
 for m in msgs:
     if m["author"]==me: continue
     # A notice from a launcher (a failed run, a lost login) is for humans. Waking a bot
     # with it makes that bot fail and post one too: two broken bots then loop for ever.
     if (m.get("meta") or {}).get("launcher")=="bin/bot": continue
     tid=m["thread_id"] or m["id"]
-    if m["id"] in mine or (goal and str(tid)==goal): why="for you"
-    elif watched(m["board"]): why="channel"
+    if m.get("worker")==me or me.lower() in [h.lower() for h in m.get("mentions",[])]: why="for you"
+    elif (watched(m["board"]) or (goal and str(tid)==goal)) and (
+            m.get("reply_to") is None or (m.get("meta") or {}).get("kind")=="thread_released"
+            or (m.get("meta") or {}).get("worker_released") is True):
+        if m.get("mentions"): continue
+        if (m.get("meta") or {}).get("done") is True: continue
+        why="channel"
     else: continue
     kind=str((m.get("meta") or {}).get("kind") or "")   # meta.kind: context_update, context_seed, ...
     kind=kind if kind.replace("_","").isalnum() else ""
     print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,kind,m["body"].replace("\n","\\n")]))
-print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$STATE/inbox.json" "$FLEET_CHANNELS" "$POOL" 2>"$STATE/seen.tmp"
+print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" "$FLEET_CHANNELS" "$POOL" 2>"$STATE/seen.tmp"
   SEEN=$(cat "$STATE/seen.tmp"); echo "$SEEN" > "$STATE/seen"
 }
 
@@ -1188,10 +1246,6 @@ while :; do
   NEW=$(route_batch <<<"$NEW" 2>"$STATE/route.log")
   while IFS= read -r line; do log "$line"; done <"$STATE/route.log"
   [ -n "$NEW" ] || continue
-  N=$(wc -l <<<"$NEW")
-  if ! cut -f6 <<<"$NEW" | grep -qx 'for you'; then   # nothing addressed to us: let a faster bot claim first
-    J=$((RANDOM % (BOT_JITTER + 1))); log "$N channel post(s), pausing ${J}s"; sleep "$J"
-  fi
   # One harness run per project in the batch, each in that project's checkout and session.
   # ("-" stands for no project, so the home group survives the trailing-newline strip)
   PROJECTS=$(cut -f1 <<<"$NEW" | awk '!s[$0]++')
@@ -1211,14 +1265,16 @@ while :; do
       DIR=$POOL; SFILE=$STATE/session
       NOREPO="There is no checkout of project $proj under $POOL and none could be cloned (the board lists no repository for it, or its channel topic names none, or the clone failed), so you cannot read or change its code. Reply only to what is addressed to you, saying so; do not claim open work there. (A topic like 'repo owner/name' on the channel would let a pool bot clone it.)"
     else NOREPO=""; fi
+    GROUP=$(claim_batch "$NOREPO" <<<"$GROUP" 2>>"$LOG")
+    [ -n "$GROUP" ] || continue
+    N=$(wc -l <<<"$GROUP")
     log "$N new message(s)${proj:+ for $proj}, prompting $HARNESS in $DIR"
     PROMPT=""
     [ -s "$SFILE" ] || PROMPT="$(intro "$proj" "$DIR")"$'\n\n'
     PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${SKILL_PATHS:+ Skills you are equipped with, to use when a message asks for what one covers: $SKILL_PATHS.}${NOREPO:+ $NOREPO}"$'\n'
     if [ -n "$proj" ] && [ -s "$STATE/route/$proj.ctx" ]; then PROMPT+=$'\n'"$(cat "$STATE/route/$proj.ctx")"$'\n\n'; fi
-    PROMPT+="- Marked 'for you': do what is asked; reply in the same thread (reply_to the id given) with the outcome, or with what you need if you cannot."$'\n'
-    PROMPT+="- Marked 'backlog': a historical thread active in the last seven days, discovered at startup, not a new request. Read its entire current thread first (paginate with next_since while has_more). Do nothing on completed or answered requests; skip any piece already claimed and not released. Only take unfinished, unclaimed work; use the same claim-and-recheck rules below, including atomic seed claims where required. Never replay completed actions just because this bot is new."$'\n'
-    PROMPT+="- Marked 'channel' or 'backlog': a post in a channel you watch, not addressed to you; every bot watching the channel got it too. Most need nothing (status, FYIs, other agents' claims and results, a conversation between others): then post nothing. If it @mentions an agent, it is theirs unless GET $BOARD/api/agents shows them idle or away. If it asks for work or a question you can answer and nobody is on it, claim it before starting: GET $BOARD/api/threads/<thread>; if another agent has already claimed or answered it, leave it. If it offers several pieces, claim one piece nobody has claimed yet and name it. Otherwise reply in the thread 'taking this: <what you will do>', then read the thread again: if someone else's claim on the same piece has a lower message id than yours, theirs wins, so reply 'backing off' and stop. Once it is yours, do it and reply in the thread with the outcome."$'\n'
+    PROMPT+="One thread, one worker. The launcher has atomically claimed threads marked 'channel' or 'backlog' for you. 'for you' is a worker-thread update or an explicit mention: if you are a tagged helper, answer that request without taking over. Only the worker follows all replies; tag anyone else whose attention you need, including humans. No prose claims or back-off messages are needed. FYIs need no reply."$'\n'
+    PROMPT+="For 'backlog', read the current thread first (paginate with next_since while has_more); do not repeat completed work. Ownership is shown by GET $BOARD/api/threads/<thread>/worker. It persists across restarts and follow-ups; release work you cannot continue with DELETE on that endpoint."$'\n'
     while IFS=$'\t' read -r id board thread author why kind note body; do
       if [ "$kind" = - ]; then kind=""; fi
       if [ "$note" = - ]; then note=""; fi
