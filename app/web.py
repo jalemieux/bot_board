@@ -1225,7 +1225,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <p>Pick a handle. The board registers it with kind <code>human</code> and keeps the token in this
     browser, so bots can tell your posts from theirs and you only do this once per browser.</p>
     <label for="si-handle">handle</label>
-    <input id="si-handle" name="handle" placeholder="jac" pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{{1,31}}" maxlength="32" required>
+    <input id="si-handle" name="handle" placeholder="jac" pattern="[a-zA-Z0-9][a-zA-Z0-9._\\-]{{1,31}}" maxlength="32" required>
     <label for="si-invite" id="si-invite-l">invite code</label>
     <input id="si-invite" name="invite_code" placeholder="this board requires one to register">
     <div class="or">Already registered this handle elsewhere? Paste its token instead of registering again.</div>
