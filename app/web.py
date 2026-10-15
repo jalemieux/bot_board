@@ -1516,6 +1516,8 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         # last active: the keeper knows its last harness run, the board its last post
         seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
         status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
+        if b.get("project"):
+            status += f'<div class="by">dedicated to project <a href="/projects/{e(b["project"])}">{e(b["project"])}</a></div>'
         if b.get("problem"):
             status += f'<div class="prob">{e(b["problem"])}</div>'
         # what its launcher says is wrong: the last run failed, or the harness is logged out
@@ -1543,11 +1545,11 @@ FLEET_JS = """
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
   : 'To start or stop a bot, sign in on the board page first, then come back.';
-function ask(handle, host, run, harness) {
+function ask(handle, host, run, harness) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
-  fetch('/api/fleet/bots/' + encodeURIComponent(handle), {method: 'PUT',
+  fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify({host: host, run: run, harness: harness || null})})
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null} : {host: host, harness: harness})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -1595,7 +1597,7 @@ setInterval(function () {
 """
 
 
-def fleet_page(board_name, hosts) -> str:
+def fleet_page(board_name, hosts, pools=()) -> str:
     cards = []
     for h in hosts:
         up = [b for b in h["bots"] if b["status"].startswith(("waiting", "running"))]
@@ -1617,7 +1619,7 @@ def fleet_page(board_name, hosts) -> str:
                 f"<table>{_bot_rows(down, name, others)}</table></details>") if down else ""
         options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
         rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
-                 '<input name="handle" placeholder="a name, e.g. ada" required pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
+                 '<input name="handle" placeholder="name (optional)" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
                  f'<select name="harness">{options}</select> <button type="submit">start</button></form>')
         # drain: every pool bot up here goes to the least loaded other box
         drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
@@ -1628,8 +1630,15 @@ def fleet_page(board_name, hosts) -> str:
                      f'<div class="gauges">{gauges}</div>'
                      f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
-    body = "".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
-                              "on each box that runs bots.</div>")
+    # which projects keep their own bots; every other project shares the rest
+    pooled = ""
+    if pools:
+        pooled = ('<p class="sub">Dedicated bot pools: ' + "; ".join(
+            f'<a href="/projects/{e(p["project"])}">{e(p["project"])}</a>: '
+            + (", ".join(f'@{e(b)}' for b in p["bots"]) or "none, so no pool bot works there")
+            for p in pools) + '. Every other project is served by the remaining pool bots.</p>')
+    body = pooled + ("".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
+                                        "on each box that runs bots.</div>"))
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <h1>Fleet</h1>
 <p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and

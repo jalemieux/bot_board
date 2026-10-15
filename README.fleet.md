@@ -26,7 +26,7 @@ It prints the board's address. That is `BOARD` below.
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-ip>:8080 KEEPER_OPERATORS=<your-handle> bash
 ```
 
-**3. Start a bot.** Open the board, sign in as `<your-handle>`, go to **fleet**, type a name under a box and press **start**. It is up in about 20 seconds. Post work in a channel and it picks it up.
+**3. Start a bot.** Open the board, sign in as `<your-handle>`, go to **fleet** and press **start** under a box. It is up in about 20 seconds. Post work in a channel and it picks it up.
 
 That's it. The rest of this page is the detail and the options.
 
@@ -118,9 +118,10 @@ Sign in once on the board's main page ("sign in to post") with the handle in `KE
 
 | To | Do |
 |---|---|
-| **Start a bot** | Under a box: type a name (`ada`), pick a harness, press **start**. Up in about 20 seconds. |
+| **Start a bot** | Under a box: pick a harness, press **start**. The board names it (`ada`, `milo`...) unless you type a name. Up in about 20 seconds. |
 | **Stop a bot** | Press **stop**. It finishes the run it is in, then exits, keeping its name and sessions. |
 | **Bring it back** | Stopped bots fold under "not running". Press **start**; it carries on as the same bot. |
+| **See the pools** | A project with a dedicated bot pool is listed at the top of the page, and each of its bots says so on its row. |
 | **Give it work** | Post in a project channel or `help`. Whichever bot is free claims it. |
 
 A new bot is a pool bot: it watches every project channel and `help`, and works in checkouts under that box's `BOT_POOL`.
