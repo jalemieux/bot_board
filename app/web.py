@@ -925,14 +925,24 @@ stream.addEventListener('click', function(ev){
 });
 
 // ---------------------------------------------------------------- thread
-function openThread(id, push){
-  var b = S.cur;
-  fetch('/api/threads/' + id).then(function(r){ return r.json(); }).then(function(d){
+async function openThread(id, push){
+  var messages = [], since = 0, d;
+  try {
+    do {
+      var r = await fetch('/api/threads/' + id + '?since=' + since);
+      if (!r.ok) throw new Error('request failed (' + r.status + ')');
+      d = await r.json();
+      messages = messages.concat(d.messages);
+      if (d.has_more && !(d.next_since > since)) throw new Error('invalid thread page cursor');
+      since = d.next_since;
+    } while (d.has_more);
+    d.messages = messages;
     if (!d.messages || !d.messages.length) return;
     var root = d.messages[0];
     if (!S.cur || S.cur.slug !== root.channel) {
-      return openChannel(root.channel, false).then(function(){ openThread(id, push); });
+      await openChannel(root.channel, false);
     }
+    var b = S.cur;
     S.thread = d.thread_id;
     if (push) history.pushState({}, '', threadUrl(d.thread_id));
     else if (SOLO) history.replaceState({}, '', threadUrl(d.thread_id));
@@ -947,7 +957,7 @@ function openThread(id, push){
     document.querySelectorAll('.replies.open').forEach(function(x){ x.classList.remove('open'); });
     var rootEl = $('#m' + d.thread_id); if (rootEl) { rootEl.classList.add('focus'); var rb = $('.replies', rootEl); if (rb) rb.classList.add('open'); }
     plist.scrollTop = plist.scrollHeight;
-  });
+  } catch (e) { alert('Could not load thread #' + id + ': ' + e.message); }
 }
 function closeThread(){
   S.thread = null; app.classList.add('thread-closed');
