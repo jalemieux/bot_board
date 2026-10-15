@@ -1271,7 +1271,9 @@ padding:7px 11px;font:13px var(--mono);margin:0 0 6px}
 .pool h3{margin:0 0 8px;font:600 13px var(--mono);display:flex;justify-content:space-between;gap:8px}
 .pool h3 small{font-weight:400;color:var(--dim)}
 .pool ul{list-style:none;margin:0;padding:0}
-.pool li{display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:10px;align-items:center;font:12.5px var(--mono);padding:3px 0}
+.pool li{display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:2px 10px;align-items:center;font:12.5px var(--mono);padding:3px 0}
+.pool li .s{grid-column:2/-1;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+.pool li .s.run{color:var(--good);font-weight:600}.pool li .s.prob{color:var(--accent)}
 .pool li .k,.pool li .t{color:var(--dim);font-size:12px}
 .pool li .t{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
 .pool details summary{cursor:pointer;color:var(--dim);font:12px var(--mono);margin-top:6px}
@@ -1313,10 +1315,32 @@ q.addEventListener('input',function(){
 """
 
 
-def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
+def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=()) -> str:
+    """hosts: box names; fleet: what each box's keeper reports (fleet.hosts()), for what
+    a pool bot is doing now, which its presence dot (when it last polled) does not say."""
     if not agents:
         return shell(board_name, "agents", here="/agents", content="""<h1>Agents</h1>
 <div class="empty">No harness has connected yet. <a href="/onboard">Connect one</a>.</div>""")
+    live = {}   # handle -> (box, state words, css class) from the keepers
+    for h in fleet:
+        for b in h.get("bots", []):
+            st = b.get("status") or ""
+            if not h.get("reporting"):
+                words, cls = f"{st}, but {h['name']} has not reported lately", "off"
+            elif st.startswith("running"):
+                words, cls = st, "run"
+            elif st.startswith("waiting"):
+                words, cls = "waiting for work", "wait"
+            else:
+                words, cls = st or "stopped", "off"
+            if b.get("problem"):
+                words, cls = f"{words}: {b['problem']}", "prob"
+            if b.get("project"):
+                words += f" · dedicated to {b['project']}"
+            key = b["handle"].lower()
+            if key not in live or cls in ("run", "wait"):   # a bot seen on two boxes: the one it is up on
+                live[key] = (h["name"], words, cls)
+    hosts = list(hosts) + [h["name"] for h in fleet]
     known = {h.lower() for h in hosts} | {a["handle"][len("keeper-"):].lower() for a in agents
                                           if a["kind"] == "keeper" and a["handle"].startswith("keeper-")}
     chans = {c.lower() for c in channels}
@@ -1332,40 +1356,54 @@ def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
     def handle_link(a, cls=""):
         return f'<a class="{cls}" href="/a/{e(a["handle"])}">@{e(a["handle"])}</a>'
 
-    working = [a for a in agents if a["role"] == "session" and a["tier"] != "away"]
+    working = [a for a in agents if a["role"] == "session" and a["tier"] in ("active", "recent")]
+    quiet = [a for a in agents if a["role"] == "session" and a["tier"] == "idle"]
     ended = [a for a in agents if a["role"] == "session" and a["tier"] == "away"]
     pool = [a for a in agents if a["role"] == "pool"]
     people = [a for a in agents if a["role"] == "people"]
-    pool_up = sum(a["tier"] in ("active", "recent") for a in pool)
+    for a in pool:   # the keeper knows where a pool bot is now, even after a move
+        if a["handle"].lower() in live:
+            a["box"] = live[a["handle"].lower()][0]
+    pool_up = sum(live.get(a["handle"].lower(), ("", "", ""))[2] in ("run", "wait") for a in pool)
 
-    rows = "".join(
+    def session_rows(group):
+        return "".join(
         f'<div class="arow" data-q="{q(a)}">{presence_dot(a["last_seen_at"])}'
         f'<div class="what">{e(a["what"]) or "<i>no description</i>"}</div>'
         f'<span class="when">{e(ago(a["last_seen_at"]))}</span><div class="meta">'
         + (f'<a class="pchip" href="/c/{e(a["project"])}">#{e(a["project"])}</a>' if a["project"] else "")
         + f'{handle_link(a, "h")}<span>{e(a["kind"])}{" on " + e(a["box"]) if a["box"] else ""}</span>'
         f'<span>{_plural(a.get("message_count") or 0, "post")}</span></div></div>'
-        for a in working)
-    work_html = (f'<div class="arows">{rows}</div>' if working
-                 else '<div class="empty">No session has been seen in the last 24 hours.</div>')
+        for a in group)
+    work_html = (f'<div class="arows">{session_rows(working)}</div>' if working
+                 else '<div class="empty">No session has been active in the last hour.</div>')
+    quiet_html = f'<div class="arows">{session_rows(quiet)}</div>' if quiet else ""
+
+    order = {"run": 0, "prob": 1, "wait": 2}
+    def state(a):
+        return live.get(a["handle"].lower(), ("", "no keeper reports it", "off"))
 
     def pool_li(a):
         kind = "claude" if a["kind"] == "claude-code" else a["kind"]
-        return (f'<li data-q="{q(a)}">{presence_dot(a["last_seen_at"])}{handle_link(a)}'
-                f'<span class="k">{e(kind)}</span><span class="t">{e(ago(a["last_seen_at"]))}</span></li>')
+        _, words, cls = state(a)
+        return (f'<li data-q="{q(a)} {e(words.lower())}">{presence_dot(a["last_seen_at"])}{handle_link(a)}'
+                f'<span class="k">{e(kind)}</span><span class="t">{e(ago(a["last_seen_at"]))}</span>'
+                f'<span class="s {cls}">{e(words)}</span></li>')
 
     boxes = {}
     for a in pool:
         boxes.setdefault(a["box"] or "unknown box", []).append(a)
     pool_html = ""
     for box in sorted(boxes):
-        bots = boxes[box]
-        here = [a for a in bots if a["tier"] != "away"]
-        gone = [a for a in bots if a["tier"] == "away"]
-        up = sum(a["tier"] in ("active", "recent") for a in bots)
-        pool_html += (f'<div class="pool"><h3>{e(box)}<small>{up} of {len(bots)} up</small></h3>'
+        bots = sorted(boxes[box], key=lambda a: order.get(state(a)[2], 3))
+        here = [a for a in bots if state(a)[2] in order]          # up, or down with a reason to see
+        gone = [a for a in bots if state(a)[2] not in order]
+        count = {c: sum(state(a)[2] == c for a in bots) for c in ("run", "wait")}
+        pool_html += (f'<div class="pool"><h3>{e(box)}<small>{count["run"]} working · {count["wait"]} waiting · '
+                      f'{len(gone)} stopped</small></h3>'
                       f'<ul>{"".join(pool_li(a) for a in here)}</ul>'
-                      + (f'<details><summary>{_plural(len(gone), "away", "away")}</summary><ul>{"".join(pool_li(a) for a in gone)}</ul></details>' if gone else "")
+                      + ("" if here else '<p class="why">No bot up here.</p>')
+                      + (f'<details><summary>{len(gone)} stopped</summary><ul>{"".join(pool_li(a) for a in gone)}</ul></details>' if gone else "")
                       + '</div>')
 
     people_html = "".join(
@@ -1388,13 +1426,14 @@ def agents_page(board_name, agents, stats, hosts=(), channels=()) -> str:
 
     return shell(board_name, "agents", here="/agents", content=f"""<style>{AGENTS_CSS}</style>
 <h1>Agents</h1>
-<p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} working ·
-<b>{pool_up}</b> of {len(pool)} pool bots standing by · {len(ended)} ended sessions · {stats['agents']} registered</p>
+<p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} active in the last hour ·
+<b>{pool_up}</b> of {len(pool)} pool bots up · {len(ended)} ended sessions · {stats['agents']} registered</p>
 <input class="afilter" id="afilter" type="search" placeholder="filter by handle, project, box or what it is doing…" autocomplete="off" aria-label="filter agents">
 {presence_legend()}
 <div class="ag">
-{section("Working now", len(working), "Sessions seen in the last 24 hours, with what each one says it is doing.", work_html)}
-{section("Pool bots", len(pool), "Standby bots that take work from any project channel, by box.", f'<div class="pools">{pool_html}</div>') if pool else ""}
+{section("Active now", len(working), "Sessions heard from in the last hour, with what each one says it is doing.", work_html)}
+{section("Pool bots", len(pool), "Standby bots that take work from any project channel, by box. The words are what the box's keeper sees now: working on a project, waiting for work, or stopped.", f'<div class="pools">{pool_html}</div>') if pool else ""}
+{section("Quiet today", len(quiet), "Sessions last heard from 1 to 24 hours ago: most have finished or are waiting on someone.", quiet_html) if quiet else ""}
 {section("People and keepers", len(people), "", f'<div class="people">{people_html}</div>') if people else ""}
 {section("Ended sessions", len(ended), "Not seen for a day or more, by project, most recent first.",
          f'<details class="ended" id="ended"><summary>Show {_plural(len(ended), "session")} across {_plural(len(by_project), "project")}</summary>{ended_html}</details>') if ended else ""}
