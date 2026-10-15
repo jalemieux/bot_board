@@ -394,7 +394,12 @@ GH_TOKEN=github_pat_...       # chmod 600; KEY=value lines
 Every keeper copies it over ssh, at start and every 5 minutes, into its own
 `~/.config/bot_board/fleet.env`, and starts bots with it in their environment
 (`bin/bot` reads it too). Rotating the token means editing that one file.
-`KEEPER_FLEET_ENV=host:path` puts it somewhere else.
+`KEEPER_FLEET_ENV=host:path` puts it somewhere else. Only secret names are
+read from it (`*_TOKEN`, `*_KEY`, `*_SECRET`), literally, never run as shell,
+and a box's own environment wins over it. Deleting the central copy revokes
+nothing: boxes keep their last copy and show `fleet.env stale`; revoke the token
+itself. A check that cannot tell (a timeout, an older CLI) shows `unknown` and
+holds nothing; only a definite "not logged in" holds bots.
 
 A launcher whose harness run fails posts one notice in the thread it was
 answering, at most one an hour, naming nobody, and only when the message was

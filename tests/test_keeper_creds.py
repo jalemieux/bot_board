@@ -46,7 +46,9 @@ class Keeper(unittest.TestCase):
         self.central = os.path.join(self.home, 'central'); os.makedirs(self.central)
         os.makedirs(os.path.join(self.home, '.config', 'bot_board'))
         # gh is happy only with the token from fleet.env; claude says whether a login file exists
-        fake(self.bin, 'gh', '[ "$GH_TOKEN" = good ]')
+        fake(self.bin, 'gh', '[ "$GH_TOKEN" = good ] && exit 0; '
+                             '[ -n "$GH_TOKEN" ] && echo "The token in GH_TOKEN is invalid." >&2 && exit 1; '
+                             'echo "You are not logged into any GitHub hosts." >&2; exit 1')
         fake(self.bin, 'claude', f'[ -e {self.home}/claude-login ] && echo \'{{"loggedIn": true}}\' '
                                  '|| echo \'{"loggedIn": false}\'')
         self.k = load_keeper(self.home)
@@ -110,6 +112,28 @@ class Keeper(unittest.TestCase):
         self.assertEqual(c.state['gh'][0], 'expired')
         self.assertNotIn('revoked', str(c.report({})))   # the secret never goes into the report
 
+    def test_an_unclear_check_holds_nothing(self):
+        # an older claude without `auth status`, then one that prints something we cannot read
+        for script in ('echo "error: unknown command auth" >&2; exit 2', 'echo "Loading..."'):
+            fake(self.bin, 'claude', script)
+            c = self.creds()
+            self.assertEqual(c.state['claude'][0], 'unknown')
+            self.assertEqual(c.blocked(), {})
+            self.assertNotIn('claude claude', c.state['claude'][1])
+
+    def test_fleet_env_sets_secrets_only_and_the_environment_wins(self):
+        with open(os.path.join(self.central, 'fleet.env'), 'w') as f:
+            f.write('GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
+        os.environ['OTHER_KEY'] = 'mine'
+        try:
+            env = self.creds().env()
+        finally:
+            os.environ.pop('OTHER_KEY')
+        self.assertEqual(env['GH_TOKEN'], 'good')
+        self.assertEqual(env['OTHER_KEY'], 'mine')
+        self.assertEqual(env['PATH'], os.environ['PATH'])
+        self.assertNotEqual(env.get('BOARD'), 'http://other')
+
     def test_a_missing_central_copy_keeps_ours_and_says_so(self):
         local = os.path.join(self.home, '.config', 'bot_board', 'fleet.env')
         with open(local, 'w') as f:
@@ -117,6 +141,20 @@ class Keeper(unittest.TestCase):
         c = self.creds()
         self.assertEqual(c.state['gh'][0], 'ok')
         self.assertIn('stale', [r['state'] for r in c.report({})])
+
+
+class BotReadsFleetEnv(unittest.TestCase):
+    def test_a_bad_line_does_not_stop_bin_bot(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as home:
+            cfg = os.path.join(home, '.config', 'bot_board'); os.makedirs(cfg)
+            with open(os.path.join(cfg, 'fleet.env'), 'w') as f:
+                f.write(f'not_a_command_xyz\nGH_TOKEN=abc def\nX_TOKEN=$(touch {home}/ran)x\n')
+            r = subprocess.run([str(ROOT / 'bin' / 'bot'), 'ps'], capture_output=True, text=True, timeout=60,
+                               env={**os.environ, 'HOME': home, 'BOT_CONFIG': os.path.join(cfg, 'config')})
+            self.assertNotIn('command not found', r.stderr)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(os.path.exists(os.path.join(home, 'ran')))
 
 
 class Page(unittest.TestCase):

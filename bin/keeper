@@ -238,8 +238,12 @@ CHECK_EVERY = 300
 FLEET_ENV = os.path.join(CFG, "fleet.env")
 
 
+SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")   # what fleet.env may set; bin/bot reads the same
+
+
 def read_env(path):
-    """KEY=value lines of a shell file (export, quotes and comments allowed) as a dict."""
+    """The secrets in fleet.env: KEY=value lines (export, quotes and comments allowed), read
+    literally, never run, and only names SECRET_NAME allows, so it cannot move BOARD or PATH."""
     env = {}
     try:
         with open(path, encoding="utf-8") as fh:
@@ -250,7 +254,8 @@ def read_env(path):
         m = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$", line)
         if m:
             try:
-                env[m.group(1)] = "".join(shlex.split(m.group(2), comments=True)[:1])
+                if SECRET_NAME.fullmatch(m.group(1)):
+                    env[m.group(1)] = "".join(shlex.split(m.group(2), comments=True)[:1])
             except ValueError:
                 pass
     return env
@@ -290,8 +295,9 @@ class Credentials:
                 os.remove(tmp)
 
     def env(self):
-        """The environment bots are started with: the keeper's, with fleet.env over it."""
-        return {**os.environ, **read_env(FLEET_ENV)}
+        """The environment bots are started with: fleet.env's secrets under the keeper's own
+        environment, which wins (as it does in bin/bot)."""
+        return {**read_env(FLEET_ENV), **os.environ}
 
     def needed(self, harnesses):
         return [c for c in CREDENTIALS if c[1] == "secret" or set(c[4]) & set(harnesses)]
@@ -303,20 +309,28 @@ class Credentials:
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as e:
-            return "unknown", f"{' '.join(cmd)}: {e}"[:200]
+            return "unknown", f"check failed: {e}"[:200]
         said = " ".join((r.stdout + " " + r.stderr).split())[:200]
+        # Only a definite answer counts. Anything else (an older CLI, a timeout, words we do
+        # not know) is "unknown", which is reported and holds nothing: as with bin/bot since
+        # #70, a hiccup in the check must not stop every bot on the box.
         if name == "claude":
             try:
                 logged = json.loads(r.stdout).get("loggedIn")
-            except ValueError:
-                logged = r.returncode == 0
-            return ("ok", "") if logged else ("missing", "not logged in")
+            except (ValueError, AttributeError):
+                logged = None
+            if logged is True:
+                return "ok", ""
+            if logged is False:
+                return "missing", "not logged in"
+            return "unknown", f"could not read `{' '.join(cmd)}`: {said}"[:200]
         if r.returncode == 0:
             return "ok", ""
-        if kind == "secret":
-            return ("expired", f"{var} is set but refused: {said}") if env.get(var) else \
-                   ("missing", f"no {var} (fleet.env) and no login")
-        return "missing", "not logged in"
+        if kind == "secret" and env.get(var) and re.search(r"invalid|expired|revoked|bad credentials|401", said, re.I):
+            return "expired", f"{var} is set but refused: {said}"[:200]
+        if re.search(r"not logged in|no.{0,20}(login|credential|token)|log ?in (first|required)", said, re.I):
+            return "missing", (f"no {var} (fleet.env) and no login" if kind == "secret" else "not logged in")
+        return "unknown", f"`{' '.join(cmd)}` exited {r.returncode}: {said}"[:200]
 
     def refresh(self, harnesses, force=False, sync=True):
         """Run the checks when they are due, or at once when a harness is new to them."""
@@ -334,7 +348,7 @@ class Credentials:
         out = {}
         for name, _, _, _, holds in CREDENTIALS:
             st, why = self.state.get(name, ("ok", ""))
-            for hn in holds if st != "ok" else ():
+            for hn in holds if st == "missing" else ():   # "unknown" and "expired" hold nothing
                 out[hn] = f"{name} {why or st}"
         return out
 
