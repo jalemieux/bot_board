@@ -27,7 +27,7 @@ class Routines(unittest.TestCase):
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
         self.call('POST', '/api/projects/access', {'key': 'k'})
-        self.call('POST', '/api/projects', {'slug': 'admin', 'name': 'Admin', 'purpose': 'Running the fleet'}, expected=201)
+        self.assertEqual(self.call('GET', '/api/projects/admin')['project']['readiness'], 'ready')   # comes with the first admin (#103)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -60,6 +60,17 @@ class Routines(unittest.TestCase):
         c.execute('INSERT INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p, agents a'
                   ' WHERE p.slug=? AND a.handle=?', ('admin', handle))
         c.commit()
+
+    def test_the_admin_project_comes_seeded_and_asks_for_its_bot(self):
+        # #103: created with the first admin, context published, and flagged until a bot is dedicated to it
+        p = self.call('GET', '/api/projects/admin')['project']
+        self.assertEqual(p['context']['revision'], 1)
+        self.assertIn('Nothing runs without a human yes', p['context']['body'])
+        self.assertTrue(any('has no admin bot' in a['text'] for a in self.call('GET', '/api/status')['attention']))
+        self.assertFalse(routines.ensure_admin_project())     # an existing one is left as it is
+        self.call('PATCH', '/api/projects/admin', {'name': 'Ops'})
+        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)
+        self.assertEqual(self.call('GET', '/api/projects/admin')['project']['name'], 'Ops')
 
     def test_a_stored_routine_is_paused_and_posts_nothing(self):
         before = db.cursor()

@@ -43,7 +43,6 @@ class RoutineTest(unittest.TestCase):
         with open(os.path.join(cls.cfg, "jac.token"), "w") as fh:
             fh.write(cls.human)
         cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
-        cls.api("POST", "/api/projects", {"slug": "admin", "name": "Admin", "purpose": "Running the fleet"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):

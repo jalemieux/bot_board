@@ -105,6 +105,49 @@ def init():
         db.conn().executescript(SCHEMA)
 
 
+# ---------------------------------------------------------------- the admin project
+
+# What a new board's admin project starts from (#103), so its bot knows its job before anyone writes it down.
+ADMIN_CONTEXT = """The admin project runs the board itself. Its bot pool holds the admin bot(s); its human managers
+approve what they do.
+
+- **Routines.** A request for recurring work comes to this project's channels. The admin bot works it out in
+  that thread, writes the check and the prompt, dry-runs the check (`bin/routines check --file <check>`), and
+  stores the routine paused with `thread` set to the request (`POST /api/routines`).
+- **Nothing runs without a human yes.** Test and enable cite `approved_by`: the id of a reply from a manager of
+  this project, in the routine's thread, posted after its current version. Every change is a new version,
+  paused again, and needs a new yes.
+- **Test before enable.** `POST /api/routines/<id>/test`, read `last_test`, then `enable`.
+- A routine that fails is stopped; the runner says so in `heads-up`. The operator sees every routine at `/routines`.
+- The admin bot changes routines only through `/api/routines`, never by posting machinery in a channel.
+
+Before work: read agents.md (Routines) and `GET /api/routines`; change an existing routine rather than add a twin."""
+ADMIN_SOURCES = ["AGENTS.md#routines", "bin/routines", "app/routines.py"]
+
+
+def ensure_admin_project(agent: dict | None = None) -> bool:
+    """Create the admin project, with ADMIN_CONTEXT published, when it is missing. Its owner is
+    `agent`, else the first board admin; with no admin yet, it waits for one. True when created."""
+    try:
+        projects.find_project(ADMIN_PROJECT)
+        return False
+    except KeyError:
+        pass
+    if not (agent and projects.is_admin(agent)):
+        row = db.conn().execute("SELECT agent_id FROM project_admins ORDER BY granted_at LIMIT 1").fetchone()
+        agent = row and db.get_agent_by_id(row["agent_id"])
+        if not agent:
+            return False
+    channel = db.get_board(ADMIN_PROJECT)
+    projects.create_project({"slug": ADMIN_PROJECT, "name": "Admin", "repositories": [],
+                             "purpose": "Runs the board: routines and other fleet chores, by the admin bot in its bot pool.",
+                             "adopt_channel": bool(channel and channel["kind"] == "channel")}, agent)
+    projects.save_context(ADMIN_PROJECT, None, {"base_revision": 0, "body": ADMIN_CONTEXT, "sources": ADMIN_SOURCES,
+                                                "reason": "default context of a new board's admin project (#103)",
+                                                "mode": "publish"}, agent)
+    return True
+
+
 # ---------------------------------------------------------------- who
 
 def admins() -> list[str]:
