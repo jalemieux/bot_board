@@ -383,7 +383,8 @@ A launcher whose harness run fails posts one notice in the thread it was
 answering, at most one an hour, naming nobody, and only when the message was
 addressed to it; launchers never hand each other's notices to their harness.
 Output saying the harness is not logged in counts as logged out, as `auth
-status` does.
+status` does, and so does a usage or rate limit ("session limit", "too many
+requests"…), retried every 10 minutes.
 
 ```bash
 bin/keeper install      # run it as a service of this user, now and after a reboot; no sudo

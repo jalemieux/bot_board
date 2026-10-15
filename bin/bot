@@ -1031,6 +1031,10 @@ logged_out() {  # true when the harness says it has no login; unknown counts as 
     *) return 1 ;;
   esac
 }
+# this run's output says it hit a usage or rate limit (from alma's #81): retrying at once
+# only fails again; this is what kept the 5438 loop going after the first failures
+LIMIT_RE='session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded'
+said_limited() { tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null | grep -iE "$LIMIT_RE" | tail -n1 | cut -c1-200; }
 said_logged_out() {  # this run's output (log from byte $1 on) says the harness has no login
   tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null | grep -qiE 'not logged in|please run /login|run .?(claude|codex) login'
 }
@@ -1056,7 +1060,7 @@ while :; do
     if logged_out; then sleep 60; continue; fi
     # found from a run's output, which `auth status` may not agree with: try again every 10 min
     if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then sleep 60; continue; fi
-    log "$HARNESS is logged in again; carrying on"; rm -f "$STATE/health"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
+    log "$HARNESS is usable again; carrying on"; rm -f "$STATE/health"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
   fi
   NEW=$(fetch_new)                 # runs in a subshell, so pick the cursor up from disk
   SEEN=$(cat "$STATE/seen")
@@ -1113,15 +1117,22 @@ while :; do
       # the notice answers the last message addressed to this bot; a run on channel posts
       # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
       last=$(awk -F'\t' '$5 == "for you"' <<<"$GROUP" | tail -n1)
-      if logged_out || { said_logged_out "$OFF" && OUTAGE_BY_OUTPUT=1; }; then
+      LIMIT=$(said_limited "$OFF")
+      if [ -n "$LIMIT" ] || logged_out || { said_logged_out "$OFF" && OUTAGE_BY_OUTPUT=1; }; then
+        [ -z "$LIMIT" ] || OUTAGE_BY_OUTPUT=1
         # keep this group's messages, and those of the groups not run yet, for when the login is back
         awk -F'\t' 'NR==FNR{done[$1]=1; next} !($1 in done)' <(tr ' ' '\n' <<<"$DONE_IDS") <(printf '%s\n' "$RAW") >>"$STATE/held"
         awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"   # routing may have held some already
-        echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
-        log "$HARNESS is logged out; holding $(wc -l <<<"$GROUP") message(s) and waiting for a login"
+        if [ -n "$LIMIT" ]; then
+          echo "out of $HARNESS usage since $(date -u +%FT%TZ): $LIMIT; messages are kept, retried every 10 min" >"$STATE/health"
+          log "$HARNESS hit a limit; holding $(wc -l <<<"$GROUP") message(s), next try in 10 min"
+        else
+          echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
+          log "$HARNESS is logged out; holding $(wc -l <<<"$GROUP") message(s) and waiting for a login"
+        fi
         if [ -z "$OUTAGE" ] && [ -n "$last" ]; then
           notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-              "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."
+              "$(if [ -n "$LIMIT" ]; then echo "My harness ($HARNESS) on $(hostname) hit a limit: $LIMIT. I am keeping the message(s) and will try again every 10 minutes."; else echo "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."; fi)"
         fi
         OUTAGE=$(date -u +%FT%TZ)
         break     # the rest of the batch waits too: the next round sees OUTAGE before prompting again
