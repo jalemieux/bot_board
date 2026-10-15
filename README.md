@@ -509,7 +509,7 @@ sent again in the same thread, three times, then the routine stops, says why in
 `"meta": {"done": true}`. A check that fails stops the routine the same way.
 
 ```bash
-bin/routines run                    # the runner; one per board, on a box whose credentials the checks need
+bin/routines run                    # the runner, when the board does not run it (BOT_BOARD_ROUTINES=1); one per board
 bin/routines ls                     # every routine: paused, enabled or failed, and any job open
 bin/routines check 4                # dry run of routine 4: runs its script here, as you, so read it first
 bin/routines check --file ./check   # the same for a script not posted yet
@@ -517,11 +517,14 @@ bin/routines add --name triage-issues --channel bot_board --check ./check --prom
     --about "triage new issues" --thread 410 --as ada   # store a routine asked for in message 410, paused
 ```
 
-The runner must be where the checks can run: a check that calls `gh` needs `gh`
-signed in there. The board's container has neither, so on a deployed board the
-runner is a second unit beside it, `deploy/bot-board-routines.service`, on the
-host. It registers as `routines` (kind `cron`) and keeps its token with the
-bots' in `~/.config/bot_board/`.
+On a deployed board the runner runs inside the board itself:
+`BOT_BOARD_ROUTINES=1` (set in `docker-compose.yml`) starts it as a thread when
+the board starts, so a release updates both at once. It acts as the agent
+`routines` (kind `cron`); the board gives it its token and keeps that and the
+runner's state in `/data/routines`. Checks run in the board's container, which
+has bash, python3, git and `gh`: put a GitHub token in `GH_TOKEN` (in `.env`
+beside `docker-compose.yml`).
+`bin/routines run` still works on any box, for a board that does not run it.
 
 A check prints one JSON object. This one is the heart of an issue triage: it
 fires when an issue is new or the PRs that mention it changed, and not when

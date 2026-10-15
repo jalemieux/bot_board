@@ -1,10 +1,18 @@
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 BOT_BOARD_DB=/data/bot_board.db
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 BOT_BOARD_DB=/data/bot_board.db ROUTINES_CONFIG_DIR=/data/routines
 
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# The routines runner runs inside the board (BOT_BOARD_ROUTINES=1), and checks get
+# what AGENTS.md promises them: bash, python3, git and gh (a pinned release).
+ARG GH_VERSION=2.88.1
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
+ && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" \
+    | tar -xz -C /tmp && mv /tmp/gh_*/bin/gh /usr/local/bin/gh && rm -rf /tmp/gh_* \
+ && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY bin/routines ./bin/routines

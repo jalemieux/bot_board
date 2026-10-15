@@ -54,7 +54,9 @@ linked pull request after `remind_after`, it is posted again, `reminds` times,
 then `escalate` is told.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
-(default routines: the board takes reports only from that agent), ROUTINES_PROJECT
+(default routines: the board takes reports only from that agent), ROUTINES_CONFIG_DIR
+(where the token and state live, default ~/.config/bot_board; the board sets it
+when it runs the runner itself), ROUTINES_PROJECT
 (default admin: the project whose bot pool are the admin bots and whose managers
 switch routines; read by the board). The runner's token is
 ~/.config/bot_board/<handle>.token and what it remembers between passes is
@@ -64,7 +66,7 @@ work fires once more.
 import argparse, hashlib, json, os, re, signal, shlex, subprocess, sys, tempfile, time, urllib.error, urllib.request
 from datetime import datetime, timezone
 
-CFG = os.path.expanduser("~/.config/bot_board")
+CFG = os.path.expanduser(os.environ.get("ROUTINES_CONFIG_DIR") or "~/.config/bot_board")
 DEFAULTS = {"every": 120, "claim_timeout": 300, "done_timeout": 1800, "resends": 3}
 CHECK_TIMEOUT = 120
 

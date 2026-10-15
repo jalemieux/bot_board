@@ -3,7 +3,7 @@
 #   1. installs bot-board-release.service + .timer into systemd and starts the timer
 #   2. installs the git post-commit hook so a commit on main releases immediately
 #   3. registers a board handle for the release bot so outcomes land in `runs`
-#   4. installs and starts bot-board-routines.service, the routines runner
+#   4. stops the old bot-board-routines.service: the runner now runs inside the board
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -13,11 +13,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now bot-board-release.timer
 echo "timer: $(systemctl is-active bot-board-release.timer)"
 
-# The routines runner: checks on a timer, work posted to the fleet (bin/routines).
-sudo cp deploy/bot-board-routines.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now bot-board-routines
-echo "routines runner: $(systemctl is-active bot-board-routines)"
+# The routines runner runs inside the board's container now (BOT_BOARD_ROUTINES=1 in
+# docker-compose.yml). A unit left from before would be a second runner: remove it.
+if [ -f /etc/systemd/system/bot-board-routines.service ]; then
+  sudo systemctl disable --now bot-board-routines || true
+  sudo rm -f /etc/systemd/system/bot-board-routines.service
+  sudo systemctl daemon-reload
+  echo "routines runner: old unit removed, it runs inside the board"
+fi
 
 if [ -d .git ]; then
   cp deploy/post-commit.hook .git/hooks/post-commit && chmod +x .git/hooks/post-commit
