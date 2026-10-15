@@ -17,7 +17,7 @@ import sqlite3
 from typing import Literal
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -205,11 +205,15 @@ API_MAP = {
                                          " names end in _TOKEN, _KEY or _SECRET",
         "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
         "GET /api/fleet/secrets/values": "a keeper fetches the secrets' values for its bots; nobody else can",
-        "GET /api/routines": "every routine in #admin (recurring work, bin/routines) with its state"
+        "GET /api/routines": "every routine in admin.routine (recurring work, bin/routines) with its state"
                              " (paused, enabled, failed, invalid), last test and latest jobs",
-        "POST /api/routines": "post a routine to #admin, paused, as `routines add` would {name, channel, check (or recipe),"
-                              " prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
-                              " -> {message, thread, code}; a human replies enable <code>, pause or test in its thread",
+        "POST /api/routines": "post a routine to admin.routine, paused, as `routines add` would {name, channel, check"
+                              " (or recipe), prompt, every, claim_timeout, done_timeout, resends, about?, skill?, thread?}"
+                              " -> {message, thread, code}; thread: the request it answers, or a new version",
+        "POST /api/routines/{thread}/{enable|pause|test}": "switch a routine {approved_by?} -> {message, code}; human"
+                              " operators, or admin bots (the admin project's bot pool) whose enable and test cite"
+                              " a human's yes in the thread after the current definition",
+        "DELETE /api/routines/{thread}": "stop a routine for good (posts `delete`); human operators and admin bots",
         "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "POST /api/channels": "create or re-topic a channel {slug, topic}",
@@ -1093,7 +1097,8 @@ class RoutineIn(BaseModel):
     resends: int = Field(routines.DEFAULTS["resends"], ge=0)
     about: str = ""
     skill: str = ""
-    thread: int | None = Field(None, description="Post a new version of the routine in this #admin thread.")
+    thread: int | None = Field(None, description="Post into this thread of the routines channel: the request"
+                               " it answers, or a new version of the routine there.")
 
     @field_validator("channel")
     @classmethod
@@ -1103,16 +1108,39 @@ class RoutineIn(BaseModel):
 
 @app.get("/api/routines", tags=["routines"])
 def routine_list(_: dict | None = Depends(optional_agent)) -> dict:
-    """Every routine in #admin, in the states the runner (bin/routines) acts on, with its latest jobs."""
+    """Every routine in the routines channel (admin.routine), in the states the runner (bin/routines) acts on, with its latest jobs."""
     return {"routines": routines.list_routines()}
 
 
 @app.post("/api/routines", tags=["routines"], status_code=201)
 async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
-    """Post a routine to #admin, paused, exactly as `routines add` would. A human starts it
-    by replying `enable <code>` in its thread; `pause` stops it and `test` dry-runs its check."""
+    """Post a routine to the routines channel, paused, exactly as `routines add` would. It
+    starts on `enable <code>` in its thread; `pause` stops it and `test` dry-runs its check."""
+    return await _routine_call(routines.create, body.model_dump(), agent, MAX_BODY)
+
+
+class RoutineActIn(BaseModel):
+    approved_by: int | None = Field(None, description="For an admin bot's enable or test: the id of the human's"
+                                    " reply in the thread, after the current definition, that said yes to it.")
+
+
+@app.post("/api/routines/{thread}/{action}", tags=["routines"], status_code=201)
+async def routine_act(thread: int, action: str = Path(pattern="^(enable|pause|test)$"),
+                      body: RoutineActIn = RoutineActIn(), agent: dict = Depends(current_agent)) -> dict:
+    """Post the reply that switches a routine: `enable <code>`, `pause` or `test`. From a human
+    operator, or an admin bot (the admin project's bot pool) citing the human's yes."""
+    return await _routine_call(routines.act, thread, action, agent, body.approved_by)
+
+
+@app.delete("/api/routines/{thread}", tags=["routines"])
+async def routine_delete(thread: int, agent: dict = Depends(current_agent)) -> dict:
+    """Stop a routine for good: posts `delete` in its thread, which stays as history."""
+    return await _routine_call(routines.act, thread, "delete", agent)
+
+
+async def _routine_call(fn, *args) -> dict:
     try:
-        out = await asyncio.to_thread(routines.create, body.model_dump(), agent, MAX_BODY)
+        out = await asyncio.to_thread(fn, *args)
     except KeyError as exc:
         raise HTTPException(404, str(exc).strip("'\"")) from exc
     except ValueError as exc:

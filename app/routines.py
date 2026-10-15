@@ -1,10 +1,11 @@
-"""Routines for the board page: the definitions bin/routines runs, read from #admin.
+"""Routines on the board: the definitions bin/routines runs, read from its channel.
 
 The runner stays the authority on whether a routine runs. This module reads the
-admin threads with the runner's own code (bin/routines, loaded as a module), so
-the page shows the states the runner acts on, and it writes a definition exactly
-as `routines add` does, so the runner accepts what a browser posted. Enable,
-pause and test are plain replies in the thread; nothing here switches anything.
+routine threads (admin.routine: the `routine` group of the `admin` project) with
+the runner's own code (bin/routines, loaded as a module), so the board shows the
+states the runner acts on, and it writes a definition exactly as `routines add`
+does, so the runner accepts what the admin bot posted. Enable, pause, test and
+delete are plain replies in the thread; nothing here switches anything.
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ def _load():
 
 cli = _load()
 ADMIN = cli.ADMIN
+ACTIONS = ("enable", "pause", "test", "delete")
 DEFAULTS = cli.DEFAULTS
 JOBS_SHOWN = 5
 ITEMS_SHOWN = 30
@@ -68,13 +70,29 @@ def _items(r: dict) -> list[dict]:
     return [dict(x) for x in rows]
 
 
+def admins() -> list[str]:
+    """The admin bots: the bot pool a human set on the admin project."""
+    try:
+        return projects.pool_settings(projects.find_project(cli.ADMIN_PROJECT))["bots"]
+    except KeyError:
+        return []
+
+
+def _setup_problem() -> str:
+    board = db.get_board(ADMIN)
+    if board is None or projects.route(ADMIN)["group"] is None:
+        return (f"#{ADMIN} is not set up: a human creates the project `{cli.ADMIN_PROJECT}` and in it the group "
+                f"`{ADMIN.split('.', 1)[-1]}`, whose channel is where routines are asked for and live")
+    return ""
+
+
 def list_routines() -> list[dict]:
     admin = _all(board=ADMIN)
     by_thread: dict[int, list[dict]] = {}
     for m in admin:
         by_thread.setdefault(m["thread_id"] or m["id"], []).append(m)
     out = []
-    for r in cli.routines_of(admin):
+    for r in cli.routines_of(admin, admins=admins()):
         msgs = by_thread[r["thread"]]
         failed = next((m for m in reversed(msgs) if m["author"] == cli.ME and m["meta"].get("routine_failed")), None)
         test = next((m for m in reversed(msgs) if isinstance(m["meta"].get("routine_test"), dict)), None)
@@ -107,20 +125,46 @@ def create(data: dict, agent: dict, max_body: int) -> dict:
     for k in ("about", "skill"):
         if text(k).strip():
             r[k] = text(k).strip()
+    if _setup_problem():
+        raise ValueError(f"not posted: {_setup_problem()}")
     thread = data.get("thread")
+    again = False   # into a thread: the first definition answers the request; a later one is a new version
     if thread is not None:
         root = db.get_message(thread)
-        if root is None or root["channel"] != ADMIN or root["reply_to"] is not None \
-                or not isinstance(root["meta"].get("routine"), dict):
-            raise KeyError(f"no routine in #{ADMIN} thread {thread}")
-    body = cli.body_of(r, thread is not None)
-    problem = cli.problem_with(r, body, thread is not None)
+        if root is None or root["channel"] != ADMIN or root["reply_to"] is not None:
+            raise KeyError(f"no thread {thread} in #{ADMIN}")
+        again = any(isinstance(m["meta"].get("routine"), dict) for m in _all(thread=thread))
+    body = cli.body_of(r, again)
+    problem = cli.problem_with(r, body, again)
     if problem:
         raise ValueError(f"not posted: {problem}")
     if len(body) > max_body:
         raise ValueError(f"not posted: the routine's message is {len(body)} characters, over the board's {max_body}")
-    if thread is None:
-        db.ensure_board(ADMIN, "Fleet administration: one thread per routine (recurring work); a human replies "
-                        "enable <code> or pause in a routine's thread. Not a project.", agent["id"])
     m = db.post_message(ADMIN, agent["id"], body, thread, [], {"routine": r})
     return {"message": m, "thread": m["thread_id"] or m["id"], "code": cli.code_of(r)}
+
+
+def act(thread: int, action: str, agent: dict, approved_by: int | None = None) -> dict:
+    """Post the reply that switches a routine, as its human or an admin bot would type it.
+    The runner reads the reply; refused here is what the runner would ignore."""
+    r = next((x for x in list_routines() if x["thread"] == thread), None)
+    if r is None:
+        raise KeyError(f"no routine in #{ADMIN} thread {thread}")
+    human = agent["kind"] == "human" and (not cli.OPERATORS or agent["handle"] in cli.OPERATORS)
+    admin = agent["kind"] != "human" and agent["handle"].lower() in {a.lower() for a in admins()}
+    if not (human or admin):
+        raise PermissionError(f"only a human operator or an admin bot (the `{cli.ADMIN_PROJECT}` project's "
+                              "bot pool) switches a routine")
+    meta = {}
+    if admin and action in ("enable", "test"):
+        yes = db.get_message(approved_by) if approved_by else None
+        if yes is None or (yes["thread_id"] or yes["id"]) != thread or yes["author_kind"] != "human" \
+                or (cli.OPERATORS and yes["author"] not in cli.OPERATORS) or not r["version"] < yes["id"]:
+            raise ValueError(f"not posted: an admin bot's {action} needs `approved_by`, the id of a human's reply "
+                             f"in this thread after the current definition (message {r['version']})")
+        meta["approved_by"] = approved_by
+    if action == "enable" and r["state"] == "invalid":
+        raise ValueError(f"not posted: this definition cannot run: {r['problem']}")
+    body = f"enable {r['code']}" if action == "enable" else action
+    m = db.post_message(ADMIN, agent["id"], body, thread, [], meta)
+    return {"message": m, "code": r["code"]}

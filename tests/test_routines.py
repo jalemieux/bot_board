@@ -1,4 +1,4 @@
-"""Routines on the board: /api/routines reads #admin as the runner does and writes as `routines add` does.
+"""Routines on the board: /api/routines reads admin.routine as the runner does and writes as `routines add` does.
 Run with python -m unittest discover -s tests."""
 import os
 import sys
@@ -19,11 +19,16 @@ class Routines(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
+        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('jac', 'human')
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
+        self.call('POST', '/api/projects/access', {'key': 'k'})
+        self.call('POST', '/api/projects', {'slug': 'admin', 'name': 'Admin', 'purpose': 'Running the fleet'}, expected=201)
+        self.call('POST', '/api/projects/admin/groups', {'slug': 'routine', 'name': 'Routines',
+                  'purpose': 'Recurring work', 'scope': 'routines'}, expected=201)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -41,14 +46,21 @@ class Routines(unittest.TestCase):
         self.assertEqual(r.status_code, expected, r.text)
         return r.json()
 
-    def post(self, body, reply_to=None, auth=None, channel='admin', meta=None):
+    def post(self, body, reply_to=None, auth=None, channel=routines.ADMIN, meta=None):
         return self.call('POST', '/api/messages', {'channel': channel, 'body': body, 'reply_to': reply_to,
                                                    'meta': meta or {}}, auth=auth, expected=201)['message']
 
-    def add(self, **kw):
+    def add(self, auth=None, **kw):
         data = {'name': 'triage', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'Triage these.\r\n',
                 'every': 60, 'about': 'triage new issues', **kw}
-        return self.call('POST', '/api/routines', data, expected=201)
+        return self.call('POST', '/api/routines', data, auth=auth, expected=201)
+
+    def make_admin(self, handle='ada'):
+        """As a human does with Bot pool controls on the admin project, without a keeper to report the bot."""
+        c = db.conn()
+        c.execute('INSERT INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p, agents a'
+                  ' WHERE p.slug=? AND a.handle=?', ('admin', handle))
+        c.commit()
 
     def only(self):
         rs = self.call('GET', '/api/routines')['routines']
@@ -114,6 +126,48 @@ class Routines(unittest.TestCase):
         self.assertEqual(len(r['jobs']), 1)
         self.assertEqual({k: r['jobs'][0][k] for k in ('id', 'sends', 'done_by')},
                          {'id': job['id'], 'sends': 2, 'done_by': 'ada'})
+
+    def test_the_admin_bot_answers_a_request_and_enables_it_only_with_a_human_yes(self):
+        ask = self.post('Every new issue on bot_board should be triaged')
+        early = self.post('sounds right', ask['id'])         # said before the definition: approves nothing
+        out = self.add(thread=ask['id'], auth=self.bot)
+        r = self.only()
+        self.assertEqual((r['thread'], r['state'], r['problem']), (ask['id'], 'paused', ''))
+        self.assertNotIn('(new version)', out['message']['body'])
+        path = f"/api/routines/{ask['id']}/enable"
+        self.call('POST', path, {'approved_by': early['id']}, auth=self.bot, expected=403)   # not an admin bot yet
+        self.make_admin()
+        self.call('POST', path, {}, auth=self.bot, expected=422)
+        self.call('POST', path, {'approved_by': early['id']}, auth=self.bot, expected=422)
+        self.post(f"enable {out['code']}", ask['id'], auth=self.bot, meta={'approved_by': early['id']})
+        self.assertEqual(self.only()['state'], 'paused', 'a yes from before the definition does not count')
+        yes = self.post('yes, go', ask['id'])
+        t = self.call('POST', f"/api/routines/{ask['id']}/test", {'approved_by': yes['id']}, auth=self.bot, expected=201)
+        self.assertEqual(self.only()['tests'], [t['message']['id']])
+        self.call('POST', path, {'approved_by': yes['id']}, auth=self.bot, expected=201)
+        self.assertEqual(self.only()['state'], 'enabled')
+        v2 = self.add(thread=ask['id'], every=300, auth=self.bot)    # a change needs a new yes
+        self.assertIn('(new version)', v2['message']['body'])
+        self.call('POST', path, {'approved_by': yes['id']}, auth=self.bot, expected=422)
+        self.assertEqual(self.only()['state'], 'paused')
+        self.call('POST', f"/api/routines/{ask['id']}/pause", None, auth=self.bot, expected=201)
+
+    def test_delete_stops_it_for_good(self):
+        out = self.add()
+        self.post(f"enable {out['code']}", out['thread'])
+        self.call('DELETE', f"/api/routines/{out['thread']}", auth=self.bot, expected=403)
+        self.call('DELETE', f"/api/routines/{out['thread']}")
+        self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
+        self.post(f"enable {out['code']}", out['thread'])
+        self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
+        self.call('DELETE', f"/api/routines/{out['thread']}", expected=404)
+
+    def test_a_board_without_the_admin_group_says_how_to_set_it_up(self):
+        db.conn().execute('DELETE FROM project_groups'); db.conn().commit()
+        r = self.client.post('/api/routines', json={'name': 'x', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'p'},
+                             headers=self.human)
+        self.assertEqual(r.status_code, 422, r.text)
+        self.assertIn('group `routine`', r.text)
 
 
 if __name__ == '__main__':
