@@ -64,13 +64,22 @@ class Kill(unittest.TestCase):
         self.assertTrue(want[0]['kill'])
         page = self.client.get('/fleet').text
         self.assertIn('kill asked', page)
-        self.assertIn('killed asked by @op', page)
+        self.assertIn('kill asked by @op', page)
         self.assertIn('data-kill="1"', page)
 
     def test_a_later_request_clears_the_kill(self):
         self.ask(run=False, kill=True)
         self.ask(run=False)
         self.assertIsNone(self.report('running proj')[0]['kill'])
+
+    def test_a_start_that_never_comes_can_be_withdrawn(self):
+        self.report('stopped')
+        self.ask(run=True)          # and the keeper never answers: no problem is ever set
+        page = self.client.get('/fleet').text
+        self.assertNotIn('data-run="1"', page)     # no second start
+        self.assertIn('data-run="0" title="withdraw the start">cancel</button>', page)
+        self.ask(run=False)
+        self.assertFalse(self.report('stopped')[0]['run'])
 
     def test_kill_with_run_is_refused(self):
         self.ask(run=True, kill=True, expected=409)

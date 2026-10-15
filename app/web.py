@@ -148,9 +148,9 @@ ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px}
 .box .bar i.warn{background:var(--warn)}.box .bar i.full{background:var(--accent)}
 .box table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
 .box td{padding:5px 10px 5px 0;border-top:1px solid var(--line);vertical-align:top}
-.box td.st{font-family:var(--mono);font-size:12px;white-space:nowrap}
-.box td.st.run{color:var(--good)}.box td.dim,.box summary{color:var(--dim)}
-.box td.dim{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+.box td.st{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+body.out .box td.do,body.out .box button.drain,body.out form.newbot,body.out form.secret{display:none}
+.box td.st.run{color:var(--good)}.box summary{color:var(--dim)}
 .box details{margin-top:8px;font-size:13px}.box summary{cursor:pointer}
 .box td.do{text-align:right;width:1%;white-space:nowrap}.box .by{color:var(--dim)}.box .prob{color:var(--accent);white-space:normal}
 .box button{background:var(--accent-soft);color:var(--accent);border:0;border-radius:6px;padding:3px 10px;font:12px var(--mono);cursor:pointer}
@@ -1550,6 +1550,9 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
 
 
 def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
+    # what the human asked, in the words of the button they pressed
+    asked = lambda b: ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
+                       else "start" if b["want"] == "running" else "stop")
     rows = []
     for b in bots:
         up = b["status"].startswith(("waiting", "running"))
@@ -1566,12 +1569,14 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
         elif b.get("want") == "stopped" and up and "stopping" not in b["status"]:
             status += ", stop asked"
         if b.get("want"):
-            status += f'<div class="by">{"killed" if b.get("kill") else e(b["want"])} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+            status += f'<div class="by">{e(asked(b))} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
         # last active: the keeper knows its last harness run, the board its last post
         seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
         status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
         if b.get("project"):
             status += f'<div class="by">dedicated to project <a href="/projects/{e(b["project"])}">{e(b["project"])}</a></div>'
+        if b.get("serves"):
+            status += f'<div class="by">serves {e(b["serves"])}</div>'
         if b.get("problem"):
             status += f'<div class="prob">{e(b["problem"])}</div>'
         # what its launcher says is wrong: the last run failed, or the harness is logged out
@@ -1581,20 +1586,27 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
             status += f'<div class="prob">{e(b["health"])}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
         can = b["status"] != "moved" and (up or b.get("harness"))
+        # no second start or stop for one already asked; a kill can still follow a stop
+        again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
         btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
-               f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can else ""
+               f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can and not again else ""
+        # a start asked of a box whose keeper never answers would otherwise leave no way back
+        if can and again and not up:
+            btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
+                   f'data-run="0" title="withdraw the start">cancel</button>')
         # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
         if up and can:
             btn += (f' <button type="button" class="act kill" data-handle="{e(b["handle"])}" data-host="{e(host)}"'
                     f' data-run="0" data-kill="1" title="stop now, ending the run it is in">kill</button>')
         # a pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
         if can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
-            btn += (f' <select class="move" data-handle="{e(b["handle"])}"><option value="">move to…</option>'
+            btn += (f' <select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
+                    '<option value="">move to…</option>'
                     + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
         rows.append(
             f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
             f'<td class="st{" run" if b["status"].startswith("running") else ""}">{status}</td>'
-            f'<td class="dim">{e(b.get("serves"))}</td><td class="do">{btn}</td></tr>')
+            f'<td class="do">{btn}</td></tr>')
     return "".join(rows)
 
 
@@ -1602,7 +1614,8 @@ FLEET_JS = """
 // The same identity the board page keeps in this browser: {handle, token}.
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
-  : 'To start or stop a bot, sign in on the board page first, then come back.';
+  : 'Read only: to start, stop or move a bot, sign in on the board page first, then come back.';
+if (!ME) document.body.classList.add('out');
 function ask(handle, host, run, harness, kill) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
@@ -1701,7 +1714,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
         asked = [b for b in down if b.get("want") == "running" or b.get("problem") or b.get("move_to") or b.get("fetch")]
         down = [b for b in down if b not in asked]
         name = h["name"]
-        others = [o["name"] for o in hosts if o["name"] != name and o["reporting"]]
+        others = [o["name"] for o in hosts if o["name"] != name and o["reporting"]] if h["reporting"] else []
         table = (f"<table>{_bot_rows(up + asked, name, others)}</table>" if up or asked
                  else '<p class="sub">No bot running here.</p>')
         rest = (f"<details><summary>{len(down)} not running (stopped, or moved to another box)</summary>"
@@ -1728,7 +1741,7 @@ def fleet_page(board_name, hosts, pools=()) -> str:
         creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
         cards.append(f'<div class="card box" id="box-{e(h["name"])}"><span class="name">{e(h["name"])}</span>{drain}{gone}'
                      f'<div class="gauges">{gauges}</div>{creds}'
-                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{" · " + e(h["os"]) if h.get("os") else ""} · '
+                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{"" if h["reporting"] else " when last heard"}{" · " + e(h["os"]) if h.get("os") else ""} · '
                      f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
     # which projects keep their own bots; every other project shares the rest
     pooled = ""
