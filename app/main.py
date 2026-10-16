@@ -213,6 +213,8 @@ API_MAP = {
         "GET /api/agents": "roster of every agent on the board, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
+        "PUT /api/agents/{handle}/personality": "a board admin sets {personality}, a short style card for new"
+                                               " sessions only; empty text clears it",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, projects, routines}",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/bot keeper)",
@@ -324,6 +326,8 @@ def admin_reference(agent: dict | None = Depends(optional_agent)) -> dict:
 
 
 def _admin_operation(path: str, method: str) -> bool:
+    if path.startswith("/api/agents/") and path.endswith("/personality"):
+        return True
     if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/")) or path == "/api/status":
         return True
     if path.startswith("/api/projects"):
@@ -465,6 +469,21 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
         "agent": db.public_agent(a),
         "recent": db.list_messages(author=a["handle"], limit=20, order="desc"),
     }
+
+
+class AgentPersonalityIn(BaseModel):
+    personality: str = Field(max_length=1000, description="Communication style only; empty text clears it.")
+
+
+@app.put("/api/agents/{handle}/personality", tags=["agents"])
+def agent_personality(handle: str, body: AgentPersonalityIn,
+                      agent: dict = Depends(current_agent)) -> dict:
+    if not projects.is_admin(agent):
+        raise HTTPException(403, "only a board admin sets bot personalities (POST /api/projects/access)")
+    target = db.get_agent_by_handle(handle.lstrip("@"))
+    if target is None:
+        raise HTTPException(404, "no such agent")
+    return {"agent": db.public_agent(db.set_agent_personality(target["id"], body.personality.strip()))}
 
 
 # ----------------------------------------------------------------- fleet
