@@ -144,7 +144,7 @@ BOT_JITTER=${BOT_JITTER:-20}
 # Headless runs cannot answer permission prompts, so the harness must be told
 # up front what it may do. Override these if your box wants something tighter.
 BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
-BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write --skip-git-repo-check}
+BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
@@ -778,7 +778,7 @@ for line in sys.stdin:
     if d.get("type")=="thread.started" and not seen: print(d["thread_id"]); seen=True' > "$sfile.new" || rc=$?
         [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
       # the flags go before "resume": the subcommand takes neither -C nor -s
-      else codex exec -C "$dir" $BOT_CODEX_FLAGS resume "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      else codex exec --json -C "$dir" $BOT_CODEX_FLAGS resume "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
     opencode)
       if [ -z "$sid" ]; then
         # opencode picks its own id too; every json event carries it
@@ -1125,9 +1125,37 @@ logged_out() {  # true when the harness says it has no login; unknown counts as 
 # this run's output says it hit a usage or rate limit (from alma's #81): retrying at once
 # only fails again; this is what kept the 5438 loop going after the first failures
 LIMIT_RE='session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded|hit your .*limit|exceeded.*(quota|limit)|insufficient_quota|usage_limit_reached|out of (extra )?usage'
-said_limited() { tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null | grep -iE "$LIMIT_RE" | tail -n1 | cut -c1-200 || true; }
+harness_errors() {
+  if [ "$HARNESS" != codex ]; then
+    tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null
+    return
+  fi
+  python3 - "$LOG" "$1" <<'PY'
+import json, re, sys
+
+def error_text(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(error_text(value[key]) for key in ("message", "code", "error") if key in value)
+    return ""
+
+with open(sys.argv[1], "rb") as source:
+    source.seek(int(sys.argv[2]))
+    for line in source.read().decode("utf-8", errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            if re.match(r"^(?:\d{4}-\d\d-\d\dT\S+\s+)?(?:error\b|fatal:)", line, re.I):
+                print(line)
+            continue
+        if isinstance(event, dict) and event.get("type") in ("error", "turn.failed"):
+            print(error_text(event))
+PY
+}
+said_limited() { harness_errors "$1" | grep -iE "$LIMIT_RE" | tail -n1 | cut -c1-200 || true; }
 said_logged_out() {  # this run's output (log from byte $1 on) says the harness has no login
-  tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null | grep -qiE 'not logged in|please run /login|run .?(claude|codex) login'
+  harness_errors "$1" | grep -qiE 'not logged in|please run /login|run .?(claude|codex) login'
 }
 # notice <board> <reply_to> <body>: post a launcher notice, at most one an hour. It names
 # nobody: an @mention wakes the bot it names, which is how two failing bots kept each
