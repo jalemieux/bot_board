@@ -461,7 +461,7 @@ class Runner:
             st["watermark"] = out.get("watermark")
             return
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
-                f"Routine `{r['name']}` ({BOARD}/routines#r={r['id']}). One bot takes this: claim it here as usual. "
+                f"Routine `{r['name']}` ({BOARD}/routines#r={r['id']}). One thread worker takes this. "
                 "When it is finished, reply in this thread with the result and `meta` `{\"done\": true}`; "
                 f"without that it is sent again after {mins(r['done_timeout'])}.")
         meta = {"routine": r["id"], "name": r["name"]}
@@ -476,7 +476,10 @@ class Runner:
 
     def follow(self, r, st):
         job = st["job"]
-        replies = [m for m in self.board.pages(f"/api/threads/{job['msg']}")
+        messages = list(self.board.pages(f"/api/threads/{job['msg']}"))
+        root = next(m for m in messages if m["id"] == job["msg"])
+        worker = root.get("worker")
+        replies = [m for m in messages
                    if m["id"] > job["msg"] and m["author"] != ME and m["author_kind"] != "human"]
         done = next((m for m in replies if m["meta"].get("done") is True), None)
         if done:
@@ -490,11 +493,14 @@ class Runner:
             st["watermark"] = job["watermark"]
             del st["job"]
             return self.log(r, f"done by {done['author']} (message {done['id']})")
-        claim = next((m for m in reversed(replies) if m["id"] > job["sent"]), None)   # the latest word from a bot
-        if claim:
-            if time.time() - when(claim["created_at"]) < r["done_timeout"]:
+        claim = next((m for m in reversed(replies) if m["id"] > job["sent"]
+                      and (not worker or m["author"] == worker)), None)
+        if worker or claim:
+            last = max(job["sent_at"], when(root["worker_claimed_at"]) if worker else 0,
+                       when(claim["created_at"]) if claim else 0)
+            if time.time() - last < r["done_timeout"]:
                 return
-            why = f"@{claim['author']} is on this and has posted nothing for {mins(r['done_timeout'])}"
+            why = f"@{worker or claim['author']} is on this and has posted nothing for {mins(r['done_timeout'])}"
         elif time.time() - job["sent_at"] >= r["claim_timeout"]:
             why = f"nobody took this in {mins(r['claim_timeout'])}"
         else:
@@ -502,7 +508,7 @@ class Runner:
         if job["sends"] > r["resends"]:
             return self.fail(r, st, f"message {job['msg']} in #{r['channel']} was sent {job['sends']} times and "
                              f"never finished ({why}).")
-        m = self.board.post(r["channel"], f"Still open: {why}. Anyone free can take it: the task is the first message "
+        m = self.board.post(r["channel"], f"Still open: {why}. The thread worker continues; unclaimed work is available for pickup. The task is the first message "
                             "of this thread. Reply with the result and `meta` `{\"done\": true}` when finished.",
                             reply_to=job["msg"], meta={"routine": r["id"], "name": r["name"], "resend": job["sends"]})
         job.update(sent=m["id"], sent_at=time.time(), sends=job["sends"] + 1)
@@ -536,7 +542,7 @@ class Runner:
             body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
                     + (f"Routed to {group}: {why}.\n" if channel != home and why else
                        f"Routed to {group}.\n" if channel != home else "No group fits it, so it is here.\n")
-                    + f"Reply in this thread to take it (\"taking this\"), then assign yourself: "
+                    + f"The thread worker should assign the issue to itself: "
                     f"`gh issue edit {i['number']} -R {rc['repo']} --add-assignee @me`.")
             m = self.board.post(channel, body, meta={"routine": r["id"], "name": r["name"],
                                                      "routine_item": {"repo": rc["repo"], "number": i["number"]}})
@@ -544,8 +550,9 @@ class Runner:
             self.log(r, f"announced #{i['number']} in #{channel} as message {m['id']}")
 
     def taken(self, r, item):
-        """A bot answered in the announcement's thread, or the issue moved on on GitHub."""
-        if any(m["id"] > item["msg"] and m["author"] != ME and m["author_kind"] != "human"
+        """A worker claimed the thread, or the issue moved on on GitHub."""
+        if any(m.get("worker") or
+               (m["id"] > item["msg"] and m["author"] != ME and m["author_kind"] != "human")
                for m in self.board.pages(f"/api/threads/{item['msg']}")):
             return "a bot took it"
         try:

@@ -169,7 +169,7 @@ class Recipes(unittest.TestCase):
         self.assertEqual([c for c, _ in self.announced(thread)[5]], ["game.art"])
 
         # Chasing: a bot takes #2; #1 and #5 get one reminder, then @jac hears about them.
-        self.api("POST", "/api/messages", {"channel": "game.econ", "reply_to": announced[2][0][1], "body": "taking this"}, self.bot)
+        self.api("POST", f"/api/threads/{announced[2][0][1]}/worker", token=self.bot)
         age = lambda st: [i.update(sent_at=i["sent_at"] - 120) for i in st["items"].values()]
         self.state(thread, age); self.once()
         items = self.state(thread)["items"]

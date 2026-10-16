@@ -139,6 +139,20 @@ class RoutineTest(unittest.TestCase):
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
 
+    def test_database_pickup_counts_as_claim_without_a_public_reply(self):
+        rid = self.add("quiet-pickup")
+        self.ask(rid, "enable")
+        self.routines("once")
+        (job,) = self.project_posts(rid)
+        worker = self.api("POST", "/api/agents", {"handle": "quiet-worker", "kind": "copilot"})["token"]
+        self.api("POST", f"/api/threads/{job['id']}/worker", token=worker)
+        state = self.state()
+        state[str(rid)]["job"]["sent_at"] -= 600  # beyond claim timeout, not completion timeout
+        with open(os.path.join(self.cfg, "routines", "state.json"), "w") as fh:
+            json.dump(state, fh)
+        self.routines("once")
+        self.assertEqual(len(self.project_posts(rid)), 1, "a claimed job must not be resent as unclaimed")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

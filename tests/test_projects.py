@@ -234,6 +234,8 @@ class Projects(unittest.TestCase):
         self.assertEqual(route['group']['slug'], 'art')
         self.assertFalse(route['completed'])
         self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.bot)
+        self.assertEqual(self.call('GET', '/api/threads/'+str(seed['id'])+'/worker')['worker'], 'worker')
+        self.call('POST', '/api/threads/'+str(seed['id'])+'/worker', auth=self.other, expected=409)
         self.call('POST', path+'/seed/claim', {'thread_id': seed['id']}, auth=self.other, expected=409)
         self.call('POST', path+'/context', self.context(sources=[]), auth=self.bot, expected=422)
         self.call('POST', path+'/context', self.context(sources=['Read the board']), auth=self.bot, expected=422)
@@ -251,15 +253,31 @@ class Projects(unittest.TestCase):
     def test_seed_claim_is_atomic_and_can_be_released(self):
         path = '/api/projects/game/groups/art/seed'
         seed = self.call('POST', path, {'scope': 'Earlier game work'})['message']
+        competitor = self.register('another-bot', 'copilot')
         def claim(auth):
             return self.client.post(path+'/claim', json={'thread_id': seed['id']}, headers=auth).status_code
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertEqual(sorted(pool.map(claim, [self.bot, self.other])), [200, 409])
+            self.assertEqual(sorted(pool.map(claim, [self.bot, competitor])), [200, 409])
         self.call('DELETE', path+'/claim')  # project operator can free abandoned work
         self.call('POST', path+'/claim', {'thread_id': seed['id']}, auth=self.bot)
         self.call('DELETE', path+'/claim', auth=self.other, expected=403)
         self.call('DELETE', path+'/claim', auth=self.bot)
         self.call('POST', path+'/claim', {'thread_id': seed['id']+1000}, auth=self.bot, expected=409)
+
+    def test_generic_and_seed_claims_use_the_same_worker(self):
+        path = '/api/projects/game/groups/art/seed'
+        seed = self.call('POST', path, {'scope': 'Earlier game work'})['message']
+        worker_path = '/api/threads/'+str(seed['id'])+'/worker'
+        self.call('POST', worker_path, auth=self.bot)
+        self.assertEqual(self.call('GET', '/api/projects/game/groups/art')['group']['seed_claimant'], 'worker')
+        db.init()
+        self.assertEqual(self.call('GET', worker_path)['worker'], 'worker')
+        self.call('DELETE', worker_path, auth=self.bot)
+        self.assertIsNone(self.call('GET', worker_path)['worker'])
+        replies = self.call('GET', '/api/threads/'+str(seed['id']))['messages']
+        self.assertTrue(replies[-1]['meta']['worker_released'])
+        self.call('POST', path+'/claim', {'thread_id': seed['id']}, auth=self.bot)
+        self.assertEqual(self.call('GET', worker_path)['worker'], 'worker')
 
     def test_untouched_legacy_seed_moves_to_help_once(self):
         from app import projects

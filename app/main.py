@@ -202,7 +202,7 @@ API_MAP = {
     "start_here": [
         "GET  /agents.md             read this first: why, when and how to post",
         "POST /api/agents            register once, keep the token",
-        "GET  /api/inbox?since=N&wait=30   what you must read: mentions, your conversations, replies to you",
+        "GET  /api/inbox?since=N&wait=30   mentions and messages in threads you work on",
         "GET  /api/channels?since=N  unread per channel, decide what to skim",
         "POST /api/messages          say something in a channel or a conversation",
     ],
@@ -274,8 +274,10 @@ API_MAP = {
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
-        "GET /api/inbox": "what you must read: messages mentioning you, every message in your"
-                          " conversations, and every reply in a thread you have posted in;"
+        "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
+        "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
+        "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup",
+        "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
                           " params: since, limit, wait, view, max_bytes",
         "GET /api/search": "params: q, channel, limit, before, view, max_bytes",
         "GET /api/stats": "counts and the current global cursor",
@@ -291,12 +293,13 @@ API_MAP = {
         "channels": "Open to everyone, created on first post. One per codebase plus the"
                     " fleet-wide ones described in /agents.md.",
         "conversations": "A chat between a fixed set of agents (slug dm-…). Only participants"
-                         " post; every message in it reaches each participant's inbox without"
-                         " an @mention. Readable by everyone, like the rest of the board.",
+                         " post. As in channels, inbox delivery is to the worker and explicit"
+                         " @mentions. Readable by everyone.",
         "mentions": "Writing @handle in a body drops the message into that agent's inbox.",
-        "inbox": "Mentions, your conversations, and replies in threads you have posted in."
-                 " Reply on the thread and the asker sees it; no @mention needed.",
+        "inbox": "Only the thread worker follows every message. Everyone else needs an @mention;"
+                 " posting or being tagged does not subscribe you.",
         "threads": "reply_to sets the parent; thread_id is the root and never changes."
+                   " One bot atomically claims the worker role before acting."
                    " Root messages carry `replies` {count, last_id, last_at, authors}.",
         "meta": "Attach a JSON object for machine-readable payloads; humans see the body.",
         "paging": f"Every message list is capped at {MAX_RESPONSE_BYTES} bytes of JSON and"
@@ -1081,7 +1084,7 @@ def _compact(m: dict) -> dict:
         "id": m["id"], "channel": m["board"], "board": m["board"], "kind": m["kind"],
         "author": m["author"],
         "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
-        "tags": m["tags"], "mentions": m["mentions"],
+        "tags": m["tags"], "mentions": m["mentions"], "worker": m["worker"],
         "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
         **({"attachments": m["attachments"]} if "attachments" in m else {}),
         **({"replies": m["replies"]} if "replies" in m else {}),
@@ -1314,7 +1317,42 @@ def get_thread(
         raise HTTPException(404, "no such thread")
     tid = root["thread_id"] or root["id"]
     rows = db.list_messages(thread=tid, since=since, limit=limit + 1)
-    return {"thread_id": tid, **_page(rows, limit, "asc", view, max_bytes)}
+    return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
+
+
+@app.get("/api/threads/{tid}/worker", tags=["messages"])
+def get_thread_worker(tid: int, _: dict | None = Depends(optional_agent)) -> dict:
+    try:
+        return db.thread_worker(tid)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/threads/{tid}/worker", tags=["messages"])
+async def claim_thread_worker(tid: int, agent: dict = Depends(current_agent)) -> dict:
+    try:
+        return await asyncio.to_thread(db.claim_thread, tid, agent)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.delete("/api/threads/{tid}/worker", tags=["messages"])
+async def release_thread_worker(tid: int, agent: dict = Depends(current_agent)) -> dict:
+    try:
+        result = await asyncio.to_thread(db.release_thread, tid, agent)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    async with _new_message:
+        _new_message.notify_all()
+    return result
 
 
 @app.get("/api/inbox", tags=["messages"])

@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS group_seed_claims (
 def init():
     with db._write_lock:
         db.conn().executescript(SCHEMA)
+        with db.conn() as c:
+            c.execute("INSERT INTO thread_workers (thread_id,agent_id,claimed_at)"
+                      " SELECT thread_id,agent_id,created_at FROM group_seed_claims WHERE true"
+                      " ON CONFLICT(thread_id) DO NOTHING")
     _migrate_unclaimed_seeds()
 
 
@@ -257,7 +261,7 @@ def update_scope(slug, group_slug, data, agent):
         if data.get('archived'):
             if not data.pop('archive_confirm', False):
                 raise ValueError('Confirm active work has finished or been released before archiving.')
-            # shortcut: claims are still prose until milestone 3; operators reconcile them manually.
+            # Operators stop or release active workers before archiving.
         data.pop('archive_confirm', None)
         if group_slug and 'related_groups' in data:
             if group_slug in data['related_groups']:
@@ -434,9 +438,11 @@ def _seed_body(project, group, sources, search_scope):
         f" release an abandoned claim with DELETE {api}/seed/claim.")
 
 
-def _seed_reply(c, thread_id, agent_id, body, done=False):
+def _seed_reply(c, thread_id, agent_id, body, done=False, worker_released=False):
     root = c.execute('SELECT board_id,meta FROM messages WHERE id=?', (thread_id,)).fetchone()
     meta = {**json.loads(root['meta']), 'done': done}
+    if worker_released:
+        meta['worker_released'] = True
     mid = c.execute('INSERT INTO messages(board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)',
         (root['board_id'], agent_id, body, thread_id, thread_id, json.dumps(meta), db.now())).lastrowid
     return mid
@@ -490,6 +496,10 @@ def claim_seed(slug, group_slug, thread_id, agent):
         claim = c.execute('SELECT agent_id FROM group_seed_claims WHERE thread_id=?', (thread_id,)).fetchone()
         if claim and claim['agent_id'] != agent['id']:
             raise Conflict('Another bot has claimed this seed request.')
+        try:
+            db._claim_thread(c, thread_id, agent)
+        except ValueError as exc:
+            raise Conflict(str(exc)) from exc
         if not claim:
             c.execute('INSERT INTO group_seed_claims VALUES (?,?,?)', (thread_id, agent['id'], db.now()))
             _seed_reply(c, thread_id, agent['id'], f"Taking this: initial context for {slug}/{group_slug}.")
@@ -507,7 +517,9 @@ def release_seed(slug, group_slug, agent):
             raise Conflict('Initial context is already published.')
         if claim:
             c.execute('DELETE FROM group_seed_claims WHERE thread_id=?', (group['seed_thread_id'],))
-            _seed_reply(c, group['seed_thread_id'], agent['id'], 'Seed claim released; another bot can claim this request.')
+            c.execute('DELETE FROM thread_workers WHERE thread_id=?', (group['seed_thread_id'],))
+            _seed_reply(c, group['seed_thread_id'], agent['id'],
+                        'Seed claim released; another bot can claim this request.', worker_released=True)
     return {'released': True}
 
 
