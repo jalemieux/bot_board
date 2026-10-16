@@ -2,10 +2,13 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = (ROOT / "bin/bot").read_text()
+WAIT = SOURCE[SOURCE.index("wait_or_stop() {"):SOURCE.index("fetch_new() {")]
 
 
 class CopilotLauncherTests(unittest.TestCase):
@@ -49,6 +52,109 @@ run_harness "$STATE" "$STATE/session" "resumed turn"
                     ],
                 )
                 self.assertEqual((state / "runs").read_text().strip(), "2")
+
+
+class StopTests(unittest.TestCase):
+    def test_retry_delay_is_preserved_unless_stopped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = WAIT + """
+STATE=$TEST_STATE
+sleep() { echo "$1" >> "$STATE/sleeps"; }
+wait_or_stop 5
+touch "$STATE/stop"
+wait_or_stop 60
+"""
+            subprocess.run(
+                ["bash", "-euc", script], env={**os.environ, "TEST_STATE": tmp},
+                check=True, capture_output=True, text=True,
+            )
+            self.assertEqual((Path(tmp) / "sleeps").read_text().splitlines(), ["1"] * 5)
+
+    def test_stop_interrupts_idle_retry_paths(self):
+        loop = SOURCE[SOURCE.index('trap \'log "stopping (seen='):
+                      SOURCE.index("  RAW=$NEW;")] + "\ndone\n"
+        fetch = SOURCE[SOURCE.index("fetch_new() {"):SOURCE.index("# ---- health:")]
+        for reason in ("logged_out", "usage_limit", "backlog_failure", "fetch_failure", "long_poll"):
+            with self.subTest(reason=reason):
+                self.check_stop(WAIT + fetch + """
+SEEN=0
+OUTAGE=""
+OUTAGE_BY_OUTPUT=""
+BACKLOG_BEFORE=0
+BOT_WAIT=60
+BOARD=http://unused.invalid
+TOKFILE=$STATE/token
+touch "$TOKFILE" "$STATE/health"
+echo "$SEEN" > "$STATE/seen"
+rotate_logs() { :; }
+log() { echo "$*"; }
+logged_out() { [ "$REASON" = logged_out ]; }
+fetch_backlog() { return 1; }
+curl() {
+  if [ "$REASON" = long_poll ]; then
+    touch "$STATE/waiting"
+    exec sleep 60
+  fi
+  return 1
+}
+sleep() { touch "$STATE/waiting"; command sleep "$@"; }
+case $REASON in
+  logged_out) OUTAGE=1 ;;
+  usage_limit) OUTAGE=1; OUTAGE_BY_OUTPUT=1 ;;
+  backlog_failure) BACKLOG_BEFORE=2 ;;
+esac
+""" + loop, reason)
+
+    def test_stop_allows_busy_run_to_finish(self):
+        self.check_stop("""
+echo project > "$STATE/busy"
+touch "$STATE/waiting"
+sleep 1
+touch "$STATE/completed"
+rm "$STATE/busy"
+while [ ! -e "$STATE/stop" ]; do sleep 1; done
+""", "busy")
+
+    def check_stop(self, body, reason):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            state = home / ".config/bot_board/bots/test"
+            state.mkdir(parents=True)
+            script = home / "bot"
+            script.write_text("""set -euo pipefail
+STATE=$TEST_STATE
+echo $$ > "$STATE/pid"
+trap 'rm -f "$STATE/pid"' EXIT
+""" + body)
+            env = {**os.environ, "HOME": tmp, "BOT_CONFIG": str(home / "missing"),
+                   "TEST_STATE": str(state), "REASON": reason}
+            with subprocess.Popen(
+                ["bash", str(script)], env=env, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True,
+            ) as launcher:
+                try:
+                    deadline = time.monotonic() + 5
+                    while (not (state / "waiting").exists()
+                           or (reason == "long_poll" and not (state / "poll").exists())):
+                        if launcher.poll() is not None:
+                            self.fail(launcher.communicate())
+                        self.assertLess(time.monotonic(), deadline, "launcher did not start waiting")
+                        time.sleep(0.01)
+                    stopped = subprocess.run(
+                        ["bash", str(ROOT / "bin/bot"), "stop", "test"],
+                        env=env, capture_output=True, text=True, timeout=6,
+                    )
+                    self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                    self.assertIn("test stopped", stopped.stdout)
+                    launcher.communicate(timeout=2)
+                    self.assertEqual(launcher.returncode, 0)
+                    if reason == "busy":
+                        self.assertTrue((state / "completed").exists())
+                        self.assertIn("will stop when its run", stopped.stdout)
+                finally:
+                    if launcher.poll() is None:
+                        launcher.kill()
+                        launcher.communicate()
 
 
 if __name__ == "__main__":

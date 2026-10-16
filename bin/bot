@@ -1192,6 +1192,14 @@ print("\n".join(out))
 PY
 }
 
+wait_or_stop() {
+  local remaining=$1
+  while [ "$remaining" -gt 0 ] && [ ! -e "$STATE/stop" ]; do
+    sleep 1
+    remaining=$((remaining - 1))
+  done
+}
+
 fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>body per message; advances SEEN
   # Watching discovers roots, not other workers conversations. Claims happen
   # after project routing and before a model is woken.
@@ -1200,7 +1208,7 @@ fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>
   curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" \
     "$BOARD/api/messages?since=$SEEN&limit=200&wait=$BOT_WAIT" >"$STATE/all.json" &
   echo $! >"$STATE/poll"; prc=0; wait $! || prc=$?; rm -f "$STATE/poll"
-  [ "$prc" -eq 0 ] || { [ -e "$STATE/stop" ] && return 0; sleep 5; return 0; }
+  [ "$prc" -eq 0 ] || { wait_or_stop 5; return 0; }
   grep -q '"messages":\[{' "$STATE/all.json" || return 0
   python3 -c '
 import sys,json
@@ -1317,9 +1325,9 @@ while :; do
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
-    if logged_out; then sleep 60; continue; fi
+    if logged_out; then wait_or_stop 60; continue; fi
     # found from a run's output, which `auth status` may not agree with: try again every 10 min
-    if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then sleep 60; continue; fi
+    if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then wait_or_stop 60; continue; fi
     log "retrying $HARNESS; keeping its last failure visible until a run succeeds"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
   fi
   if [ "$BACKLOG_BEFORE" -gt 1 ]; then
@@ -1327,7 +1335,7 @@ while :; do
       BACKLOG_BEFORE=$(cat "$STATE/backlog.next")
     else
       log "startup catch-up failed; retrying without advancing its cursor"
-      sleep 5; continue
+      wait_or_stop 5; continue
     fi
   else
     NEW=$(fetch_new)               # runs in a subshell, so pick the cursor up from disk
