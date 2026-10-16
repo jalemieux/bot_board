@@ -1577,7 +1577,7 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
             f'{e(text)}</span>')
 
 
-def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
+def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool = False) -> str:
     # what the human asked, in the words of the button they pressed
     asked = lambda b: ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
                        else "start" if b["want"] == "running" else "stop")
@@ -1585,20 +1585,18 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
     for b in bots:
         up = b["status"].startswith(("waiting", "running"))
         st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
-        status = e(st["words"])
+        detail = ""
         if b.get("want"):
-            status += f'<div class="by">{e(asked(b))} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+            detail += f'<div class="by">{e(asked(b))} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
         # last active: the keeper knows its last harness run, the board its last post
         seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
-        status += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
-        if b.get("project"):
-            status += f'<div class="by">dedicated to project <a href="/projects/{e(b["project"])}">{e(b["project"])}</a></div>'
+        detail += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
         if b.get("serves"):
-            status += f'<div class="by">serves {e(b["serves"])}</div>'
+            detail += f'<div class="by">serves {e(b["serves"])}</div>'
         # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
         for why in dict.fromkeys(w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "",
                                              b.get("health") if up else "") if w):
-            status += f'<div class="prob">{e(why)}</div>'
+            detail += f'<div class="prob">{e(why)}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
         can = b["status"] != "moved" and (up or b.get("harness"))
         # no second start or stop for one already asked; a kill can still follow a stop
@@ -1618,10 +1616,18 @@ def _bot_rows(bots: list, host: str, others: list | None = None) -> str:
             btn += (f' <select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
                     '<option value="">move to…</option>'
                     + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
+        identity = e(b.get("harness") or "unknown harness")
+        if show_host:
+            identity += f' · <a href="#box-{e(host)}">{e(host)}</a>'
+        if b.get("project"):
+            identity += f' · <a href="/projects/{e(b["project"])}">{e(b["project"])}</a>'
+        tone = " run" if st["can_work"] and not st["reason"] else " prob" if st["reason"] else ""
+        warning = '<div class="prob">Last run failed · can retry</div>' if st["state"] == "failing" and st["can_work"] else ""
         rows.append(
-            f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td><td>{e(b.get("harness") or "?")}</td>'
-            f'<td class="st{" run" if st["state"] == "working" else ""}">{status}</td>'
-            f'<td class="do">{btn}</td></tr>')
+            f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a><div class="by">{identity}</div></td>'
+            f'<td class="st{tone}">{e(st["words"])}{warning}'
+            f'<details><summary>Details<span class="sr-only"> for @{e(b["handle"])}</span></summary>{detail}'
+            f'<div class="worker-controls">{btn}</div></details></td></tr>')
     return "".join(rows)
 
 
@@ -1707,43 +1713,90 @@ document.addEventListener('submit', function (ev) {
 // Keep the page current, but never under someone who is typing a name or a secret.
 setInterval(function () {
   var a = document.activeElement;
-  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)')
+  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('.fleet-page details[open]')
+      && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)')
       && !document.querySelector('form.secret input:not(:placeholder-shown)'))
     location.reload();
 }, 15000);
 """
 
 
-def _cannot(bots: list) -> str:
-    """' (2 cannot work)': bots whose launcher is up but which take no work (#100)."""
-    n = sum(1 for b in bots if b.get("state") and not b["state"]["can_work"])
-    return f" ({n} cannot work)" if n else ""
+FLEET_CSS = """
+.fleet-page .machine-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fleet-page h2{font-size:18px;margin:0 0 8px}.fleet-page h3{font-size:15px;margin:0}
+.fleet-page .fleet-summary{color:var(--dim);margin:0 0 22px}
+.fleet-page .fleet-section{margin:24px 0}
+.fleet-page .fleet-alert{padding:14px 16px;margin:12px 0;background:var(--accent-soft);border-radius:8px}
+.fleet-page .fleet-alert p{margin:7px 0;overflow-wrap:anywhere;font-size:13px}
+.fleet-page .fleet-alert summary{color:var(--accent)}
+.fleet-page .box table{table-layout:fixed;margin:10px 0 0}
+.fleet-page .box td{padding:12px 10px 12px 0;overflow-wrap:anywhere}
+.fleet-page .box td:first-child{width:44%}
+.fleet-page .box td.st{font:13px system-ui,sans-serif}
+.fleet-page .box .by{font-size:12px;margin-top:4px;overflow-wrap:anywhere}
+.fleet-page .worker-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.fleet-page .worker-controls select{max-width:100%}
+.fleet-page .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fleet-page .machine{padding:16px 0;border-top:1px solid var(--line)}
+.fleet-page .machine .meta{margin:6px 0;font-size:13px;color:var(--dim)}
+.fleet-page .machine-head .name{font-size:15px}
+.fleet-page .good{color:var(--good)}.fleet-page .warning{color:var(--accent)}
+.fleet-page .machine-actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
+.fleet-page .newbot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fleet-page .newbot input{min-width:0;max-width:100%}
+.fleet-page .history,.fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:22px}
+.fleet-page .fleet-settings p{font-size:13px;color:var(--dim)}
+body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{display:none}
+@media(max-width:600px){
+ .fleet-page .box table,.fleet-page .box tbody,.fleet-page .box tr,.fleet-page .box td{display:block;width:100%}
+ .fleet-page .box td:first-child{width:100%;padding-bottom:4px}
+ .fleet-page .box td.st{border-top:0;padding-top:0}
+ .fleet-page .box .gauges{display:block}.fleet-page .box .gauge{flex-wrap:wrap;margin:8px 0}
+ .fleet-page form.secret input{max-width:100%}
+}
+"""
 
 
 def fleet_page(board_name, hosts, pools=(), status=None) -> str:
-    cards = []
+    available, pending, history, blockers, machines = [], [], [], {}, []
+    reporting = sum(h["reporting"] for h in hosts)
+
+    def worker_rows(entries):
+        rows = ""
+        for host, bot in entries:
+            others = [h["name"] for h in hosts if h["reporting"] and h["name"] != host["name"]]
+            rows += _bot_rows([bot], host["name"], others if host["reporting"] else [], show_host=True)
+        return f'<table aria-label="Workers"><tbody>{rows}</tbody></table>'
+
     for h in hosts:
-        up = [b for b in h["bots"] if b["status"].startswith(("waiting", "running"))]
-        down = [b for b in h["bots"] if b not in up]
+        bots = [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]
+        for b in bots:
+            st = b["state"]
+            entry = (h, b)
+            if not h["reporting"]:
+                continue
+            if st["can_work"]:
+                available.append(entry)
+            elif st["state"] in ("out of usage", "needs login", "failing") or b.get("problem"):
+                blockers.setdefault((h["name"], b.get("harness") or "unknown harness", st["state"]), []).append(entry)
+            elif st["state"] != "stopped":
+                pending.append(entry)
+            else:
+                history.append(entry)
+        up = [b for b in bots if b["status"].startswith(("waiting", "running"))]
+        ready = sum(b["state"]["can_work"] for b in bots)
+        blocked = sum(b["state"]["state"] in ("out of usage", "needs login", "failing")
+                      and not b["state"]["can_work"] for b in bots)
         load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
         gauges = _gauge("load", load, cores, f"{load:.1f} of {cores} cores" if load is not None and cores else "")
         gauges += _gauge("memory", None if free is None or total is None else total - free, total,
                          f"{(free or 0) / 1024:.1f} GB free of {(total or 0) / 1024:.0f}")
-        gone = "" if h["reporting"] else (f'<span class="gone">not reporting: last heard {e(ago(h["reported_at"]))}, '
-                                          "figures are from then</span>")
-        # what someone asked for stays in sight whatever its state; the rest of the stopped ones fold away
-        asked = [b for b in down if b.get("want") == "running" or b.get("problem") or b.get("move_to") or b.get("fetch")]
-        down = [b for b in down if b not in asked]
         name = h["name"]
         others = [o["name"] for o in hosts if o["name"] != name and o["reporting"]] if h["reporting"] else []
-        table = (f"<table>{_bot_rows(up + asked, name, others)}</table>" if up or asked
-                 else '<p class="sub">No bot running here.</p>')
-        rest = (f"<details><summary>{len(down)} not running (stopped, or moved to another box)</summary>"
-                f"<table>{_bot_rows(down, name, others)}</table></details>") if down else ""
         options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
-        rest += (f'<form class="newbot" data-host="{e(name)}">new bot here: '
+        newbot = (f'<form class="newbot" data-host="{e(name)}">new bot here: '
                  '<input name="handle" placeholder="name (optional)" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
-                 f'<select name="harness">{options}</select> <button type="submit">start</button></form>')
+                 f'<select name="harness" aria-label="harness on {e(name)}">{options}</select> <button type="submit">start</button></form>')
         # drain: every pool bot up here goes to the least loaded other box
         drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
         drain = (f' <button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
@@ -1760,34 +1813,80 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
             parts.append(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(text)}</span>')
         creds = " · ".join(parts)
         creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
-        cards.append(f'<div class="card box" id="box-{e(h["name"])}"><span class="name">{e(h["name"])}</span>{drain}{gone}'
-                     f'<div class="gauges">{gauges}</div>{creds}'
-                     f'<div class="meta">{len(up)} bot{"" if len(up) == 1 else "s"} running{"" if h["reporting"] else " when last heard"}{_cannot(up)}{" · " + e(h["os"]) if h.get("os") else ""} · '
-                     f'reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>{table}{rest}</div>')
+        if h["reporting"]:
+            activity = f'{ready} available · {blocked} blocked · {_plural(len(up), "launcher")} alive' if up or ready or blocked else 'No live workers'
+            connection = '<span class="good">Reporting</span>'
+            snapshot = ""
+        else:
+            activity = f'Worker availability unknown · last report {e(ago(h["reported_at"]))}'
+            connection = '<span class="warning">Not reporting</span>'
+            snapshot = (f'<details><summary>Last known workers · {len(bots)} records</summary>'
+                        f'{worker_rows([(h, b) for b in bots])}</details>') if bots else ""
+        machines.append(f'<section class="machine box" id="box-{e(name)}">'
+                        f'<div class="machine-head"><h3 class="name">{e(name)}</h3>{connection}</div>'
+                        f'<div class="meta">{activity}</div>'
+                        f'<details><summary>Machine details<span class="sr-only"> for {e(name)}</span></summary>'
+                        f'<div class="gauges">{gauges}</div>{creds}'
+                        f'<div class="meta">{e(h.get("os") or "")} · reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>'
+                        f'<div class="machine-actions">{drain}</div>'
+                        f'{newbot if h["reporting"] else ""}</details>{snapshot}</section>')
     # which projects keep their own bots; every other project shares the rest
     pooled = ""
     if pools:
-        pooled = ('<p class="sub">Dedicated bot pools: ' + "; ".join(
+        pooled = ('<details><summary>Project assignments</summary><p class="sub">Dedicated bot pools: ' + "; ".join(
             f'<a href="/projects/{e(p["project"])}">{e(p["project"])}</a>: '
             + (", ".join(f'@{e(b)}' for b in p["bots"]) or "none, so no pool bot works there")
-            for p in pools) + '. Every other project is served by the remaining pool bots.</p>')
-    body = pooled + ("".join(cards) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
-                                        "on each box that runs bots.</div>"))
+            for p in pools) + '. Every other project is served by the remaining pool bots.</p></details>')
+    alerts = []
+    for (host, harness, state), entries in blockers.items():
+        words = {"out of usage": "usage limit reached", "needs login": "login required"}.get(state, "workers need attention")
+        reasons = list(dict.fromkeys(b["state"]["reason"] or b.get("problem") or "" for _, b in entries))
+        alerts.append(f'<div class="fleet-alert box"><h3>{e(harness)}: {e(words)} on {e(host)} · {len(entries)}</h3>'
+                      + (f'<p>{e(reasons[0])}</p>' if reasons[0] else "")
+                      + f'<details><summary>View {_plural(len(entries), "worker")}</summary>{worker_rows(entries)}</details></div>')
+    for h in hosts:
+        if not h["reporting"]:
+            alerts.append(f'<div class="fleet-alert"><h3>{e(h["name"])} is not reporting</h3>'
+                          f'<p>Last heard {e(ago(h["reported_at"]))}. Current worker availability is unknown.</p>'
+                          f'<a href="#box-{e(h["name"])}">View machine</a></div>')
+        else:
+            for credential in h.get("credentials") or []:
+                if credential["state"] != "ok":
+                    alerts.append(f'<div class="fleet-alert"><h3>{e(credential["name"])} {e(credential["state"])} on {e(h["name"])}</h3>'
+                                  f'<p>{e(credential.get("detail") or "Check credentials on this machine.")}</p>'
+                                  f'<a href="#box-{e(h["name"])}">View machine</a></div>')
+    attention = f'<section class="fleet-section" id="fleet-attention"><h2>Needs attention</h2>{"".join(alerts)}</section>' if alerts else ""
+    ready_html = worker_rows(available) if available else '<p class="sub">No workers are available to take work.</p>'
+    pending_html = (f'<section class="fleet-section box" id="fleet-pending"><h2>Starting, stopping &amp; moving · {len(pending)}</h2>'
+                    f'{worker_rows(pending)}</section>') if pending else ""
+    history_html = (f'<details class="history box" id="fleet-history"><summary>Stopped &amp; historical bots · {_plural(len(history), "record")}</summary>'
+                    f'{worker_rows(history)}</details>') if history else ""
+    machines_html = "".join(machines) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
+                                         'on each box that runs bots.</div>')
+    blocked_count = sum(len(entries) for entries in blockers.values())
     return shell(board_name, "fleet", here="/fleet", content=f"""
-{status_html(status)}
+<style>{FLEET_CSS}</style>
+<div class="fleet-page">
 <h1>Fleet</h1>
-<p class="sub">The boxes bots run on, as each box's keeper last reported it. Start and stop are asked here and
-carried out by the keeper of the box, within a few seconds; stop lets a bot finish the run it is in, kill cuts it short.
-<span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>
-{body}
-<h2 id="secrets">Secrets</h2>
+<p class="fleet-summary">{_plural(len(available), "available worker")} · {_plural(blocked_count, "blocked worker")} ·
+{reporting} of {_plural(len(hosts), "box", "boxes")} reporting</p>
+{attention}
+<section class="fleet-section card box" id="fleet-available"><h2>Available now · {len(available)}</h2>{ready_html}</section>
+{pending_html}
+<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+{history_html}
+<details class="fleet-settings"><summary>Fleet controls &amp; project assignments</summary>
+<p>Start and stop requests are carried out by the keeper; stop finishes the current run, kill cuts it short.
+<span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}</details>
+<details class="fleet-settings" id="secrets"><summary>Secrets</summary>
 <p class="sub">Given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
 shown again. Board admins only.</p>
 <div id="secretlist" class="sub"></div>
 <form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
- autocomplete="off" required> <button type="submit">save</button></form>
+ autocomplete="off" required> <button type="submit">save</button></form></details>
+</div>
 <script>{FLEET_JS}</script>""")
 
 
