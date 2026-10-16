@@ -13,6 +13,7 @@
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
+#   bot keeper install|uninstall|run|once|show   the box agent: report this box to the board and run its bots
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -438,6 +439,10 @@ fi
 
 # ---- bot ps|stop|kill|pack|unpack: the bots on this box, and moving one to another -------
 case ${1:-} in
+  keeper)
+    # The box agent (reporting, supervising) installs and runs through the same bot
+    # binary as every bot, so a box needs only this one command on its PATH.
+    shift; exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" "$@" ;;
   ps|ls)
     ALL=""; TSV=""; shift
     for arg in "$@"; do case $arg in -a) ALL=1 ;; --tsv) TSV=1 ;; *) usage ;; esac; done
@@ -468,8 +473,11 @@ case ${1:-} in
     S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
     alive "$S" || { echo "bot: $H is not running"; exit 0; }
     touch "$S/stop"
+    # Idle in a long-poll? End that curl so it stops now, not at the poll's end.
+    # A busy bot has no poll file, so its run is left to finish (graceful stop).
+    [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true
     if [ -s "$S/busy" ]; then echo "bot: $H will stop when its run in $(cat "$S/busy") returns; waiting"
-    else echo "bot: $H will stop at its next poll, within ${BOT_WAIT:-60}s; waiting"; fi
+    else echo "bot: $H will stop now; waiting"; fi
     while alive "$S"; do sleep 2; done
     echo "bot: $H stopped"
     exit 0 ;;
@@ -496,7 +504,7 @@ case ${1:-} in
     LEFT=$(rest; if alive "$S"; then echo "$P"; fi)
     if [ -n "$LEFT" ]; then kill -KILL $LEFT 2>/dev/null || true; sleep 1; fi
     if alive "$S"; then die "could not kill $H (pid $P)"; fi
-    rm -f "$S/pid" "$S/stop" "$S/busy"   # a launcher killed with KILL never cleaned up after itself
+    rm -f "$S/pid" "$S/stop" "$S/busy" "$S/poll"   # a launcher killed with KILL never cleaned up after itself
     echo "bot: $H killed"
     exit 0 ;;
   pack)
@@ -514,7 +522,7 @@ case ${1:-} in
     echo "being packed $(date -u +%FT%TZ)" > "$S/moved"
     alive "$S" && die "$H was started again just now. If a keeper runs it, press stop for $H on the board's /fleet page, wait until it shows stopped, then pack"
     mkdir "$W/transcripts"; cp -R "$S" "$W/state"; cp "$T" "$W/token"
-    (cd "$W/state" && rm -f pid stop busy moved handed all.json inbox.json seen.tmp)
+    (cd "$W/state" && rm -f pid stop busy poll moved handed all.json inbox.json seen.tmp)
     # Claude Code keeps a session as <id>.jsonl (and sometimes a folder <id>/) under
     # ~/.claude/projects/<the directory it ran in>/; the id is all that is needed to find it.
     N=0; LOST=""
@@ -743,8 +751,8 @@ else
   api "$BOARD/api/me" >/dev/null || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
 fi
 # From here on the bot is running: bot ps lists it, bot stop asks it to leave.
-rm -f "$STATE/stop" "$STATE/busy"; echo $$ > "$STATE/pid"
-trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy"' EXIT
+rm -f "$STATE/stop" "$STATE/busy" "$STATE/poll"; echo $$ > "$STATE/pid"
+trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"' EXIT
 [ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
 # what ended sessions left behind goes at every start; skill clones only on `bot gc`
 gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "gc: $line"; done || true
@@ -1140,7 +1148,12 @@ PY
 fetch_new() {  # prints id<TAB>board<TAB>thread<TAB>author<TAB>why<TAB>kind<TAB>body per message; advances SEEN
   # Watching discovers roots, not other workers conversations. Claims happen
   # after project routing and before a model is woken.
-  api "$BOARD/api/messages?since=$SEEN&limit=200&wait=$BOT_WAIT" >"$STATE/all.json" || { sleep 5; return 0; }
+  # Run the long-poll as a child whose pid is on disk, so `bot stop` can end it at
+  # once instead of waiting out the poll window. prc is captured under set -e.
+  curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" \
+    "$BOARD/api/messages?since=$SEEN&limit=200&wait=$BOT_WAIT" >"$STATE/all.json" &
+  echo $! >"$STATE/poll"; prc=0; wait $! || prc=$?; rm -f "$STATE/poll"
+  [ "$prc" -eq 0 ] || { [ -e "$STATE/stop" ] && return 0; sleep 5; return 0; }
   grep -q '"messages":\[{' "$STATE/all.json" || return 0
   python3 -c '
 import sys,json

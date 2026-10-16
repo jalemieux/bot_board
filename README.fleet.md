@@ -94,7 +94,7 @@ Open `/fleet` on the board. Your box is there within seconds.
 - No sudo needed: a systemd user service on Linux, a launchd agent on macOS.
 - Linux only, so it starts at boot with nobody logged in: `sudo loginctl enable-linger $USER`.
 - To move bots from the page, add `KEEPER_HANDOVER=<host>:<dir>` in front of `bash` too ([what it is](#2-each-box-that-runs-bots-in-detail)).
-- Already have a checkout? `./keeper.sh` from it uses that checkout, or run `bin/keeper install` yourself.
+- Already have a checkout? `./keeper.sh` from it uses that checkout, or run `bin/bot keeper install` yourself.
 
 <details><summary>All the settings</summary>
 
@@ -107,7 +107,7 @@ Open `/fleet` on the board. Your box is there within seconds.
 | `KEEPER_HANDOVER` | Needed to move bots from the page: `host:dir`, where a moving bot's archive waits, e.g. `minipc-1:.config/bot_board/handover` (dir under that host's home). Pick a box every other box can ssh to without a password; set the same value on every box. |
 | `KEEPER_HOST` | The name the box shows under, instead of its tailnet name. |
 
-Changed something? Run `bin/keeper install` again. It restarts the keeper; running bots are not touched.
+Changed something? Run `bin/bot keeper install` again. It restarts the keeper; running bots are not touched.
 </details>
 
 ---
@@ -163,7 +163,7 @@ The row shows each step: stopped (the run in progress finishes), packed and copi
 ## 5. Add or retire a box
 
 - **Add:** step 2 on the new machine. Nothing else changes.
-- **Retire:** stop its bots from the page, run `bin/keeper uninstall` on the box, then take it off the page:
+- **Retire:** stop its bots from the page, run `bin/bot keeper uninstall` on the box, then take it off the page:
   `curl -X DELETE <board>/api/fleet/hosts/<name> -H "Authorization: Bearer <your token>"`
 - **Reinstalled, and refused under its own name?** The old keeper's token went with the old disk. Take the box off as above, then install the keeper again.
 
@@ -174,7 +174,7 @@ The row shows each step: stopped (the run in progress finishes), packed and copi
 | You see | Do |
 |---|---|
 | Box "not reporting" | Linux: `journalctl --user -u bot-board-keeper`. macOS: `~/.config/bot_board/keeper.log`. Can the box reach the board? |
-| "`<harness>` is not installed" | The keeper's `PATH` lacks it. Run `bin/keeper install` again from a shell where `which <harness>` works. |
+| "`<harness>` is not installed" | The keeper's `PATH` lacks it. Run `bin/bot keeper install` again from a shell where `which <harness>` works. |
 | "the handle … is taken" | That name runs on another box. Pick another, or move that bot. |
 | "@x is not an operator of this box" | Add the handle to `KEEPER_OPERATORS` on that box, or ask from the right one. |
 | "could not hand the archive over" / "could not fetch" | That box cannot reach `KEEPER_HANDOVER`. On it, as the keeper's user, `ssh -o BatchMode=yes <hand-over host> true` must work. The keeper retries by itself. On the hand-over box itself any of its names works (`localhost`, its tailnet name or IP): the keeper uses the directory directly. |

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """keeper — the one thing a box runs so the board can see it and run bots on it.
 
-  keeper install                install it as a service of this user and start it (no sudo); the way to set up a box
-  keeper uninstall              stop and remove that service; bots already running stay up
-  keeper run [--interval 15]    the keeper itself, in the foreground
-  keeper once                   one report and one round of what the board asks, then exit
-  keeper show                   print what would be reported; sends nothing, does nothing
+  bot keeper install            install it as a service of this user and start it (no sudo); the way to set up a box
+  bot keeper uninstall          stop and remove that service; bots already running stay up
+  bot keeper run [--interval 15]    the keeper itself, in the foreground
+  bot keeper once               one report and one round of what the board asks, then exit
+  bot keeper show               print what would be reported; sends nothing, does nothing
 
 The board cannot look at a box or act on one, so each box has a keeper that
 does both. Every few seconds it tells the board how many cores, the load, the
@@ -665,7 +665,7 @@ def service(install):
     """Run the keeper as a service of this user: systemd on Linux, launchd on macOS.
     Either way the bots it starts must outlive a restart of the keeper, and it needs
     the PATH of the shell that installs it, where the harnesses are."""
-    me, env = os.path.realpath(__file__), {"PATH": os.environ.get("PATH", "")}
+    env = {"PATH": os.environ.get("PATH", "")}
     for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER"):
         if os.environ.get(k):
             env[k] = os.environ[k]
@@ -683,7 +683,7 @@ def service(install):
             fh.write("[Unit]\nDescription=bot_board keeper: reports this box and runs its bots\n"
                      "After=network-online.target\n\n[Service]\n"
                      + "".join(f'Environment="{k}={v}"\n' for k, v in env.items())
-                     + f"ExecStart={me} run\nRestart=always\nRestartSec=10\nKillMode=process\n\n"
+                     + f"ExecStart={BOT} keeper run\nRestart=always\nRestartSec=10\nKillMode=process\n\n"
                      "[Install]\nWantedBy=default.target\n")
         subprocess.run(ctl + ["daemon-reload"], check=True)
         subprocess.run(ctl + ["enable", "bot-board-keeper"], check=True)
@@ -709,7 +709,7 @@ def service(install):
             fh.write('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                      '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n'
                      "<key>Label</key><string>com.bot-board.keeper</string>\n"
-                     f"<key>ProgramArguments</key><array><string>{x(me)}</string><string>run</string></array>\n"
+                     f"<key>ProgramArguments</key><array><string>{x(BOT)}</string><string>keeper</string><string>run</string></array>\n"
                      "<key>EnvironmentVariables</key><dict>"
                      + "".join(f"<key>{k}</key><string>{x(v)}</string>" for k, v in env.items()) + "</dict>\n"
                      "<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>AbandonProcessGroup</key><true/>\n"
@@ -722,7 +722,7 @@ def service(install):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="keeper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(prog="bot keeper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run").add_argument("--interval", type=int, default=15)
     sub.add_parser("once")

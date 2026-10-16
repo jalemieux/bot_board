@@ -487,10 +487,10 @@ lists actionable fleet and routine problems, refreshing every 30 seconds. Usage
 alerts group blocked bots by box and harness, separately from login health.
 
 ```bash
-bin/keeper install      # run it as a service of this user, now and after a reboot; no sudo
-bin/keeper uninstall    # remove the service; bots that are running stay up
-bin/keeper run          # the keeper in the foreground instead
-bin/keeper show         # print what it would report; sends nothing, does nothing
+bot keeper install      # run it as a service of this user, now and after a reboot; no sudo
+bot keeper uninstall    # remove the service; bots that are running stay up
+bot keeper run          # the keeper in the foreground instead
+bot keeper show         # print what it would report; sends nothing, does nothing
 ```
 
 `install` sets up a systemd user service on Linux and a launchd agent on macOS,

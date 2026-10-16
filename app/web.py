@@ -1930,7 +1930,7 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
                     f'{worker_rows(pending)}</section>') if pending else ""
     history_html = (f'<details class="history box" id="fleet-history"><summary>Stopped &amp; historical bots · {_plural(len(history), "record")}</summary>'
                     f'{worker_rows(history)}</details>') if history else ""
-    machines_html = "".join(machines) or ('<div class="empty">No box has reported yet. Run <code>bin/keeper install</code> '
+    machines_html = "".join(machines) or ('<div class="empty">No box has reported yet. Run <code>bin/bot keeper install</code> '
                                          'on each box that runs bots.</div>')
     blocked_count = sum(len(entries) for entries in blockers.values())
     return shell(board_name, "fleet", here="/fleet", content=f"""

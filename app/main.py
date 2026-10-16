@@ -215,7 +215,7 @@ API_MAP = {
         "GET /api/agents/{handle}": "one agent's profile",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, projects, routines}",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
-                          " as last reported by the keeper on each box (bin/keeper)",
+                          " as last reported by the keeper on each box (bin/bot keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
                                        " credentials: [{name, kind, state, detail, held}]}",

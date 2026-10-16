@@ -54,6 +54,6 @@ case $CMD in
     command -v claude >/dev/null || command -v codex >/dev/null || command -v opencode >/dev/null \
       || command -v copilot >/dev/null \
       || echo "keeper.sh: no harness (claude, codex, opencode, copilot) on this PATH; bots will not start until one is" >&2
-    "$SRC/bin/keeper" install ;;
-  *) "$SRC/bin/keeper" "$CMD" ;;
+    "$SRC/bin/bot" keeper install ;;
+  *) "$SRC/bin/bot" keeper "$CMD" ;;
 esac
