@@ -86,6 +86,67 @@ def setting(name, default=""):
     return default
 
 
+def rotate_log(path, max_bytes=10 * 1024 * 1024, backups=3):
+    try:
+        source = os.fdopen(os.open(path, os.O_RDWR | os.O_NOFOLLOW), "r+b")
+    except FileNotFoundError:
+        return
+    with source:
+        fcntl.flock(source, fcntl.LOCK_EX)
+        size = os.fstat(source.fileno()).st_size
+        if size < max_bytes:
+            return
+        for n in range(backups - 1, 0, -1):
+            older = f"{path}.{n}"
+            if os.path.exists(older):
+                os.replace(older, f"{path}.{n + 1}")
+        source.seek(max(0, size - max_bytes))
+        # Keep the inode: launchd and the bot's inherited stderr still have it open.
+        fd = os.open(f"{path}.1", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as archive:
+            archive.write(source.read(max_bytes))
+        source.truncate(0)
+
+
+class Maintenance:
+    def __init__(self):
+        self.stamp = Path(CFG) / "gc.last"
+        self.retry_at = 0
+
+    def tick(self, rows):
+        paths = [Path(CFG) / "keeper.log"]
+        for row in rows:
+            if row["status"] in ("stopped", "moved"):
+                state = Path(CFG) / "bots" / row["handle"]
+                paths.extend((state / "log", state / "keeper.out"))
+        for path in paths:
+            try:
+                rotate_log(path)
+            except OSError as e:
+                print(f"keeper: could not rotate {path}: {e}", file=sys.stderr, flush=True)
+        now = time.time()
+        try:
+            last_gc = self.stamp.stat().st_mtime
+        except FileNotFoundError:
+            last_gc = 0
+        except OSError as e:
+            print(f"keeper: could not read GC schedule: {e}", file=sys.stderr, flush=True)
+            return
+        if now < self.retry_at or now - last_gc < 86400:
+            return
+        try:
+            result = subprocess.run([BOT, "gc"], capture_output=True, text=True, timeout=60, check=True)
+            if result.stdout.strip():
+                print(f"keeper: gc: {result.stdout.strip()}", flush=True)
+            if result.stderr.strip():
+                print(f"keeper: gc: {result.stderr.strip()}", file=sys.stderr, flush=True)
+            self.stamp.touch(mode=0o600)
+        except (OSError, subprocess.SubprocessError) as e:
+            self.retry_at = now + 300
+            detail = (e.stderr or e.stdout or str(e)) if isinstance(e, subprocess.CalledProcessError) else str(e)
+            print(f"keeper: gc failed; retrying in 5 minutes: {detail}", file=sys.stderr, flush=True)
+
+
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 OPERATORS = setting("KEEPER_OPERATORS").replace(",", " ").split()
 HARNESSES = ("claude", "codex", "opencode", "copilot")
@@ -668,7 +729,13 @@ def main():
     sub.add_parser("show")
     sub.add_parser("install")
     sub.add_parser("uninstall")
+    rotate = sub.add_parser("rotate-logs", help="rotate local logs between launcher runs")
+    rotate.add_argument("paths", nargs="+")
     a = p.parse_args()
+    if a.cmd == "rotate-logs":
+        for path in a.paths:
+            rotate_log(path)
+        return
     if a.cmd in ("install", "uninstall"):
         return service(a.cmd == "install")
     host = host_name()
@@ -687,9 +754,11 @@ def main():
     except OSError:
         die("a keeper is already running on this box for this user")
     hands, problems, creds, want = Hands(host), {}, Credentials(host), []
+    maintenance = Maintenance()
     while True:
         try:
             snap = snapshot()
+            maintenance.tick(snap["bots"])
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
