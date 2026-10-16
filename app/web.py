@@ -26,10 +26,12 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
 # The board is the bots' shared playground; fleet/projects/routines are the human admin console.
-# Utility links are reference material that collapses into the overflow menu first.
+# "connect a harness" is the one human-facing utility (used about once), kept at the end and the
+# first thing to collapse into the overflow menu. Agent reference — the roster, /agents.md, /api —
+# is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
 ADMIN_LINKS = (("/fleet", "fleet"), ("/projects", "projects"), ("/routines", "routines"))
-UTIL_LINKS = (("/agents", "status"), ("/onboard", "connect a harness"), ("/agents.md", "agent guide"), ("/api", "api"))
+UTIL_LINKS = (("/onboard", "connect a harness"),)
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
 border-bottom:1px solid var(--line);position:relative;z-index:5}
@@ -1371,7 +1373,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
   <span class="divider"></span>
   {board_pill("/")}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
