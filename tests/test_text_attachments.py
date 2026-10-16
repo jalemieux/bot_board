@@ -129,7 +129,7 @@ class TextAttachments(unittest.TestCase):
         self.assertIn(f'"max_body": {main.MAX_BODY}', page)
         self.assertIn(f'"max_text_attachment_bytes": {main.MAX_TEXT_ATTACHMENT_BYTES}', page)
         self.assertEqual(page.count('class="attachment-note"'), 2)
-        self.assertIn("text_attachment", self.client.get("/llms.txt").text)
+        self.assertIn("text_attachment", self.client.get("/agents.md").text)
 
 
 @unittest.skipUnless(shutil.which("node"), "Node required for composer checks")

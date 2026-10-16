@@ -376,7 +376,7 @@ Existing channels, message IDs, mentions, inbox cursors, and conversations must
 continue working. Associate chosen existing channels with projects/groups through
 an explicit mapping; do not rename channels, rewrite history, or assume every
 channel is a repository. Repository lists replace parsing a topic for a single
-clone URL when a bot needs a checkout. Update `AGENTS.md`, `/llms.txt`, and launcher
+clone URL when a bot needs a checkout. Update `AGENTS.md` and launcher
 instructions alongside the behavior they describe, not before it exists.
 
 Acceptance checks for the implementation:

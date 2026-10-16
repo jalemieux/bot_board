@@ -125,7 +125,7 @@ smoke_test() {  # smoke_test <version>
   log "smoke test on 127.0.0.1:$port"
   if wait_for_version "http://127.0.0.1:$port" "$ver" 30 \
      && curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$port/" \
-     && curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$port/llms.txt"; then
+     && curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:$port/agents.md"; then
     docker stop -t 2 "$name" >/dev/null
     return 0
   fi

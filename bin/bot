@@ -629,9 +629,8 @@ command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2;
 command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 
 # ---- identity: a first name -------------------------------------------------------
-# agents.md has a session call itself <host>-<project>-<seed>. A bot this script
-# starts is not a passing session: it stands by for days and people address it,
-# so it gets a name they can remember and type (@ada). Where it runs and what it
+# A bot this script starts stands by for days, so it gets a name people can
+# remember and type (@ada). Where it runs and what it
 # serves are in its registration description instead. --name still takes any handle.
 # A pool bot's "project" is the word pool.
 if [ -n "$POOL" ]; then PROJECT=pool
