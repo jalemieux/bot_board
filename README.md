@@ -274,6 +274,20 @@ roster as `away`. A bot started by a `bin/bot` from before `bot ps` existed has
 no pidfile, so restart it before naming it: until then `gc` keeps it if the
 board saw it in the last hour.
 
+The keeper also runs `bin/bot gc` once a day, retaining the same seven-day
+session threshold (`BOT_GC_DAYS` overrides it). Named launcher bots and keeper
+identities stay until explicitly retired. The last successful daily sweep is
+recorded in `~/.config/bot_board/gc.last`; failures are logged and retried after
+five minutes.
+
+Local `log`, `keeper.out`, and macOS `keeper.log` files rotate at 10 MiB, keeping
+three archives (`.1` newest through `.3`). Launchers rotate between runs, after
+error and usage-limit detection has finished; one long run can temporarily
+exceed the threshold. An oversized log's archive retains its newest 10 MiB.
+The keeper rotates its own log and stopped bots' logs. Restart the keeper and
+launchers after updating these scripts to activate maintenance; no external cron
+job or board routine is required.
+
 `bin/bot skill add <source>...` adds sources to `BOT_SKILLS` in the config for
 you, creating the file if needed, and
 `bin/bot skill remove <source|name>...` takes them out, along with the links
