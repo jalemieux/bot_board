@@ -99,7 +99,14 @@ def util_links(here: str = "") -> str:
     return "\n".join(out)
 
 
-CSS = """
+PICKUP_CSS = """
+.msg .pickup:empty{display:none}
+.msg .pickup-chip{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid var(--line);
+border-radius:12px;background:var(--bot-soft);color:var(--ink);font:12px/1.5 var(--sans);overflow-wrap:anywhere}
+.msg .pickup-chip a{color:inherit}
+"""
+
+CSS = PICKUP_CSS + """
 :root{--bg:#faf9f7;--panel:#fff;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
@@ -379,6 +386,11 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
     if m.get("meta"):
         keys = ", ".join(sorted(m["meta"])[:6])
         meta_note = f'<span title="structured payload">meta: {e(keys)}</span>'
+    pickup = ""
+    if not m.get("reply_to") and m.get("worker"):
+        worker = e(m["worker"])
+        pickup = (f'<div class="pickup"><span class="pickup-chip"><span aria-hidden="true">👀</span> '
+                  f'Picked up by <a href="/a/{worker}">@{worker}</a></span></div>')
     return f"""<div class="{cls}" id="m{m['id']}">
   <div class="head">
     <a class="who" href="/a/{e(m['author'])}">@{e(m['author'])}</a>
@@ -387,6 +399,7 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
     <span>{e(ago(m['created_at']))}</span>
   </div>
   <div class="body">{render_body(m['body'])}</div>
+  {pickup}
   <div class="foot">
     <a href="/t/{m['thread_id'] or m['id']}#m{m['id']}">#{m['id']}</a>
     {'<span>re: #%d</span>' % m['reply_to'] if m.get('reply_to') else ''}
@@ -420,7 +433,7 @@ def presence_legend() -> str:
 
 # ------------------------------------------------------------ channel view
 
-APP_CSS = """
+APP_CSS = PICKUP_CSS + """
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -857,6 +870,10 @@ function refreshLists(){
 }
 
 // ---------------------------------------------------------------- stream
+function pickupHtml(worker){
+  return worker ? '<span class="pickup-chip"><span aria-hidden="true">👀</span> Picked up by <a href="/a/' +
+    esc(worker) + '">@' + esc(worker) + '</a></span>' : '';
+}
 function messageHtml(m, inThread){
   var foot = m.tags.map(function(t){ return '<span class="tag">#' + esc(t) + '</span>'; }).join('');
   (m.attachments || []).forEach(function(a){
@@ -877,6 +894,7 @@ function messageHtml(m, inThread){
     '<span title="' + esc(m.created_at) + '">' + esc(when(m.created_at)) + '</span>' +
     '<a class="id" href="/t/' + (m.thread_id || m.id) + '">#' + m.id + '</a></div>' +
     '<div class="body">' + body(m.body) + '</div>' +
+    (!m.reply_to ? '<div class="pickup" data-worker-thread="' + m.id + '">' + pickupHtml(m.worker) + '</div>' : '') +
     '<div class="foot">' + foot + '</div>' + rep + '</div></div>';
 }
 
@@ -1250,6 +1268,37 @@ wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.c
 renderWho();
 
 // ------------------------------------------------------------------ live
+var refreshingWorkers = false;
+async function refreshWorkers(){
+  if (document.hidden || refreshingWorkers) return;
+  var chips = Array.from(document.querySelectorAll('[data-worker-thread]'));
+  var ids = Array.from(new Set(chips.map(function(chip){ return chip.dataset.workerThread; })));
+  if (!ids.length) return;
+  refreshingWorkers = true;
+  try {
+    for (var i = 0; i < ids.length; i += 200) {
+      var query = ids.slice(i, i + 200).map(function(id){ return 'thread=' + id; }).join('&');
+      var r = await fetch('/api/thread-workers?' + query);
+      if (!r.ok) throw new Error('request failed (' + r.status + ')');
+      var workers = (await r.json()).workers;
+      chips.forEach(function(chip){
+        var id = chip.dataset.workerThread;
+        if (chip.isConnected && Object.prototype.hasOwnProperty.call(workers, id)) {
+          var html = pickupHtml(workers[id]);
+          if (chip.innerHTML !== html) chip.innerHTML = html;
+        }
+      });
+      var messages = S.roots.concat(Object.values(S.umsgs).flat());
+      messages.forEach(function(m){
+        if (!m.reply_to && Object.prototype.hasOwnProperty.call(workers, m.id)) m.worker = workers[m.id];
+      });
+    }
+  } finally { refreshingWorkers = false; }
+}
+setInterval(function(){
+  refreshWorkers().catch(function(e){ console.error('Could not refresh pickup indicators:', e); setLive(false); });
+}, 5000);
+
 function onMessage(m){
   if (m.id <= S.cursor) return;           // already rendered (our own post, or an overlapping poll)
   S.cursor = m.id;

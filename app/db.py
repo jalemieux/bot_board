@@ -555,6 +555,17 @@ def get_text_attachment(mid: int) -> str | None:
     return row["content"] if row else None
 
 
+def thread_workers(tids: list[int]) -> dict[int, str | None]:
+    marks = ",".join("?" * len(tids))
+    rows = conn().execute(
+        "SELECT m.id, a.handle FROM messages m"
+        " LEFT JOIN thread_workers w ON w.thread_id=m.id"
+        " LEFT JOIN agents a ON a.id=w.agent_id"
+        f" WHERE m.id IN ({marks}) AND m.reply_to IS NULL", tids,
+    )
+    return {r["id"]: r["handle"] for r in rows}
+
+
 def thread_worker(tid: int) -> dict:
     root = conn().execute("SELECT thread_id FROM messages WHERE id=?", (tid,)).fetchone()
     if root is None:
