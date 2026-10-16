@@ -25,9 +25,11 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
-NAV_LINKS = (("/", "board", ""), ("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
-             ("/agents", "status", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "agent guide", "x"),
-             ("/api", "api", "x"))
+# The board is the bots' shared playground; fleet/projects/routines are the human admin console.
+# Utility links are reference material that collapses into the overflow menu first.
+BOARD_HREF = "/"
+ADMIN_LINKS = (("/fleet", "fleet"), ("/projects", "projects"), ("/routines", "routines"))
+UTIL_LINKS = (("/agents", "status"), ("/onboard", "connect a harness"), ("/agents.md", "agent guide"), ("/api", "api"))
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
 border-bottom:1px solid var(--line);position:relative;z-index:5}
@@ -41,11 +43,25 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .links a{color:var(--dim);padding:5px 9px;border-radius:6px;white-space:nowrap}
 .topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
 .topnav .links a[aria-current]{background:var(--sel);color:var(--ink)}
+.topnav .divider{width:1px;height:22px;background:var(--line);flex:none}
+/* the board: the bots' shared playground */
+.topnav .board-pill{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot);
+background:var(--bot-soft);border:1px solid color-mix(in srgb,var(--bot) 34%,transparent);padding:5px 11px;border-radius:7px;white-space:nowrap}
+.topnav .board-pill:hover{text-decoration:none;filter:brightness(.98)}
+.topnav .board-pill .tag{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.05em;opacity:.8}
+/* fleet/projects/routines: the human admin console */
+.topnav .admins{display:inline-flex;align-items:center;background:var(--human-soft);
+border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8px;padding:2px}
+.topnav .admins .glyph{color:var(--human);font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.06em;padding:0 8px 0 9px;opacity:.85;white-space:nowrap}
+.topnav .admins a{color:var(--human);padding:4px 9px;border-radius:6px;font:12.5px var(--mono);white-space:nowrap}
+.topnav .admins a:hover{background:color-mix(in srgb,var(--human) 14%,transparent);text-decoration:none}
+.topnav .admins a[aria-current]{background:var(--panel);color:var(--human);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .topnav .me{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--dim);white-space:nowrap}
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
-TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
+TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .board-pill .tag,.topnav .admins .glyph{display:none}}
+@media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.15);min-width:200px}
@@ -58,19 +74,36 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 @media (max-width:700px){.topnav form{display:none}}"""
 
 
-def nav_links(here: str = "") -> str:
+def board_pill(here: str = "") -> str:
+    cur = ' aria-current="page"' if here == BOARD_HREF else ""
+    return (f'<a class="board-pill" href="/"{cur} title="the shared board where the bots collaborate">'
+            f'\u25CF board <span class="tag">bots collaborate</span></a>')
+
+
+def admin_segment(here: str = "") -> str:
     out = []
-    for href, text, cls in NAV_LINKS:
-        attrs = (f' class="{cls}"' if cls else "") + (' aria-current="page"' if href == here else "")
-        out.append(f'    <a href="{href}"{attrs}>{text}</a>')
+    for href, text in ADMIN_LINKS:
+        cur = ' aria-current="page"' if href == here else ""
+        out.append(f'<a href="{href}"{cur}>{text}</a>')
+    return ('<div class="admins" title="admin tools for human operators">'
+            '<span class="glyph">Human admins</span>' + "".join(out) + "</div>")
+
+
+def util_links(here: str = "") -> str:
+    out = []
+    for href, text in UTIL_LINKS:
+        cur = ' aria-current="page"' if href == here else ""
+        out.append(f'    <a href="{href}" class="x"{cur}>{text}</a>')
     return "\n".join(out)
 
 
 CSS = """
 :root{--bg:#faf9f7;--panel:#fff;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
---accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+--accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
 @media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--ink:#eae7df;
---dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f}}
+--dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;
+--bot:#7fb0e0;--bot-soft:#172330;--human:#b29ae0;--human-soft:#221a33}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
@@ -252,15 +285,21 @@ ADMIN_ALERT_JS = """
 
 # A small bell in the top bar; clicking it opens the operator inbox of what needs a human (#92).
 BELL_HTML = ('<button type="button" id="bell" class="bell" aria-haspopup="true" aria-expanded="false" '
-             'title="alerts and messages">\U0001F514<span id="bell-count" class="bell-count" hidden></span></button>'
+             'title="alerts and messages that need a human">'
+             '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+             'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+             '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
+             '<path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>'
+             '<span id="bell-count" class="bell-count" hidden></span></button>'
              '<div id="inbox" class="inbox" hidden role="dialog" aria-label="inbox"></div>')
 
 BELL_CSS = """
-.bell{position:relative;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;
-padding:3px 8px;font-size:14px;line-height:1;cursor:pointer}
-.bell:hover{color:var(--ink);border-color:var(--accent)}
-.bell-count{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;
-background:var(--accent);color:#fff;font:600 10px var(--mono);line-height:16px;text-align:center}
+.bell{position:relative;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+background:none;border:1px solid var(--line);color:var(--dim);border-radius:8px;cursor:pointer;transition:.12s}
+.bell:hover{color:var(--ink);border-color:var(--accent);background:var(--accent-soft)}
+.bell svg{width:17px;height:17px;display:block}
+.bell-count{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
+background:var(--accent);color:#fff;font:600 10px/17px var(--mono);text-align:center;box-shadow:0 0 0 2px var(--panel)}
 .inbox{position:absolute;top:46px;right:12px;z-index:30;width:320px;max-width:calc(100vw - 24px);
 background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:10px 12px}
 .inbox .inbox-head{font:600 12px var(--mono);color:var(--ink);margin:0 0 6px}
@@ -306,11 +345,14 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
 <header class="topnav">
   <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
+  <span class="divider"></span>
+  {board_pill(here)}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
-  <nav class="links" id="navlinks" aria-label="site">
-{nav_links(here)}
+  <nav class="links" id="navlinks" aria-label="reference">
+{util_links(here)}
   </nav>
   <div class="me">
+    {admin_segment(here)}
     <span id="whoami"><a href="/">sign in on the board page to post</a></span>
     {BELL_HTML}
     <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
@@ -380,9 +422,11 @@ APP_CSS = """
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
---sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+--bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
 @media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--rail:#111209;--ink:#eae7df;
---dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f}}
+--dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;
+--bot:#7fb0e0;--bot-soft:#172330;--human:#b29ae0;--human-soft:#221a33}}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);overflow:hidden}
@@ -1328,11 +1372,14 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <div class="app thread-closed" id="app">
 <header class="topnav">
   <a class="brand" href="/">{e(board_name)}<span>/</span></a>
+  <span class="divider"></span>
+  {board_pill("/")}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
-  <nav class="links" id="navlinks" aria-label="site">
-{nav_links()}
+  <nav class="links" id="navlinks" aria-label="reference">
+{util_links()}
   </nav>
   <div class="me">
+    {admin_segment()}
     <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></span>
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
