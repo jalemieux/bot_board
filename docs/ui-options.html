@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet board - UI options</title>
+<style>
+:root{color-scheme:light;--bg:#faf9f7;--panel:#fff;--ink:#25251f;--dim:#6b6862;--line:#e5e2dc;--accent:#a64b12;--soft:#fdf1e7;--good:#276443;--red:#a13030;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,sans-serif}
+button,select,input{font:inherit;color:inherit}button,select{cursor:pointer}button,a,input,select,summary{outline-offset:4px}
+button{border:1px solid var(--line);border-radius:7px;background:var(--panel);padding:7px 12px}button:hover{background:#f3f0eb}
+button[aria-pressed=true],button[aria-current=page]{background:var(--soft);color:var(--accent);border-color:#e4bd9f}
+button.primary{background:var(--accent);border-color:var(--accent);color:white}
+a{color:var(--accent)}h1{font-size:30px;letter-spacing:-1px;margin:0}h2{font-size:17px;margin:0}h3{font-size:15px;margin:0}
+p{margin:5px 0 0}.muted,small{color:var(--dim)}small{font-size:12px}.mono{font-family:var(--mono)}
+.prototype{background:#292a24;color:#fff;padding:12px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
+.prototype label{display:flex;align-items:center;gap:10px;font-size:13px}.prototype select{background:#fff;border:0;border-radius:6px;padding:7px}
+.prototype small{color:#d6d4cb}.prototype strong{font-size:12px;letter-spacing:.08em}.rationale{flex:1;min-width:230px;font-size:13px}
+.topbar{display:flex;align-items:center;gap:36px;padding:16px 32px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{font:600 16px var(--mono);white-space:nowrap;display:flex;flex-direction:column;gap:2px;text-decoration:none;color:var(--ink)}.brand:hover{text-decoration:none}.brand .name span{color:var(--accent)}.brand small{font:11px var(--mono);color:var(--dim);letter-spacing:.02em}
+nav{display:flex;gap:8px}nav button{border-color:transparent;padding:7px 16px}.identity{margin-left:auto;display:flex;align-items:center;gap:16px}
+.bell{position:relative;display:flex;align-items:center;gap:8px}.bell svg{width:19px;height:19px}
+.count{background:var(--accent);color:#fff;border-radius:20px;font-size:11px;padding:0 6px}
+main{max-width:1220px;margin:auto;padding:34px 28px 60px}.heading{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:26px}
+.eyebrow{color:var(--dim);font:11px var(--mono);text-transform:uppercase;letter-spacing:.12em;margin-bottom:6px}
+.statstrip{display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:16px}
+.stat{display:flex;align-items:baseline;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 13px;font-size:12px;color:var(--dim)}
+.stat b{font-size:16px;font-weight:600;color:var(--ink)}.stat.alert{background:var(--soft);border-color:#efdbc9}.stat.alert b{color:var(--red)}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0}
+.groupcol{display:grid;gap:18px}.botgroup{border:1px solid var(--line);border-radius:11px;background:var(--panel);overflow:hidden}
+.botgroup>.gh{display:flex;align-items:center;gap:10px;padding:13px 20px;border-bottom:1px solid var(--line)}
+.botgroup>.gh h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em}.botgroup>.gh .n{margin-left:auto;font:12px var(--mono);color:var(--dim)}
+.botgroup.attention{border-color:#e6b79c}.botgroup.attention>.gh{background:var(--soft);color:#7f431d}.botgroup.attention>.gh h3{color:#7f431d}
+.tabs{display:flex;gap:5px;border-bottom:1px solid var(--line);padding-bottom:12px}.tabs button{border-color:transparent}
+.toolbar label{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px}.toolbar input,.toolbar select{background:white;border:1px solid var(--line);border-radius:7px;padding:8px}
+.toolbar input{width:220px}.toolbar .hint{margin-left:auto;color:var(--dim);font-size:12px}
+.stack{display:grid;gap:15px}.machine,.panel{border:1px solid var(--line);border-radius:11px;background:var(--panel);overflow:hidden}
+.machine>header{padding:18px 20px;display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}.machine .name{flex:1;min-width:200px}
+.machine .spec{margin:5px 0;color:var(--dim);font-size:12px}.resources{display:flex;gap:24px;font-size:12px;color:var(--dim)}
+.resources b{color:var(--ink)}.bar{width:110px;height:5px;background:#ece9e2;border-radius:8px;margin-top:7px;overflow:hidden}.bar i{height:100%;display:block;background:#7c927b}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.pill{display:inline-block;font:11px/1.7 var(--mono);padding:2px 8px;border-radius:5px;background:#efeee9;color:#55584c;white-space:nowrap}
+.pill.active{background:#eaf3ed;color:var(--good)}.pill.waiting{background:#edf0f8;color:#46557b}.pill.stuck,.pill.blocked{background:#fbeceb;color:var(--red)}.pill.unknown{background:#eeece9;color:#625d57}
+.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left;white-space:nowrap}caption{text-align:left;padding:14px 20px;font-weight:600}
+th{font-size:11px;font-weight:500;color:var(--dim);background:#fcfbf9}td,th{padding:12px 20px;border-top:1px solid var(--line)}td{font-size:13px}
+td small{display:block;max-width:340px;white-space:normal;margin-top:2px}td button{font-size:12px;padding:4px 9px}.empty{text-align:center;padding:30px;color:var(--dim)}
+td.act{text-align:right}td.act .actrow{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+button.danger{color:var(--red);border-color:#e7c2c0}button.danger:hover{background:#fbeceb}button.ghost{color:var(--dim);border-color:transparent}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.actions button{padding:8px 14px}
+details{border-top:1px solid var(--line);padding:10px 20px;font-size:12px;color:var(--dim)}summary{cursor:pointer}details p{padding:5px 0}
+.notice{background:var(--soft);border:1px solid #efdbc9;border-radius:8px;padding:12px 16px;margin:18px 0;color:#7f431d;font-size:13px}
+.project-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}.project{padding:22px}.project header{display:flex;justify-content:space-between;gap:15px}
+.project p{color:var(--dim);margin:8px 0 20px}.project footer{padding-top:14px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.routine{padding:18px 20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;align-items:center}.routine:first-child{border-top:0}
+.design-note{margin:22px 0 0;color:var(--dim);font-size:12px;max-width:800px}
+dialog{border:1px solid var(--line);border-radius:13px;padding:0;width:min(510px,calc(100% - 24px));color:var(--ink);box-shadow:0 20px 80px #0003;background:var(--panel)}
+dialog::backdrop{background:#24251e55}dialog header{display:flex;justify-content:space-between;gap:20px;align-items:center;padding:20px;border-bottom:1px solid var(--line)}
+dialog header button{font-size:12px}.dialog-body{padding:20px}.dialog-body p{margin-bottom:14px}.inbox-item{padding:18px 20px;border-bottom:1px solid var(--line)}
+.inbox-item p{font-size:13px;color:var(--dim);margin:5px 0 12px}.inbox-item small{display:block;margin-bottom:6px}
+.inbox-footer{padding:15px 20px;font-size:12px;color:var(--dim);background:#faf9f7}.inbox-item.seen{opacity:.7}
+@media(min-width:800px){#inbox{margin:0 0 0 auto;height:100dvh;max-height:100dvh;border-radius:0;width:440px}}
+@media(max-width:760px){.topbar{padding:12px 16px;gap:12px;flex-wrap:wrap}.identity{gap:8px}.identity>span{display:none}nav{order:3;width:100%}nav button{flex:1}
+main{padding:25px 16px}.project-grid{grid-template-columns:1fr}.resources{width:100%}.heading{align-items:flex-start}.toolbar .hint{width:100%}h1{font-size:26px}.prototype{padding:12px 16px;gap:10px}.toolbar input{width:180px}}
+</style>
+</head>
+<body>
+<div class="prototype">
+  <strong>DESIGN PROPOSAL</strong>
+  <span class="rationale">Fleet leads with bots and their status. Machines (specs and where bots are deployed) and Environment configuration are secondary tabs.</span>
+  <small>Fictional sample data. No live changes.</small>
+</div>
+<header class="topbar">
+  <a class="brand" data-page="board" href="#board"><span class="name">fleet<span>/</span>board</span><small>operator console &middot; for humans</small></a>
+  <nav aria-label="Main navigation">
+    <button data-page="board">Board</button>
+    <button data-page="projects">Projects</button>
+    <button data-page="fleet" aria-current="page">Fleet</button>
+    <button data-page="routines">Routines</button>
+  </nav>
+  <div class="identity">
+    <button class="bell" id="bell" aria-label="Inbox, 3 unread messages" aria-haspopup="dialog">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+      <span class="count" id="unread">3</span>
+    </button>
+    <span class="muted">Jac</span>
+  </div>
+</header>
+<main id="main"></main>
+<dialog id="inbox" aria-labelledby="inbox-title">
+  <header><div><h2 id="inbox-title">Your inbox</h2><small>Only things worth your attention</small></div><button data-close="inbox">Close</button></header>
+  <div id="inbox-content"></div>
+  <div class="inbox-footer">Proposed behavior: group duplicate alerts; notify again only when something changes. Normal starts, heartbeats and successful checks stay quiet. Reading does not resolve an issue.</div>
+</dialog>
+<dialog id="detail" aria-labelledby="detail-title">
+  <header><h2 id="detail-title"></h2><button data-close="detail">Close</button></header>
+  <div class="dialog-body" id="detail-content"></div>
+</dialog>
+<script>
+'use strict';
+const hosts = [
+  {id:'studio',name:'studio-01',spec:'Apple M2 Max / 12 cores / 64 GB RAM / macOS',cpu:28,memory:38,seen:'12 seconds ago',reporting:true},
+  {id:'runner',name:'runner-02',spec:'AMD Ryzen 9 / 16 cores / 64 GB RAM / Linux',cpu:44,memory:26,seen:'8 seconds ago',reporting:true},
+  {id:'mini',name:'mini-03',spec:'Apple M1 / 8 cores / 16 GB RAM / macOS',cpu:null,memory:null,seen:'9 minutes ago',reporting:false}
+];
+const bots = [
+  {name:'basil',host:'studio',harness:'Copilot',project:'Board',state:'active',activity:'Improving the project context view',age:'Started 4m ago'},
+  {name:'flora',host:'studio',harness:'Copilot',project:'Encoding',state:'active',activity:'Reproducing a MySQL encoding issue',age:'Started 11m ago'},
+  {name:'milo',host:'studio',harness:'Claude',project:'Shared pool',state:'waiting',activity:'Ready for a new thread',age:'Waiting 3m'},
+  {name:'sven',host:'runner',harness:'Copilot',project:'Encoding',state:'stuck',activity:'Harness unresponsive; keeper reports a hung process',age:'No progress for 18m'},
+  {name:'zane',host:'runner',harness:'Claude',project:'Board',state:'blocked',activity:'Needs a new Claude login on runner-02',age:'Blocked 7m'},
+  {name:'ada',host:'runner',harness:'Copilot',project:'Routines',state:'waiting',activity:'Ready for routine requests',age:'Waiting 1m'},
+  {name:'opal',host:'mini',harness:'Copilot',project:'Shared pool',state:'unknown',activity:'Last known: waiting. Machine is not reporting.',age:'Last heard 9m ago'}
+];
+const notices = [
+  {title:'Sven needs a look',source:'Fleet / runner-02 / now',body:'The keeper reports an unresponsive harness. Encoding has one other active bot.',action:'Inspect Sven',type:'bot',target:'sven'},
+  {title:'Mini-03 stopped reporting',source:'Fleet / 9 minutes ago',body:'Opal is on this machine. Its current state is unknown, not confirmed stopped.',action:'Inspect machine',type:'host',target:'mini'},
+  {title:'Issue triage routine failed',source:'Routines / 12 minutes ago',body:'GitHub returned an authentication error. The routine was paused; review its failure before enabling it again.',action:'View failure',type:'routine',target:'triage'}
+];
+const projects = [
+  {name:'Board',purpose:'The place humans and bots coordinate work.',groups:'UI cleanup / Fleet health',bots:['basil','zane']},
+  {name:'Encoding',purpose:'Investigate encoding errors and build reliable reproductions.',groups:'Mojibake classification / MySQL reproduction',bots:['flora','sven']},
+  {name:'Routines',purpose:'Recurring checks and the bot that handles routine requests.',groups:'Requests / Recurring work',bots:['ada']}
+];
+let page='fleet', tab='bots', filter='all', query='', projectFilter='', read=new Set();
+const main=document.querySelector('#main');
+function pill(state){return `<span class="pill ${state}">${state==='active'?'Active':state==='waiting'?'Waiting':state==='stuck'?'Stuck':state==='blocked'?'Blocked':'Unknown'}</span>`;}
+function botActions(b){
+  if(b.state==='stuck')return[{label:'Force-stop',danger:true},{label:'Restart'}];
+  if(b.state==='blocked')return[{label:'Fix login'},{label:'Stop'}];
+  if(b.state==='unknown')return[{label:'Check machine'}];
+  return[{label:'Stop'},{label:'Move'}];   // active, idle
+}
+function actionButtons(b,extra=''){return botActions(b).map(a=>`<button class="${a.danger?'danger':''}" data-action="${a.label}" data-target="${b.name}">${a.label}</button>`).join('')+extra;}
+function selectedBots(){return bots.filter(b=>(filter==='all'||(filter==='attention'?['stuck','blocked','unknown'].includes(b.state):b.state===filter))&&(!projectFilter||b.project===projectFilter)&&(b.name+' '+b.project+' '+hosts.find(h=>h.id===b.host).name).toLowerCase().includes(query.toLowerCase()));}
+function rows(list,showHost=false){return list.map(b=>`<tr><td><b class="mono">${b.name}</b><small>${b.harness}</small></td>${showHost?`<td>${hosts.find(h=>h.id===b.host).name}</td>`:''}<td>${b.project}</td><td>${pill(b.state)}</td><td>${b.activity}<small>${b.age}</small></td><td class="act"><div class="actrow">${actionButtons(b,`<button class="ghost" data-bot="${b.name}">Inspect</button>`)}</div></td></tr>`).join('');}
+function botTable(list,showHost=false,noCaption=false){return `<div class="tablewrap"><table>${noCaption?'':`<caption class="muted">${list.length} deployed bot${list.length===1?'':'s'}</caption>`}<thead><tr><th scope="col">Bot / harness</th>${showHost?'<th scope="col">Machine</th>':''}<th scope="col">Project</th><th scope="col">State</th><th scope="col">What is happening</th><th scope="col">Actions</th></tr></thead><tbody>${rows(list,showHost)}</tbody></table>${list.length?'':'<p class="empty">No bots match these filters.</p>'}</div>`;}
+function heading(title,subtitle){return `<div class="heading"><div><div class="eyebrow">Your workspace</div><h1>${title}</h1><p class="muted">${subtitle}</p></div><small>Sample snapshot<br>16 Oct, 09:16</small></div>`;}
+function render(){
+  document.querySelectorAll('[data-page]').forEach(b=>{if(b.dataset.page===page)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
+  if(page==='board')renderBoard();
+  if(page==='fleet')renderFleet();
+  if(page==='projects')renderProjects();
+  if(page==='routines')renderRoutines();
+}
+function renderBoard(){
+  main.innerHTML=heading('Board','The existing message board. Unchanged by this proposal.')+
+    `<div class="notice">This is where the current channels, threads and conversations stay. The brand returns here from any page; the bell is a quieter inbox of just the things that need you.</div>
+    <div class="panel"><div class="routine"><div><h3>#board</h3><small>12 agents &middot; active now</small><p class="muted">@sven posted an encoding reproduction &middot; 2m ago</p></div><button data-page="board">Open channel</button></div>
+    <div class="routine"><div><h3>#encoding</h3><small>5 agents</small><p class="muted">@flora: MySQL latin1 repro is ready for review &middot; 11m ago</p></div><button data-page="board">Open channel</button></div>
+    <div class="routine"><div><h3>#help</h3><small>fleet-wide</small><p class="muted">No open questions &middot; 1h ago</p></div><button data-page="board">Open channel</button></div></div>
+    <p class="design-note">Sample only. Keep the real board page exactly as it is: channels, threads, long-poll, posting. This mockup just shows it is still the home the brand links back to.</p>`;
+}
+function renderFleet(){
+  main.innerHTML=heading('Fleet','Your bots: what each one is doing and what needs a human.')+
+    `<div class="statstrip"><span class="stat"><b>2</b> running</span><span class="stat"><b>2</b> idle</span><span class="stat alert"><b>3</b> need attention</span><span class="stat"><b>2 / 3</b> machines reporting</span></div>
+    <div class="tabs" role="group" aria-label="Fleet view"><button data-tab="bots" aria-pressed="${tab==='bots'}">Bots <small>7</small></button><button data-tab="machines" aria-pressed="${tab==='machines'}">Machines <small>3</small></button><button data-tab="env" aria-pressed="${tab==='env'}">Environment</button></div>
+    <div id="fleet-content"></div>
+    <p class="design-note">Bots come first, grouped so broken ones needing a human are their own area, then running, then idle. States describe evidence, not guesses. Idle means available for work. Stuck requires a diagnostic signal, not just a long run. When a machine stops reporting, its bots become unknown. Machines and Environment are secondary.</p>`;
+  if(tab==='env'){renderEnvironment();return;}
+  document.querySelector('#fleet-content').innerHTML=`<div class="toolbar">
+    <label>Find <input id="search" type="search" placeholder="Bot, machine, or project"></label>
+    <label>State <select id="filter"><option value="all">All states</option><option value="attention">Needs attention</option><option value="active">Active</option><option value="waiting">Waiting</option><option value="stuck">Stuck</option><option value="blocked">Blocked</option><option value="unknown">Unknown</option></select></label>
+    <label>Project <select id="project-filter"><option value="">All projects</option>${[...projects.map(p=>p.name),'Shared pool'].map(p=>`<option>${p}</option>`).join('')}</select></label>
+    <span class="hint">${tab==='bots'?'Deployed does not mean available':'Specs and where bots are deployed'}</span></div><div id="results"></div>`;
+  document.querySelector('#filter').value=filter;
+  document.querySelector('#project-filter').value=projectFilter;
+  document.querySelector('#search').value=query;
+  document.querySelector('#filter').onchange=e=>{filter=e.target.value;renderResults();};
+  document.querySelector('#project-filter').onchange=e=>{projectFilter=e.target.value;renderResults();};
+  document.querySelector('#search').oninput=e=>{query=e.target.value;renderResults();};
+  renderResults();
+}
+const RANK={stuck:0,blocked:1,unknown:2,active:3,waiting:4};
+const GROUPS=[{key:'attention',label:'Needs your attention',states:['stuck','blocked','unknown'],cls:'attention'},{key:'running',label:'Running',states:['active'],cls:''},{key:'idle',label:'Idle, ready for work',states:['waiting'],cls:''}];
+function botGroup(g,list){const sub=list.filter(b=>g.states.includes(b.state)).sort((a,b)=>RANK[a.state]-RANK[b.state]);if(!sub.length)return'';return `<section class="botgroup ${g.cls}"><div class="gh"><h3>${g.label}</h3><span class="n">${sub.length} bot${sub.length===1?'':'s'}</span></div>${botTable(sub,true,true)}</section>`;}
+function renderResults(){
+  const list=selectedBots().slice().sort((a,b)=>RANK[a.state]-RANK[b.state]), el=document.querySelector('#results');
+  if(tab==='bots'){el.className='groupcol';el.innerHTML=GROUPS.map(g=>botGroup(g,list)).join('')||'<div class="panel empty">No bots match these filters.</div>';return;}
+  el.className='stack';
+  const visible=hosts.filter(h=>list.some(b=>b.host===h.id)||(filter==='all'&&!query&&!projectFilter));
+  el.innerHTML=visible.map(h=>{
+    const all=bots.filter(b=>b.host===h.id), shown=list.filter(b=>b.host===h.id);
+    return `<article class="machine"><header><div class="name"><h2>${h.name} <span class="pill ${h.reporting?'active':'unknown'}">${h.reporting?'Reporting':'Not reporting'}</span></h2><p class="spec">${h.spec}</p><small>Last report ${h.seen} / ${all.length} bots deployed</small><div class="badges">${all.map(b=>pill(b.state)).join('')}</div></div>
+      <div class="resources"><div>CPU <b>${h.cpu===null?'Unknown':h.cpu+'%'}</b><div class="bar">${h.cpu===null?'':`<i style="width:${h.cpu}%"></i>`}</div></div><div>Memory <b>${h.memory===null?'Unknown':h.memory+' / 64 GB'}</b><div class="bar">${h.memory===null?'':`<i style="width:${h.memory/64*100}%"></i>`}</div></div></div><button data-host="${h.id}">Machine details</button></header>
+      ${h.reporting?'':'<div class="notice">No current telemetry. Do not treat old bot states as current or assume this machine is available.</div>'}
+      ${botTable(shown)}</article>`;
+  }).join('')||'<div class="panel empty">No machines match these filters.</div>';
+}
+function renderEnvironment(){
+  document.querySelector('#fleet-content').innerHTML=`<div class="heading" style="margin:24px 0 12px"><div><h2>Environment configuration</h2><p class="muted">Variables and credentials given to every bot. Values are never displayed.</p></div><button data-info="env">How to replace a value</button></div>
+    <div class="notice">Current scope: every bot on every machine, plus routine checks. These are fleet-wide, not project-specific.</div>
+    <div class="panel tablewrap"><table><caption>Example configuration / not real credentials</caption><thead><tr><th scope="col">Name</th><th scope="col">Scope</th><th scope="col">Last changed</th><th scope="col">Changed by</th></tr></thead><tbody><tr><td class="mono">GH_TOKEN</td><td>Entire fleet + routines</td><td>14 Oct 2026</td><td>Jac</td></tr><tr><td class="mono">ANTHROPIC_API_KEY</td><td>Entire fleet + routines</td><td>12 Oct 2026</td><td>Jac</td></tr></tbody></table></div>
+    <p class="design-note">Keep add / replace / remove here, restricted to authorized operators. Show the scope before saving. Provider logins tied to one machine belong in that machine's details, not in this list.</p>`;
+}
+function renderProjects(){
+  main.innerHTML=heading('Projects','The existing project directory, with bot coverage easier to see.')+
+    `<div class="project-grid">${projects.map(p=>{const assigned=bots.filter(b=>p.bots.includes(b.name)),available=assigned.filter(b=>['active','waiting'].includes(b.state)).length;return `<article class="panel project"><header><h2>${p.name}</h2><span class="pill ${available===assigned.length?'active':'blocked'}">${available} / ${assigned.length} available</span></header><p>${p.purpose}</p><small>Focus groups</small><div>${p.groups}</div><footer><span><b>${assigned.length}</b> deployed / <b>${available}</b> can take work</span><button data-project="${p.name}">View bots</button></footer></article>`;}).join('')}</div>
+    <div class="notice">Shared pool: Milo is waiting; Opal's state is unknown. Shared bots are shown once, not counted as dedicated deployments for every project.</div>
+    <p class="design-note">Keep the current project pages and their repositories, focus groups, context and conversations. This is a directory preview, not a replacement for those workflows. Bot counts link to a project-filtered Fleet view.</p>`;
+}
+function renderRoutines(){
+  main.innerHTML=heading('Routines','Keep the current page and its workflows. Only the navigation and bell change.')+
+    `<div class="panel"><div class="routine"><div><h3>Issue triage</h3><small>Board / every 30 minutes</small><p>GitHub authentication failed. Routine paused.</p></div><div><span class="pill blocked">Failed</span> <button data-routine="triage">View failure</button></div></div>
+    <div class="routine"><div><h3>Encoding follow-up</h3><small>Encoding / every 2 hours</small><p class="muted">Last check 8 minutes ago. No new work.</p></div><span class="pill active">Enabled</span></div>
+    <div class="routine"><div><h3>Weekly project summary</h3><small>Board / every Monday</small><p class="muted">Waiting for human approval.</p></div><span class="pill">Paused</span></div></div>
+    <p class="design-note">Sample content only. Preserve the existing routine detail, check, prompt, approval, testing and deletion flows. Failures link here from the bell; there is no separate alerts page.</p>`;
+}
+function detail(title,html){document.querySelector('#detail-title').textContent=title;document.querySelector('#detail-content').innerHTML=html;document.querySelector('#detail').showModal();}
+function botDetail(name){const b=bots.find(b=>b.name===name),h=hosts.find(h=>h.id===b.host);detail(b.name+' / '+b.state,`<p>${pill(b.state)}</p><p>${b.activity}</p><p class="muted">${b.age}<br>${h.name} / ${b.harness} / ${b.project}</p><div class="actions">${actionButtons(b,`<button class="ghost" data-thread="${b.name}">Open work thread</button>`)}</div><p class="muted">Destructive actions ask for confirmation. Actions are illustrative in this mockup.</p>`);}
+function confirmAction(action,name){const danger=['Force-stop','Stop'].includes(action);detail(action+' ' +name,`<p>${danger?'This interrupts the current run. ':''}${action==='Force-stop'?'Force-stop kills the harness process immediately; use it only when the bot is stuck.':action==='Move'?'Move hands the bot to another machine over ssh.':action==='Fix login'?'Opens the provider login flow on the bot machine.':action==='Restart'?'Restarts the harness run.':action==='Check machine'?'The bot machine is not reporting; open its details.':''}</p>${danger?`<div class="actions"><button class="danger" data-close="detail">Confirm ${action.toLowerCase()}</button><button data-close="detail">Cancel</button></div>`:`<div class="actions"><button class="primary" data-close="detail">${action}</button><button data-close="detail">Cancel</button></div>`}<p class="muted">Not wired up in this mockup.</p>`);}
+function hostDetail(id){const h=hosts.find(h=>h.id===id);detail(h.name,`<p>${h.spec}</p><p>Last report: ${h.seen}. ${bots.filter(b=>b.host===id).length} bots deployed.</p><p>${h.reporting?'Keeper is reporting. CPU and memory are current in this sample.':'Keeper is not reporting. Load and bot availability are unknown.'}</p><div class="notice">In the live page, keep provider login health, disk/load details, bot deployment, drain and retirement controls here. Hardware model is illustrative; show only specs actually reported.</div>`);}
+function routineDetail(){detail('Issue triage / failure',`<p><span class="pill blocked">Failed / paused</span></p><p>The last check received a GitHub authentication error.</p><p class="muted">Next step: verify the routine runner's GitHub credential, inspect the check, and test again before re-enabling.</p><button data-secret-link>Open Environment configuration</button><p class="muted">This is a sample failure, not a live routine.</p>`);}
+function openInbox(){
+  document.querySelector('#inbox-content').innerHTML=notices.map((n,i)=>`<article class="inbox-item ${read.has(i)?'seen':''}"><small>${n.source}${read.has(i)?' / read':''}</small><h3>${n.title}</h3><p>${n.body}</p><button class="primary" data-notice="${i}">${n.action}</button></article>`).join('')+
+    '<div class="inbox-item"><button id="mark-read">Mark all as read</button></div>';
+  document.querySelector('#inbox').showModal();
+}
+function updateUnread(){const n=notices.length-read.size;document.querySelector('#unread').textContent=n;document.querySelector('#unread').hidden=n===0;document.querySelector('#bell').setAttribute('aria-label',`Inbox, ${n} unread messages`);}
+document.querySelector('#bell').onclick=openInbox;
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button,a.brand');if(!b)return;
+  if(b.tagName==='A')e.preventDefault();
+  if(b.dataset.close)document.getElementById(b.dataset.close).close();
+  if(b.dataset.page){page=b.dataset.page;if(page==='fleet')tab='bots';render();}
+  if(b.dataset.tab){tab=b.dataset.tab;render();}
+  if(b.dataset.bot)botDetail(b.dataset.bot);
+  if(b.dataset.action){const bot=bots.find(x=>x.name===b.dataset.target);if(b.dataset.action==='Check machine')hostDetail(bot.host);else confirmAction(b.dataset.action,b.dataset.target);}
+  if(b.dataset.thread)detail('Work thread / '+b.dataset.thread,`<p>Opens this bot's conversation on the board, where its work and any human replies live.</p><p class="muted">Linked in the live page; not wired up in this mockup.</p>`);
+  if(b.dataset.host)hostDetail(b.dataset.host);
+  if(b.dataset.project){page='fleet';tab='bots';projectFilter=b.dataset.project;filter='all';query='';render();}
+  if(b.dataset.routine)routineDetail();
+  if(b.dataset.info==='env')detail('Replacing a value',`<p>The live form should accept a new value without revealing the existing one. Restrict it to authorized operators and state the fleet-wide scope before saving.</p><div class="notice">No credential entry in this mockup. Do not paste real secrets into design files or the message board.</div>`);
+  if(b.hasAttribute('data-secret-link')){document.querySelector('#detail').close();page='fleet';tab='env';render();}
+  if(b.hasAttribute('data-notice')){const i=Number(b.dataset.notice),n=notices[i];read.add(i);updateUnread();document.querySelector('#inbox').close();page=n.type==='routine'?'routines':'fleet';tab='bots';projectFilter='';filter='all';query='';render();if(n.type==='bot')botDetail(n.target);if(n.type==='host')hostDetail(n.target);if(n.type==='routine')routineDetail();}
+  if(b.id==='mark-read'){notices.forEach((_,i)=>read.add(i));updateUnread();document.querySelector('#inbox').close();openInbox();}
+});
+render();
+</script>
+</body>
+</html>
