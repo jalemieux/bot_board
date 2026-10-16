@@ -4,7 +4,7 @@ Runs the real launcher against a small fake board and a fake `claude` that
 records where each run happened and what it was told. Needs bash, git and
 python3; no dependencies. `python3 tests/test_project_routing.py` or pytest.
 """
-import json, os, shutil, signal, subprocess, sys, tempfile, threading, time, unittest
+import datetime, json, os, shutil, signal, subprocess, sys, tempfile, threading, time, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -13,9 +13,10 @@ BOT = os.path.join(ROOT, "bin", "bot")
 ME = "tst"
 
 
-def msg(mid, board, body, meta=None, mention=False):
+def msg(mid, board, body, meta=None, mention=False, **kw):
     return {"id": mid, "board": board, "thread_id": None, "author": "jac", "body": body,
-            "meta": meta or {}, "mention": mention}
+            "meta": meta or {}, "mention": mention, "reply_to": None,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), **kw}
 
 
 def scope(slug, readiness="ready", body="", archived=False, **kw):
@@ -26,13 +27,16 @@ def scope(slug, readiness="ready", body="", archived=False, **kw):
 class FakeBoard:
     """Messages, an inbox, and GET /api/channels/{slug}/project from a table."""
 
-    def __init__(self, messages, routes, has_lookup=True, flaky=(), assigned=None, assignment_error=False):
+    def __init__(self, messages, routes, has_lookup=True, flaky=(), assigned=None, assignment_error=False,
+                 cursor=0, page_size=20, backlog_failures=0):
         self.messages, self.routes, self.has_lookup = messages, routes, has_lookup
         self.flaky = dict.fromkeys(flaky, 1)   # channel -> lookups left that fail with 500
         self.lookups = []
         self.assigned = assigned
         self.assignment_error = assignment_error
         self.seed_routes = {}
+        self.cursor, self.page_size, self.backlog_failures = cursor, page_size, backlog_failures
+        self.requests = []
         board = self
 
         class H(BaseHTTPRequestHandler):
@@ -50,8 +54,9 @@ class FakeBoard:
 
             def do_GET(self):
                 u = urlparse(self.path); q = parse_qs(u.query); path = u.path
+                board.requests.append(self.path)
                 since = int(q.get("since", ["0"])[0])
-                if path == "/api/me": return self.send(200, {"agent": {"handle": ME}, "cursor": 0})
+                if path == "/api/me": return self.send(200, {"agent": {"handle": ME}, "cursor": board.cursor})
                 if path == '/api/me/project-pool':
                     if not board.has_lookup: return self.send(404, {'detail': 'Not Found'})
                     if board.assignment_error: return self.send(500, {'detail': 'failed'})
@@ -65,6 +70,16 @@ class FakeBoard:
                     return self.send(200, board.seed_routes[tid]) if tid in board.seed_routes else self.send(404, {'detail':'Not Found'})
                 if path in ("/api/messages", "/api/inbox"):
                     new = [m for m in board.messages if m["id"] > since and (path == "/api/messages" or m["mention"])]
+                    if q.get("order") == ["desc"]:
+                        if board.backlog_failures:
+                            board.backlog_failures -= 1
+                            return self.send(500, {"detail": "backlog unavailable"})
+                        before = int(q.get("before", [str(board.cursor + 1)])[0])
+                        new = sorted((m for m in new if m["id"] < before),
+                                     key=lambda m: m["id"], reverse=True)
+                        page = new[:board.page_size]
+                        return self.send(200, {"messages": page, "has_more": len(new) > len(page),
+                                              "next_before": page[-1]["id"] if page else 0})
                     if not new and q.get("wait"): time.sleep(1)
                     return self.send(200, {"messages": new, "cursor": max([m["id"] for m in new], default=since)})
                 if path.startswith("/api/channels/") and path.endswith("/project"):
@@ -83,6 +98,7 @@ class FakeBoard:
 
     def close(self):
         self.srv.shutdown()
+        self.srv.server_close()
 
 
 FAKE_CLAUDE = """#!/usr/bin/env python3
@@ -300,6 +316,157 @@ class Routing(unittest.TestCase):
         self.assertTrue(any('curate original art references' in r['prompt'] for r in project_runs))
         self.assertIn('Bootstrap exception',project_runs[0]['prompt'])
         self.assertNotIn('do not build ships yet','\n'.join(r['prompt'] for r in runs))
+
+    def test_new_capacity_catches_up_recent_roots_without_rewinding_live_cursor(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=8)).isoformat()
+        recent = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=6)).isoformat()
+        board = FakeBoard([
+            msg(1, "wordsnap", "too old", created_at=old),
+            msg(2, "wordsnap", "recent unanswered task", created_at=recent),
+            msg(3, "wordsnap", "context event", meta={"kind": "context_update"}),
+            msg(4, "wordsnap", "launcher failure", meta={"launcher": "bin/bot"}),
+            msg(5, "wordsnap", "already done", meta={"done": True}),
+            msg(6, "wordsnap", "recent second task"),
+            msg(7, "wordsnap", "new live request"),
+        ], {}, has_lookup=False, cursor=6, page_size=2)
+        try:
+            runs = self.run_bot(board, lambda rs: any("new live request" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        for text in ("recent unanswered task", "recent second task", "new live request"):
+            self.assertEqual(prompts.count(text), 1)
+        for text in ("too old", "context event", "launcher failure", "already done"):
+            self.assertNotIn(text, prompts)
+        self.assertIn("[backlog: message 2", prompts)
+        self.assertIn("Read its entire current thread first", prompts)
+        self.assertIn("skip any piece already claimed and not released", prompts)
+        self.assertIn("[channel: message 7", prompts)
+        self.assertIn("seen=6", self.log)
+        self.assertTrue(any("since=6" in path for path in board.requests))
+        self.assertEqual([parse_qs(urlparse(path).query)["before"][0]
+                          for path in board.requests if "order=desc" in path], ["7", "5", "3"])
+        seen = os.path.join(self.home, ".config/bot_board/bots", ME, "seen")
+        with open(seen) as f:
+            self.assertEqual(f.read().strip(), "7")
+
+    def test_restart_discovers_backlog_but_preserves_saved_cursor_and_watches(self):
+        state = os.path.join(self.home, ".config/bot_board/bots", ME)
+        os.makedirs(state)
+        with open(os.path.join(self.home, ".config/bot_board", ME + ".token"), "w") as f:
+            f.write("t0k")
+        with open(os.path.join(state, "seen"), "w") as f:
+            f.write("4")
+        with open(os.path.join(state, "held"), "w") as f:
+            f.write("2\twordsnap\t2\tjac\tbacklog\t\trestart pending request\n")
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(1, "unwatched", "do not take unrelated history"),
+            msg(2, "wordsnap", "restart pending request"),
+            msg(3, "lobby", "do not replay fleet chatter"),
+            msg(4, "wordsnap", "own old post", author=ME)], {}, cursor=4)
+        try:
+            runs = self.run_bot(board, lambda rs: any("restart pending request" in r["prompt"] for r in rs),
+                                watch="wordsnap")
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        self.assertIn("[backlog: message 2", prompts)
+        self.assertEqual(prompts.count("restart pending request"), 1)
+        for text in ("do not take unrelated history", "do not replay fleet chatter", "own old post"):
+            self.assertNotIn(text, prompts)
+        with open(os.path.join(state, "seen")) as f:
+            self.assertEqual(f.read(), "4")
+
+    def test_backlog_uses_assignment_readiness_and_seed_routing(self):
+        os.makedirs(os.path.join(self.pool, "game"))
+        board = FakeBoard([
+            msg(1, "help", "unclaimed bootstrap", meta={"kind": "context_seed"}),
+            msg(2, "game-art", "do not do unseeded work"),
+            msg(3, "reserved", "do not enter reserved pool"),
+            msg(4, "retired", "do not reopen archived project"),
+        ], {"game-art": {"project": scope("game"), "group": scope("art", readiness="unseeded")},
+            "reserved": {"project": scope("reserved", bot_pool={"configured": True, "bots": ["another"]}),
+                         "group": None},
+            "retired": {"project": scope("retired", archived=True), "group": None}}, cursor=4)
+        board.seed_routes["1"] = {"project": scope("game"), "group": scope("art", readiness="unseeded"),
+                                  "seed_thread_id": 1, "completed": False}
+        try:
+            runs = self.run_bot(board, lambda rs: any("unclaimed bootstrap" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        self.assertIn("[backlog: message 1", prompts)
+        self.assertIn("Bootstrap exception", prompts)
+        self.assertTrue(any(r["cwd"] == os.path.join(self.pool, "game") for r in runs))
+        for text in ("do not do unseeded work", "do not enter reserved pool", "do not reopen archived project"):
+            self.assertNotIn(text, prompts)
+
+    def test_backlog_discovery_failure_retries_without_losing_history(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(1, "wordsnap", "recover backlog after failure")], {},
+                          cursor=1, backlog_failures=1)
+        try:
+            runs = self.run_bot(board, lambda rs: any("recover backlog after failure" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertIn("startup catch-up failed; retrying without advancing its cursor", self.log)
+        self.assertEqual(sum("recover backlog after failure" in r["prompt"] for r in runs), 1)
+        self.assertEqual(sum("order=desc" in path for path in board.requests), 2)
+
+    def test_backlog_exact_seven_day_boundary_and_invalid_pagination(self):
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
+        board = FakeBoard([
+            msg(1, "wordsnap", "outside", created_at=(cutoff - datetime.timedelta(microseconds=1)).isoformat()),
+            msg(2, "wordsnap", "boundary", created_at=cutoff.isoformat()),
+            msg(3, "wordsnap", "inside", created_at=(cutoff + datetime.timedelta(microseconds=1)).isoformat()),
+            msg(4, "wordsnap", "live only"),
+        ], {}, cursor=3)
+        with open(BOT) as f:
+            source = f.read()
+        function = source[source.index("fetch_backlog() {"):source.index("\nfetch_new() {")]
+        token = os.path.join(self.tmp, "token")
+        with open(token, "w") as f:
+            f.write("t0k")
+        env = dict(self.env, BOARD=board.url, TOKFILE=token, STATE=self.tmp, HANDLE=ME,
+                   WATCH="wordsnap", FLEET_CHANNELS="lobby,findings,help,heads-up,runs", POOL="",
+                   GOAL="", BACKLOG_BEFORE="4", BACKLOG_CUTOFF=str(cutoff.timestamp()))
+        try:
+            result = subprocess.run(["bash", "-euc", function + "\nfetch_backlog"], env=env,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual([line.split("\t")[0] for line in result.stdout.splitlines()], ["3", "2"])
+            with open(os.path.join(self.tmp, "backlog.next")) as f:
+                self.assertEqual(f.read(), "0")
+            board.page_size = 0
+            result = subprocess.run(["bash", "-euc", function + "\nfetch_backlog"], env=env,
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("startup catch-up pagination did not advance", result.stderr)
+        finally:
+            board.close()
+
+    def test_backlog_considers_recent_replies_once_and_skips_completed_threads(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        old = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=8)).isoformat()
+        board = FakeBoard([
+            msg(1, "wordsnap", "old request", created_at=old),
+            msg(2, "wordsnap", "recent followup on older thread", thread_id=1, reply_to=1),
+            msg(3, "wordsnap", "resolved request"),
+            msg(4, "wordsnap", "completed reply", thread_id=3, reply_to=3, meta={"done": True}),
+            msg(5, "wordsnap", "thread original request"),
+            msg(6, "wordsnap", "latest discussion", thread_id=5, reply_to=5),
+            msg(7, "wordsnap", "live control"),
+        ], {}, cursor=6, page_size=2)
+        try:
+            runs = self.run_bot(board, lambda rs: any("live control" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        prompts = "\n".join(r["prompt"] for r in runs)
+        self.assertIn("[backlog: message 2, board wordsnap, thread 1", prompts)
+        self.assertEqual(prompts.count("latest discussion"), 1)
+        for text in ("old request", "resolved request", "completed reply", "thread original request"):
+            self.assertNotIn(text, prompts)
 
 
 if __name__ == "__main__":
