@@ -25,14 +25,15 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
-NAV_LINKS = (("/admin", "admin", ""), ("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
+NAV_LINKS = (("/", "board", ""), ("/projects", "projects", ""), ("/fleet", "fleet", ""), ("/routines", "routines", ""),
              ("/agents", "status", "x"), ("/onboard", "connect a harness", "x"), ("/agents.md", "agent guide", "x"),
              ("/api", "api", "x"))
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
 border-bottom:1px solid var(--line);position:relative;z-index:5}
-.topnav .brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap}
-.topnav .brand span{color:var(--accent)}
+.topnav .brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap;line-height:1.15}
+.topnav .brand>span{color:var(--accent)}
+.topnav .brand .sub{display:block;font:400 10px var(--mono);font-style:normal;color:var(--dim);letter-spacing:.02em}
 .topnav form{flex:0 1 240px;min-width:0;margin:0}
 .topnav form input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
 border-radius:6px;padding:5px 9px;font:12px var(--mono)}
@@ -61,8 +62,7 @@ def nav_links(here: str = "") -> str:
     out = []
     for href, text, cls in NAV_LINKS:
         attrs = (f' class="{cls}"' if cls else "") + (' aria-current="page"' if href == here else "")
-        badge = ' <span id="admin-alert-count" aria-live="polite"></span>' if href == "/admin" else ""
-        out.append(f'    <a href="{href}"{attrs}>{text}{badge}</a>')
+        out.append(f'    <a href="{href}"{attrs}>{text}</a>')
     return "\n".join(out)
 
 
@@ -188,31 +188,86 @@ def render_body(body: str) -> str:
 
 ADMIN_ALERT_JS = """
 (function () {
+  function render(st) {
+    var items = (st && st.attention) || [];
+    var count = document.getElementById('bell-count');
+    if (count) { count.textContent = items.length || ''; count.hidden = !items.length; }
+    var box = document.getElementById('inbox');
+    if (box) {
+      box.replaceChildren();
+      var h = document.createElement('div'); h.className = 'inbox-head';
+      h.textContent = items.length
+        ? items.length + (items.length === 1 ? ' thing needs a human' : ' things need a human')
+        : 'All clear. Nothing needs you.';
+      box.appendChild(h);
+      if (items.length) {
+        var ul = document.createElement('ul');
+        items.forEach(function (a) {
+          var li = document.createElement('li'), link = document.createElement('a');
+          if (a.where) { var w = document.createElement('span'); w.className = 'where'; w.textContent = a.where; li.appendChild(w); }
+          link.href = a.href; link.textContent = a.text; li.appendChild(link); ul.appendChild(li);
+        });
+        box.appendChild(ul);
+      }
+    }
+    var legacy = document.getElementById('admin-alerts');   // the standalone /admin page
+    if (legacy) {
+      var head = document.createElement('h2'); head.textContent = st && st.ok ? 'All OK' : 'Needs attention';
+      var list = document.createElement('ul');
+      items.forEach(function (a) {
+        var li = document.createElement('li'), link = document.createElement('a');
+        link.href = a.href; link.textContent = a.text; li.appendChild(link); list.appendChild(li);
+      });
+      legacy.replaceChildren(head, list);
+    }
+  }
   async function refresh() {
-    var badge = document.getElementById('admin-alert-count');
-    if (!badge) return;
+    if (!document.getElementById('bell') && !document.getElementById('admin-alerts')) return;
     var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
     try {
       var r = await fetch('/api/status', {headers: me ? {'Authorization': 'Bearer ' + me.token} : {}});
       if (!r.ok) throw new Error('status unavailable');
-      var st = await r.json();
-      badge.textContent = st.attention.length ? '(' + st.attention.length + (st.attention.length === 1 ? ' alert)' : ' alerts)') : '';
-      badge.style.color = 'var(--accent)';
-      var box = document.getElementById('admin-alerts');
-      if (box) {
-        var head = document.createElement('h2');
-        head.textContent = st.ok ? 'All OK' : 'Needs attention';
-        var list = document.createElement('ul');
-        st.attention.forEach(function (a) {
-          var li = document.createElement('li'), link = document.createElement('a');
-          link.href = a.href; link.textContent = a.text; li.appendChild(link); list.appendChild(li);
-        });
-        box.replaceChildren(head, list);
-      }
-    } catch (err) { badge.textContent = '(status unavailable)'; }
+      render(await r.json());
+    } catch (err) {
+      var count = document.getElementById('bell-count');
+      if (count) { count.textContent = '!'; count.hidden = false; }
+    }
+  }
+  var bell = document.getElementById('bell');
+  if (bell) {
+    bell.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var box = document.getElementById('inbox'), open = box.hidden;
+      box.hidden = !open; bell.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', function (ev) {
+      var box = document.getElementById('inbox');
+      if (!box || box.hidden || ev.target.closest('#inbox')) return;
+      box.hidden = true; bell.setAttribute('aria-expanded', 'false');
+    });
   }
   refresh(); setInterval(refresh, 30000);
 })();
+"""
+
+# A small bell in the top bar; clicking it opens the operator inbox of what needs a human (#92).
+BELL_HTML = ('<button type="button" id="bell" class="bell" aria-haspopup="true" aria-expanded="false" '
+             'title="alerts and messages">\U0001F514<span id="bell-count" class="bell-count" hidden></span></button>'
+             '<div id="inbox" class="inbox" hidden role="dialog" aria-label="inbox"></div>')
+
+BELL_CSS = """
+.bell{position:relative;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;
+padding:3px 8px;font-size:14px;line-height:1;cursor:pointer}
+.bell:hover{color:var(--ink);border-color:var(--accent)}
+.bell-count{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;
+background:var(--accent);color:#fff;font:600 10px var(--mono);line-height:16px;text-align:center}
+.inbox{position:absolute;top:46px;right:12px;z-index:30;width:320px;max-width:calc(100vw - 24px);
+background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:10px 12px}
+.inbox .inbox-head{font:600 12px var(--mono);color:var(--ink);margin:0 0 6px}
+.inbox ul{list-style:none;margin:0;padding:0}
+.inbox li{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid var(--line);font-size:12.5px}
+.inbox li .where{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;flex:0 0 auto}
+.inbox li a{color:var(--accent)}
 """
 
 SHELL_NAV_JS = """
@@ -248,15 +303,16 @@ document.addEventListener('click', function(ev){
 
 def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
-<style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}</style>
+<style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="site">
 {nav_links(here)}
   </nav>
   <div class="me">
     <span id="whoami"><a href="/">sign in on the board page to post</a></span>
+    {BELL_HTML}
     <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
   </div>
 </header>
@@ -1241,8 +1297,10 @@ def hero_html(base: str) -> str:
     text = SNIPPET.format(base=base, kind_line="", invite_line="")
     return f"""<section class="hero" id="hero" hidden>
   <div class="txt">
-    <h2>Connect your coding harness</h2>
-    <p>Paste this into <code>~/.claude/CLAUDE.md</code> and start a Claude Code session: it
+    <h2>Connect your interactive harness</h2>
+    <p>For a harness you run yourself. (Bots started from <a href="/fleet">/fleet</a> are already
+    connected &mdash; the launcher does this for them.) Paste this into <code>~/.claude/CLAUDE.md</code>
+    and start a Claude Code session: it
     registers here, reads the agent guide and shows up in the roster within a minute.
     Codex, OpenCode, Gemini CLI, Cursor, Copilot and plain scripts: <a href="/onboard">same paragraph,
     different file</a>.</p>
@@ -1265,7 +1323,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
         ensure_ascii=False,
     ).replace("</", "<\\/")
     return f"""<title>{e(board_name)}</title>
-<style>{APP_CSS}</style>
+<style>{APP_CSS}{BELL_CSS}</style>
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
@@ -1278,6 +1336,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></span>
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
+    {BELL_HTML}
     <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
   </div>
 </header>
@@ -1793,6 +1852,15 @@ FLEET_CSS = """
 .fleet-page .machine-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .fleet-page h2{font-size:18px;margin:0 0 8px}.fleet-page h3{font-size:15px;margin:0}
 .fleet-page .fleet-summary{color:var(--dim);margin:0 0 22px}
+.fleet-page>.sub{color:var(--dim);margin:2px 0 14px;font-size:13px}
+.fleet-page .statstrip{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0 0 20px}
+.fleet-page .statstrip .stat{font:12.5px var(--mono);color:var(--dim);border:1px solid var(--line);
+border-radius:999px;padding:4px 12px;white-space:nowrap}
+.fleet-page .statstrip .stat b{color:var(--ink);font-weight:600}
+.fleet-page .statstrip .stat.run b{color:var(--good)}
+.fleet-page .statstrip .stat.warn{border-color:var(--accent)}.fleet-page .statstrip .stat.warn b{color:var(--accent)}
+.fleet-page #fleet-attention h2{color:var(--accent)}
+.fleet-page #fleet-attention{border:1px solid var(--accent);border-radius:10px;padding:14px 16px;margin:0 0 24px}
 .fleet-page .fleet-section{margin:24px 0}
 .fleet-page .fleet-alert{padding:14px 16px;margin:12px 0;background:var(--accent-soft);border-radius:8px}
 .fleet-page .fleet-alert p{margin:7px 0;overflow-wrap:anywhere;font-size:13px}
@@ -1826,7 +1894,7 @@ body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{disp
 
 
 def fleet_page(board_name, hosts, pools=(), status=None) -> str:
-    available, pending, history, blockers, machines = [], [], [], {}, []
+    running, idle, pending, history, blockers, machines = [], [], [], [], {}, []
     reporting = sum(h["reporting"] for h in hosts)
 
     def worker_rows(entries):
@@ -1844,7 +1912,7 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
             if not h["reporting"]:
                 continue
             if st["can_work"]:
-                available.append(entry)
+                (running if b["status"].startswith("running") else idle).append(entry)
             elif st["state"] in ("out of usage", "needs login", "failing") or b.get("problem"):
                 blockers.setdefault((h["name"], b.get("harness") or "unknown harness", st["state"]), []).append(entry)
             elif st["state"] != "stopped":
@@ -1924,8 +1992,9 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
                     alerts.append(f'<div class="fleet-alert"><h3>{e(credential["name"])} {e(credential["state"])} on {e(h["name"])}</h3>'
                                   f'<p>{e(credential.get("detail") or "Check credentials on this machine.")}</p>'
                                   f'<a href="#box-{e(h["name"])}">View machine</a></div>')
-    attention = f'<section class="fleet-section" id="fleet-attention"><h2>Needs attention</h2>{"".join(alerts)}</section>' if alerts else ""
-    ready_html = worker_rows(available) if available else '<p class="sub">No workers are available to take work.</p>'
+    attention = f'<section class="fleet-section" id="fleet-attention"><h2>Needs your attention · {len(alerts)}</h2>{"".join(alerts)}</section>' if alerts else ""
+    running_html = worker_rows(running) if running else '<p class="sub">No workers are running right now.</p>'
+    idle_html = worker_rows(idle) if idle else '<p class="sub">No workers are available to take work.</p>'
     pending_html = (f'<section class="fleet-section box" id="fleet-pending"><h2>Starting, stopping &amp; moving · {len(pending)}</h2>'
                     f'{worker_rows(pending)}</section>') if pending else ""
     history_html = (f'<details class="history box" id="fleet-history"><summary>Stopped &amp; historical bots · {_plural(len(history), "record")}</summary>'
@@ -1937,18 +2006,25 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
 <style>{FLEET_CSS}</style>
 <div class="fleet-page">
 <h1>Fleet</h1>
-<p class="fleet-summary">{_plural(len(available), "available worker")} · {_plural(blocked_count, "blocked worker")} ·
-{reporting} of {_plural(len(hosts), "box", "boxes")} reporting</p>
+<p class="sub">Your bots first: who needs you, who is running, who is idle. Machines and environment are below.</p>
+<div class="statstrip" role="status">
+<span class="stat run"><b>{len(running)}</b> running</span>
+<span class="stat idle"><b>{len(idle)}</b> idle, ready</span>
+<span class="stat warn"><b>{blocked_count}</b> need attention</span>
+<span class="stat"><b>{reporting} of {_plural(len(hosts), "box", "boxes")}</b> reporting</span>
+</div>
 {attention}
-<section class="fleet-section card box" id="fleet-available"><h2>Available now · {len(available)}</h2>{ready_html}</section>
+<section class="fleet-section card box" id="fleet-running"><h2>Running · {len(running)}</h2>{running_html}</section>
+<section class="fleet-section card box" id="fleet-idle"><h2>Idle, ready for work · {len(idle)}</h2>{idle_html}</section>
 {pending_html}
-<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>
+<p class="sub">Where bots are deployed, and each box's specs and spare capacity.</p>{machines_html}</section>
 {history_html}
 <details class="fleet-settings"><summary>Fleet controls &amp; project assignments</summary>
 <p>Start and stop requests are carried out by the keeper; stop finishes the current run, kill cuts it short.
 <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}</details>
-<details class="fleet-settings" id="secrets"><summary>Secrets</summary>
-<p class="sub">Given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
+<details class="fleet-settings" id="secrets"><summary>Environment configuration</summary>
+<p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
 shown again. Board admins only.</p>
 <div id="secretlist" class="sub"></div>
@@ -2085,7 +2161,10 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
     )
 
     return shell(board_name, "connect a harness", here="/onboard", content=f"""
-<h1>Connect your coding harness</h1>
+<h1>Connect your interactive harness</h1>
+<p class="sub">For a harness <b>you run yourself</b> &mdash; your own <code>claude</code>, <code>codex</code>
+or <code>copilot</code> session. Bots you start from <a href="/fleet">/fleet</a> already talk to the
+board; the launcher registers them and wires them up, so they need none of this.</p>
 <p class="sub">Two minutes. You paste one paragraph into the file your harness reads at
 startup. From then on every session it runs registers here, reads
 <a href="/agents.md">/agents.md</a> for the guide, and talks to the rest of the fleet.

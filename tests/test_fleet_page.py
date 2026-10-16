@@ -54,13 +54,15 @@ class FleetPage(unittest.TestCase):
                           bot('leaving', 'running game, stopping'), bot('old', 'stopped')]),
             host('offline', [bot('ghost')], reporting=False),
         ])
-        self.assertIn('2 available workers', page)
-        self.assertIn('2 blocked workers', page)
-        self.assertIn('1 of 2 boxes reporting', page)
-        self.assertIn('@ready', sections['fleet-available'])
-        self.assertIn('@busy', sections['fleet-available'])
+        self.assertIn('1</b> running', page)
+        self.assertIn('1</b> idle', page)
+        self.assertIn('2</b> need attention', page)
+        self.assertIn('1 of 2 boxes', page)
+        self.assertIn('@ready', sections['fleet-idle'])
+        self.assertIn('@busy', sections['fleet-running'])
         for handle in ('limited', 'login', 'leaving', 'old', 'ghost'):
-            self.assertNotIn('@' + handle, sections['fleet-available'])
+            self.assertNotIn('@' + handle, sections['fleet-idle'])
+            self.assertNotIn('@' + handle, sections['fleet-running'])
         self.assertIn('@leaving', sections['fleet-pending'])
         self.assertIn('2 available · 2 blocked · 5 launchers alive', sections['box-live'])
         self.assertIn('availability unknown', sections['box-offline'])
@@ -75,7 +77,8 @@ class FleetPage(unittest.TestCase):
         self.assertEqual(sections['fleet-attention'].count('codex: usage limit reached'), 1)
         self.assertEqual(sections['fleet-attention'].count(reason), 1)
         self.assertIn('View 2 workers', page)
-        self.assertIn('0 available workers', page)
+        self.assertIn('0</b> running', page)
+        self.assertIn('0</b> idle', page)
         self.assertNotIn('id="fleet-history"', page)
 
     def test_history_and_worker_controls_are_collapsed_but_preserved(self):
@@ -87,7 +90,7 @@ class FleetPage(unittest.TestCase):
         self.assertNotIn('fleet-attention', sections)
         self.assertIn('1 record', page)
         self.assertNotIn('@retired', sections.get('fleet-history', ''))
-        self.assertNotIn('/saved/sessions', sections['fleet-available'])
+        self.assertNotIn('/saved/sessions', sections['fleet-idle'])
         self.assertIn('data-kill="1"', page)
         self.assertIn('class="move" data-handle="ready"', page)
         self.assertIn('data-handle="retired" data-host="live" data-run="1"', page)
@@ -106,15 +109,15 @@ class FleetPage(unittest.TestCase):
 
     def test_failed_last_run_keeps_worker_available(self):
         page, sections = self.render([host('live', [bot('retry', health='last run failed: temporary error')])])
-        self.assertIn('1 available worker', page)
-        self.assertIn('@retry', sections['fleet-available'])
-        self.assertIn('Last run failed · can retry', sections['fleet-available'])
-        self.assertNotIn('1 blocked worker', page)
+        self.assertIn('1</b> idle', page)
+        self.assertIn('@retry', sections['fleet-idle'])
+        self.assertIn('Last run failed · can retry', sections['fleet-idle'])
+        self.assertIn('0</b> need attention', page)
         self.assertIn('last run failed: temporary error', page)
 
     def test_stopped_worker_with_a_problem_has_consistent_blocked_counts(self):
         page, sections = self.render([host('live', [bot('broken', 'stopped', problem='failed to stop cleanly')])])
-        self.assertIn('1 blocked worker', page)
+        self.assertIn('1</b> need attention', page)
         self.assertIn('0 available · 1 blocked · 0 launchers alive', sections['box-live'])
         self.assertIn('failed to stop cleanly', sections['fleet-attention'])
 
@@ -124,7 +127,7 @@ class FleetPage(unittest.TestCase):
         ])])
         self.assertIn('Run claude /login', sections['fleet-attention'])
         self.assertIn('No live workers', sections['box-empty'])
-        self.assertIn('No workers are available', sections['fleet-available'])
+        self.assertIn('No workers are available', sections['fleet-idle'])
         self.assertIn('No box has reported yet', self.render([])[0])
 
     def test_untrusted_names_and_health_are_escaped(self):

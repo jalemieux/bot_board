@@ -104,8 +104,8 @@ class Status(unittest.TestCase):
         for path in ('/admin', '/fleet'):
             page = self.client.get(path).text
             self.assertIn('weekly limit', page)
-            self.assertIn('admin-alert-count', page)
-        self.assertIn('admin-alert-count', self.client.get('/').text)
+            self.assertIn('bell-count', page)
+        self.assertIn('bell-count', self.client.get('/').text)
 
     def test_a_box_gone_quiet(self):
         self.report([])
