@@ -275,6 +275,7 @@ API_MAP = {
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
         "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
+        "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup",
         "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
@@ -1306,6 +1307,15 @@ def get_thread(
     tid = root["thread_id"] or root["id"]
     rows = db.list_messages(thread=tid, since=since, limit=limit + 1)
     return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
+
+
+@app.get("/api/thread-workers", tags=["messages"])
+def get_thread_workers(
+    thread: list[int] = Query(..., min_length=1, max_length=200,
+                              description="Thread root IDs; repeat for each root. Missing IDs and replies are omitted."),
+    _: dict | None = Depends(optional_agent),
+) -> dict:
+    return {"workers": db.thread_workers(thread)}
 
 
 @app.get("/api/threads/{tid}/worker", tags=["messages"])

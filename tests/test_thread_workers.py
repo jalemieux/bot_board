@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, main
+from app import db, main, web
 
 
 class ThreadWorkers(unittest.TestCase):
@@ -142,6 +142,64 @@ except ValueError:
         self.assertNotIn(followup["id"], self.inbox(self.worker))
         self.assertIn(followup["id"], self.inbox(self.helper))
         self.assertEqual(self.client.delete(self.endpoint, headers=self.helper).status_code, 200)
+
+    def test_pickup_indicator_tracks_authoritative_worker_without_posting(self):
+        rid = self.root["id"]
+
+        def snapshot(worker):
+            response = self.client.get("/api/thread-workers", params={"thread": rid})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["workers"], {str(rid): worker})
+            root = self.client.get(f"/api/messages/{rid}").json()["message"]
+            markup = web.message_html(root)
+            if worker:
+                self.assertEqual(markup.count("Picked up by"), 1)
+                self.assertIn(f'href="/a/{worker}">@{worker}</a>', markup)
+            else:
+                self.assertNotIn("Picked up by", markup)
+            for path in (f"/api/messages?channel=work&roots=true", f"/api/threads/{rid}"):
+                self.assertEqual(self.client.get(path).json()["messages"][0]["worker"], worker)
+
+        snapshot(None)
+        self.assertEqual(self.claim(self.worker).status_code, 200)
+        snapshot("worker")
+        self.assertEqual(self.claim(self.worker).status_code, 200)
+        self.assertEqual(self.claim(self.helper).status_code, 409)
+        snapshot("worker")
+        self.assertEqual(len(self.client.get(f"/api/threads/{rid}").json()["messages"]), 1)
+        db.init()
+        snapshot("worker")
+        reply = self.post(self.worker, "Answered.", rid)
+        self.assertNotIn("Picked up by", web.message_html(reply))
+        snapshot("worker")
+        self.assertEqual(self.client.delete(self.endpoint, headers=self.worker).status_code, 200)
+        snapshot(None)
+        self.assertEqual(self.claim(self.helper).status_code, 200)
+        snapshot("helper")
+
+    def test_worker_snapshot_is_batched_bounded_and_obeys_read_auth(self):
+        rid = self.root["id"]
+        reply = self.post(self.human, "More context.", rid)
+        other_root = self.post(self.human, "Another request.")
+        self.assertEqual(self.claim(self.worker).status_code, 200)
+        response = self.client.get("/api/thread-workers", params=[
+            ("thread", rid), ("thread", rid), ("thread", other_root["id"]),
+            ("thread", reply["id"]), ("thread", 999999),
+        ])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["workers"], {str(rid): "worker", str(other_root["id"]): None})
+        for params in ([], [("thread", "bad")], [("thread", rid)] * 201):
+            self.assertEqual(self.client.get("/api/thread-workers", params=params).status_code, 422)
+        with patch.object(main, "READ_TOKEN_REQUIRED", True):
+            self.assertEqual(self.client.get("/api/thread-workers", params={"thread": rid}).status_code, 401)
+            self.assertEqual(self.client.get("/api/thread-workers", params={"thread": rid},
+                                             headers=self.human).status_code, 200)
+
+    def test_pickup_handle_is_escaped_in_server_markup(self):
+        markup = web.message_html({**self.root, "worker": 'bad"><script>'})
+        self.assertIn('aria-hidden="true"', markup)
+        self.assertIn('Picked up by <a href="/a/bad&quot;&gt;&lt;script&gt;">', markup)
+        self.assertNotIn("<script>", markup)
 
     def test_claim_validation_and_targeted_roots(self):
         self.assertEqual(self.claim(self.human).status_code, 403)
