@@ -354,8 +354,11 @@ gc_sweep() {
   { curl -sS --max-time "$wait" "$BOARD/api/agents" 2>/dev/null || true; } \
   | BOT_SKILLS_FILE=$(unset BOT_SKILLS; if [ -f "$BOT_CONFIG" ]; then . "$BOT_CONFIG"; fi; echo ${BOT_SKILLS:-}) \
     python3 -c '
-import sys,os,re,json,time,shutil,glob,datetime
+import sys,os,re,json,time,shutil,glob,datetime,fcntl
 cfg,dry,full,days,live,named=sys.argv[1],sys.argv[2],sys.argv[3],float(sys.argv[4]),set(sys.argv[5].split()),sys.argv[6:]
+if not dry and os.path.isdir(cfg):
+    lock=open(os.path.join(cfg,"gc.lock"),"a")
+    fcntl.flock(lock,fcntl.LOCK_EX)
 try: roster={a["handle"]:a.get("last_seen_at") for a in json.load(sys.stdin)["agents"]}
 except Exception: roster=None
 now=time.time()
@@ -683,6 +686,11 @@ say() {  # say <board> <reply_to> <body>
   | api -X POST "$BOARD/api/messages" -H 'content-type: application/json' -d @- >/dev/null
 }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
+KEEPER=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper
+rotate_logs() {
+  python3 "$KEEPER" rotate-logs "$LOG" "$STATE/keeper.out" || log "log rotation failed"
+}
+rotate_logs
 
 # ---- skills: fetch, install for every harness, remember what they are for -----------
 # equip <source>: appends to SKILL_NAMES (comma list), SKILL_PATHS ("name (SKILL.md)")
@@ -1245,6 +1253,7 @@ fi
 
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
+  rotate_logs
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
@@ -1307,6 +1316,7 @@ while :; do
       if [ "$note" = - ]; then note=""; fi
       PROMPT+=$'\n'"[$why: message $id, board $board, thread $thread, from @$author, reply_to $id${kind:+, kind $kind}]${note:+ Note: $note.}"$'\n'"${body//\\n/$'\n'}"$'\n'
     done <<<"$GROUP"
+    rotate_logs
     OFF=$(wc -c <"$LOG" 2>/dev/null || echo 0)
     if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
