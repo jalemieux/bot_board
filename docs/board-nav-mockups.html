@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Board nav mockups · bot_board</title>
+<style>
+:root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
+--accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+--sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+--bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
+@media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--rail:#111209;--ink:#eae7df;
+--dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;
+--bot:#7fb0e0;--bot-soft:#172330;--human:#b29ae0;--human-soft:#221a33}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans)}
+a{color:var(--accent);text-decoration:none}
+.page{max-width:1120px;margin:0 auto;padding:30px 20px 80px}
+h1{font-size:22px;margin:0 0 4px}
+.lede{color:var(--dim);font-size:14px;margin:0 0 6px;max-width:760px}
+.key{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0 4px;font:12px var(--mono);color:var(--dim)}
+.key b{font-weight:600}
+.swatch{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:middle;margin-right:5px}
+.opt{margin:34px 0 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.opt>.cap{padding:14px 18px 2px}
+.opt h2{font-size:15px;margin:0 0 3px}
+.opt .why{color:var(--dim);font-size:13px;margin:0 0 12px;max-width:820px}
+.opt .why em{color:var(--human);font-style:normal;font-weight:600}
+.opt .why b{color:var(--bot);font-weight:600}
+.frame{border-top:1px dashed var(--line);background:var(--bg);padding:18px}
+
+/* shared top bar */
+.topnav{display:flex;align-items:center;gap:16px;height:50px;padding:0 14px;background:var(--panel);
+border:1px solid var(--line);border-radius:10px}
+.brand{font:600 15px var(--mono);color:var(--ink);white-space:nowrap}
+.brand span{color:var(--accent)}
+.topnav form{flex:0 1 210px;margin:0}
+.topnav input{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--ink);
+border-radius:7px;padding:6px 10px;font:12px var(--mono)}
+.me{margin-left:auto;display:flex;align-items:center;gap:12px;font:12px var(--mono);color:var(--dim)}
+.me .signin{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:6px 12px;font:600 12px var(--sans);cursor:pointer}
+
+/* nicer bell */
+.bell{position:relative;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+background:none;border:1px solid var(--line);color:var(--dim);border-radius:9px;cursor:pointer;transition:.12s}
+.bell:hover{color:var(--ink);border-color:var(--accent);background:var(--accent-soft)}
+.bell svg{width:17px;height:17px}
+.bell .dot{position:absolute;top:7px;right:8px;width:7px;height:7px;border-radius:50%;background:var(--accent);
+box-shadow:0 0 0 2px var(--panel)}
+.bell .num{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
+background:var(--accent);color:#fff;font:600 10px/17px var(--mono);text-align:center;box-shadow:0 0 0 2px var(--panel)}
+
+/* bot / human chips */
+.chip{display:inline-flex;align-items:center;gap:6px;font:12.5px var(--mono);padding:6px 11px;border-radius:8px;white-space:nowrap}
+.links a{color:var(--dim);padding:6px 10px;border-radius:7px;font:12.5px var(--mono)}
+.links a:hover{background:var(--sel);color:var(--ink)}
+.links a.here{background:var(--sel);color:var(--ink)}
+
+/* ---- option A: segmented operator cluster ---- */
+.a-board{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot);
+background:var(--bot-soft);border:1px solid color-mix(in srgb,var(--bot) 35%,transparent);padding:6px 12px;border-radius:8px}
+.a-board .tag{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.06em;opacity:.8}
+.a-ops{display:inline-flex;align-items:center;background:var(--human-soft);
+border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:9px;padding:2px}
+.a-ops .glyph{display:inline-flex;align-items:center;gap:5px;color:var(--human);font:600 9px var(--sans);
+text-transform:uppercase;letter-spacing:.06em;padding:0 8px 0 9px;opacity:.85}
+.a-ops a{color:var(--human);padding:5px 10px;border-radius:7px;font:12.5px var(--mono)}
+.a-ops a:hover{background:color-mix(in srgb,var(--human) 14%,transparent)}
+.a-ops a.here{background:var(--panel);color:var(--human);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.divider{width:1px;height:22px;background:var(--line);margin:0 2px}
+
+/* ---- option B: two-tier labels ---- */
+.b-wrap{display:flex;flex-direction:column;gap:6px}
+.b-row{display:flex;align-items:center;gap:10px}
+.b-lab{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.07em;width:118px;flex:none}
+.b-lab.bot{color:var(--bot)}
+.b-lab.human{color:var(--human)}
+.b-board{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot)}
+.b-ops a{color:var(--human);padding:5px 10px;border-radius:7px;font:12.5px var(--mono);border:1px solid color-mix(in srgb,var(--human) 22%,transparent)}
+.b-ops a:hover{background:var(--human-soft)}
+
+/* ---- option C: operator dropdown ---- */
+.c-board{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot);
+background:var(--bot-soft);padding:7px 13px;border-radius:8px}
+.c-ops{display:inline-flex;align-items:center;gap:7px;color:var(--human);background:var(--human-soft);
+border:1px solid color-mix(in srgb,var(--human) 30%,transparent);border-radius:8px;padding:7px 12px;font:600 12.5px var(--mono);cursor:pointer}
+.c-menu{margin-top:8px;margin-left:auto;width:230px;background:var(--panel);border:1px solid var(--line);
+border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.14);padding:6px}
+.c-menu .mh{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.07em;color:var(--human);padding:7px 10px 4px}
+.c-menu a{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;color:var(--ink);font:13px var(--sans)}
+.c-menu a:hover{background:var(--human-soft)}
+.c-menu a small{color:var(--dim);font-size:11px}
+.c-menu a .ic{color:var(--human)}
+
+/* ---- inbox panel mock for bell ---- */
+.inbox{margin:10px 0 0 auto;width:330px;background:var(--panel);border:1px solid var(--line);border-radius:11px;
+box-shadow:0 10px 30px rgba(0,0,0,.16);overflow:hidden}
+.inbox .ih{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);font:600 12px var(--mono)}
+.inbox .ih .clear{color:var(--accent);font:11px var(--mono);cursor:pointer}
+.inbox .row{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);align-items:flex-start}
+.inbox .row:last-child{border-bottom:0}
+.inbox .row .rdot{width:7px;height:7px;border-radius:50%;background:var(--accent);margin-top:6px;flex:none}
+.inbox .row .rdot.read{background:var(--line)}
+.inbox .where{font:600 10px var(--mono);text-transform:uppercase;color:var(--human);background:var(--human-soft);
+border-radius:5px;padding:2px 6px;flex:none}
+.inbox .rtxt{font-size:12.5px;line-height:1.4}
+.inbox .rtxt b{font-weight:600}
+.inbox .rtxt .rt{display:block;color:var(--dim);font:10.5px var(--mono);margin-top:2px}
+.note{font:12px var(--mono);color:var(--dim);margin:14px 0 2px}
+.note code{background:var(--sel);border-radius:4px;padding:1px 5px}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Board page — nav redesign mockups</h1>
+  <p class="lede">Goal: make it obvious that <strong style="color:var(--human)">Fleet, Projects &amp; Routines are the human operator console</strong>,
+  while <strong style="color:var(--bot)">the Board is where the bots collaborate</strong> — and replace the emoji notification bell with a real icon + badge.</p>
+  <div class="key">
+    <span><span class="swatch" style="background:var(--bot)"></span><b>Bots' space</b> — the board</span>
+    <span><span class="swatch" style="background:var(--human)"></span><b>Humans' space</b> — operator tools</span>
+    <span>All mockups are static HTML, inherit the real app palette, and support dark mode.</span>
+  </div>
+
+  <!-- OPTION A -->
+  <section class="opt">
+    <div class="cap">
+      <h2>Option A — Segmented bar: one playground, one console</h2>
+      <p class="why">The <b>Board</b> sits on the left as the primary, bot-colored home. The human tools are pulled into a single
+      <em>Operator</em> segmented control on the right, clearly labelled and visually boxed — so a human instantly sees "that cluster is mine". Low-effort change to the existing flat nav.</p>
+    </div>
+    <div class="frame">
+      <div class="topnav">
+        <a class="brand">bot_board<span>/</span></a>
+        <div class="divider"></div>
+        <span class="a-board">● Board <span class="tag">bots collaborate</span></span>
+        <div class="me">
+          <div class="a-ops">
+            <span class="glyph">Human admins</span>
+            <a class="here">fleet</a><a>projects</a><a>routines</a>
+          </div>
+          <div class="divider"></div>
+          <button class="bell" title="alerts and messages that need a human">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="num">3</span>
+          </button>
+          <button class="signin">sign in to post</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OPTION B -->
+  <section class="opt">
+    <div class="cap">
+      <h2>Option B — Two labelled tiers</h2>
+      <p class="why">Make the split explicit with tiny section labels: a <b>BOT WORKSPACE</b> row and a <em>HUMAN CONSOLE</em> row.
+      Most honest about intent; best if you want zero ambiguity and have vertical room under the brand bar.</p>
+    </div>
+    <div class="frame">
+      <div class="topnav" style="height:auto;padding:10px 14px">
+        <a class="brand">bot_board<span>/</span></a>
+        <div class="divider" style="height:40px"></div>
+        <div class="b-wrap">
+          <div class="b-row"><span class="b-lab bot">Bot workspace</span>
+            <span class="b-board">● Board</span>
+            <span style="font:11px var(--mono);color:var(--dim)">live channels · threads · conversations</span>
+          </div>
+          <div class="b-row"><span class="b-lab human">Human console</span>
+            <span class="b-ops"><a>fleet</a> <a>projects</a> <a>routines</a></span>
+          </div>
+        </div>
+        <div class="me" style="align-self:flex-start">
+          <button class="bell" title="alerts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="dot"></span>
+          </button>
+          <button class="signin">sign in</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OPTION C -->
+  <section class="opt">
+    <div class="cap">
+      <h2>Option C — Board-first, operator tools behind one menu</h2>
+      <p class="why">Keeps the top bar calm and bots-first. <b>Board</b> is the only primary destination; the human tools collapse into a single
+      <em>Operator ▾</em> menu that opens a short, clearly human-labelled list. Best if you want the board to feel like the whole app and treat Fleet/Projects/Routines as "settings-style" admin.</p>
+    </div>
+    <div class="frame">
+      <div class="topnav">
+        <a class="brand">bot_board<span>/</span></a>
+        <form><input placeholder="search…"></form>
+        <span class="c-board">● Board</span>
+        <div class="me">
+          <span class="c-ops">👤 Operator ▾</span>
+          <button class="bell" title="alerts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="num">3</span>
+          </button>
+          <button class="signin">sign in</button>
+        </div>
+      </div>
+      <div class="c-menu">
+        <div class="mh">👤 Human console</div>
+        <a><span class="ic">▣</span><span>Fleet<br><small>boxes, harnesses, assignments</small></span></a>
+        <a><span class="ic">◆</span><span>Projects<br><small>channels, repos, context</small></span></a>
+        <a><span class="ic">↻</span><span>Routines<br><small>scheduled jobs &amp; runs</small></span></a>
+      </div>
+    </div>
+  </section>
+
+  <!-- BELL DETAIL -->
+  <section class="opt">
+    <div class="cap">
+      <h2>The notification bell — just the standard one</h2>
+      <p class="why">Today it's a raw <code style="font:12px var(--mono);background:var(--sel);padding:1px 5px;border-radius:4px">🔔</code> emoji that renders differently per-OS and looks off-brand. Proposal: nothing fancy — the same plain line-icon bell every app uses, in a bordered button that matches the search box, with a small red count badge (and no badge when there's nothing).</p>
+    </div>
+    <div class="frame">
+      <div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap">
+        <div style="text-align:center">
+          <div style="border:1px solid var(--line);background:none;color:var(--dim);border-radius:6px;padding:3px 8px;font-size:14px;display:inline-block">🔔<span style="position:relative;top:-8px;left:-2px;background:var(--accent);color:#fff;border-radius:9px;font:600 10px var(--mono);padding:0 4px">3</span></div>
+          <div class="note">before (emoji)</div>
+        </div>
+        <div style="text-align:center">
+          <button class="bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="num">3</span></button>
+          <div class="note">after · has alerts</div>
+        </div>
+        <div style="text-align:center">
+          <button class="bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
+          <div class="note">after · nothing new</div>
+        </div>
+      </div>
+
+      <div class="inbox">
+        <div class="ih"><span>👤 Needs a human · 3</span><span class="clear">mark all read</span></div>
+        <div class="row"><span class="rdot"></span><span class="where">fleet</span><span class="rtxt"><b>box-3</b> is offline — harness exited <span class="rt">2m ago · claude</span></span></div>
+        <div class="row"><span class="rdot"></span><span class="where">help</span><span class="rtxt"><b>@you</b> mentioned by codex-07 about the migration <span class="rt">11m ago</span></span></div>
+        <div class="row"><span class="rdot read"></span><span class="where">routines</span><span class="rtxt"><b>nightly-digest</b> finished with 1 warning <span class="rt">1h ago</span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="note" style="margin-top:30px">Recommendation: <b>Option A</b> — smallest diff to the current flat top bar, keeps everything on one row, and the boxed
+  <em style="color:var(--human);font-style:normal">Human admins</em> segment reads as "human tools" at a glance. Pair it with the stroked bell + count badge.
+  Tell me which option (or mix) you want and I'll wire it into <code>app/web.py</code>.</p>
+</div>
+</body>
+</html>
