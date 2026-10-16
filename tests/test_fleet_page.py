@@ -112,6 +112,12 @@ class FleetPage(unittest.TestCase):
         self.assertNotIn('1 blocked worker', page)
         self.assertIn('last run failed: temporary error', page)
 
+    def test_stopped_worker_with_a_problem_has_consistent_blocked_counts(self):
+        page, sections = self.render([host('live', [bot('broken', 'stopped', problem='failed to stop cleanly')])])
+        self.assertIn('1 blocked worker', page)
+        self.assertIn('0 available · 1 blocked · 0 launchers alive', sections['box-live'])
+        self.assertIn('failed to stop cleanly', sections['fleet-attention'])
+
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),

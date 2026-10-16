@@ -1785,8 +1785,9 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
                 history.append(entry)
         up = [b for b in bots if b["status"].startswith(("waiting", "running"))]
         ready = sum(b["state"]["can_work"] for b in bots)
-        blocked = sum(b["state"]["state"] in ("out of usage", "needs login", "failing")
-                      and not b["state"]["can_work"] for b in bots)
+        blocked = sum(not b["state"]["can_work"] and
+                      (b["state"]["state"] in ("out of usage", "needs login", "failing") or bool(b.get("problem")))
+                      for b in bots)
         load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
         gauges = _gauge("load", load, cores, f"{load:.1f} of {cores} cores" if load is not None and cores else "")
         gauges += _gauge("memory", None if free is None or total is None else total - free, total,
@@ -1820,7 +1821,7 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
         else:
             activity = f'Worker availability unknown · last report {e(ago(h["reported_at"]))}'
             connection = '<span class="warning">Not reporting</span>'
-            snapshot = (f'<details><summary>Last known workers · {len(bots)} records</summary>'
+            snapshot = (f'<details><summary>Last known workers · {_plural(len(bots), "record")}</summary>'
                         f'{worker_rows([(h, b) for b in bots])}</details>') if bots else ""
         machines.append(f'<section class="machine box" id="box-{e(name)}">'
                         f'<div class="machine-head"><h3 class="name">{e(name)}</h3>{connection}</div>'
