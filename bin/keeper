@@ -371,7 +371,12 @@ class Credentials:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as e:
             return "unknown", f"check failed: {e}"[:200]
-        said = " ".join((r.stdout + " " + r.stderr).split())[:200]
+        output = r.stdout + "\n" + r.stderr
+        if name == "gh" and r.returncode:
+            failure = re.search(r"^.*Failed to log in to .*$", output, re.M)
+            if failure:
+                output = output[failure.start():]
+        said = " ".join(output.split())
         # Only a definite answer counts. Anything else (an older CLI, a timeout, words we do
         # not know) is "unknown", which is reported and holds nothing: as with bin/bot since
         # #70, a hiccup in the check must not stop every bot on the box.
@@ -387,8 +392,8 @@ class Credentials:
             return "unknown", f"could not read `{' '.join(cmd)}`: {said}"[:200]
         if r.returncode == 0:
             return "ok", ""
-        if kind == "secret" and env.get(var) and re.search(r"invalid|expired|revoked|bad credentials|401", said, re.I):
-            return "expired", f"{var} is set but refused: {said}"[:200]
+        if kind == "secret" and re.search(r"invalid|expired|revoked|bad credentials|401", said, re.I):
+            return "expired", f"authentication refused: {said}"[:200]
         if re.search(r"not logged in|no.{0,20}(login|credential|token)|log ?in (first|required)", said, re.I):
             return "missing", (f"no {var} (fleet.env) and no login" if kind == "secret" else "not logged in")
         return "unknown", f"`{' '.join(cmd)}` exited {r.returncode}: {said}"[:200]

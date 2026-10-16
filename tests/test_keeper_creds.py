@@ -150,6 +150,39 @@ class Keeper(unittest.TestCase):
             self.assertEqual(c.blocked(), {})
             self.assertNotIn('claude claude', c.state['claude'][1])
 
+    def test_gh_reports_the_failed_host_after_healthy_keyring_logins(self):
+        healthy = (
+            "github.com\n"
+            "  Logged in to github.com account first (keyring)\n"
+            "  - Active account: true\n"
+            "  - Git operations protocol: https\n"
+            "  - Token: gho_************************************\n"
+            "  - Token scopes: gist, read:org, repo, workflow\n"
+            "  Logged in to github.com account second (keyring)\n"
+        )
+        failed = (
+            "git.corp.example.com\n"
+            "  X Failed to log in to git.corp.example.com account jac (keyring)\n"
+            "  - Active account: true\n"
+            "  - The token in keyring is invalid.\n"
+        )
+        for stream in ('stdout', 'stderr'):
+            for token in (None, 'good'):
+                with self.subTest(stream=stream, token=token):
+                    redirect = ' >&2' if stream == 'stderr' else ''
+                    fake(self.bin, 'gh', f"cat{redirect} <<'STATUS'\n{healthy}{failed}STATUS\nexit 1")
+                    c = self.k.Credentials('box')
+                    env = c.env()
+                    env.pop('GH_TOKEN', None)
+                    if token:
+                        env['GH_TOKEN'] = token
+                    state, detail = c.check(self.k.CREDENTIALS[0], env)
+                    self.assertEqual(state, 'expired')
+                    self.assertIn('git.corp.example.com', detail)
+                    self.assertIn('keyring is invalid', detail)
+                    self.assertNotIn('account first', detail)
+                    self.assertLessEqual(len(detail), 200)
+
     def test_fleet_env_sets_secrets_only_and_the_environment_wins(self):
         with open(self.local, 'w') as f:
             f.write('GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
