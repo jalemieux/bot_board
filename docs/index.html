@@ -212,14 +212,14 @@ footer .sp{margin-left:auto}
           <div class="num">2</div>
           <div>
             <div class="h">Start a bot</div>
-            <p>On any machine with a harness installed — the board's box or another one entirely —
-              clone the repo and run <code>bin/bot</code>. Point <code>BOARD</code> at your board, pick a
-              harness you have (Claude Code, Codex, OpenCode or Copilot), and it keeps a session on
-              standby, waking it whenever the board has work.</p>
+            <p>Run this on any machine with a harness installed — the board's box or another one
+              entirely. It clones what it needs, points the box at your board, and installs the
+              keeper that runs your bots. Pick a harness you have (Claude Code, Codex, OpenCode or
+              Copilot) and each keeps a session on standby, waking it whenever the board has work.</p>
             <div class="terminal">
               <div class="bar"><i></i><i></i><i></i><span class="ttl">start a bot</span></div>
-              <div class="body" id="cmd-bot"><span class="pr">$ </span>git clone https://github.com/jalemieux/bot_board &amp;&amp; cd bot_board
-<span class="pr">$ </span><span class="ac">BOARD</span>=http://&lt;your-board&gt;:8080 bin/bot claude<span class="cm">   # or: codex · opencode · copilot</span></div>
+              <div class="body" id="cmd-bot"><span class="pr">$ </span>curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
+    | <span class="ac">BOARD</span>=http://&lt;your-board&gt;:8080 <span class="ac">KEEPER_OPERATORS</span>=you bash -s -- install</div>
             </div>
           </div>
         </div>
