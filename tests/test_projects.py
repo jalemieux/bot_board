@@ -1,4 +1,7 @@
-"""Project management and context checks. Run with python -m unittest discover -s tests."""
+"""Project management and context checks. Run with python -m unittest discover -s tests.
+
+The optional browser check needs playwright and `python -m playwright install chromium`.
+"""
 import concurrent.futures
 import os
 import tempfile
@@ -160,6 +163,98 @@ class Projects(unittest.TestCase):
         self.call('PATCH', '/api/projects/game', {'repositories': [{'name': 'bad', 'url': 'file:///tmp/private'}]}, expected=422)
         self.call('PATCH', '/api/projects/game', {'name': None}, expected=422)
         self.call('PATCH', '/api/projects/game', {'owner_id': 99}, expected=422)
+
+    def test_repository_editor_in_browser(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest('Install playwright and its Chromium browser for UI checks')
+        import json
+
+        repositories = [{'name': 'primary-code', 'url': 'https://github.com/example/game'}]
+        self.call('PATCH', '/api/projects/game', {'repositories': repositories})
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            page = browser.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+
+            def serve(route):
+                request = route.request
+                response = self.client.request(request.method, request.url.replace('http://board.test', ''),
+                                               content=request.post_data, headers=request.headers)
+                route.fulfill(status=response.status_code, body=response.content,
+                              content_type=response.headers.get('content-type', 'text/plain'))
+
+            page.route('**/*', serve)
+            identity = {'handle': 'owner', 'token': self.human['Authorization'].removeprefix('Bearer ')}
+            page.add_init_script("if (!localStorage.getItem('bb.me')) localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            page.goto('http://board.test/projects/game')
+            editor = page.locator('section').filter(has=page.get_by_role('heading', name='Project', exact=True))
+            inputs = editor.get_by_role('textbox', name='repository', exact=True)
+            self.assertEqual(inputs.input_value(), repositories[0]['url'])
+            editor.get_by_role('textbox', name='Name', exact=True).fill('Renamed game')
+            with page.expect_response(lambda r: r.request.method == 'PATCH'):
+                editor.get_by_role('button', name='Save', exact=True).click()
+            page.wait_for_function("document.querySelector('h1').textContent.startsWith('Renamed game')")
+            self.assertEqual(self.call('GET', '/api/projects/game')['project']['repositories'], repositories)
+
+            inputs.fill('not-a-valid-repo')
+            with page.expect_response(lambda r: r.status == 422):
+                editor.get_by_role('button', name='Save', exact=True).click()
+            editor.locator('.msg-err').wait_for()
+            self.assertIn('Repository URL must', editor.locator('.msg-err').inner_text())
+            self.assertEqual(inputs.input_value(), 'not-a-valid-repo')
+            self.assertEqual(self.call('GET', '/api/projects/game')['project']['repositories'], repositories)
+
+            inputs.fill('example/general-tasks')
+            editor.get_by_role('button', name='+ add another repository', exact=True).click()
+            inputs.nth(1).fill('https://github.com/example/notes.git/')
+            with page.expect_response(lambda r: r.request.method == 'PATCH'):
+                editor.get_by_role('button', name='Save', exact=True).click()
+            page.wait_for_function("document.querySelectorAll('.pj .repo').length === 2 && !document.querySelector('.pj .msg-err')")
+            expected = [{'name': name, 'url': 'https://github.com/example/' + name}
+                        for name in ['general-tasks', 'notes']]
+            self.assertEqual(self.call('GET', '/api/projects/game')['project']['repositories'], expected)
+            page.reload()
+            self.assertEqual(inputs.nth(1).input_value(), expected[1]['url'])
+
+            editor.get_by_role('button', name='remove repository', exact=True).first.click()
+            editor.get_by_role('button', name='remove repository', exact=True).click()
+            self.assertEqual(inputs.count(), 1)
+            self.assertEqual(inputs.input_value(), '')
+            with page.expect_response(lambda r: r.request.method == 'PATCH'):
+                editor.get_by_role('button', name='Save', exact=True).click()
+            page.reload()
+            self.assertEqual(self.call('GET', '/api/projects/game')['project']['repositories'], [])
+            self.assertEqual(inputs.input_value(), '')
+
+            identity = {'handle': 'visitor', 'token': self.other['Authorization'].removeprefix('Bearer ')}
+            page.evaluate("localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            page.reload()
+            page.get_by_role('heading', name='Renamed game', level=1).wait_for()
+            self.assertEqual(editor.count(), 0)
+            self.call('PATCH', '/api/projects/game', {'repositories': repositories}, auth=self.other, expected=403)
+
+            identity = {'handle': 'owner', 'token': self.human['Authorization'].removeprefix('Bearer ')}
+            page.evaluate("localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            self.call('PATCH', '/api/projects/game', {'archived': True, 'archive_confirm': True})
+            page.reload()
+            page.get_by_role('heading', name='Renamed game', level=1).wait_for()
+            self.assertEqual(editor.count(), 0)
+
+            page.goto('http://board.test/projects')
+            page.get_by_role('button', name='New project', exact=True).click()
+            drawer = page.get_by_role('dialog', name='new project')
+            drawer.get_by_role('textbox', name='Name', exact=True).fill('General tasks')
+            drawer.get_by_role('textbox', name='What is it for?').fill('Non-code tasks')
+            drawer.get_by_role('textbox', name='repository', exact=True).fill('example/general-tasks')
+            drawer.get_by_role('button', name='Create project', exact=True).click()
+            page.wait_for_url('http://board.test/projects/general_tasks')
+            self.assertEqual(self.call('GET', '/api/projects/general_tasks')['project']['repositories'], [
+                {'name': 'general-tasks', 'url': 'https://github.com/example/general-tasks'}])
+            self.assertEqual(errors, [])
+            browser.close()
 
     def report_pool(self, bots=None):
         self.call('PUT', '/api/fleet/hosts/test-box', {'bots': bots if bots is not None else [

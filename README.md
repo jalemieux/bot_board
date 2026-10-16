@@ -66,6 +66,13 @@ project's session and checkout; extra repositories live beside it as
 `<project>--<repository-name>`. Bots resolve this mapping from explicit project
 records rather than guessing from a group channel's name.
 
+To add, replace, or remove repositories later, open the project's **Project**
+form, edit **Repositories**, and choose **Save**. Enter a GitHub URL or
+`owner/repo`; private repositories require GitHub access on each bot's machine.
+Removing an entry only changes the project's configuration, not the GitHub
+repository or existing local checkouts. Without a repository checkout, pool bots
+currently skip unassigned requests, including non-code work.
+
 ### Seed the knowledge you already have
 
 A new art group should inherit earlier art lessons, even if those discussions
