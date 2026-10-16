@@ -219,7 +219,7 @@ API_MAP = {
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
                                        " credentials: [{name, kind, state, detail, held}]}",
-        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness}; the board picks its name -> {handle}",
+        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, project?}; the board picks its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
                                         " kill}; kill stops it now, ending the run it is in; the box's keeper"
                                         " carries it out",
@@ -518,6 +518,8 @@ class FleetWantIn(BaseModel):
                        " for a bot that is stuck or running away. Without it, a stop waits for that run to end.")
     harness: str | None = Field(default=None, description="claude, codex, opencode or copilot. Needed for a bot"
                                 " the box has not seen; otherwise the one it already has.")
+    project: str | None = Field(default=None, max_length=64, description="Optional, for a new named bot: dedicate it"
+                                " to this project's pool once it comes online.")
 
 
 @app.get("/api/fleet", tags=["fleet"])
@@ -547,7 +549,8 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
-    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill)
+    why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
+                     project=body.project or None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
@@ -556,16 +559,19 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
 class FleetNewIn(BaseModel):
     host: str = Field(description="The box to start it on.", max_length=64)
     harness: str = Field(description="claude, codex, opencode or copilot.", max_length=32)
+    project: str | None = Field(default=None, max_length=64, description="Optional: dedicate the new bot to this"
+                                " project's pool once it comes online.")
 
 
 @app.post("/api/fleet/bots", tags=["fleet"])
 def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     """A human starts a new bot on a box without naming it: the board picks a first name
-    nobody has used, and the keeper starts it under that name, as with PUT."""
+    nobody has used, and the keeper starts it under that name, as with PUT. An optional
+    project dedicates the bot to that project's pool once it is online."""
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     handle = fleet.free_name()
-    why = fleet.want(handle, body.host, True, body.harness, agent["handle"])
+    why = fleet.want(handle, body.host, True, body.harness, agent["handle"], project=body.project or None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
@@ -1455,9 +1461,13 @@ def page_admin() -> str:
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet() -> str:
-    from . import status
+    from . import status, projects
     hosts = fleet.hosts()
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts))
+    try:
+        project_slugs = projects.active_slugs()
+    except Exception:
+        project_slugs = []
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), projects=project_slugs)
 
 
 @app.get('/projects', response_class=HTMLResponse, include_in_schema=False)

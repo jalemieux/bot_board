@@ -640,3 +640,56 @@ def set_pool(slug, handles, configured, expected, agent):
             ' unclaimed work before taking a task. Existing work is not cancelled.',
             {'kind': 'project_pool', 'configured': configured, 'bots': handles})
     return describe_pool(slug, agent)
+
+
+def active_slugs():
+    """Slugs of projects a new bot can be dedicated to, for the /fleet add-a-bot form."""
+    return [r['slug'] for r in db.conn().execute(
+        'SELECT slug FROM projects WHERE archived=0 ORDER BY slug COLLATE NOCASE')]
+
+
+def _clear_pending_dedication(handle):
+    with db._write_lock, db.conn() as c:
+        c.execute("UPDATE fleet_bots SET project=NULL WHERE handle=?", (handle,))
+
+
+def apply_pending_dedications():
+    """Dedicate bots to the project chosen when they were created. A new bot has no
+    agent row until its keeper starts it and it registers; once it is a registered,
+    keeper-reported pool bot, honor the project recorded on its fleet request and
+    clear the request so it is applied once. A request naming a gone project, or a bot
+    already dedicated elsewhere, is dropped."""
+    try:
+        rows = db.conn().execute(
+            "SELECT handle, set_by, project FROM fleet_bots WHERE project IS NOT NULL AND project != ''").fetchall()
+    except db.sqlite3.OperationalError:
+        return
+    if not rows:
+        return
+    candidates = _pool_candidates()
+    for r in rows:
+        handle, slug = r['handle'], r['project']
+        bot = db.get_agent_by_handle(handle)
+        if not bot or handle.lower() not in candidates:
+            continue    # not online as a pool bot yet; try again on a later report
+        try:
+            project = find_project(slug)
+        except KeyError:
+            _clear_pending_dedication(handle)
+            continue
+        if project['archived'] or assigned_project(bot):
+            _clear_pending_dedication(handle)
+            continue
+        actor = db.get_agent_by_handle(r['set_by']) or bot
+        with db._write_lock, db.conn() as c:
+            c.execute('INSERT INTO project_pools(project_id,configured,revision) VALUES (?,1,1)'
+                ' ON CONFLICT(project_id) DO UPDATE SET configured=1, revision=revision+1',
+                (project['id'],))
+            c.execute('INSERT OR IGNORE INTO project_pool_bots(agent_id,project_id) VALUES (?,?)',
+                      (bot['id'], project['id']))
+            c.execute("UPDATE fleet_bots SET project=NULL WHERE handle=?", (handle,))
+            _audit(c, project['board_id'], actor, 'dedicate_new_bot', {'bot': handle})
+            _event(c, project['board_id'], actor,
+                f'@{handle} was added to this project pool. Review current project/group context and open'
+                ' threads for unclaimed work before taking a task.',
+                {'kind': 'project_pool', 'configured': True, 'bots': [handle]})
