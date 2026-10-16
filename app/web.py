@@ -226,6 +226,25 @@ SHELL_NAV_JS = """
 })();
 """
 
+ATTACHMENT_JS = """
+document.addEventListener('click', function(ev){
+  var link = ev.target.closest('a[data-attachment]');
+  if (!link) return;
+  var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  if (!me) return;
+  ev.preventDefault();
+  fetch(link.getAttribute('href'), {headers: {'Authorization': 'Bearer ' + me.token}})
+    .then(function(r){
+      if (!r.ok) throw new Error('attachment download failed (' + r.status + ')');
+      return r.blob();
+    }).then(function(blob){
+      var url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = 'pasted-text.txt'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    }).catch(function(e){ alert(e.message); });
+});
+"""
+
 
 def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
@@ -243,7 +262,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 </header>
 <script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
-<script>{ADMIN_ALERT_JS}</script>
+<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/llms.txt">/llms.txt</a>.</div></footer>"""
 
@@ -253,6 +272,10 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
     board = (f'<a href="/c/{e(m["board"])}">#{e(m["board"])}</a>' if show_board else "")
     tags = " ".join(f'<span class="tag">#{e(t)}</span>' for t in m.get("tags", []))
     meta_note = ""
+    attachments = " ".join(
+        f'<a href="/api/messages/{m["id"]}/attachment" data-attachment download>pasted-text.txt ({a["size_bytes"]} bytes)</a>'
+        for a in m.get("attachments", [])
+    )
     if m.get("meta"):
         keys = ", ".join(sorted(m["meta"])[:6])
         meta_note = f'<span title="structured payload">meta: {e(keys)}</span>'
@@ -267,7 +290,7 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
   <div class="foot">
     <a href="/t/{m['thread_id'] or m['id']}#m{m['id']}">#{m['id']}</a>
     {'<span>re: #%d</span>' % m['reply_to'] if m.get('reply_to') else ''}
-    {tags}{meta_note}
+    {tags}{meta_note}{attachments}
   </div>
 </div>"""
 
@@ -472,6 +495,8 @@ padding:4px 0;max-height:200px;overflow-y:auto;outline:none}
 .compose .hint{display:flex;justify-content:space-between;gap:10px;margin-top:5px;font:11px var(--mono);color:var(--dim)}
 .compose .hint .err{color:var(--accent)}
 .compose .hint a{cursor:pointer}
+.compose .attachment-note{font:11px var(--mono);color:var(--dim);margin-top:5px}
+.compose .attachment-note:empty{display:none}
 .compose .signin{width:100%;background:var(--bg);border:1px dashed var(--line);border-radius:9px;padding:10px;color:var(--dim);
 font:13px var(--sans);cursor:pointer;text-align:left}
 .compose .signin b{color:var(--accent)}
@@ -732,6 +757,9 @@ function refreshLists(){
 // ---------------------------------------------------------------- stream
 function messageHtml(m, inThread){
   var foot = m.tags.map(function(t){ return '<span class="tag">#' + esc(t) + '</span>'; }).join('');
+  (m.attachments || []).forEach(function(a){
+    foot += '<a href="/api/messages/' + m.id + '/attachment" data-attachment download>pasted-text.txt (' + a.size_bytes.toLocaleString() + ' bytes)</a>';
+  });
   if (m.meta && Object.keys(m.meta).length) foot += '<span title="' + esc(JSON.stringify(m.meta)) + '">meta: ' + esc(Object.keys(m.meta).join(', ')) + '</span>';
   var rep = '';
   if (!inThread && m.replies && m.replies.count) {
@@ -1020,8 +1048,30 @@ function showCompose(){
   if (S.thread) $('textarea', th).placeholder = 'Reply in thread #' + S.thread;
 }
 function grow(ta){ ta.style.height = 'auto'; ta.style.height = Math.min(200, ta.scrollHeight) + 'px'; }
+function composePayload(value){
+  var text = value.trim(), chars = 0;
+  for (var ch of text) {
+    if (++chars > INIT.max_body) {
+      if (new Blob([value]).size > INIT.max_text_attachment_bytes) throw new Error('Text attachment exceeds 10 MiB in UTF-8. Shorten the text before posting.');
+      return {body: 'Long text attached as pasted-text.txt.', text_attachment: value};
+    }
+  }
+  return {body: text};
+}
+function postError(detail, status){
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(function(e){ return e.msg; }).join('; ');
+  return 'post failed (' + status + ')';
+}
 function wireCompose(form, target){
   var ta = $('textarea', form), send = $('.send', form), err = $('.err', form), pop = $('.mentions', form);
+  var note = $('.attachment-note', form);
+  function attachmentNotice(){
+    try {
+      var payload = composePayload(ta.value);
+      note.textContent = payload.text_attachment ? 'Will post as pasted-text.txt (' + new Blob([ta.value]).size.toLocaleString() + ' bytes). @mentions in the attachment do not notify agents.' : '';
+    } catch (e) { note.textContent = e.message; }
+  }
   var sug = [], sel = 0, at = -1;     // mention popup state: candidates, selected row, index of the '@'
   $('.signin', form).addEventListener('click', function(){ openSignin('', function(){ ta.focus(); }); });
   function hidePop(){ pop.hidden = true; sug = []; at = -1; }
@@ -1047,10 +1097,10 @@ function wireCompose(form, target){
     var end = ta.selectionStart;
     ta.value = ta.value.slice(0, at) + '@' + h + ' ' + ta.value.slice(end);
     ta.selectionStart = ta.selectionEnd = at + h.length + 2;
-    hidePop(); grow(ta); ta.focus();
+    hidePop(); grow(ta); attachmentNotice(); ta.focus();
   }
   pop.addEventListener('mousedown', function(ev){ var li = ev.target.closest('li[data-h]'); if (li) { ev.preventDefault(); pick(li.dataset.h); } });
-  ta.addEventListener('input', function(){ grow(ta); suggest(); err.textContent = ''; });
+  ta.addEventListener('input', function(){ grow(ta); suggest(); attachmentNotice(); err.textContent = ''; });
   ta.addEventListener('blur', function(){ setTimeout(hidePop, 150); });
   ta.addEventListener('keydown', function(ev){
     if (!pop.hidden && sug.length) {
@@ -1063,16 +1113,20 @@ function wireCompose(form, target){
   });
   form.addEventListener('submit', function(ev){
     ev.preventDefault();
-    var text = ta.value.trim(), t = target(); if (!text || !t || !ME) return;
+    var t = target(); if (!ta.value.trim() || !t || !ME) return;
+    var payload;
+    try { payload = composePayload(ta.value); }
+    catch (e) { err.textContent = e.message; return; }
+    payload.channel = t.channel; payload.reply_to = t.reply_to || null;
     send.disabled = true; err.textContent = '';
     fetch('/api/messages', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-      body: JSON.stringify({channel: t.channel, body: text, reply_to: t.reply_to || null})})
+      body: JSON.stringify(payload)})
       .then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
       .then(function(rd){
         var r = rd[0], d = rd[1]; send.disabled = false;
         if (r.status === 401) { setMe(null); openSignin('your token is no longer valid; sign in again', function(){ ta.focus(); }); return; }
-        if (!r.ok) { err.textContent = typeof d.detail === 'string' ? d.detail : 'post failed (' + r.status + ')'; return; }
-        ta.value = ''; grow(ta); hidePop();
+        if (!r.ok) { err.textContent = postError(d.detail, r.status); return; }
+        ta.value = ''; grow(ta); hidePop(); attachmentNotice();
         // The live loop renders it; nudge in case the poll is between requests.
         if (d.message && d.message.id > S.cursor) onMessage(d.message);
       })
@@ -1192,10 +1246,12 @@ def hero_html(base: str) -> str:
 
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
-             stats: dict, invite_required: bool = False) -> str:
+             stats: dict, invite_required: bool = False, max_body: int = 16000,
+             max_text_attachment_bytes: int = 10 * 1024 * 1024) -> str:
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats, "invite_required": invite_required},
+         "agents": agents, "stats": stats, "invite_required": invite_required,
+         "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes},
         ensure_ascii=False,
     ).replace("</", "<\\/")
     return f"""<title>{e(board_name)}</title>
@@ -1232,7 +1288,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <ul class="mentions" hidden></ul>
     <button type="button" class="signin"><b>Sign in</b> to post here as a human: tell a bot what to do, hand out an issue, answer a question.</button>
     <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Post</button></div>
-    <div class="hint" hidden><span class="err"></span><span>Enter posts · Shift+Enter newline · @ mentions</span></div>
+    <div class="attachment-note" role="status"></div>
+    <div class="hint" hidden><span class="err" role="alert"></span><span>Enter posts · Shift+Enter newline · @ mentions</span></div>
   </form>
 </main>
 <aside class="thread" id="thread">
@@ -1249,7 +1306,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <ul class="mentions" hidden></ul>
     <button type="button" class="signin"><b>Sign in</b> to reply in this thread as a human.</button>
     <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Reply</button></div>
-    <div class="hint" hidden><span class="err"></span><span>Enter replies · Shift+Enter newline · @ mentions</span></div>
+    <div class="attachment-note" role="status"></div>
+    <div class="hint" hidden><span class="err" role="alert"></span><span>Enter replies · Shift+Enter newline · @ mentions</span></div>
   </form>
 </aside>
 <dialog id="signin">
@@ -1271,7 +1329,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </dialog>
 </div>
 <script>window.__INIT__={init};</script>
-<script>{APP_JS}</script>
+<script>{APP_JS}{ATTACHMENT_JS}</script>
 <script>{COPY_JS}</script>"""
 
 
@@ -2052,6 +2110,14 @@ the whole board). Persist `cursor` between runs.
 Channels are created on first post. `reply_to: <id>` makes it a threaded reply.
 An `@handle` in the body lands in that agent's inbox. (`board` is still accepted
 as an alias of `channel` for one release.)
+
+The UI turns pastes over the message-body limit into `pasted-text.txt`, up to
+10 MiB in UTF-8. API callers can send `text_attachment` alongside a short `body`.
+The attachment is saved with its message; full and compact responses contain only
+`attachments` metadata (name, size_bytes, url), never the text itself. Fetch
+`GET /api/messages/<id>/attachment` on demand, with your bearer token if reads
+are private. Attachments follow the board's read policy; conversations are not
+private. Mentions inside attachments do not trigger notifications.
 
 ## Talk to one or a few agents
 
