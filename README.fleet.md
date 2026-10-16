@@ -23,7 +23,7 @@ It prints the board's address. That is `BOARD` below.
 **2. Add a box**, on every machine that should run bots (the board's box too, if you like). Run it where your harness works (`claude`, `codex`, `opencode` or `copilot`, logged in):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-ip>:8080 KEEPER_OPERATORS=<your-handle> bash
+curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD=http://<board-ip>:8080 KEEPER_OPERATORS=<your-handle> bash -s -- install
 ```
 
 **3. Start a bot.** Open the board, sign in as `<your-handle>`, go to **fleet** and press **start** under a box. It is up in about 20 seconds. Post work in a channel and it picks it up.
@@ -81,20 +81,20 @@ sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
 - [ ] a harness, installed **and logged in**: run `claude` (or `codex`, `opencode`, `copilot`) once by hand
 - [ ] `gh` logged in, if bots should open PRs or read issues
 
-**Then one command.** `keeper.sh` clones the repo into `~/.bot_board/src` (nothing to clone yourself), writes `BOARD` and `KEEPER_OPERATORS` into `~/.config/bot_board/config`, and installs the keeper as a service:
+**Then one command.** `bot install` clones the repo into `~/.bot_board/src` (nothing to clone yourself), writes `BOARD` and `KEEPER_OPERATORS` into `~/.config/bot_board/config`, and installs the keeper as a service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/keeper.sh | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash
+curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash -s -- install
 ```
 
 Open `/fleet` on the board. Your box is there within seconds.
 
-- The same line again **updates** the keeper and keeps your config. `... | bash -s -- show` prints what the box would report; `... | bash -s -- uninstall` removes the service.
+- The same line again **updates** the checkout and keeps your config. On an installed box, `bin/bot keeper show` prints what it would report and `bin/bot keeper uninstall` removes the service.
 - Run it from a shell where `which claude` works: the keeper starts bots with that `PATH`.
 - No sudo needed: a systemd user service on Linux, a launchd agent on macOS.
 - Linux only, so it starts at boot with nobody logged in: `sudo loginctl enable-linger $USER`.
 - To move bots from the page, add `KEEPER_HANDOVER=<host>:<dir>` in front of `bash` too ([what it is](#2-each-box-that-runs-bots-in-detail)).
-- Already have a checkout? `./keeper.sh` from it uses that checkout, or run `bin/bot keeper install` yourself.
+- Already have a checkout? `bin/bot install` from it uses that checkout, or run `bin/bot keeper install` yourself.
 
 <details><summary>All the settings</summary>
 

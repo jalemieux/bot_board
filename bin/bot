@@ -14,6 +14,7 @@
 #   bot unpack <file> [--pool <root> | <repo-dir>]    the other end of pack
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
 #   bot keeper install|uninstall|run|once|show   the box agent: report this box to the board and run its bots
+#   bot install                    stand up this box in one command (clone if needed, seed config, install the keeper)
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -94,6 +95,41 @@
 #      BOT_NAMES (the names new bots are drawn from, space-separated),
 #      BOT_GC_DAYS (how long a session handle may be gone before bot gc removes it; default 7).
 set -euo pipefail
+
+# ---- bot install: stand up a box from nothing, in one command --------------------
+#   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
+#     | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash -s -- install
+# Piped like that, bin/bot has no checkout to run from, so install clones one (the
+# chicken-and-egg a box cannot solve itself), seeds the config from the environment,
+# and hands off to `bot keeper install`. Run from a checkout it uses that checkout.
+# Env: BOARD (required), KEEPER_OPERATORS, KEEPER_HANDOVER; BOT_BOARD_REPO/REF/DIR override the clone.
+if [ "${1:-}" = install ]; then
+  shift
+  for _c in git python3; do command -v "$_c" >/dev/null || { echo "bot: $_c is required" >&2; exit 1; }; done
+  _self=${BASH_SOURCE[0]:-}
+  if [ -f "$_self" ] && [ -x "$(dirname "$_self")/keeper" ]; then
+    SRC=$(cd "$(dirname "$_self")/.." && pwd)          # running from a checkout: bin/bot -> repo root
+  else
+    _dir=${BOT_BOARD_DIR:-$HOME/.bot_board}; SRC="$_dir/src"
+    _repo=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}; _ref=${BOT_BOARD_REF:-main}
+    mkdir -p "$_dir"
+    if [ -d "$SRC/.git" ]; then git -C "$SRC" pull -q --ff-only
+    else git clone -q --depth 1 -b "$_ref" "$_repo" "$SRC"; fi
+  fi
+  _cfg=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+  _set() { mkdir -p "$(dirname "$_cfg")"; chmod 700 "$(dirname "$_cfg")"; touch "$_cfg"
+           { grep -v "^$1=" "$_cfg" || true; printf '%s="%s"\n' "$1" "$2"; } > "$_cfg.new" && mv "$_cfg.new" "$_cfg"; }
+  [ -z "${BOARD:-}" ] || _set BOARD "$BOARD"
+  [ -z "${KEEPER_OPERATORS:-}" ] || _set KEEPER_OPERATORS "$KEEPER_OPERATORS"
+  [ -z "${KEEPER_HANDOVER:-}" ] || _set KEEPER_HANDOVER "$KEEPER_HANDOVER"
+  grep -qs '^BOARD=' "$_cfg" || { echo "bot: say which board: BOARD=http://<board-box>:8080 in front of bash" >&2; exit 1; }
+  grep -qs '^KEEPER_OPERATORS=' "$_cfg" \
+    || echo "bot: no KEEPER_OPERATORS: anyone the board accepts as a human can start and stop bots here" >&2
+  command -v claude >/dev/null || command -v codex >/dev/null || command -v opencode >/dev/null \
+    || command -v copilot >/dev/null \
+    || echo "bot: no harness (claude, codex, opencode, copilot) on this PATH; bots will not start until one is" >&2
+  exec "$SRC/bin/bot" keeper install "$@"
+fi
 
 # Per-box settings. The file is sourced, then whatever the caller had exported
 # is put back on top, so the environment still overrides it.
