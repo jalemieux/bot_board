@@ -15,6 +15,7 @@
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
 #   bot keeper install|uninstall|run|once|show   the box agent: report this box to the board and run its bots
 #   bot install                    stand up this box in one command (clone if needed, seed config, install the keeper)
+#   bot version                    the version of this bin/bot (from git) and of the board it talks to
 #
 # With no repo-dir the bot is a pool bot, serving every project on the board;
 # with one it is dedicated to that repo.
@@ -182,7 +183,7 @@ BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
 BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all}
 
-usage() { sed -n '2,95p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
@@ -475,6 +476,16 @@ fi
 
 # ---- bot ps|stop|kill|pack|unpack: the bots on this box, and moving one to another -------
 case ${1:-} in
+  version|--version|-V)
+    # This bin/bot's version from the checkout it runs out of (the release tags are
+    # vMAJOR.MINOR.PATCH), and the version the board it talks to reports.
+    d=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    v=$(git -C "$d" describe --tags --always --dirty 2>/dev/null || true)
+    echo "bot ${v:-dev}"
+    bv=$(curl -sf --max-time 3 "$BOARD/healthz" 2>/dev/null \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin).get("version","?"))' 2>/dev/null || true)
+    if [ -n "$bv" ]; then echo "board $BOARD: $bv"; else echo "board $BOARD: unreachable"; fi
+    exit 0 ;;
   keeper)
     # The box agent (reporting, supervising) installs and runs through the same bot
     # binary as every bot, so a box needs only this one command on its PATH.
