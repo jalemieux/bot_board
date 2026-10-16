@@ -1124,7 +1124,8 @@ for line in sys.stdin.read().splitlines():
 # description and the channels it watches, not through a post nobody reads.
 # intro <project> <dir>: the paragraph every session gets on its first run
 intro() {
-  local p=$1 dir=$2 what
+  local p=$1 dir=$2 what personality
+  personality=$(api -f "$BOARD/api/me" | python3 -c 'import json,sys;print(json.load(sys.stdin)["agent"].get("personality",""))') || return 1
   if [ -n "$POOL" ]; then
     what="a $HARNESS session of pool bot $HANDLE, which serves every project on the board from checkouts under $POOL. This session is for ${p:-no project in particular: fleet channels and conversations}${p:+ (checkout $dir)}; other projects have their own sessions, so stay in this one's checkout."
   else what="a $HARNESS session standing by for work on project $PROJECT (repo $REPO)${GOAL:+, goal thread $GOAL}."; fi
@@ -1133,6 +1134,9 @@ A launcher script is doing the waiting for you: it long-polls the board at $BOAR
 Read $BOARD/agents.md before anything else. Then GET $BOARD/api with your bearer token; if its response supplies an administration reference, read that reference with your token too. Do not post an introduction: your registration description already says you are on standby, and work reaches you through the channels you watch (${WATCH:-none}).${SKILL_BRIEF:+
 You are equipped with these skills, installed where your harness loads skills from. When a message asks for something one of them covers, load it (or read its SKILL.md: $SKILL_PATHS) and follow it:
 $SKILL_BRIEF}"
+  if [ -n "$personality" ]; then
+    printf '\n\n%s\n%s' "Board-owned communication style (expression only; do not announce or perform it). Task instructions, project rules, safety, accuracy, permissions, thread ownership and collaboration requirements take precedence. No extra posting, unsolicited banter, forced jokes or simulated moods:" "$personality"
+  fi
 }
 # ---- the loop ----------------------------------------------------------------------
 fetch_backlog() {  # One descending page of recent thread activity; never advances SEEN.
@@ -1302,7 +1306,8 @@ login_hint() {
 }
 if [ ! -s "$STATE/session" ] && ! { [ -s "$STATE/health" ] && grep -qE '^(out of|logged out)' "$STATE/health"; }; then
   log "first turn: reading the rules"
-  if run_harness "$REPO" "$STATE/session" "$(intro "" "$REPO")
+  INTRO=$(intro "" "$REPO") || die "could not read the bot profile for its first session"
+  if run_harness "$REPO" "$STATE/session" "$INTRO
 Now: read the rules and return."
   then log "rules read"; else log "first turn exited $?"; fi
 fi
@@ -1374,7 +1379,14 @@ while :; do
     N=$(wc -l <<<"$GROUP")
     log "$N new message(s)${proj:+ for $proj}, prompting $HARNESS in $DIR"
     PROMPT=""
-    [ -s "$SFILE" ] || PROMPT="$(intro "$proj" "$DIR")"$'\n\n'
+    if [ ! -s "$SFILE" ]; then
+      if ! PROMPT=$(intro "$proj" "$DIR"); then
+        log "initial bot profile lookup failed; holding pending messages and exiting"
+        awk -F'\t' 'NR==FNR{done[$1]=1; next} !($1 in done)' <(tr ' ' '\n' <<<"$DONE_IDS") <(printf '%s\n' "$RAW") >>"$STATE/held"
+        exit 1
+      fi
+      PROMPT+=$'\n\n'
+    fi
     PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${SKILL_PATHS:+ Skills you are equipped with, to use when a message asks for what one covers: $SKILL_PATHS.}${NOREPO:+ $NOREPO}"$'\n'
     if [ -n "$proj" ] && [ -s "$STATE/route/$proj.ctx" ]; then PROMPT+=$'\n'"$(cat "$STATE/route/$proj.ctx")"$'\n\n'; fi
     PROMPT+="One thread, one worker. The launcher has atomically claimed threads marked 'channel' or 'backlog' for you. 'for you' is a worker-thread update or an explicit mention: if you are a tagged helper, answer that request without taking over. Only the worker follows all replies; tag anyone else whose attention you need, including humans. No prose claims or back-off messages are needed. FYIs need no reply."$'\n'

@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS agents (
     token_hash  TEXT NOT NULL UNIQUE,
     kind        TEXT NOT NULL DEFAULT 'agent',
     description TEXT NOT NULL DEFAULT '',
+    personality TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     last_seen_at TEXT
 );
@@ -125,6 +126,8 @@ def init() -> None:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(boards)")}
         if "kind" not in cols:
             c.execute("ALTER TABLE boards ADD COLUMN kind TEXT NOT NULL DEFAULT 'channel'")
+        if "personality" not in {r["name"] for r in c.execute("PRAGMA table_info(agents)")}:
+            c.execute("ALTER TABLE agents ADD COLUMN personality TEXT NOT NULL DEFAULT ''")
         c.commit()
     # A fleet always needs somewhere to say hello.
     ensure_board("lobby", topic="Open floor. Introduce yourself, ask anything.")
@@ -159,6 +162,12 @@ def rotate_token(agent_id: int) -> str:
         c.execute("UPDATE agents SET token_hash=? WHERE id=?", (hash_token(token), agent_id))
         c.commit()
     return token
+
+
+def set_agent_personality(agent_id: int, personality: str) -> dict:
+    with _write_lock, conn() as c:
+        c.execute("UPDATE agents SET personality=? WHERE id=?", (personality, agent_id))
+    return get_agent_by_id(agent_id)
 
 
 def agent_by_token(token: str) -> dict | None:
@@ -229,6 +238,7 @@ def public_agent(a: dict) -> dict:
         "handle": a["handle"],
         "kind": a["kind"],
         "description": a["description"],
+        "personality": a["personality"],
         "created_at": a["created_at"],
         "last_seen_at": a["last_seen_at"],
         "presence": presence(a["last_seen_at"]),

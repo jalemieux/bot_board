@@ -29,7 +29,7 @@ class FakeBoard:
     """Messages, an inbox, and GET /api/channels/{slug}/project from a table."""
 
     def __init__(self, messages, routes, has_lookup=True, flaky=(), assigned=None, assignment_error=False,
-                 cursor=0, page_size=20, backlog_failures=0, workers=None, claim_failures=0):
+                 cursor=0, page_size=20, backlog_failures=0, workers=None, claim_failures=0, personality=None):
         self.messages, self.routes, self.has_lookup = messages, routes, has_lookup
         self.flaky = dict.fromkeys(flaky, 1)   # channel -> lookups left that fail with 500
         self.lookups = []
@@ -43,6 +43,8 @@ class FakeBoard:
         self.claim_lock = threading.Lock()
         self.tokens = {"t0k": ME}
         self.on_claim = None
+        self.personality = personality
+        self.profile_failure = False
         board = self
 
         class H(BaseHTTPRequestHandler):
@@ -81,7 +83,11 @@ class FakeBoard:
                 board.requests.append(self.path)
                 handle = board.tokens.get(self.headers.get("Authorization", "").removeprefix("Bearer "), ME)
                 since = int(q.get("since", ["0"])[0])
-                if path == "/api/me": return self.send(200, {"agent": {"handle": handle}, "cursor": board.cursor})
+                if path == "/api/me":
+                    if board.profile_failure: return self.send(503, {"detail": "profile unavailable"})
+                    agent = {"handle": handle}
+                    if board.personality is not None: agent["personality"] = board.personality
+                    return self.send(200, {"agent": agent, "cursor": board.cursor})
                 if path == '/api/me/project-pool':
                     if not board.has_lookup: return self.send(404, {'detail': 'Not Found'})
                     if board.assignment_error: return self.send(500, {'detail': 'failed'})
@@ -186,10 +192,64 @@ class Routing(unittest.TestCase):
                 if os.path.exists(self.runs):
                     with open(self.runs) as f: runs = [json.loads(l) for l in f]
                 if until(runs): break
+                if p.poll() is not None: break
         finally:
-            os.killpg(p.pid, signal.SIGTERM); p.wait(10)
+            if p.poll() is None: os.killpg(p.pid, signal.SIGTERM)
+            p.wait(10)
         with open(os.path.join(self.home, ".config/bot_board/bots", ME, "log")) as f: self.log = f.read()
         return [r for r in runs if "read the rules and return" not in r["prompt"]]   # skip the first turn
+
+    def test_personality_is_fetched_for_each_new_session_not_resumed_turns(self):
+        for project in ("game", "other", "third"):
+            os.makedirs(os.path.join(self.pool, project))
+        board = FakeBoard([msg(1, "game", "first game task"), msg(2, "other", "first other task")],
+                          {}, has_lookup=False, personality="Warm and quietly curious.")
+        try:
+            runs = self.run_bot(board, lambda rs: any("first other task" in r["prompt"] for r in rs))
+            with open(self.runs) as f:
+                first_runs = [json.loads(line) for line in f]
+            for run in first_runs:
+                self.assertEqual(run["prompt"].count("Warm and quietly curious."), 1)
+                self.assertIn("Task instructions, project rules, safety", run["prompt"])
+            self.assertEqual(len({r["sid"] for r in first_runs}), 3)
+            board.personality = "Direct and kind."
+            board.messages.extend([msg(3, "game", "resumed game task"), msg(4, "third", "fresh third task")])
+            runs = self.run_bot(board, lambda rs: any("fresh third task" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        resumed = next(r for r in runs if "resumed game task" in r["prompt"])
+        self.assertNotIn("Board-owned communication style", resumed["prompt"])
+        self.assertNotIn("Direct and kind.", resumed["prompt"])
+        self.assertEqual(resumed["sid"], next(r["sid"] for r in first_runs if "first game task" in r["prompt"]))
+        fresh = next(r for r in runs if "fresh third task" in r["prompt"])
+        self.assertIn("Direct and kind.", fresh["prompt"])
+        self.assertNotIn("Warm and quietly curious.", fresh["prompt"])
+        self.assertLess(fresh["prompt"].index("Direct and kind."), fresh["prompt"].index("fresh third task"))
+
+    def test_empty_personality_does_not_change_initial_prompt(self):
+        os.makedirs(os.path.join(self.pool, "game"))
+        board = FakeBoard([msg(1, "game", "empty style task")], {}, has_lookup=False, personality="")
+        try:
+            runs = self.run_bot(board, lambda rs: any("empty style task" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertTrue(runs)
+        self.assertNotIn("Board-owned communication style", "\n".join(r["prompt"] for r in runs))
+
+    def test_profile_failure_holds_work_instead_of_starting_a_styleless_session(self):
+        os.makedirs(os.path.join(self.pool, "game"))
+        board = FakeBoard([msg(1, "game", "keep pending work")], {}, has_lookup=False, personality="Concise.")
+        board.on_claim = lambda: setattr(board, "profile_failure", True)
+        try:
+            runs = self.run_bot(board, lambda rs: any("keep pending work" in r["prompt"] for r in rs))
+        finally:
+            board.close()
+        self.assertEqual(runs, [])
+        self.assertIn("initial bot profile lookup failed", self.log)
+        state = os.path.join(self.home, ".config/bot_board/bots", ME)
+        with open(os.path.join(state, "held")) as f:
+            self.assertIn("keep pending work", f.read())
+        self.assertFalse(os.path.exists(os.path.join(state, "session.game")))
 
     def test_groups_share_their_project_session_and_context(self):
         art_url, assets_url = self.remote("game"), self.remote("assets")
@@ -265,6 +325,7 @@ class Routing(unittest.TestCase):
         self.assertTrue(any(r["cwd"] == self.pool and "anyone?" in r["prompt"] for r in runs))
         self.assertTrue(os.path.exists(os.path.join(self.home, ".config/bot_board/bots", ME, "session.wordsnap")))
         self.assertNotIn("held", self.log)
+        self.assertNotIn("Board-owned communication style", "\n".join(r["prompt"] for r in runs))
 
     def test_another_launchers_notice_never_wakes_the_bot(self):
         # Two bots whose harness failed kept @mentioning each other in notices, for hours.
