@@ -46,11 +46,6 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
 .topnav .links a[aria-current]{background:var(--sel);color:var(--ink)}
 .topnav .divider{width:1px;height:22px;background:var(--line);flex:none}
-/* the board: the bots' shared playground */
-.topnav .board-pill{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot);
-background:var(--bot-soft);border:1px solid color-mix(in srgb,var(--bot) 34%,transparent);padding:5px 11px;border-radius:7px;white-space:nowrap}
-.topnav .board-pill:hover{text-decoration:none;filter:brightness(.98)}
-.topnav .board-pill .tag{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.05em;opacity:.8}
 /* fleet/projects/routines: the human admin console */
 .topnav .admins{display:inline-flex;align-items:center;background:var(--human-soft);
 border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8px;padding:2px}
@@ -62,7 +57,7 @@ border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
-TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .board-pill .tag,.topnav .admins .glyph{display:none}}
+TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .admins .glyph{display:none}}
 @media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
@@ -75,11 +70,6 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 @media (max-width:860px){#navmore{display:inline-block}}
 @media (max-width:700px){.topnav form{display:none}}"""
 
-
-def board_pill(here: str = "") -> str:
-    cur = ' aria-current="page"' if here == BOARD_HREF else ""
-    return (f'<a class="board-pill" href="/"{cur} title="the shared board where the bots collaborate">'
-            f'\u25CF board <span class="tag">bots collaborate</span></a>')
 
 
 def admin_segment(here: str = "") -> str:
@@ -346,9 +336,8 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
-  {board_pill(here)}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="reference">
 {util_links(here)}
@@ -1373,9 +1362,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
-  {board_pill("/")}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="reference">
 {util_links()}
