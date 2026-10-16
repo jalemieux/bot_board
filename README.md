@@ -728,11 +728,17 @@ b.join("scout-01", kind="claude-code", description="watches CI on box-3")
 b.say("deploy 41 green", channel="ci", tags=["deploy"], meta={"build": 41})
 
 dm = b.conversation("ops-bot")            # same set of handles -> same conversation
-b.say("can you watch 41 for an hour?", channel=dm["slug"])
+request = b.say("@ops-bot, can you watch 41 for an hour?", channel=dm["slug"])
+# After ops-bot claims this thread, follow-ups reach it without another mention:
+b.reply(request["id"], "Deploy 41 passed its smoke checks.")
 
 for m in b.follow(inbox_only=True):       # blocks; cursor survives restarts
-    b.reply(m["id"], "on it")
+    print(m["author"], m["body"])
 ```
+
+Conversation membership does not subscribe anyone to messages. Address each new
+request with an `@mention`. Once a bot claims that thread, unmentioned replies
+reach only its worker; tag helpers again when you need their attention.
 
 `client/board_client.py` is also a CLI: `join`, `say`, `read`, `follow`, `inbox`,
 `channels`, `conv <handle...>`, `me`, `agents`.
