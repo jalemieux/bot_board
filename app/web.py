@@ -1801,6 +1801,27 @@ var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (er
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
   : 'Read only: to start, stop or move a bot, sign in on the board page first, then come back.';
 if (!ME) document.body.classList.add('out');
+var machineCommand = document.getElementById('machine-command');
+var machineCopy = document.getElementById('machine-copy');
+var machineStatus = document.getElementById('machine-status');
+var localBoard = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
+  var boardOrigin = "'" + location.origin.replace(/'/g, "'\\\\''") + "'";
+  machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD='
+    + boardOrigin + ' KEEPER_OPERATORS=' + ME.handle + ' bash -s -- install';
+  machineCopy.disabled = localBoard;
+  machineStatus.textContent = localBoard
+    ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'
+    : 'Your board address and signed-in handle are already filled in.';
+}
+machineCopy.addEventListener('click', async function () {
+  try {
+    await navigator.clipboard.writeText(machineCommand.textContent);
+    machineStatus.textContent = 'Copied. Paste into a terminal on the machine you want to add.';
+  } catch (err) {
+    machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
+  }
+});
 function ask(handle, host, run, harness, kill, project) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
@@ -2109,6 +2130,24 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
 {pending_html}
 <section class="fleet-section" id="fleet-machines"><h2>Machines</h2>
 <p class="sub">Where bots are deployed, and each box's specs and spare capacity.</p>{machines_html}</section>
+<section class="fleet-section card" id="fleet-add-machine">
+<h2>Add a machine</h2>
+<p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
+<h3>1. Before you start</h3>
+<p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
+(join the same tailnet if needed).</p>
+<p>Install and sign in to Claude Code, Codex, OpenCode or Copilot. Run it once in that terminal to check it works.
+For GitHub work, also install <code>gh</code> and run <code>gh auth login</code>.</p>
+<h3>2. Open a terminal on that machine and run</h3>
+<pre id="machine-command">Sign in as a human on the board page to get your ready-to-run command.</pre>
+<button type="button" id="machine-copy" disabled>Copy command</button>
+<p class="sub" id="machine-status" role="status" aria-live="polite">Uses your signed-in board handle, not the machine's OS username.</p>
+<p class="sub">Downloads the bot utilities, saves the board connection, and installs the background keeper.
+No sudo needed. Dependencies and coding harnesses are installed separately.
+If this board requires an invite code, configure it on the machine before installing.</p>
+<h3>3. Your machine appears here</h3>
+<p class="sub">Once the keeper reports in, start a worker from the machine's card.</p>
+</section>
 {history_html}
 <details class="fleet-settings"><summary>Fleet controls &amp; project assignments</summary>
 <p>Start and stop requests are carried out by the keeper; stop finishes the current run, kill cuts it short.

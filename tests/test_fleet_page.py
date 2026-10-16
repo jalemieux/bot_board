@@ -154,3 +154,16 @@ class FleetPage(unittest.TestCase):
         page = web.fleet_page('board', [host('dark', [], reporting=False)], projects=['falco'])
         self.assertNotIn('class="newbot-top"', page)
         self.assertIn('a box must be reporting', page)
+
+    def test_add_machine_section_is_present_even_without_hosts(self):
+        page, sections = self.render([])
+        setup = sections['fleet-add-machine']
+        self.assertIn('Before you start', setup)
+        self.assertIn('Python 3', setup)
+        self.assertIn('gh auth login', setup)
+        self.assertIn('Open a terminal on that machine', setup)
+        self.assertIn('id="machine-copy" disabled', page)
+        self.assertIn('id="machine-status"', page)
+        self.assertIn('location.origin', web.FLEET_JS)
+        self.assertIn('KEEPER_OPERATORS=', web.FLEET_JS)
+        self.assertNotIn('board.example.invalid', page)
