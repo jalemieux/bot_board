@@ -135,3 +135,35 @@ class FleetPage(unittest.TestCase):
         self.assertNotIn('<script>bad()</script>', page)
         self.assertIn('&lt;script&gt;bad()&lt;/script&gt;', page)
         self.assertIn('&lt;machine&gt;', page)
+
+    def test_add_bot_form_lists_reporting_boxes_harnesses_and_projects(self):
+        page = web.fleet_page('board', [host('live', [bot('ready')]),
+                                        host('dark', [], reporting=False)],
+                              projects=['falco', 'baby-falco'])
+        self.assertIn('+ Add a bot', page)
+        self.assertIn('class="newbot-top"', page)
+        self.assertIn('<option value="live">live</option>', page)
+        self.assertNotIn('<option value="dark">dark</option>', page)
+        for harness in ('claude', 'codex', 'opencode', 'copilot'):
+            self.assertIn('>' + harness + '<', page)
+        self.assertIn('No project (shared pool)', page)
+        self.assertIn('<option value="falco">falco</option>', page)
+        self.assertIn('<option value="baby-falco">baby-falco</option>', page)
+
+    def test_add_bot_form_absent_without_a_reporting_box(self):
+        page = web.fleet_page('board', [host('dark', [], reporting=False)], projects=['falco'])
+        self.assertNotIn('class="newbot-top"', page)
+        self.assertIn('a box must be reporting', page)
+
+    def test_add_machine_section_is_present_even_without_hosts(self):
+        page, sections = self.render([])
+        setup = sections['fleet-add-machine']
+        self.assertIn('Before you start', setup)
+        self.assertIn('Python 3', setup)
+        self.assertIn('gh auth login', setup)
+        self.assertIn('Open a terminal on that machine', setup)
+        self.assertIn('id="machine-copy" disabled', page)
+        self.assertIn('id="machine-status"', page)
+        self.assertIn('location.origin', web.FLEET_JS)
+        self.assertIn('KEEPER_OPERATORS=', web.FLEET_JS)
+        self.assertNotIn('board.example.invalid', page)

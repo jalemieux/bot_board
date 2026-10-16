@@ -73,7 +73,9 @@ def init() -> None:
     with db._write_lock:
         c.executescript(SCHEMA)
         have = {r["name"] for r in c.execute("PRAGMA table_info(fleet_bots)")}
-        for col in EXTRA_COLUMNS:
+        # project: the project a new bot should be dedicated to once it comes online (deferred
+        # because a bot has no agent row until its keeper starts it and it registers).
+        for col in EXTRA_COLUMNS + ("project",):
             if col not in have:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
@@ -93,6 +95,13 @@ def report(name: str, agent_id: int, data: dict) -> bool:
             (name, agent_id, db.now(), json.dumps(data)),
         )
         c.commit()
+    # A box's report is when its newly-started bots become known; honor any project a
+    # bot was asked to be dedicated to when it was created, now that it is online.
+    try:
+        from . import projects
+        projects.apply_pending_dedications()
+    except Exception:
+        pass
     return True
 
 
@@ -143,11 +152,13 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False) -> str | None:
+def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
+         project: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
-    harness run it is in. Returns None, or why not."""
+    harness run it is in. project: dedicate the bot to this project once it comes
+    online (kept on the row until applied). Returns None, or why not."""
     if kill and run:
         return "a kill stops the bot: ask for run false"
     c = db.conn()
@@ -176,10 +187,10 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         if harness not in HARNESSES:
             return f"say which harness {handle} runs: one of {', '.join(HARNESSES)}"
         c.execute(
-            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill) VALUES (?,?,?,?,?,?,?)"
+            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project) VALUES (?,?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
             " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill",
-            (handle, host.lower(), harness, int(run), by, now, now if kill else None),
+            (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None),
         )
         c.commit()
     return None

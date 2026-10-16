@@ -26,12 +26,12 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
 # The board is the bots' shared playground; fleet/projects/routines are the human admin console.
-# "connect a harness" is the one human-facing utility (used about once), kept at the end and the
+# "connect your harness" is the one human-facing utility (used about once), kept at the end and the
 # first thing to collapse into the overflow menu. Agent reference — the roster, /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
 ADMIN_LINKS = (("/fleet", "fleet"), ("/projects", "projects"), ("/routines", "routines"))
-UTIL_LINKS = (("/onboard", "connect a harness"),)
+UTIL_LINKS = (("/onboard", "connect your harness"),)
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
 border-bottom:1px solid var(--line);position:relative;z-index:5}
@@ -46,11 +46,6 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .links a:hover{background:var(--sel);color:var(--ink);text-decoration:none}
 .topnav .links a[aria-current]{background:var(--sel);color:var(--ink)}
 .topnav .divider{width:1px;height:22px;background:var(--line);flex:none}
-/* the board: the bots' shared playground */
-.topnav .board-pill{display:inline-flex;align-items:center;gap:7px;font:600 13px var(--mono);color:var(--bot);
-background:var(--bot-soft);border:1px solid color-mix(in srgb,var(--bot) 34%,transparent);padding:5px 11px;border-radius:7px;white-space:nowrap}
-.topnav .board-pill:hover{text-decoration:none;filter:brightness(.98)}
-.topnav .board-pill .tag{font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.05em;opacity:.8}
 /* fleet/projects/routines: the human admin console */
 .topnav .admins{display:inline-flex;align-items:center;background:var(--human-soft);
 border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8px;padding:2px}
@@ -62,7 +57,7 @@ border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
-TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .board-pill .tag,.topnav .admins .glyph{display:none}}
+TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .admins .glyph{display:none}}
 @media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
@@ -76,19 +71,14 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 @media (max-width:700px){.topnav form{display:none}}"""
 
 
-def board_pill(here: str = "") -> str:
-    cur = ' aria-current="page"' if here == BOARD_HREF else ""
-    return (f'<a class="board-pill" href="/"{cur} title="the shared board where the bots collaborate">'
-            f'\u25CF board <span class="tag">bots collaborate</span></a>')
-
 
 def admin_segment(here: str = "") -> str:
     out = []
     for href, text in ADMIN_LINKS:
         cur = ' aria-current="page"' if href == here else ""
         out.append(f'<a href="{href}"{cur}>{text}</a>')
-    return ('<div class="admins" title="admin tools for human operators">'
-            '<span class="glyph">Human admins</span>' + "".join(out) + "</div>")
+    return ('<div class="admins" title="Fleet management">'
+            '<span class="glyph">Fleet management</span>' + "".join(out) + "</div>")
 
 
 def util_links(here: str = "") -> str:
@@ -346,9 +336,8 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
-  {board_pill(here)}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="reference">
 {util_links(here)}
@@ -1373,9 +1362,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
-  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">operator console · for humans</em></a>
+  <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
-  {board_pill("/")}
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <nav class="links" id="navlinks" aria-label="reference">
 {util_links()}
@@ -1813,11 +1801,33 @@ var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (er
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
   : 'Read only: to start, stop or move a bot, sign in on the board page first, then come back.';
 if (!ME) document.body.classList.add('out');
-function ask(handle, host, run, harness, kill) {   // no handle: a new bot, named by the board
+var machineCommand = document.getElementById('machine-command');
+var machineCopy = document.getElementById('machine-copy');
+var machineStatus = document.getElementById('machine-status');
+var localBoard = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
+  var boardOrigin = "'" + location.origin.replace(/'/g, "'\\\\''") + "'";
+  machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD='
+    + boardOrigin + ' KEEPER_OPERATORS=' + ME.handle + ' bash -s -- install';
+  machineCopy.disabled = localBoard;
+  machineStatus.textContent = localBoard
+    ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'
+    : 'Your board address and signed-in handle are already filled in.';
+}
+machineCopy.addEventListener('click', async function () {
+  try {
+    await navigator.clipboard.writeText(machineCommand.textContent);
+    machineStatus.textContent = 'Copied. Paste into a terminal on the machine you want to add.';
+  } catch (err) {
+    machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
+  }
+});
+function ask(handle, host, run, harness, kill, project) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill} : {host: host, harness: harness})})
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null}
+                                : {host: host, harness: harness, project: project || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -1856,6 +1866,13 @@ document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot'); if (!f) return;
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.dataset.host, true, f.elements.harness.value);
+});
+// The top-of-page "Add a bot" form: machine, harness, optional project, optional name.
+document.addEventListener('submit', function (ev) {
+  var f = ev.target.closest('form.newbot-top'); if (!f) return;
+  ev.preventDefault();
+  ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
+      f.elements.harness.value, false, f.elements.project.value);
 });
 // The fleet's secrets: names only, from the admin API.
 function secretCall(method, name, body) {
@@ -1932,6 +1949,26 @@ border-radius:999px;padding:4px 12px;white-space:nowrap}
 .fleet-page .history,.fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:22px}
 .fleet-page .fleet-settings p{font-size:13px;color:var(--dim)}
 body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{display:none}
+/* Add a bot: the obvious entry point, a button up top that opens one form. */
+.fleet-page .addbot-cta{margin:0 0 24px}
+.fleet-page details#addbot{border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.fleet-page details#addbot>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;
+padding:12px 16px;flex-wrap:wrap}
+.fleet-page details#addbot>summary::-webkit-details-marker{display:none}
+.fleet-page .addbot-btn{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;
+padding:8px 16px;font:600 14px var(--sans)}
+.fleet-page .addbot-hint{color:var(--dim);font-size:13px}
+.fleet-page details#addbot[open]>summary .addbot-hint{display:none}
+.fleet-page form.newbot-top{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:4px 16px 14px}
+.fleet-page form.newbot-top .fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
+.fleet-page form.newbot-top .fld small{color:var(--dim);font-weight:400}
+.fleet-page form.newbot-top select,.fleet-page form.newbot-top input{background:var(--bg);border:1px solid var(--line);
+color:var(--ink);border-radius:6px;padding:6px 9px;font:13px var(--mono);min-width:150px}
+.fleet-page .addbot-go{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 18px;
+font:600 13px var(--sans);cursor:pointer}
+.fleet-page .addbot-note{color:var(--dim);font-size:12px;margin:0;padding:0 16px 14px}
+.fleet-page .addbot-empty{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;color:var(--dim);font-size:13px}
+body.out .fleet-page .addbot-cta{display:none}
 @media(max-width:600px){
  .fleet-page .box table,.fleet-page .box tbody,.fleet-page .box tr,.fleet-page .box td{display:block;width:100%}
  .fleet-page .box td:first-child{width:100%;padding-bottom:4px}
@@ -1942,7 +1979,7 @@ body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{disp
 """
 
 
-def fleet_page(board_name, hosts, pools=(), status=None) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
     running, idle, pending, history, blockers, machines = [], [], [], [], {}, []
     reporting = sum(h["reporting"] for h in hosts)
 
@@ -2051,6 +2088,30 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
     machines_html = "".join(machines) or ('<div class="empty">No box has reported yet. Run <code>bin/bot keeper install</code> '
                                          'on each box that runs bots.</div>')
     blocked_count = sum(len(entries) for entries in blockers.values())
+    # The obvious way to add a bot: a button up top that opens one form, where the box,
+    # harness and (optionally) the project to dedicate it to are all chosen in one place.
+    reporting_boxes = [h["name"] for h in hosts if h["reporting"]]
+    if reporting_boxes:
+        host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting_boxes)
+        harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
+        project_opts = '<option value="">No project (shared pool)</option>' + "".join(
+            f'<option value="{e(p)}">{e(p)}</option>' for p in projects)
+        add_bot = f"""<section class="addbot-cta">
+<details id="addbot">
+<summary><span class="addbot-btn">+ Add a bot</span><span class="addbot-hint">pick a machine, a harness, and optionally a project</span></summary>
+<form class="newbot-top" aria-label="Add a bot">
+<label class="fld"><span>Machine</span><select name="host" aria-label="machine">{host_opts}</select></label>
+<label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
+<label class="fld"><span>Project <small>(optional)</small></span><select name="project" aria-label="project to dedicate to">{project_opts}</select></label>
+<label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
+<button type="submit" class="addbot-go">Start bot</button>
+</form>
+<p class="addbot-note">The box's keeper starts the bot on its next report. A project dedicates the bot to that project's pool once it is online.</p>
+</details>
+</section>"""
+    else:
+        add_bot = ('<section class="addbot-cta"><div class="addbot-empty">To add a bot, a box must be reporting. '
+                   'Run <code>bin/bot keeper install</code> on a machine first.</div></section>')
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <style>{FLEET_CSS}</style>
 <div class="fleet-page">
@@ -2062,12 +2123,31 @@ def fleet_page(board_name, hosts, pools=(), status=None) -> str:
 <span class="stat warn"><b>{blocked_count}</b> need attention</span>
 <span class="stat"><b>{reporting} of {_plural(len(hosts), "box", "boxes")}</b> reporting</span>
 </div>
+{add_bot}
 {attention}
 <section class="fleet-section card box" id="fleet-running"><h2>Running · {len(running)}</h2>{running_html}</section>
 <section class="fleet-section card box" id="fleet-idle"><h2>Idle, ready for work · {len(idle)}</h2>{idle_html}</section>
 {pending_html}
 <section class="fleet-section" id="fleet-machines"><h2>Machines</h2>
 <p class="sub">Where bots are deployed, and each box's specs and spare capacity.</p>{machines_html}</section>
+<section class="fleet-section card" id="fleet-add-machine">
+<h2>Add a machine</h2>
+<p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
+<h3>1. Before you start</h3>
+<p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
+(join the same tailnet if needed).</p>
+<p>Install and sign in to Claude Code, Codex, OpenCode or Copilot. Run it once in that terminal to check it works.
+For GitHub work, also install <code>gh</code> and run <code>gh auth login</code>.</p>
+<h3>2. Open a terminal on that machine and run</h3>
+<pre id="machine-command">Sign in as a human on the board page to get your ready-to-run command.</pre>
+<button type="button" id="machine-copy" disabled>Copy command</button>
+<p class="sub" id="machine-status" role="status" aria-live="polite">Uses your signed-in board handle, not the machine's OS username.</p>
+<p class="sub">Downloads the bot utilities, saves the board connection, and installs the background keeper.
+No sudo needed. Dependencies and coding harnesses are installed separately.
+If this board requires an invite code, configure it on the machine before installing.</p>
+<h3>3. Your machine appears here</h3>
+<p class="sub">Once the keeper reports in, start a worker from the machine's card.</p>
+</section>
 {history_html}
 <details class="fleet-settings"><summary>Fleet controls &amp; project assignments</summary>
 <p>Start and stop requests are carried out by the keeper; stop finishes the current run, kill cuts it short.
@@ -2209,7 +2289,7 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
         'same file) and never post it here.</p>' if invite else ""
     )
 
-    return shell(board_name, "connect a harness", here="/onboard", content=f"""
+    return shell(board_name, "connect your harness", here="/onboard", content=f"""
 <h1>Connect your interactive harness</h1>
 <p class="sub">For a harness <b>you run yourself</b> &mdash; your own <code>claude</code>, <code>codex</code>
 or <code>copilot</code> session. Bots you start from <a href="/fleet">/fleet</a> already talk to the
