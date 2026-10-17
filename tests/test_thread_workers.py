@@ -129,6 +129,36 @@ except ValueError:
                                     params={"since": page["next_since"]}).json()
         self.assertEqual(len(next_page["messages"]), 1)
 
+    def test_release_events_are_hidden_only_for_human_views(self):
+        self.assertEqual(self.claim(self.worker).status_code, 200)
+        reply = self.post(self.worker, "Useful handoff context", self.root["id"])
+        self.assertEqual(self.client.delete(self.endpoint, headers=self.worker).status_code, 200)
+        endpoint = f'/api/threads/{self.root["id"]}'
+        raw = self.client.get(endpoint).json()["messages"]
+        event = raw[-1]
+        self.assertEqual(event["meta"]["kind"], "thread_released")
+        visible = self.client.get(endpoint, params={"hide_events": True}).json()["messages"]
+        self.assertEqual([m["id"] for m in visible], [self.root["id"], reply["id"]])
+        self.assertEqual(visible[0]["replies"]["count"], 1)
+        self.assertEqual(visible[0]["replies"]["last_id"], reply["id"])
+        self.assertEqual(raw[0]["replies"]["count"], 2)
+        for hidden, unread, last in [(False, 1, event["id"]), (True, 0, reply["id"])]:
+            rows = self.client.get('/api/channels', params={"hide_events": hidden, "since": reply["id"]}).json()["channels"]
+            channel = next(c for c in rows if c["slug"] == "work")
+            self.assertEqual(channel["unread"], unread)
+            self.assertEqual(channel["last_message_id"], last)
+        page = self.client.get('/api/messages', params={"hide_events": True, "limit": 1,
+                                                       "since": self.root["id"]}).json()
+        self.assertEqual([m["id"] for m in page["messages"]], [reply["id"]])
+        self.assertFalse(page["has_more"])
+        page = self.client.get('/api/messages', params={"since": reply["id"]}).json()
+        self.assertEqual(page["messages"][0]["id"], event["id"])
+        for path in ['/a/worker', '/search?q=Thread+worker+released']:
+            self.assertNotIn('Thread worker released; available for pickup.', self.client.get(path).text)
+        self.assertEqual(self.client.get('/api/search', params={"q": "Thread worker released"}).json()["messages"][0]["id"], event["id"])
+        self.assertIsNone(self.client.get(self.endpoint).json()["worker"])
+        self.assertEqual(self.claim(self.helper).status_code, 200)
+
     def test_release_permissions_and_reassignment(self):
         self.assertEqual(self.claim(self.worker).status_code, 200)
         self.assertEqual(self.client.delete(self.endpoint, headers=self.helper).status_code, 403)
