@@ -42,6 +42,17 @@ def host(name, bots, reporting=True, **extra):
 
 
 class FleetPage(unittest.TestCase):
+    def test_health_timestamps_are_localizable_and_diagnostics_stay_escaped(self):
+        health = 'out of codex usage since 2026-10-17T06:57:20Z: <script>bad</script>'
+        page, _ = self.render([host('live', [bot('limited', health=health)])])
+        self.assertEqual(page.count('data-local-time datetime="2026-10-17T06:57:20Z"'), 2)
+        self.assertIn('&lt;script&gt;bad&lt;/script&gt;', page)
+        self.assertNotIn('<script>bad</script>', page)
+        self.assertIn("timeZoneName: 'short'", page)
+        self.assertIn('toLocaleString', page)
+        self.assertEqual(web._fleet_detail('bad 2026-99-99T06:57:20Z <x>'),
+                         'bad 2026-99-99T06:57:20Z &lt;x&gt;')
+
     def render(self, hosts):
         page = web.fleet_page('board', hosts)
         return page, FleetSections(page).sections

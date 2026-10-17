@@ -1898,6 +1898,24 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
             f'{e(text)}</span>')
 
 
+def _fleet_detail(text: str) -> str:
+    """Escape diagnostics while exposing embedded timestamps to browser localization."""
+    pattern = r'\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})'
+    parts, end = [], 0
+    for match in re.finditer(pattern, text):
+        parts.append(e(text[end:match.start()]))
+        stamp = match.group()
+        try:
+            datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+        except ValueError:
+            parts.append(e(stamp))
+        else:
+            parts.append(f'<time data-local-time datetime="{e(stamp)}">{e(ago(stamp))}</time>')
+        end = match.end()
+    parts.append(e(text[end:]))
+    return ''.join(parts)
+
+
 def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool = False) -> str:
     # what the human asked, in the words of the button they pressed
     asked = lambda b: ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
@@ -1917,7 +1935,7 @@ def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool
         # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
         for why in dict.fromkeys(w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "",
                                              b.get("health") if up else "") if w):
-            detail += f'<div class="prob">{e(why)}</div>'
+            detail += f'<div class="prob">{_fleet_detail(why)}</div>'
         # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
         can = b["status"] != "moved" and (up or b.get("harness"))
         # no second start or stop for one already asked; a kill can still follow a stop
@@ -1953,6 +1971,13 @@ def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool
 
 
 FLEET_JS = """
+document.querySelectorAll('time[data-local-time]').forEach(function (el) {
+  var date = new Date(el.dateTime);
+  if (!isNaN(date.getTime())) el.textContent = date.toLocaleString([], {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+});
 // The same identity the board page keeps in this browser: {handle, token}.
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
@@ -2222,7 +2247,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
         words = {"out of usage": "usage limit reached", "needs login": "login required"}.get(state, "workers need attention")
         reasons = list(dict.fromkeys(b["state"]["reason"] or b.get("problem") or "" for _, b in entries))
         alerts.append(f'<div class="fleet-alert box"><h3>{e(harness)}: {e(words)} on {e(host)} · {len(entries)}</h3>'
-                      + (f'<p>{e(reasons[0])}</p>' if reasons[0] else "")
+                      + (f'<p>{_fleet_detail(reasons[0])}</p>' if reasons[0] else "")
                       + f'<details><summary>View {_plural(len(entries), "worker")}</summary>{worker_rows(entries)}</details></div>')
     for h in hosts:
         if not h["reporting"]:
