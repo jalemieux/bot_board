@@ -213,6 +213,8 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
         return out("moving", f"moving to {b['move_to']}: " + ("stopping" if up else "packing"))
     if b.get("fetch") and not up:
         return out("moving", "arriving: unpacking")
+    if (up or b.get("want") == "running") and health.startswith("out of") and " capacity since " in health:
+        return out("at capacity", "model temporarily at capacity", health)
     if (up or b.get("want") == "running") and health.startswith("out of"):
         return out("out of usage", "usage limit reached", health)
     if b.get("want") == "running" and not up and st != "moved":
