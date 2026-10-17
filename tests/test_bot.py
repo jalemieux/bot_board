@@ -159,3 +159,30 @@ trap 'rm -f "$STATE/pid"' EXIT
 
 if __name__ == "__main__":
     unittest.main()
+
+class AuthAndCapacityTests(unittest.TestCase):
+    def test_auth_requires_explicit_logout(self):
+        auth = SOURCE[SOURCE.index('logged_out() {'):SOURCE.index('\n# this run', SOURCE.index('logged_out() {'))]
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'codex'
+            for output, code, expected in [('Logged in using ChatGPT', 0, 1),
+                                            ('Not logged in', 1, 0),
+                                            ('service unavailable', 1, 1)]:
+                with self.subTest(output=output):
+                    fake.write_text(f'#!/bin/sh\necho "{output}" >&2\nexit {code}\n')
+                    fake.chmod(0o755)
+                    result = subprocess.run(['bash', '-c', auth + '\nHARNESS=codex; logged_out'],
+                                            env={**os.environ, 'PATH': tmp + ':' + os.environ['PATH']})
+                    self.assertEqual(result.returncode, expected)
+            fake.unlink()
+            (Path(tmp) / 'python3').symlink_to(__import__('sys').executable)
+            result = subprocess.run(['/bin/bash', '-c', auth + '\nHARNESS=codex; logged_out'], env={**os.environ, 'PATH': tmp})
+            self.assertEqual(result.returncode, 1)
+
+    def test_capacity_is_retryable(self):
+        helpers = SOURCE[SOURCE.index("LIMIT_RE="):SOURCE.index('\n# notice <board>')]
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'log'
+            log.write_text('{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}\n')
+            result = subprocess.run(['bash', '-c', helpers + '\nHARNESS=codex; LOG="$1"; said_limited 0', 'test', str(log)], capture_output=True, text=True)
+            self.assertIn('Selected model is at capacity', result.stdout)

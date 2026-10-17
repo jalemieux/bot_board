@@ -23,6 +23,13 @@ class BotState(unittest.TestCase):
         self.assertEqual(got['reason'], reason)
         self.check({'status': 'stopped', 'want': 'stopped', 'health': reason}, 'stopped', False)
 
+    def test_capacity_retains_reason(self):
+        reason = 'out of codex capacity since yesterday: model at capacity; retried every 10 min'
+        for status in ('waiting', 'stopped'):
+            got = self.check({'status': status, 'want': 'running', 'health': reason},
+                             'at capacity', False, 'model temporarily at capacity')
+            self.assertEqual(got['reason'], reason)
+
     def test_every_state(self):
         self.check({'status': 'running wordsnap'}, 'working', True, 'working on wordsnap')
         self.check({'status': 'waiting'}, 'waiting', True, 'waiting for work')

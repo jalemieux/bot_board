@@ -810,7 +810,7 @@ log "bot $HANDLE ($HARNESS) standing by on $REPO${POOL:+ (pool)}${GOAL:+, goal t
 # The session file holds the harness's id for that directory once a first run
 # has succeeded; until then the run is a first run, which creates the session.
 run_harness() {
-  local dir=$1 sfile=$2 prompt=$3 rc=0 sid="" off limit
+  local dir=$1 sfile=$2 prompt=$3 rc=0 sid="" off limit reason
   off=$(wc -c <"$LOG" 2>/dev/null || echo 0)
   [ -s "$sfile" ] && sid=$(cat "$sfile")
   load_fleet_env
@@ -857,7 +857,9 @@ for line in sys.stdin:
   esac </dev/null   # the caller's loop feeds stdin; a harness that reads it would eat the loop's input
   limit=$(said_limited "$off")
   if [ -n "$limit" ]; then
-    echo "out of $HARNESS usage since $(date -u +%FT%TZ): $limit; messages are kept, retried every 10 min" >"$STATE/health"
+    reason=usage
+    if printf '%s' "$limit" | grep -qiE 'at capacity|overloaded'; then reason=capacity; fi
+    echo "out of $HARNESS $reason since $(date -u +%FT%TZ): $limit; messages are kept, retried every 10 min" >"$STATE/health"
     rc=1
   elif [ "$rc" -eq 0 ]; then
     rm -f "$STATE/health"
@@ -1253,15 +1255,26 @@ print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$GOAL" "$WATCH" "$STATE/all.json" 
 # batch, so the launcher stops prompting it, keeps what arrived, and tries again
 # once the login is back.
 logged_out() {  # true when the harness says it has no login; unknown counts as logged in
-  case $HARNESS in
-    claude) timeout 30 claude auth status 2>/dev/null | python3 -c 'import sys,json;sys.exit(0 if json.load(sys.stdin).get("loggedIn") is False else 1)' 2>/dev/null ;;
-    codex) ! timeout 30 codex login status >/dev/null 2>&1 ;;
-    *) return 1 ;;
-  esac
+  python3 - "$HARNESS" <<'PYAUTH'
+import json, subprocess, sys
+harness = sys.argv[1]
+command = {"codex": ["codex", "login", "status"], "claude": ["claude", "auth", "status"]}.get(harness)
+logged_out = False
+if command:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        if harness == "claude":
+            logged_out = json.loads(result.stdout).get("loggedIn") is False
+        else:
+            logged_out = "not logged in" in (result.stdout + result.stderr).lower()
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass  # An unavailable auth check does not establish that login is missing.
+sys.exit(0 if logged_out else 1)
+PYAUTH
 }
 # this run's output says it hit a usage or rate limit (from alma's #81): retrying at once
 # only fails again; this is what kept the 5438 loop going after the first failures
-LIMIT_RE='session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded|hit your .*limit|exceeded.*(quota|limit)|insufficient_quota|usage_limit_reached|out of (extra )?usage'
+LIMIT_RE='session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded|at capacity|hit your .*limit|exceeded.*(quota|limit)|insufficient_quota|usage_limit_reached|out of (extra )?usage'
 harness_errors() {
   if [ "$HARNESS" != codex ]; then
     tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null
@@ -1424,7 +1437,7 @@ while :; do
         fi
         if [ -z "$OUTAGE" ] && [ -n "$last" ]; then
           notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-              "$(if [ -n "$LIMIT" ]; then echo "My harness ($HARNESS) on $(hostname) hit a limit: $LIMIT. I am keeping the message(s) and will try again every 10 minutes."; else echo "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."; fi)"
+              "$(if [ -n "$LIMIT" ]; then echo "My harness ($HARNESS) on $(hostname) is temporarily unavailable: $LIMIT. I am keeping the message(s) and will try again every 10 minutes."; else echo "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."; fi)"
         fi
         OUTAGE=$(date -u +%FT%TZ)
         break     # the rest of the batch waits too: the next round sees OUTAGE before prompting again

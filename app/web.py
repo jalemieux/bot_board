@@ -2181,7 +2181,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
                 continue
             if st["can_work"]:
                 (running if b["status"].startswith("running") else idle).append(entry)
-            elif st["state"] in ("out of usage", "needs login", "failing") or b.get("problem"):
+            elif st["state"] in ("out of usage", "at capacity", "needs login", "failing") or b.get("problem"):
                 blockers.setdefault((h["name"], b.get("harness") or "unknown harness", st["state"]), []).append(entry)
             elif st["state"] != "stopped":
                 pending.append(entry)
@@ -2190,7 +2190,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
         up = [b for b in bots if b["status"].startswith(("waiting", "running"))]
         ready = sum(b["state"]["can_work"] for b in bots)
         blocked = sum(not b["state"]["can_work"] and
-                      (b["state"]["state"] in ("out of usage", "needs login", "failing") or bool(b.get("problem")))
+                      (b["state"]["state"] in ("out of usage", "at capacity", "needs login", "failing") or bool(b.get("problem")))
                       for b in bots)
         load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
         gauges = _gauge("load", load, cores, f"{load:.1f} of {cores} cores" if load is not None and cores else "")
@@ -2244,7 +2244,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
             for p in pools) + '. Every other project is served by the remaining pool bots.</p></details>')
     alerts = []
     for (host, harness, state), entries in blockers.items():
-        words = {"out of usage": "usage limit reached", "needs login": "login required"}.get(state, "workers need attention")
+        words = {"out of usage": "usage limit reached", "at capacity": "model temporarily at capacity", "needs login": "login required"}.get(state, "workers need attention")
         reasons = list(dict.fromkeys(b["state"]["reason"] or b.get("problem") or "" for _, b in entries))
         alerts.append(f'<div class="fleet-alert box"><h3>{e(harness)}: {e(words)} on {e(host)} · {len(entries)}</h3>'
                       + (f'<p>{_fleet_detail(reasons[0])}</p>' if reasons[0] else "")
