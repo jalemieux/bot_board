@@ -1022,9 +1022,10 @@ SeenParam = Query(None, description="Per-slug cursors `slug:id,slug:id`; overrid
 def channels(
     since: int | None = SinceParam,
     seen: str | None = SeenParam,
+    hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
     _: dict | None = Depends(optional_agent),
 ) -> dict:
-    return {"channels": db.list_boards(since, "channel", seen=_parse_seen(seen)), "cursor": db.cursor()}
+    return {"channels": db.list_boards(since, "channel", seen=_parse_seen(seen), hide_events=hide_events), "cursor": db.cursor()}
 
 
 @app.post("/api/channels", tags=["channels"], status_code=201)
@@ -1043,10 +1044,11 @@ def conversations(
     all: bool = Query(False, description="Every conversation, not only the ones you are in."),
     since: int | None = SinceParam,
     seen: str | None = SeenParam,
+    hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
     agent: dict | None = Depends(optional_agent),
 ) -> dict:
     mine = None if (all or agent is None) else agent["id"]
-    rows = db.list_boards(since, "conversation", agent_id=mine, seen=_parse_seen(seen))
+    rows = db.list_boards(since, "conversation", agent_id=mine, seen=_parse_seen(seen), hide_events=hide_events)
     return {"conversations": rows, "cursor": db.cursor()}
 
 
@@ -1173,13 +1175,14 @@ async def get_messages(
     wait: int = Query(0, ge=0, description=f"Long-poll up to N seconds (max {MAX_WAIT})."),
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
+    hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
     _: dict | None = Depends(optional_agent),
 ) -> dict:
     slug = (channel or board or "").lower() or None
 
     def fetch() -> list[dict]:
         return db.list_messages(slug, since, before, limit + 1, tag, author, thread, order,
-                                roots=roots, kind=kind)
+                                roots=roots, kind=kind, hide_events=hide_events)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
     page = _page(rows, limit, order, view, max_bytes)
@@ -1343,13 +1346,14 @@ def get_thread(
     limit: int = Query(50, ge=1, le=500),
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
+    hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
     _: dict | None = Depends(optional_agent),
 ) -> dict:
     root = db.get_message(tid)
     if root is None:
         raise HTTPException(404, "no such thread")
     tid = root["thread_id"] or root["id"]
-    rows = db.list_messages(thread=tid, since=since, limit=limit + 1)
+    rows = db.list_messages(thread=tid, since=since, limit=limit + 1, hide_events=hide_events)
     return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
 
 
@@ -1447,8 +1451,8 @@ def _app_page(request: Request) -> str:
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
-        channels=db.list_boards(kind="channel"),
-        conversations=db.list_boards(kind="conversation"),
+        channels=db.list_boards(kind="channel", hide_events=True),
+        conversations=db.list_boards(kind="conversation", hide_events=True),
         agents=[db.public_agent(a) for a in db.list_agents()],
         stats=db.stats(),
         invite_required=bool(INVITE_CODE),
@@ -1543,13 +1547,13 @@ def page_agent(handle: str) -> HTMLResponse:
     a = db.get_agent_by_handle(handle.lstrip("@"))
     if a is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No agent called '{handle}'."), 404)
-    recent = db.list_messages(author=a["handle"], limit=50, order="desc")
+    recent = db.list_messages(author=a["handle"], limit=50, order="desc", hide_events=True)
     return HTMLResponse(web.agent_page(BOARD_NAME, a, recent))
 
 
 @app.get("/search", response_class=HTMLResponse, include_in_schema=False)
 def page_search(q: str = "") -> str:
-    return web.search_page(BOARD_NAME, q, db.search(q, limit=60) if q.strip() else [])
+    return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True) if q.strip() else [])
 
 
 @app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)

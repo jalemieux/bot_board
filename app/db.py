@@ -363,11 +363,16 @@ def _seen_map(seen: dict[str, int] | None, slug: str, since: int | None) -> int 
     return since
 
 
+# Release events remain in the bot feed, but are not human conversation.
+HUMAN_MESSAGE = "COALESCE(json_extract(m.meta, '$.kind'), '') != 'thread_released'"
+
+
 def list_boards(
     since: int | None = None,
     kind: str | None = "channel",
     agent_id: int | None = None,
     seen: dict[str, int] | None = None,
+    hide_events: bool = False,
 ) -> list[dict]:
     """Boards with activity, most recently active first.
 
@@ -383,12 +388,13 @@ def list_boards(
         where.append("(b.kind = 'channel' OR b.id IN (SELECT board_id FROM members WHERE agent_id = ?))")
         params.append(agent_id)
     clause = f"WHERE {' AND '.join(where)}" if where else ""
+    visible = f" AND {HUMAN_MESSAGE}" if hide_events else ""
     rows = conn().execute(
         f"""
         SELECT b.id, b.slug, b.topic, b.kind, b.created_at,
-               (SELECT COUNT(*) FROM messages m WHERE m.board_id=b.id) AS message_count,
-               (SELECT MAX(m.id) FROM messages m WHERE m.board_id=b.id) AS last_message_id,
-               (SELECT MAX(m.created_at) FROM messages m WHERE m.board_id=b.id) AS last_activity
+               (SELECT COUNT(*) FROM messages m WHERE m.board_id=b.id{visible}) AS message_count,
+               (SELECT MAX(m.id) FROM messages m WHERE m.board_id=b.id{visible}) AS last_message_id,
+               (SELECT MAX(m.created_at) FROM messages m WHERE m.board_id=b.id{visible}) AS last_activity
         FROM boards b {clause}
         ORDER BY (last_message_id IS NULL), last_message_id DESC
         """,
@@ -403,7 +409,7 @@ def list_boards(
                 b["unread"] = 0
             else:
                 b["unread"] = conn().execute(
-                    "SELECT COUNT(*) n FROM messages WHERE board_id=? AND id>?",
+                    f"SELECT COUNT(*) n FROM messages m WHERE board_id=? AND id>?{visible}",
                     (b["id"], cursor_for),
                 ).fetchone()["n"]
         if b["kind"] == "conversation":
@@ -507,7 +513,7 @@ LEFT JOIN agents worker ON worker.id = w.agent_id
 """
 
 
-def _hydrate(rows) -> list[dict]:
+def _hydrate(rows, hide_events: bool = False) -> list[dict]:
     out = []
     ids = [r["id"] for r in rows]
     tags: dict[int, list[str]] = {}
@@ -552,6 +558,7 @@ def _hydrate(rows) -> list[dict]:
                        GROUP_CONCAT(DISTINCT a.handle) AS authors
                 FROM messages m JOIN agents a ON a.id = m.agent_id
                 WHERE m.thread_id IN ({marks}) AND m.reply_to IS NOT NULL
+                  {("AND " + HUMAN_MESSAGE) if hide_events else ""}
                 GROUP BY m.thread_id""",
             root_ids,
         ):
@@ -701,9 +708,12 @@ def list_messages(
     order: str = "asc",
     roots: bool = False,
     kind: str | None = None,
+    hide_events: bool = False,
 ) -> list[dict]:
     where = ["m.id > ?"]
     params: list = [since]
+    if hide_events:
+        where.append(HUMAN_MESSAGE)
     if board:
         where.append("b.slug = ?")
         params.append(board)
@@ -728,7 +738,7 @@ def list_messages(
     sql = f"{_MSG_SELECT} WHERE {' AND '.join(where)} ORDER BY m.id {direction} LIMIT ?"
     params.append(max(1, min(limit, 501)))
     rows = conn().execute(sql, params).fetchall()
-    return _hydrate(rows)
+    return _hydrate(rows, hide_events=hide_events)
 
 
 def list_inbox(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
@@ -755,10 +765,13 @@ def list_mentions(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
 
 
 def search(
-    q: str, board: str | None = None, limit: int = 50, before: int | None = None
+    q: str, board: str | None = None, limit: int = 50, before: int | None = None,
+    hide_events: bool = False
 ) -> list[dict]:
     where = ["m.body LIKE ?"]
     params: list = [f"%{q}%"]
+    if hide_events:
+        where.append(HUMAN_MESSAGE)
     if board:
         where.append("b.slug = ?")
         params.append(board)
@@ -769,7 +782,7 @@ def search(
     rows = conn().execute(
         f"{_MSG_SELECT} WHERE {' AND '.join(where)} ORDER BY m.id DESC LIMIT ?", params
     ).fetchall()
-    return _hydrate(rows)
+    return _hydrate(rows, hide_events=hide_events)
 
 
 def cursor() -> int:

@@ -901,8 +901,8 @@ rail.addEventListener('click', function(ev){
 });
 
 function refreshLists(){
-  var q1 = '/api/channels?seen=' + encodeURIComponent(seenParam(S.channels));
-  var q2 = '/api/conversations?all=true&seen=' + encodeURIComponent(seenParam(S.convs));
+  var q1 = '/api/channels?hide_events=true&seen=' + encodeURIComponent(seenParam(S.channels));
+  var q2 = '/api/conversations?hide_events=true&all=true&seen=' + encodeURIComponent(seenParam(S.convs));
   return Promise.all([fetch(q1).then(function(r){ return r.json(); }), fetch(q2).then(function(r){ return r.json(); })])
     .then(function(rs){
       S.channels = rs[0].channels; S.convs = rs[1].conversations;
@@ -996,7 +996,7 @@ function openChannel(slug, push){
   renderHead(); renderRail();
   stream.innerHTML = '<div class="empty">loading…</div>';
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
-  return fetch('/api/messages?channel=' + encodeURIComponent(slug) + '&roots=true&order=desc&limit=60', {signal: S.ctrl.signal})
+  return fetch('/api/messages?hide_events=true&channel=' + encodeURIComponent(slug) + '&roots=true&order=desc&limit=60', {signal: S.ctrl.signal})
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (S.cur !== b) return;
@@ -1006,7 +1006,7 @@ function openChannel(slug, push){
 }
 function loadOlder(){
   var b = S.cur, before = S.olderBefore; if (!before) return;
-  fetch('/api/messages?channel=' + encodeURIComponent(b.slug) + '&roots=true&order=desc&limit=60&before=' + before)
+  fetch('/api/messages?hide_events=true&channel=' + encodeURIComponent(b.slug) + '&roots=true&order=desc&limit=60&before=' + before)
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (S.cur !== b) return;
@@ -1042,7 +1042,7 @@ function openUnread(push){
   stream.innerHTML = '<div class="empty">loading…</div>';
   var todo = S.channels.concat(S.convs).filter(function(b){ return S.unread[b.slug]; });
   return Promise.all(todo.map(function(b){
-    return fetch('/api/messages?channel=' + encodeURIComponent(b.slug) + '&since=' + (S.seen[b.slug] || 0) + '&limit=' + UNREAD_LIMIT, {signal: signal})
+    return fetch('/api/messages?hide_events=true&channel=' + encodeURIComponent(b.slug) + '&since=' + (S.seen[b.slug] || 0) + '&limit=' + UNREAD_LIMIT, {signal: signal})
       .then(function(r){ return r.json(); })
       .then(function(d){ S.umsgs[b.slug] = d.messages; S.umore[b.slug] = d.has_more; });
   })).then(function(){ if (S.view === 'unread') renderUnread(); }).catch(function(){});
@@ -1099,7 +1099,7 @@ async function openThread(id, push){
   var messages = [], since = 0, d;
   try {
     do {
-      var r = await fetch('/api/threads/' + id + '?since=' + since);
+      var r = await fetch('/api/threads/' + id + '?hide_events=true&since=' + since);
       if (!r.ok) throw new Error('request failed (' + r.status + ')');
       d = await r.json();
       messages = messages.concat(d.messages);
@@ -1437,7 +1437,7 @@ async function liveLoop(){
   var fails = 0;
   for (;;) {
     try {
-      var req = fetch('/api/messages?since=' + S.cursor + '&wait=30&limit=200');
+      var req = fetch('/api/messages?hide_events=true&since=' + S.cursor + '&wait=30&limit=200');
       if (!fails) setLive(true);            // a poll in flight is "live"; an error flips it back
       var r = await req;
       if (!r.ok) throw new Error(r.status);

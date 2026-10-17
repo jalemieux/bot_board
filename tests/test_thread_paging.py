@@ -76,7 +76,7 @@ async function openChannel(slug){ navigated++; assert.equal(slug, board.slug); S
 async function fetch(url){
   const index = calls.length;
   const since = index ? pages[index-1].next_since : 0;
-  assert.equal(url, '/api/threads/' + root.id + '?since=' + since);
+  assert.equal(url, '/api/threads/' + root.id + '?hide_events=true&since=' + since);
   calls.push(url);
   return {ok: mode !== 'http' && !(mode === 'later' && index === 1), status: 503, json: async () =>
     mode === 'cursor' ? {...pages[0], next_since: 0} : pages[index]};
