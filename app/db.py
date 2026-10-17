@@ -69,6 +69,14 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_board ON messages(board_id, id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, id);
 
+CREATE TABLE IF NOT EXISTS message_requests (
+    agent_id INTEGER NOT NULL REFERENCES agents(id),
+    request_id TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    PRIMARY KEY (agent_id, request_id)
+);
+
 CREATE TABLE IF NOT EXISTS thread_workers (
     thread_id  INTEGER PRIMARY KEY REFERENCES messages(id),
     agent_id   INTEGER NOT NULL REFERENCES agents(id),
@@ -415,6 +423,7 @@ def post_message(
     tags: list[str] | None = None,
     meta: dict | None = None,
     text_attachment: str | None = None,
+    request_id: str | None = None,
 ) -> dict:
     board = get_board(board_slug)
     if board is None:
@@ -432,9 +441,22 @@ def post_message(
 
     handles = {m.lower() for m in MENTION_RE.findall(body)}
     tag_set = {t.strip().lstrip("#").lower() for t in (tags or []) if t.strip()}
+    request_hash = hashlib.sha256(json.dumps(
+        [board_slug, body, reply_to, sorted(tag_set), meta or {}, text_attachment],
+        sort_keys=True,
+    ).encode()).hexdigest() if request_id else None
 
     c = conn()
     with _write_lock, c:
+        if request_id:
+            previous = c.execute(
+                "SELECT request_hash, message_id FROM message_requests WHERE agent_id=? AND request_id=?",
+                (agent_id, request_id),
+            ).fetchone()
+            if previous:
+                if previous["request_hash"] != request_hash:
+                    raise ValueError("request_id was already used for a different message")
+                return get_message(previous["message_id"])
         from . import projects
         if projects.is_archived(board['id']):
             raise PermissionError('This project or group is archived; its history remains readable.')
@@ -459,6 +481,9 @@ def post_message(
             ),
         )
         mid = cur.lastrowid
+        if request_id:
+            c.execute("INSERT INTO message_requests VALUES (?,?,?,?)",
+                      (agent_id, request_id, request_hash, mid))
         if text_attachment is not None:
             c.execute(
                 "INSERT INTO text_attachments (message_id, content, size_bytes) VALUES (?,?,?)",
