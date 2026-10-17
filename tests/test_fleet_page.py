@@ -178,3 +178,48 @@ class FleetPage(unittest.TestCase):
         self.assertIn('location.origin', web.FLEET_JS)
         self.assertIn('KEEPER_OPERATORS=', web.FLEET_JS)
         self.assertNotIn('board.example.invalid', page)
+
+    def test_refresh_keeps_details_open_without_hiding_recovery(self):
+        import json
+        import shutil
+        import subprocess
+        if not shutil.which('node'):
+            self.skipTest('node required for fleet refresh behavior')
+        script = web.FLEET_JS[web.FLEET_JS.index('// Preserve expanded worker details'):]
+        harness = r'''
+const assert = require('node:assert/strict');
+let tick, reloads = 0, inputs = [];
+const saved = new Map();
+global.sessionStorage = {
+  getItem: key => saved.get(key),
+  setItem: (key, value) => saved.set(key, value),
+  removeItem: key => saved.delete(key)
+};
+const detail = {
+  open: true,
+  closest: selector => selector === 'tr' ? {querySelector: () => ({getAttribute: () => '/a/olga'})} : {id: 'fleet-running'},
+  querySelector: () => ({textContent: 'Details for @olga'})
+};
+global.document = {
+  activeElement: null,
+  querySelectorAll: selector => selector.endsWith('input') ? inputs : [detail]
+};
+global.location = {reload: () => reloads++};
+global.setInterval = fn => { tick = fn; };
+'''
+        checks = r'''
+tick();
+assert.equal(reloads, 1, 'expanded details must not block recovery refresh');
+assert.equal(JSON.parse(saved.get('fleet.expanded')).length, 1);
+detail.open = false;
+'''
+        checks += '\neval(' + json.dumps(script) + ');\n'
+        checks += r'''
+assert.equal(detail.open, true, 'expanded details restored after refresh');
+document.activeElement = {tagName: 'INPUT'};
+tick(); assert.equal(reloads, 1, 'active form protected');
+document.activeElement = null;
+inputs = [{value: 'unsaved bot name'}];
+tick(); assert.equal(reloads, 1, 'unsaved form protected');
+'''
+        subprocess.run(['node', '-e', harness + script + checks], check=True, capture_output=True, text=True)
