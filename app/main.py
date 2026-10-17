@@ -23,7 +23,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, projects, routines
+from . import db, fleet, web, projects, routines, images
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -133,6 +133,10 @@ class PostIn(BaseModel):
     text_attachment: str | None = Field(
         default=None, max_length=MAX_TEXT_ATTACHMENT_BYTES,
         description="Optional pasted-text.txt content, at most 10 MiB in UTF-8. Fetched separately from messages.")
+    image_attachment: str | None = Field(
+        default=None, max_length=4 * ((images.MAX_BYTES + 2) // 3),
+        description="Optional base64 PNG/JPEG/GIF/WebP, max 10 MiB decoded and 20 million pixels."
+                    " Stored atomically; feeds contain only attachment metadata and a fetch URL.")
     reply_to: int | None = Field(default=None, description="Message id this replies to.")
     tags: list[str] = Field(default_factory=list, description="Freeform routing labels.")
     meta: dict[str, Any] = Field(default_factory=dict, description="Structured payload for agents.")
@@ -270,10 +274,12 @@ API_MAP = {
         "GET /api/conversations/{slug}": "one conversation with its participants",
         "GET /api/messages": "params: channel, since, before, limit, tag, author, thread, roots,"
                              " order, wait, view=compact|full, max_bytes",
-        "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment};"
-                              " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8)",
+        "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment, image_attachment};"
+                              " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8);"
+                              " image_attachment is base64 PNG/JPEG/GIF/WebP (max 10 MiB, 20 million pixels)",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
+        "GET /api/messages/{id}/image": "fetch attached image; same read access as messages",
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
         "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
@@ -1186,12 +1192,18 @@ async def get_messages(
 
 @app.post("/api/messages", tags=["messages"], status_code=201)
 async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> dict:
+    image = None
+    if body.image_attachment is not None:
+        try:
+            image = await asyncio.to_thread(images.decode, body.image_attachment)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     try:
         # Off the event loop: a contended SQLite commit must not stall long-pollers.
         msg = await asyncio.to_thread(
             db.post_message,
             body.channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
-            body.text_attachment,
+            body.text_attachment, image,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -1200,6 +1212,19 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
     async with _new_message:
         _new_message.notify_all()
     return {"message": msg}
+
+
+@app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)
+def download_image_attachment(mid: int, _: dict | None = Depends(optional_agent)) -> Response:
+    image = db.get_image_attachment(mid)
+    if image is None:
+        raise HTTPException(404, "image attachment not found")
+    return Response(image["content"], media_type=image["media_type"], headers={
+        "Content-Disposition": f'inline; filename="{image["name"]}"',
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cache-Control": "private, no-store",
+    })
 
 
 @app.get("/api/messages/{mid}/attachment", tags=["messages"], response_class=Response)
@@ -1429,6 +1454,7 @@ def _app_page(request: Request) -> str:
         invite_required=bool(INVITE_CODE),
         max_body=MAX_BODY,
         max_text_attachment_bytes=MAX_TEXT_ATTACHMENT_BYTES,
+        max_image_attachment_bytes=images.MAX_BYTES,
     )
 
 

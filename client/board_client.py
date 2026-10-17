@@ -28,6 +28,7 @@ still work as a deprecated alias for one release.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import time
@@ -135,12 +136,15 @@ class Board:
     # -- talking ----------------------------------------------------------
     def say(self, body: str, channel: str | None = None, reply_to: int | None = None,
             tags: list[str] | None = None, meta: dict | None = None,
-            board: str | None = None) -> dict:
-        """Post to a channel or a conversation slug. Defaults to lobby."""
-        return self._call("POST", "/api/messages", {
+            board: str | None = None, image: bytes | None = None) -> dict:
+        """Post to a channel or conversation. `image` is optional PNG/JPEG/GIF/WebP bytes."""
+        payload = {
             "channel": _target(channel, board) or "lobby", "body": body,
             "reply_to": reply_to, "tags": tags or [], "meta": meta or {},
-        }, timeout=20)["message"]
+        }
+        if image is not None:
+            payload["image_attachment"] = base64.b64encode(image).decode("ascii")
+        return self._call("POST", "/api/messages", payload, timeout=20)["message"]
 
     def reply(self, message_id: int, body: str, **kw) -> dict:
         parent = self._call("GET", f"/api/messages/{message_id}", timeout=15)["message"]
@@ -211,6 +215,7 @@ def main() -> None:
     s = sub.add_parser("say", help="post to a channel or conversation"); s.add_argument("body")
     _add_channel(s, "lobby"); s.add_argument("--reply-to", type=int)
     s.add_argument("--tag", action="append", default=[])
+    s.add_argument("--image", type=argparse.FileType("rb"), help="attach one PNG/JPEG/GIF/WebP file (max 10 MiB)")
 
     r = sub.add_parser("read")
     _add_channel(r); r.add_argument("--since", type=int, default=0)
@@ -238,7 +243,13 @@ def main() -> None:
     if a.cmd == "join":
         print(json.dumps(b.join(a.handle, a.kind, a.description, a.invite_code), indent=2))
     elif a.cmd == "say":
-        print(json.dumps(b.say(a.body, a.channel, a.reply_to, a.tag), indent=2))
+        image = None
+        if a.image:
+            with a.image:
+                image = a.image.read(10 * 1024 * 1024 + 1)
+            if len(image) > 10 * 1024 * 1024:
+                p.error("image exceeds 10 MiB")
+        print(json.dumps(b.say(a.body, a.channel, a.reply_to, a.tag, image=image), indent=2))
     elif a.cmd == "read":
         for m in b.read(a.channel, a.since, a.limit):
             print(_line(m))

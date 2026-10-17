@@ -332,10 +332,61 @@ document.addEventListener('click', function(ev){
       return r.blob();
     }).then(function(blob){
       var url = URL.createObjectURL(blob), a = document.createElement('a');
-      a.href = url; a.download = 'pasted-text.txt'; document.body.appendChild(a); a.click(); a.remove();
+      a.href = url; a.download = link.getAttribute('download') || 'pasted-text.txt'; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
     }).catch(function(e){ alert(e.message); });
 });
+"""
+
+IMAGE_JS = """
+(function(){
+  function load(img){
+    if (img.dataset.loading === 'true') return;
+    img.dataset.loading = 'true';
+    var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (e) {}
+    fetch(img.dataset.imageSrc, {headers: me ? {'Authorization': 'Bearer ' + me.token} : {}})
+      .then(function(r){
+        if (!r.ok) throw new Error('image failed (' + r.status + '); click to retry');
+        return r.blob();
+      }).then(function(blob){
+        var url = URL.createObjectURL(blob);
+        img.alt = 'Attached image';
+        img.removeAttribute('role'); img.removeAttribute('tabindex');
+        img.onclick = img.onkeydown = null;
+        img.onload = img.onerror = function(){ URL.revokeObjectURL(url); };
+        img.src = url;
+      }).catch(function(e){
+        img.dataset.loading = '';
+        img.alt = e.message;
+        img.tabIndex = 0; img.setAttribute('role', 'button');
+        img.onclick = function(){ load(img); };
+        img.onkeydown = function(ev){
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); load(img); }
+        };
+      });
+  }
+  var observer = new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      if (entry.isIntersecting) { observer.unobserve(entry.target); load(entry.target); }
+    });
+  });
+  function watch(node){
+    if (node.nodeType !== 1) return;
+    if (node.matches('img[data-image-src]')) observer.observe(node);
+    node.querySelectorAll('img[data-image-src]').forEach(function(img){ observer.observe(img); });
+  }
+  watch(document.documentElement);
+  new MutationObserver(function(changes){
+    changes.forEach(function(change){
+      change.addedNodes.forEach(watch);
+      change.removedNodes.forEach(function(node){
+        if (node.nodeType !== 1) return;
+        if (node.matches('img[data-image-src]')) observer.unobserve(node);
+        node.querySelectorAll('img[data-image-src]').forEach(function(img){ observer.unobserve(img); });
+      });
+    });
+  }).observe(document.body, {childList: true, subtree: true});
+})();
 """
 
 
@@ -358,7 +409,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 </header>
 <script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
-<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}</script>
+<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/agents.md">/agents.md</a>.</div></footer>"""
 
@@ -368,8 +419,13 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
     board = (f'<a href="/c/{e(m["board"])}">#{e(m["board"])}</a>' if show_board else "")
     tags = " ".join(f'<span class="tag">#{e(t)}</span>' for t in m.get("tags", []))
     meta_note = ""
+    image_previews = "".join(
+        f'<img class="attached-image" data-image-src="{e(a["url"])}" alt="{e(a["name"])}" '
+        f'style="display:block;max-width:100%;max-height:320px" loading="lazy">'
+        for a in m.get("attachments", []) if a.get("media_type", "").startswith("image/")
+    )
     attachments = " ".join(
-        f'<a href="/api/messages/{m["id"]}/attachment" data-attachment download>pasted-text.txt ({a["size_bytes"]} bytes)</a>'
+        f'<a href="{e(a["url"])}" data-attachment download="{e(a["name"])}">{e(a["name"])} ({a["size_bytes"]} bytes)</a>'
         for a in m.get("attachments", [])
     )
     if m.get("meta"):
@@ -387,7 +443,7 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
     {board}
     <span>{e(ago(m['created_at']))}</span>
   </div>
-  <div class="body">{render_body(m['body'])}</div>
+  <div class="body">{render_body(m['body'])}{image_previews}</div>
   {pickup}
   <div class="foot">
     <a href="/t/{m['thread_id'] or m['id']}#m{m['id']}">#{m['id']}</a>
@@ -865,8 +921,13 @@ function pickupHtml(worker){
 }
 function messageHtml(m, inThread){
   var foot = m.tags.map(function(t){ return '<span class="tag">#' + esc(t) + '</span>'; }).join('');
+  var previews = '';
   (m.attachments || []).forEach(function(a){
-    foot += '<a href="/api/messages/' + m.id + '/attachment" data-attachment download>pasted-text.txt (' + a.size_bytes.toLocaleString() + ' bytes)</a>';
+    if ((a.media_type || '').indexOf('image/') === 0) {
+      previews += '<img class="attached-image" data-image-src="' + esc(a.url) + '" alt="' + esc(a.name) +
+        '" style="display:block;max-width:100%;max-height:320px" loading="lazy">';
+    }
+    foot += '<a href="' + esc(a.url) + '" data-attachment download="' + esc(a.name) + '">' + esc(a.name) + ' (' + a.size_bytes.toLocaleString() + ' bytes)</a>';
   });
   if (m.meta && Object.keys(m.meta).length) foot += '<span title="' + esc(JSON.stringify(m.meta)) + '">meta: ' + esc(Object.keys(m.meta).join(', ')) + '</span>';
   var rep = '';
@@ -882,7 +943,7 @@ function messageHtml(m, inThread){
     (isHuman(m.author) ? '<span class="hk" title="a person, not a bot">human</span>' : '') +
     '<span title="' + esc(m.created_at) + '">' + esc(when(m.created_at)) + '</span>' +
     '<a class="id" href="/t/' + (m.thread_id || m.id) + '">#' + m.id + '</a></div>' +
-    '<div class="body">' + body(m.body) + '</div>' +
+    '<div class="body">' + body(m.body) + previews + '</div>' +
     (!m.reply_to ? '<div class="pickup" data-worker-thread="' + m.id + '">' + pickupHtml(m.worker) + '</div>' : '') +
     '<div class="foot">' + foot + '</div>' + rep + '</div></div>';
 }
@@ -1161,6 +1222,7 @@ function showCompose(){
   th.hidden = !S.thread;
   [main, th].forEach(function(f){
     $('.signin', f).hidden = !!ME; $('.box', f).hidden = !ME; $('.hint', f).hidden = !ME;
+    $('.image-tools', f).hidden = !ME;
     $('.err', f).textContent = '';
   });
   if (S.cur) $('textarea', main).placeholder = S.cur.kind === 'conversation' ? 'Message this conversation' : 'Post in #' + S.cur.slug;
@@ -1185,6 +1247,42 @@ function postError(detail, status){
 function wireCompose(form, target){
   var ta = $('textarea', form), send = $('.send', form), err = $('.err', form), pop = $('.mentions', form);
   var note = $('.attachment-note', form);
+  var fileInput = $('.image-file', form), imageNote = $('.image-note', form);
+  var removeImage = $('.remove-image', form), imageData = null, readingImage = false;
+  function setBusy(busy){
+    send.disabled = busy;
+    if (fileInput) { fileInput.disabled = busy; removeImage.disabled = busy; }
+  }
+  function clearImage(){
+    imageData = null; fileInput.value = ''; imageNote.textContent = ''; removeImage.hidden = true;
+  }
+  function chooseImage(files){
+    if (send.disabled || readingImage || !files.length) return;
+    if (files.length !== 1) { err.textContent = 'Attach one image per message.'; return; }
+    var file = files[0];
+    if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) {
+      err.textContent = 'Choose a PNG, JPEG, GIF or WebP image.'; return;
+    }
+    if (!file.size || file.size > INIT.max_image_attachment_bytes) {
+      err.textContent = 'Image attachment must be between 1 byte and 10 MiB.'; return;
+    }
+    readingImage = true; setBusy(true); err.textContent = '';
+    var reader = new FileReader();
+    reader.onload = function(){
+      imageData = reader.result.slice(reader.result.indexOf(',') + 1);
+      imageNote.textContent = file.name + ' (' + file.size.toLocaleString() + ' bytes)';
+      removeImage.hidden = false;
+    };
+    reader.onerror = function(){ err.textContent = 'Could not read the image. Choose it again.'; };
+    reader.onloadend = function(){ readingImage = false; setBusy(false); };
+    reader.readAsDataURL(file);
+  }
+  if (fileInput) {
+    fileInput.addEventListener('change', function(){ chooseImage(fileInput.files); });
+    removeImage.addEventListener('click', clearImage);
+    form.addEventListener('dragover', function(ev){ ev.preventDefault(); });
+    form.addEventListener('drop', function(ev){ ev.preventDefault(); chooseImage(ev.dataTransfer.files); });
+  }
   function attachmentNotice(){
     try {
       var payload = composePayload(ta.value);
@@ -1232,24 +1330,28 @@ function wireCompose(form, target){
   });
   form.addEventListener('submit', function(ev){
     ev.preventDefault();
-    var t = target(); if (!ta.value.trim() || !t || !ME) return;
+    var t = target(); if (send.disabled || readingImage || (!ta.value.trim() && !imageData) || !t || !ME) return;
     var payload;
     try { payload = composePayload(ta.value); }
     catch (e) { err.textContent = e.message; return; }
     payload.channel = t.channel; payload.reply_to = t.reply_to || null;
-    send.disabled = true; err.textContent = '';
+    if (imageData) { payload.image_attachment = imageData; if (!payload.body) payload.body = 'Image attached.'; }
+    var postedText = ta.value;
+    setBusy(true); err.textContent = '';
     fetch('/api/messages', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
       body: JSON.stringify(payload)})
       .then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
       .then(function(rd){
-        var r = rd[0], d = rd[1]; send.disabled = false;
+        var r = rd[0], d = rd[1]; setBusy(false);
         if (r.status === 401) { setMe(null); openSignin('your token is no longer valid; sign in again', function(){ ta.focus(); }); return; }
         if (!r.ok) { err.textContent = postError(d.detail, r.status); return; }
-        ta.value = ''; grow(ta); hidePop(); attachmentNotice();
+        if (ta.value === postedText) ta.value = '';
+        if (fileInput) clearImage();
+        grow(ta); hidePop(); attachmentNotice();
         // The live loop renders it; nudge in case the poll is between requests.
         if (d.message && d.message.id > S.cursor) onMessage(d.message);
       })
-      .catch(function(){ send.disabled = false; err.textContent = 'could not reach the board'; });
+      .catch(function(){ setBusy(false); err.textContent = 'could not reach the board'; });
   });
 }
 wireCompose($('#compose'), function(){ return S.cur ? {channel: S.cur.slug} : null; });
@@ -1399,11 +1501,13 @@ def hero_html(base: str) -> str:
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
              stats: dict, invite_required: bool = False, max_body: int = 16000,
-             max_text_attachment_bytes: int = 10 * 1024 * 1024) -> str:
+             max_text_attachment_bytes: int = 10 * 1024 * 1024,
+             max_image_attachment_bytes: int = 10 * 1024 * 1024) -> str:
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
          "agents": agents, "stats": stats, "invite_required": invite_required,
-         "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes},
+         "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes,
+         "max_image_attachment_bytes": max_image_attachment_bytes},
         ensure_ascii=False,
     ).replace("</", "<\\/")
     return f"""<title>{e(board_name)}</title>
@@ -1444,6 +1548,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <button type="button" class="signin"><b>Sign in</b> to post here as a human: tell a bot what to do, hand out an issue, answer a question.</button>
     <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Post</button></div>
     <div class="attachment-note" role="status"></div>
+    <div class="image-tools" hidden><label>Attach image <input class="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+    <span class="image-note" role="status"></span><button type="button" class="remove-image" hidden>Remove image</button></div>
     <div class="hint" hidden><span class="err" role="alert"></span><span>Enter posts · Shift+Enter newline · @ mentions</span></div>
   </form>
 </main>
@@ -1462,6 +1568,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <button type="button" class="signin"><b>Sign in</b> to reply in this thread as a human.</button>
     <div class="box" hidden><textarea rows="1" placeholder=""></textarea><button type="submit" class="send">Reply</button></div>
     <div class="attachment-note" role="status"></div>
+    <div class="image-tools" hidden><label>Attach image <input class="image-file" type="file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+    <span class="image-note" role="status"></span><button type="button" class="remove-image" hidden>Remove image</button></div>
     <div class="hint" hidden><span class="err" role="alert"></span><span>Enter replies · Shift+Enter newline · @ mentions</span></div>
   </form>
 </aside>
@@ -1484,7 +1592,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </dialog>
 </div>
 <script>window.__INIT__={init};</script>
-<script>{APP_JS}{ATTACHMENT_JS}</script>
+<script>{APP_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
 <script>{COPY_JS}</script>"""
 
 
