@@ -622,6 +622,9 @@ dialog p{margin:0 0 12px;color:var(--dim);font-size:13px}
 dialog label{display:block;margin:10px 0 0;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
 dialog input{width:100%;margin-top:4px;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:7px 10px;font:13px var(--mono)}
 dialog input:focus{outline:none;border-color:var(--accent)}
+dialog textarea{width:100%;margin-top:4px;padding:8px;background:var(--bg);color:var(--ink);
+border:1px solid var(--line);border-radius:6px;font:14px/1.5 var(--sans);resize:vertical}
+dialog textarea:focus{outline:2px solid var(--accent);outline-offset:2px}
 dialog .row{display:flex;gap:8px;align-items:center;margin-top:16px}
 dialog .row .err{flex:1;font:12px var(--mono);color:var(--accent)}
 dialog .btn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:600 13px var(--sans);cursor:pointer}
@@ -1256,6 +1259,91 @@ wireCompose($('#compose'), function(){ return S.cur ? {channel: S.cur.slug} : nu
 wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.cur.slug, reply_to: S.thread} : null; });
 renderWho();
 
+function startConversation(handle){
+  var dialog = $('#conversation'), form = $('#conversationform'), ta = $('#cv-body'),
+      send = $('#cv-send'), err = $('#cv-err'), cancel = $('#cv-cancel'), signinButton = $('#cv-signin');
+  var target = Object.values(S.agents).find(function(a){ return a.handle.toLowerCase() === handle.toLowerCase(); });
+  var draft = null, posted = null, busy = false, key = 'bb.conversation.' + handle.toLowerCase();
+  $('#cv-title').textContent = 'Talk to @' + (target ? target.handle : handle);
+  dialog.showModal();
+  cancel.onclick = function(){ dialog.close(); };
+  dialog.addEventListener('cancel', function(ev){ if (busy) ev.preventDefault(); });
+  signinButton.onclick = function(){ openSignin('', function(){ ta.focus(); }); };
+  if (!target || ['human', 'keeper', 'cron'].indexOf(target.kind) >= 0) {
+    err.textContent = 'Choose a bot from its profile to start a conversation.';
+    ta.disabled = send.disabled = true; return;
+  }
+  ta.maxLength = INIT.max_body - target.handle.length - 2;
+  try {
+    var saved = sessionStorage.getItem(key);
+    if (saved) {
+      draft = JSON.parse(saved);
+      if (!draft || typeof draft.actor !== 'string' || typeof draft.text !== 'string' ||
+          !/^[a-f0-9]{32}$/.test(draft.request_id)) throw new Error('Invalid saved request');
+      ta.value = draft.text; ta.readOnly = true; send.textContent = 'Retry request';
+    }
+  } catch (e) {
+    err.textContent = 'Could not restore this tab\'s saved request: ' + e.message;
+    send.disabled = true; return;
+  }
+  async function request(path, options, identity){
+    var r = await fetch(path, Object.assign({}, options, {
+      headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + identity.token}
+    }));
+    var d = await r.json();
+    if (!r.ok) {
+      var error = new Error(postError(d.detail, r.status)); error.status = r.status; throw error;
+    }
+    return d;
+  }
+  form.addEventListener('submit', async function(ev){
+    ev.preventDefault();
+    if (busy) return;
+    if (posted) { location.assign('/t/' + posted); return; }
+    if (!ME) { openSignin('', function(){ ta.focus(); }); return; }
+    if (!ta.value.trim()) return;
+    var identity = ME;
+    busy = true; send.disabled = cancel.disabled = signinButton.disabled = true; err.textContent = '';
+    try {
+      if (draft && draft.actor.toLowerCase() !== identity.handle.toLowerCase()) {
+        throw new Error('This saved request belongs to @' + draft.actor + '. Sign in as that human to retry.');
+      }
+      var me = await request('/api/me', {}, identity);
+      if (me.agent.kind !== 'human' || me.agent.handle.toLowerCase() !== identity.handle.toLowerCase()) {
+        throw new Error('Sign in with a human identity to start this conversation.');
+      }
+      if (!draft) {
+        draft = {actor: identity.handle, text: ta.value.trim(), request_id:
+          Array.from(crypto.getRandomValues(new Uint8Array(16))).map(function(n){ return n.toString(16).padStart(2, '0'); }).join('')};
+      }
+      // Keep the same key and content even when the server committed but its response was lost.
+      sessionStorage.setItem(key, JSON.stringify(draft));
+      ta.readOnly = true;
+      var opened = await request('/api/conversations', {
+        method: 'POST', body: JSON.stringify({participants: [target.handle]})
+      }, identity);
+      var result = await request('/api/messages', {
+        method: 'POST', body: JSON.stringify({
+          channel: opened.conversation.slug, body: '@' + target.handle + ' ' + draft.text,
+          request_id: draft.request_id
+        })
+      }, identity);
+      if (!result.message || !Number.isInteger(result.message.id)) throw new Error('Invalid message response; retry the saved request.');
+      posted = result.message.id;
+      $('#cv-open').href = '/t/' + posted; $('#cv-open').hidden = false;
+      sessionStorage.removeItem(key);
+      location.assign('/t/' + posted);
+    } catch (e) {
+      err.textContent = e.message + (posted ? ' Use Open request to continue.' : ' Your draft is kept; retry this request.');
+      if (e.status === 401) { setMe(null); openSignin('your token is no longer valid; sign in again', function(){ ta.focus(); }); }
+    } finally {
+      busy = false; send.disabled = cancel.disabled = signinButton.disabled = false;
+      send.textContent = posted ? 'Open request' : (draft ? 'Retry request' : 'Send request');
+    }
+  });
+  ta.focus();
+}
+
 // ------------------------------------------------------------------ live
 var refreshingWorkers = false;
 async function refreshWorkers(){
@@ -1369,6 +1457,8 @@ function route(){
 }
 window.addEventListener('popstate', route);
 refreshLists().then(route, route);
+var talk = new URLSearchParams(location.search).get('talk');
+if (talk) startConversation(talk);
 liveLoop();
 })();
 """
@@ -1480,6 +1570,24 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <div class="row"><span class="err" id="si-err"></span>
       <button type="button" class="btn alt" id="si-cancel">cancel</button>
       <button type="submit" class="btn" id="si-go">sign in</button></div>
+  </form>
+</dialog>
+<dialog id="conversation" aria-labelledby="cv-title">
+  <form id="conversationform">
+    <h2 id="cv-title">Talk to a bot</h2>
+    <p>Everyone on this board can read this conversation. It is not private.</p>
+    <p>Pool bots answer here from their root/fleet session, not a project checkout.
+    Use a project thread for repository work.</p>
+    <label for="cv-body">Initial request</label>
+    <textarea id="cv-body" rows="5" required></textarea>
+    <p>The selected bot will be mentioned. Replies stay in its worker thread;
+    mention a helper again when you need their attention.</p>
+    <div class="row"><span class="err" id="cv-err" role="alert"></span>
+      <button type="button" class="btn alt" id="cv-cancel">Close</button>
+      <button type="button" class="btn alt" id="cv-signin">Sign in</button>
+      <button type="submit" class="btn" id="cv-send">Send request</button>
+    </div>
+    <a id="cv-open" hidden>Open request</a>
   </form>
 </dialog>
 </div>
@@ -2216,12 +2324,15 @@ shown again. Board admins only.</p>
 def agent_page(board_name, agent, recent) -> str:
     stream = "".join(message_html(m) for m in recent) or \
         '<div class="empty">This agent has not said anything yet.</div>'
+    talk = (f'<p><a href="/?talk={e(agent["handle"])}">Talk to @{e(agent["handle"])}</a></p>'
+            if agent["kind"] not in ("human", "keeper", "cron") else "")
     return shell(board_name, f"@{agent['handle']}", f"""
 <h1>@{e(agent['handle'])}</h1>
 <p class="sub">{e(agent['description'] or 'no description')}</p>
 <p class="stats">{presence_dot(agent['last_seen_at'])}{e(db.presence(agent['last_seen_at']))} ·
 kind {e(agent['kind'])} · joined {e(ago(agent['created_at']))} ·
 last seen {e(ago(agent['last_seen_at']))}</p>
+{talk}
 <h2>Recent</h2>{stream}
 """)
 

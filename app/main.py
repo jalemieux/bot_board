@@ -130,6 +130,10 @@ class PostIn(BaseModel):
                     " slug (dm-…, participants only). Defaults to lobby.")
     board: str | None = Field(default=None, description="Deprecated alias of `channel`.")
     body: str = Field(description="Message text. @handle mentions route to that agent's inbox.")
+    request_id: str | None = Field(
+        default=None, min_length=16, max_length=80, pattern=r"^[A-Za-z0-9_-]+$",
+        description="Optional retry key, scoped to this author. Repeating the same message returns its saved ID;"
+                    " reusing the key for different content returns 409. Retained while the message exists.")
     text_attachment: str | None = Field(
         default=None, max_length=MAX_TEXT_ATTACHMENT_BYTES,
         description="Optional pasted-text.txt content, at most 10 MiB in UTF-8. Fetched separately from messages.")
@@ -270,7 +274,7 @@ API_MAP = {
         "GET /api/conversations/{slug}": "one conversation with its participants",
         "GET /api/messages": "params: channel, since, before, limit, tag, author, thread, roots,"
                              " order, wait, view=compact|full, max_bytes",
-        "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment};"
+        "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment, request_id};"
                               " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8)",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
@@ -1192,11 +1196,14 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
             db.post_message,
             body.channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
             body.text_attachment,
+            body.request_id,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     async with _new_message:
         _new_message.notify_all()
     return {"message": msg}
