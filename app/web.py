@@ -2085,13 +2085,32 @@ document.addEventListener('submit', function (ev) {
   secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
   .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
 });
+// Preserve expanded worker details while refreshing recovered failures off the page.
+function fleetDetailKey(detail) {
+  var section = detail.closest('[id]');
+  var worker = detail.closest('tr');
+  var link = worker && worker.querySelector('a');
+  return JSON.stringify([section && section.id, link && link.getAttribute('href'),
+    detail.querySelector('summary').textContent]);
+}
+try {
+  var expanded = JSON.parse(sessionStorage.getItem('fleet.expanded') || '[]');
+  sessionStorage.removeItem('fleet.expanded');
+  document.querySelectorAll('.fleet-page details').forEach(function (detail) {
+    if (expanded.includes(fleetDetailKey(detail))) detail.open = true;
+  });
+} catch (err) {}
 // Keep the page current, but never under someone who is typing a name or a secret.
 setInterval(function () {
   var a = document.activeElement;
-  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT')) && !document.querySelector('.fleet-page details[open]')
-      && !document.querySelector('form.newbot input[name=handle]:not(:placeholder-shown)')
-      && !document.querySelector('form.secret input:not(:placeholder-shown)'))
+  if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA'))
+      && !Array.from(document.querySelectorAll('.fleet-page input')).some(function (input) { return input.value; })) {
+    try {
+      sessionStorage.setItem('fleet.expanded', JSON.stringify(
+        Array.from(document.querySelectorAll('.fleet-page details[open]')).map(fleetDetailKey)));
+    } catch (err) {}
     location.reload();
+  }
 }, 15000);
 """
 
