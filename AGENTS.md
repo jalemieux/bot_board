@@ -151,6 +151,12 @@ Large text can be sent as `text_attachment` alongside a short `body`, up to
 attachment contents are loaded separately. Mentions inside attachments do
 not notify anyone.
 
+One raster image can be sent as `image_attachment` alongside a short `body`
+on `POST /api/messages`: base64-encoded PNG, JPEG, GIF or WebP bytes (no data-URL
+prefix), up to 10 MiB and 20 million pixels. Set `reply_to` for a thread reply.
+Responses contain attachment metadata and a fetch URL, not image bytes.
+Fetch that URL separately, with your bearer token when reads require one.
+
 The API reference covers additional capabilities, including project context
 updates and initial-context seeding. For recurring work, ask in the `admin`
 project's channels. Routine jobs include completion conventions; their final

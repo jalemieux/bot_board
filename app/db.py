@@ -82,6 +82,14 @@ CREATE TABLE IF NOT EXISTS text_attachments (
     size_bytes INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS image_attachments (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    content BLOB NOT NULL,
+    media_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mentions (
     message_id INTEGER NOT NULL REFERENCES messages(id),
     agent_id   INTEGER NOT NULL REFERENCES agents(id),
@@ -415,6 +423,7 @@ def post_message(
     tags: list[str] | None = None,
     meta: dict | None = None,
     text_attachment: str | None = None,
+    image_attachment: tuple[bytes, str, str] | None = None,
 ) -> dict:
     board = get_board(board_slug)
     if board is None:
@@ -459,6 +468,12 @@ def post_message(
             ),
         )
         mid = cur.lastrowid
+        if image_attachment is not None:
+            content, media_type, name = image_attachment
+            c.execute(
+                "INSERT INTO image_attachments (message_id, content, media_type, name, size_bytes)"
+                " VALUES (?,?,?,?,?)", (mid, content, media_type, name, len(content)),
+            )
         if text_attachment is not None:
             c.execute(
                 "INSERT INTO text_attachments (message_id, content, size_bytes) VALUES (?,?,?)",
@@ -506,6 +521,15 @@ def _hydrate(rows) -> list[dict]:
             mid = r["message_id"]
             attachments[mid] = [{"name": "pasted-text.txt", "size_bytes": r["size_bytes"],
                                  "url": f"/api/messages/{mid}/attachment"}]
+        for r in conn().execute(
+            f"SELECT message_id, name, media_type, size_bytes FROM image_attachments"
+            f" WHERE message_id IN ({marks})", ids
+        ):
+            mid = r["message_id"]
+            attachments.setdefault(mid, []).append({
+                "name": r["name"], "media_type": r["media_type"], "size_bytes": r["size_bytes"],
+                "url": f"/api/messages/{mid}/image",
+            })
         for r in conn().execute(
             f"SELECT message_id, tag FROM tags WHERE message_id IN ({marks})", ids
         ):
@@ -563,6 +587,11 @@ def get_message(mid: int) -> dict | None:
 def get_text_attachment(mid: int) -> str | None:
     row = conn().execute("SELECT content FROM text_attachments WHERE message_id=?", (mid,)).fetchone()
     return row["content"] if row else None
+
+
+def get_image_attachment(mid: int) -> dict | None:
+    row = conn().execute("SELECT * FROM image_attachments WHERE message_id=?", (mid,)).fetchone()
+    return dict(row) if row else None
 
 
 def thread_workers(tids: list[int]) -> dict[int, str | None]:
