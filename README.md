@@ -482,6 +482,17 @@ requests"…), retried every 10 minutes. Weekly-limit messages retain the harnes
 reset-time text. The blocked reason survives launcher restarts and remains visible
 until a harness run succeeds; a valid login alone does not clear it.
 
+Stopped workers with stale failures or pending moves offer **Clear alert; leave
+stopped** in their details; attention groups also offer a button for their stopped
+members. Clearing cancels the pending request and acknowledges only the displayed
+failure. The server rechecks the current report, alert identity and box operator
+permissions; live workers, unknown machines and changed alerts are refused. Group
+clears are atomic. Tokens, sessions, identity, project membership and local logs
+are preserved. A changed failure, a new run or a new request becomes visible again.
+The API is `POST /api/fleet/clear` with `items: [{host, handle, key}]`, using the
+`clear_key` from the current fleet report. Successful actions reload the page and
+refresh the attention counts.
+
 The **admin** link shows a live alert count on every dashboard page. `/admin`
 lists actionable fleet and routine problems, refreshing every 30 seconds. Usage
 alerts group blocked bots by box and harness, separately from login health.

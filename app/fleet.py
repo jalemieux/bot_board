@@ -11,6 +11,7 @@ import json
 import random
 import re
 import uuid
+from datetime import datetime, timezone
 
 from . import db
 
@@ -32,6 +33,15 @@ CREATE TABLE IF NOT EXISTS fleet_bots (
     set_by  TEXT NOT NULL,
     set_at  TEXT NOT NULL,
     problem TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS fleet_alert_clears (
+    handle TEXT PRIMARY KEY COLLATE NOCASE,
+    host TEXT NOT NULL COLLATE NOCASE,
+    health TEXT NOT NULL,
+    last_run TEXT NOT NULL,
+    problem TEXT NOT NULL,
+    set_at TEXT NOT NULL
 );
 
 -- Secrets every box's bots get in their environment (GH_TOKEN, ...), set by an admin
@@ -152,6 +162,15 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
+def _set_want(c, handle, host, harness, run, by, now, kill=False, project=None):
+    c.execute(
+        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project) VALUES (?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
+        " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill",
+        (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None),
+    )
+
+
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
          project: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
@@ -186,12 +205,7 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         now = db.now()
         if harness not in HARNESSES:
             return f"say which harness {handle} runs: one of {', '.join(HARNESSES)}"
-        c.execute(
-            "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project) VALUES (?,?,?,?,?,?,?,?)"
-            " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill",
-            (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None),
-        )
+        _set_want(c, handle, host, harness, run, by, now, kill, project)
         c.commit()
     return None
 
@@ -392,12 +406,57 @@ def wanted(host: str, problems: dict | None = None) -> list[dict]:
     c = db.conn()
     if problems is not None:
         with db._write_lock:
+            raw = c.execute("SELECT report FROM fleet_hosts WHERE name=?", (host,)).fetchone()
+            observed = {b["handle"].lower(): b for b in json.loads(raw["report"])["bots"]} if raw else {}
             for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (host,)).fetchall():
-                c.execute("UPDATE fleet_bots SET problem=? WHERE handle=?",
-                          (str(problems.get(r["handle"], ""))[:500], r["handle"]))
+                problem = str(problems.get(r["handle"], ""))[:500]
+                ack = c.execute("SELECT a.* FROM fleet_alert_clears a JOIN fleet_bots b ON b.handle=a.handle "
+                                "AND b.set_at=a.set_at WHERE a.handle=? AND a.host=?", (r["handle"], host)).fetchone()
+                bot = observed.get(r["handle"].lower(), {})
+                if ack and bot.get("status") == "stopped" and problem == ack["problem"] and bot.get("last_run", "") == ack["last_run"]:
+                    problem = ""
+                c.execute("UPDATE fleet_bots SET problem=? WHERE handle=?", (problem, r["handle"]))
             c.commit()
     return [{**dict(r), "run": bool(r["run"])} for r in
             c.execute("SELECT * FROM fleet_bots WHERE host=? ORDER BY handle", (host,))]
+
+
+def alert_key(host, bot):
+    fields = {k: bot.get(k, "") for k in ("status", "health", "last_run", "problem", "move_to", "fetch", "kill", "want", "set_at", "harness")}
+    return hashlib.sha256(json.dumps([host.lower(), bot["handle"].lower(), fields], sort_keys=True).encode()).hexdigest()
+
+
+def clear_alerts(items: list[dict], by: str):
+    with db._write_lock, db.conn() as c:
+        c.execute("BEGIN IMMEDIATE")
+        boxes = {h["name"].lower(): h for h in hosts()}
+        checked = []
+        for item in items:
+            host, handle = item["host"].lower(), item["handle"].lower()
+            box = boxes.get(host)
+            if not box or not box["reporting"]:
+                raise ValueError("box state is unknown; wait for a fresh report")
+            why = not_operator(box, by)
+            if why:
+                raise PermissionError(why)
+            bot = next((b for b in box["bots"] if b["handle"].lower() == handle), None)
+            if not bot or not bot.get("clear_key") or bot["clear_key"] != item["key"]:
+                raise ValueError("worker state or alert changed; refresh before clearing")
+            for other in boxes.values():
+                for copy in other["bots"]:
+                    if other["name"].lower() != host and copy["handle"].lower() == handle and copy["status"] != "moved":
+                        if not other["reporting"] or copy["status"] != "stopped":
+                            raise ValueError("worker is live or unknown on another box")
+            checked.append((host, handle, bot))
+        # One atomic group: a changed/live member prevents clearing any member.
+        for host, handle, bot in checked:
+            stamp = datetime.now(timezone.utc).isoformat()
+            _set_want(c, handle, host, bot["harness"], False, by, stamp)
+            c.execute("UPDATE fleet_bots SET fetch=NULL WHERE handle=?", (handle,))
+            c.execute("INSERT INTO fleet_alert_clears VALUES (?,?,?,?,?,?) ON CONFLICT(handle) DO UPDATE SET "
+                      "host=excluded.host,health=excluded.health,last_run=excluded.last_run,problem=excluded.problem,set_at=excluded.set_at",
+                      (handle, host, bot.get("health", ""), bot.get("last_run", ""), bot.get("problem", ""), stamp))
+    return [handle for _, handle, _ in checked]
 
 
 def hosts() -> list[dict]:
@@ -416,6 +475,7 @@ def hosts() -> list[dict]:
     except db.sqlite3.OperationalError:     # a board without projects yet
         dedicated = {}
     out = []
+    clears = {r["handle"].lower(): dict(r) for r in db.conn().execute("SELECT * FROM fleet_alert_clears")}
     for r in rows:
         secs = db.seconds_since(r["reported_at"])
         h = {
@@ -425,6 +485,7 @@ def hosts() -> list[dict]:
         }
         # Beside what the keeper saw, what was asked: `want` is running or stopped
         # (absent when nobody asked), and a bot asked for but not seen yet is listed too.
+        observed = {b["handle"].lower() for b in h["bots"]}
         asked = {w["handle"].lower(): w for w in wanted(r["name"])}
         for b in h["bots"]:
             w = asked.pop(b["handle"].lower(), None)
@@ -436,6 +497,12 @@ def hosts() -> list[dict]:
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
         for b in h["bots"]:
+            ack = clears.get(b["handle"].lower())
+            if ack and h["reporting"] and b["status"] == "stopped" and ack["host"].lower() == h["name"].lower():
+                if ack["set_at"] == b.get("set_at") and ack["health"] == b.get("health", "") and ack["last_run"] == b.get("last_run", ""):
+                    b["health"] = ""
+            if h["reporting"] and b["handle"].lower() in observed and b["status"] == "stopped" and any(b.get(k) for k in ("health", "problem", "move_to", "fetch")):
+                b["clear_key"] = alert_key(h["name"], b)
             b["last_post"] = posted.get(b["handle"].lower(), "")
             b["project"] = dedicated.get(b["handle"].lower())
             b["state"] = bot_state(b, h["reporting"])
