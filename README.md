@@ -464,12 +464,34 @@ anything but a keeper that reports a box) and writes them to
 `~/.config/bot_board/fleet.env`, mode 600. `bin/bot` reads that file before
 every harness run, so a rotated or removed token takes effect on each bot's next
 run, with no restart. Only secret names are read (`*_TOKEN`, `*_KEY`,
-`*_SECRET`), literally, never run as shell, and a secret already in a bot's own
-environment wins. With no secrets on the board, a `fleet.env` kept by hand on a
-box is left alone. If a fetch fails, the box keeps its last copy and shows
+`*_SECRET`), literally, never run as shell. Repository tokens (`GH_TOKEN`,
+`GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`) come only from
+the keeper's board-managed file and override or remove inherited personal tokens.
+Other secrets retain environment precedence. A hand-kept `fleet.env` is left
+alone when the board has no secrets, but its repository tokens are not used. If a fetch fails, the box keeps its last copy and shows
 `fleet.env stale`. Removing a secret from the board revokes nothing: revoke
 the token itself. Values are stored in plain text in the board's database;
 the board is meant to be private.
+Repository health validates only the selected host using `gh api --hostname
+<host> user`, with the fleet token. It does not scan saved personal or enterprise
+accounts. `GH_HOST` defaults to `github.com`; set it in the box config (or keeper
+installation environment) for an Enterprise Server, and configure
+`GH_ENTERPRISE_TOKEN` in Secrets. GitHub.com and `*.ghe.com` use `GH_TOKEN`.
+This follows the [GitHub CLI environment contract](https://cli.github.com/manual/gh_help_environment).
+Missing/rejected tokens report the required variable and host, without echoing
+credential or CLI response bodies. Missing repository credentials do not hold
+non-repository bot conversations.
+
+Launchers give `gh` a fresh empty configuration and disable interactive prompts.
+Git uses a fleet-only credential helper, resetting saved helpers; supported
+GitHub/`GH_HOST` SSH URLs are rewritten to HTTPS so saved SSH keys do not select
+a different account. Missing credentials stop authentication instead of falling
+back to the user's saved login. Normal Git identity settings remain unchanged.
+The same helper covers project and skill clones. Rotations/removals are read
+before project cloning and every harness run; Git's helper also rereads the
+managed file on each authentication request. No token is written into Git
+config or command arguments. Public unauthenticated clones can still work.
+
 A check that cannot tell (a timeout, an older CLI) shows `unknown` and
 holds nothing; only a definite "not logged in" holds bots.
 

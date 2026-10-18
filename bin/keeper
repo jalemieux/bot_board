@@ -64,6 +64,9 @@ import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subproces
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from repository_auth import token_environment, token_for as repository_token, token_name
+
 CFG = os.path.expanduser("~/.config/bot_board")
 BOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bot")
 
@@ -356,26 +359,32 @@ class Credentials:
             self.sync_error = f"fleet.env not updated from the board: {str(e)[:200]}"
 
     def env(self):
-        """The environment the checks run in: fleet.env's secrets under the keeper's own
-        environment, which wins (as it does in bin/bot)."""
-        return {**read_env(FLEET_ENV), **os.environ}
+        """Fleet repository tokens override personal tokens; other secrets keep environment precedence."""
+        return token_environment({**read_env(FLEET_ENV), **os.environ}, FLEET_ENV)
 
     def needed(self, harnesses):
         return [c for c in CREDENTIALS if c[1] == "secret" or set(c[4]) & set(harnesses)]
 
     def check(self, cred, env):
         name, kind, var, cmd, _ = cred
+        if name == "gh":
+            host = setting("GH_HOST", "github.com").lower()
+            if not repository_token(host, env):
+                return "missing", f"configure {token_name(host)} in fleet Secrets for {host}; saved accounts are not used"
+            cmd = ("gh", "api", "--hostname", host, "user", "--jq", ".login")
         if not shutil.which(cmd[0], path=env.get("PATH")):
             return "missing", f"{cmd[0]} is not installed (or not on the keeper's PATH)"
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as e:
             return "unknown", f"check failed: {e}"[:200]
+        if name == "gh":
+            if r.returncode == 0:
+                return "ok", ""
+            if re.search(r"401|403|invalid|expired|revoked|bad credentials", r.stdout + r.stderr, re.I):
+                return "expired", f"{token_name(host)} rejected by {host}; update fleet Secrets"
+            return "unknown", f"could not validate fleet credential at {host} (exit {r.returncode})"
         output = r.stdout + "\n" + r.stderr
-        if name == "gh" and r.returncode:
-            failure = re.search(r"^.*Failed to log in to .*$", output, re.M)
-            if failure:
-                output = output[failure.start():]
         said = " ".join(output.split())
         # Only a definite answer counts. Anything else (an older CLI, a timeout, words we do
         # not know) is "unknown", which is reported and holds nothing: as with bin/bot since
@@ -671,7 +680,7 @@ def service(install):
     Either way the bots it starts must outlive a restart of the keeper, and it needs
     the PATH of the shell that installs it, where the harnesses are."""
     env = {"PATH": os.environ.get("PATH", "")}
-    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER"):
+    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER", "GH_HOST"):
         if os.environ.get(k):
             env[k] = os.environ[k]
     if sys.platform.startswith("linux"):

@@ -126,11 +126,11 @@ class Keeper(unittest.TestCase):
 
     def test_a_refused_fetch_keeps_ours_and_says_so(self):
         with open(self.local, 'w') as f:
-            f.write('GH_TOKEN=good\n')
+            f.write(self.k.FROM_BOARD + 'GH_TOKEN=good\n')
         c = self.creds(None, 'v1', token='not-a-keeper')
         self.assertEqual(c.state['gh'][0], 'ok')
         self.assertIn('stale', [r['state'] for r in c.report({})])
-        self.assertEqual(Path(self.local).read_text(), 'GH_TOKEN=good\n')
+        self.assertEqual(Path(self.local).read_text(), self.k.FROM_BOARD + 'GH_TOKEN=good\n')
 
     def test_no_board_secrets_leave_a_hand_kept_file_but_clear_ours(self):
         with open(self.local, 'w') as f:
@@ -150,42 +150,38 @@ class Keeper(unittest.TestCase):
             self.assertEqual(c.blocked(), {})
             self.assertNotIn('claude claude', c.state['claude'][1])
 
-    def test_gh_reports_the_failed_host_after_healthy_keyring_logins(self):
-        healthy = (
-            "github.com\n"
-            "  Logged in to github.com account first (keyring)\n"
-            "  - Active account: true\n"
-            "  - Git operations protocol: https\n"
-            "  - Token: gho_************************************\n"
-            "  - Token scopes: gist, read:org, repo, workflow\n"
-            "  Logged in to github.com account second (keyring)\n"
-        )
-        failed = (
-            "git.corp.example.com\n"
-            "  X Failed to log in to git.corp.example.com account jac (keyring)\n"
-            "  - Active account: true\n"
-            "  - The token in keyring is invalid.\n"
-        )
-        for stream in ('stdout', 'stderr'):
-            for token in (None, 'good'):
-                with self.subTest(stream=stream, token=token):
-                    redirect = ' >&2' if stream == 'stderr' else ''
-                    fake(self.bin, 'gh', f"cat{redirect} <<'STATUS'\n{healthy}{failed}STATUS\nexit 1")
-                    c = self.k.Credentials('box')
-                    env = c.env()
-                    env.pop('GH_TOKEN', None)
-                    if token:
-                        env['GH_TOKEN'] = token
-                    state, detail = c.check(self.k.CREDENTIALS[0], env)
-                    self.assertEqual(state, 'expired')
-                    self.assertIn('git.corp.example.com', detail)
-                    self.assertIn('keyring is invalid', detail)
-                    self.assertNotIn('account first', detail)
-                    self.assertLessEqual(len(detail), 200)
+    def test_gh_checks_only_the_board_token_and_required_host(self):
+        fake(self.bin, 'gh', '[ "$1 $2 $3 $4" = "api --hostname github.com user" ] && [ "$GH_TOKEN" = good ] && exit 0; '
+                             'echo "invalid enterprise keyring login" >&2; exit 1')
+        c = self.creds(None, self.secrets('v1', GH_TOKEN='good'))
+        self.assertEqual(c.state['gh'], ('ok', ''))
+        os.environ['GH_TOKEN'] = 'personal'
+        try:
+            c = self.creds(c, self.secrets('v2'))
+            self.assertEqual(c.state['gh'][0], 'missing')
+            self.assertIn('fleet Secrets', c.state['gh'][1])
+            self.assertNotIn('personal', str(c.report({})))
+        finally:
+            os.environ.pop('GH_TOKEN')
+
+    def test_enterprise_token_is_checked_against_its_host_without_echoing_errors(self):
+        fake(self.bin, 'gh', '[ "$1 $2 $3 $4" = "api --hostname git.corp.example.com user" ] && '
+                             '[ "$GH_ENTERPRISE_TOKEN" = enterprise ] && exit 0; '
+                             'echo "401 invalid secret-echo" >&2; exit 1')
+        os.environ['GH_HOST'] = 'git.corp.example.com'
+        try:
+            c = self.creds(None, self.secrets('v1', GH_ENTERPRISE_TOKEN='enterprise'))
+            self.assertEqual(c.state['gh'], ('ok', ''))
+            c = self.creds(c, self.secrets('v2', GH_ENTERPRISE_TOKEN='bad'))
+            self.assertEqual(c.state['gh'][0], 'expired')
+            self.assertIn('git.corp.example.com', c.state['gh'][1])
+            self.assertNotIn('secret-echo', str(c.report({})))
+        finally:
+            os.environ.pop('GH_HOST')
 
     def test_fleet_env_sets_secrets_only_and_the_environment_wins(self):
         with open(self.local, 'w') as f:
-            f.write('GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
+            f.write(self.k.FROM_BOARD + 'GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
         os.environ['OTHER_KEY'] = 'mine'
         try:
             env = self.creds().env()
@@ -274,7 +270,7 @@ class BotReloadsFleetEnv(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             env_file = os.path.join(home, '.config', 'bot_board', 'fleet.env'); os.makedirs(os.path.dirname(env_file))
             script = fn + f'''
-w() {{ printf '%s\\n' "$1" > {env_file}; }}
+w() {{ printf '%s\\n%s\\n' '# written by bin/keeper from the board' "$1" > {env_file}; }}
 w GH_TOKEN=one; load_fleet_env; echo "gh=$GH_TOKEN own=$MY_KEY"
 w GH_TOKEN=two; load_fleet_env; echo "gh=$GH_TOKEN"
 w MY_KEY=theirs; load_fleet_env; echo "gh=${{GH_TOKEN:-gone}} own=$MY_KEY"

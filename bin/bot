@@ -146,11 +146,13 @@ fi
 # harness run, so a rotated token is used from the next run and a removed one is dropped.
 # Read as KEY=value lines exactly as the keeper reads them, never run as shell: a bad
 # line must not stop bin/bot. Only secret names (*_TOKEN, *_KEY, *_SECRET), so the file
-# cannot move a box's BOARD or PATH; and a secret this bot's own environment had wins.
-_OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"
+# cannot move BOARD or PATH. Repository tokens require the board-managed file;
+# other secrets keep the bot's own environment precedence.
+_OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | grep -Ev '^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)$' | tr '\n' ' ' || true)"
 _FLEET_SET=" "
 load_fleet_env() {
   local _kv _k now=" "
+  unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
   if [ -f "$HOME/.config/bot_board/fleet.env" ]; then
     while IFS= read -r -d '' _kv; do
       _k=${_kv%%=*}
@@ -158,9 +160,12 @@ load_fleet_env() {
       export "$_kv"; now+="$_k "
     done < <(python3 - "$HOME/.config/bot_board/fleet.env" <<'PY' || true
 import re,shlex,sys
-for line in open(sys.argv[1],encoding="utf-8",errors="replace"):
+text=open(sys.argv[1],encoding="utf-8",errors="replace").read()
+managed=text.startswith("# written by bin/keeper from the board")
+for line in text.splitlines():
     m=re.match(r"\s*(?:export\s+)?([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
     if not m: continue
+    if m.group(1) in ("GH_TOKEN","GITHUB_TOKEN","GH_ENTERPRISE_TOKEN","GITHUB_ENTERPRISE_TOKEN") and not managed: continue
     try: v="".join(shlex.split(m.group(2),comments=True)[:1])
     except ValueError: continue
     if "\0" not in v: sys.stdout.write(m.group(1)+"="+v+"\0")
@@ -186,6 +191,31 @@ BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all}
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
 CFG=~/.config/bot_board
+configure_repository_auth() {
+  [ -z "${_REPO_AUTH_READY:-}" ] || return 0
+  # A fresh gh configuration cannot fall back to the machine user's saved accounts.
+  GH_CONFIG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bot-board-gh.XXXXXX")
+  trap 'rm -rf "$GH_CONFIG_DIR"' EXIT
+  export GH_CONFIG_DIR GH_PROMPT_DISABLED=1 GIT_TERMINAL_PROMPT=0
+  export GIT_ASKPASS=/usr/bin/false SSH_ASKPASS=/usr/bin/false
+  export GH_HOST="${GH_HOST:-github.com}"
+  _repo_helper=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repository_auth.py
+  _git_setting() {
+    local n=${GIT_CONFIG_COUNT:-0}
+    case $n in *[!0-9]*|'') n=0 ;; esac
+    printf -v "GIT_CONFIG_KEY_$n" '%s' "$1"; export "GIT_CONFIG_KEY_$n"
+    printf -v "GIT_CONFIG_VALUE_$n" '%s' "$2"; export "GIT_CONFIG_VALUE_$n"
+    export GIT_CONFIG_COUNT=$((n + 1))
+  }
+  _git_setting credential.helper ''
+  _repo_python=$(command -v python3)
+  _git_setting credential.helper "!$(python3 -c 'import shlex,sys;print(shlex.quote(sys.argv[1])+" "+shlex.quote(sys.argv[2]))' "$_repo_python" "$_repo_helper")"
+  for _repo_host in github.com "$GH_HOST"; do
+    _git_setting "url.https://$_repo_host/.insteadOf" "git@$_repo_host:"
+    _git_setting "url.https://$_repo_host/.insteadOf" "ssh://git@$_repo_host/"
+  done
+  _REPO_AUTH_READY=1
+}
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
 # reboot and its pid goes to another process, so the process must be this script.
 alive() {
@@ -204,6 +234,7 @@ GH_SKILL='^https?://github\.com/([^/]+)/([^/]+)(/tree/([^/]+)(/(.*))?)?/?$'
 # "local" stays off the network. Returns 1 with SKILL_ERR set; a pull that
 # fails is only SKILL_WARN, since the copy already here still works.
 skill_fetch() {
+  configure_repository_auth
   local src=$1 out
   SKILL_ERR=""; SKILL_WARN=""; SKILL_CLONE=""
   if [[ $src =~ $GH_SKILL ]]; then
@@ -718,6 +749,8 @@ identify "$NAME"
 [ -e "$STATE/moved" ] && die "$HANDLE left this box ($(cat "$STATE/moved")). Started here too, two boxes would answer as $HANDLE. If the move was called off, remove $STATE/moved"
 alive "$STATE" && die "$HANDLE is already running on this box (pid $(cat "$STATE/pid")); bot stop $HANDLE first"
 mkdir -p "$STATE" && chmod 700 "$CFG"
+configure_repository_auth
+
 echo "$HARNESS" > "$STATE/harness"
 if [ -n "$POOL" ]; then echo "$POOL" > "$STATE/pool"; rm -f "$STATE/repo"
 else echo "$REPO" > "$STATE/repo"; rm -f "$STATE/pool"; fi
@@ -799,7 +832,7 @@ else
 fi
 # From here on the bot is running: bot ps lists it, bot stop asks it to leave.
 rm -f "$STATE/stop" "$STATE/busy" "$STATE/poll"; echo $$ > "$STATE/pid"
-trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"' EXIT
+trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"; rm -rf "$GH_CONFIG_DIR"' EXIT
 [ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
 # what ended sessions left behind goes at every start; skill clones only on `bot gc`
 gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "gc: $line"; done || true
@@ -889,6 +922,7 @@ for c in json.load(sys.stdin).get("channels",[]):
 # first repository into $POOL/<project>, the others beside it as <project>--<name>.
 workdir_of() {
   local p=$1 url name dir first=1
+  load_fleet_env
   [ -z "$POOL" ] && { echo "$REPO"; return; }
   [ -z "$p" ] && { echo "$POOL"; return; }
   if [ -e "$STATE/route/$p.repos" ]; then

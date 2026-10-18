@@ -148,7 +148,7 @@ import sys, os, json
 a = sys.argv[1:]
 sid = a[a.index("--session-id") + 1] if "--session-id" in a else a[a.index("--resume") + 1]
 with open(os.environ["ROUTING_TEST_RUNS"], "a") as f:
-    f.write(json.dumps({"cwd": os.getcwd(), "sid": sid, "prompt": a[-1]}) + "\\n")
+    f.write(json.dumps({"cwd": os.getcwd(), "sid": sid, "prompt": a[-1], "repo_token": os.environ.get("GH_TOKEN"), "gh_config": os.environ.get("GH_CONFIG_DIR")}) + "\\n")
 """
 
 
@@ -198,6 +198,27 @@ class Routing(unittest.TestCase):
             p.wait(10)
         with open(os.path.join(self.home, ".config/bot_board/bots", ME, "log")) as f: self.log = f.read()
         return [r for r in runs if "read the rules and return" not in r["prompt"]]   # skip the first turn
+
+    def test_harness_uses_fleet_token_and_isolated_gh_configuration(self):
+        os.makedirs(os.path.join(self.pool, 'wordsnap'))
+        cfg = os.path.join(self.home, '.config', 'bot_board')
+        os.makedirs(cfg)
+        with open(os.path.join(cfg, 'fleet.env'), 'w') as f:
+            f.write('# written by bin/keeper from the board\nGH_TOKEN=board-test-token\n')
+        personal = os.path.join(self.home, '.config', 'gh')
+        os.makedirs(personal)
+        with open(os.path.join(personal, 'hosts.yml'), 'w') as f:
+            f.write('github.com: personal-saved-account')
+        self.env.update(GH_TOKEN='personal-inherited', GITHUB_TOKEN='personal-alias', GH_CONFIG_DIR=personal)
+        board = FakeBoard([msg(1, 'wordsnap', 'repository access check')], {})
+        try:
+            runs = self.run_bot(board, lambda rs: any('repository access check' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        task = next(r for r in runs if 'repository access check' in r['prompt'])
+        self.assertEqual(task['repo_token'], 'board-test-token')
+        self.assertNotEqual(task['gh_config'], personal)
+        self.assertTrue(os.path.exists(os.path.join(personal, 'hosts.yml')))
 
     def test_personality_is_fetched_for_each_new_session_not_resumed_turns(self):
         for project in ("game", "other", "third"):
