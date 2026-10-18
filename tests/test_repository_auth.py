@@ -30,6 +30,20 @@ class RepositoryAuth(unittest.TestCase):
             path.write_text(auth.HEADER + '\n')
             self.assertNotIn('GH_TOKEN', auth.token_environment(base, path))
 
+    def test_update_git_environment_has_only_fleet_credentials_and_no_secret_config_values(self):
+        with tempfile.TemporaryDirectory() as home:
+            from unittest.mock import patch
+            cfg = Path(home) / '.config/bot_board'; cfg.mkdir(parents=True)
+            (cfg / 'fleet.env').write_text(auth.HEADER + '\nGH_TOKEN=board-test-token\n')
+            (cfg / 'config').write_text('GH_HOST=git.example.com\n')
+            with patch.dict(os.environ, {'HOME':home}):
+                env = auth.git_environment({'GH_TOKEN':'personal', 'PATH':os.environ['PATH']})
+            self.assertEqual(env['GH_TOKEN'], 'board-test-token')
+            self.assertEqual(env['GH_HOST'], 'git.example.com')
+            values = [v for k,v in env.items() if k.startswith('GIT_CONFIG_VALUE_')]
+            self.assertFalse(any('board-test-token' in v or 'personal' in v for v in values))
+            self.assertEqual(env['GIT_CONFIG_VALUE_0'], '')
+
     def test_real_git_credential_flow_never_falls_back_to_saved_helper(self):
         with tempfile.TemporaryDirectory() as home:
             cfg = Path(home) / '.config/bot_board'; cfg.mkdir(parents=True)

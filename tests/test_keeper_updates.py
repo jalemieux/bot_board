@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'bin'))
 spec = importlib.util.spec_from_file_location('keeper_update', ROOT / 'bin/keeper_update.py')
 u = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(u)
@@ -51,6 +52,7 @@ class ManagedUpdates(unittest.TestCase):
         self.git('config', 'user.email', 'test@example.com')
         (self.repo / 'bin').mkdir()
         shutil.copyfile(ROOT / 'bin/keeper_update.py', self.repo / 'bin/keeper_update.py')
+        shutil.copyfile(ROOT / 'bin/repository_auth.py', self.repo / 'bin/repository_auth.py')
         (self.repo / '.gitignore').write_text('__pycache__/\n')
         (self.repo / 'bin/keeper').write_text(KEEPER)
         (self.repo / 'bin/bot').write_text('#!/bin/bash\nexit 0\n')

@@ -1398,6 +1398,7 @@ while :; do
       && ! [ "$KEEPER_MANAGED_ROOT/launcher/bin/bot" -ef "$BOT_LAUNCH_PATH" ]; then
     log "adopting updated launcher between runs"
     export BOT_UPDATE_RESUME=1
+    rm -rf "$GH_CONFIG_DIR"
     exec "$KEEPER_MANAGED_ROOT/launcher/bin/bot" "${BOT_LAUNCH_ARGS[@]}"
   fi
   if [ -n "$OUTAGE" ]; then

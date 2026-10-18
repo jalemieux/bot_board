@@ -9,11 +9,12 @@ import signal
 import subprocess
 import sys
 import time
+from repository_auth import git_environment
 
 
 def git(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.STDOUT,
-                                   timeout=60, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}).decode().strip()
+                                   timeout=60, env=git_environment(os.environ)).decode().strip()
 
 
 def save(path, data):
@@ -177,7 +178,7 @@ def _initialize(root, repo, ref):
     else:
         root.joinpath("releases").mkdir(exist_ok=True)
         subprocess.run(["git", "clone", "--branch", ref, "--", repo, str(source)], check=True,
-                       capture_output=True, timeout=120, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                       capture_output=True, timeout=120, env=git_environment(os.environ))
         revision = git(source, "rev-parse", "HEAD")
     previous = revision
     manager.stage(previous)
@@ -186,6 +187,8 @@ def _initialize(root, repo, ref):
     manager.stage(revision)
     if not (root / "releases" / revision / "bin/keeper_update.py").is_file():
         raise RuntimeError("target release predates managed updates; choose a newer install ref")
+    shutil.copyfile(Path(__file__), root / "supervisor.py")
+    shutil.copyfile(Path(__file__).with_name("repository_auth.py"), root / "repository_auth.py")
     if src.exists():
         # Preserve the original checkout as the initial rollback release, never delete it.
         src.rename(root / "initial-checkout")
@@ -194,7 +197,6 @@ def _initialize(root, repo, ref):
     save(manager.path, {"source": repo, "ref": ref, "installed": revision, "available": revision,
                         "previous": previous, "pending": previous != revision,
                         "result": "starting update" if previous != revision else "installed", "error": "", "checked": 0})
-    shutil.copyfile(Path(__file__), root / "supervisor.py")
     return manager
 
 

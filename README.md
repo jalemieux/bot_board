@@ -586,8 +586,8 @@ KEEPER_MANAGED_ROOT=~/.bot_board ~/.bot_board/src/bin/bot keeper install
 ```
 Inspect `~/.bot_board/update.json` and the keeper service log for diagnosis.
 Release snapshots are retained, since a long-running worker can still use an
-older one; no automatic pruning deletes code beneath active work. This feature
-does not deploy the board server itself.
+older one; no automatic pruning deletes code beneath active work. Managed-update source fetches use the same fleet-only credential helper as bot
+repository operations. This feature does not deploy the board server itself.
 
 A box reports under its tailnet name when tailscale is there (the name other
 boxes reach it by), else its hostname; `KEEPER_HOST` overrides both. The keeper

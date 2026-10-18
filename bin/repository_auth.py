@@ -45,6 +45,37 @@ def token_for(host, env):
     return env.get(key) or env.get(alias)
 
 
+def git_environment(base):
+    env = token_environment(base, Path.home() / '.config/bot_board/fleet.env')
+    host = env.get('GH_HOST', '')
+    if not host:
+        config = Path(env.get('BOT_CONFIG') or Path.home() / '.config/bot_board/config')
+        try:
+            for line in config.read_text().splitlines():
+                match = re.match(r'\s*(?:export\s+)?GH_HOST=(.*)$', line)
+                if match:
+                    host = ''.join(shlex.split(match[1], comments=True)[:1])
+        except OSError:
+            pass
+    env.update(GH_HOST=host or 'github.com', GIT_TERMINAL_PROMPT='0',
+               GIT_ASKPASS='/usr/bin/false', SSH_ASKPASS='/usr/bin/false')
+    try:
+        count = max(0, int(env.get('GIT_CONFIG_COUNT', 0)))
+    except ValueError:
+        count = 0
+    settings = [('credential.helper', ''), ('credential.helper',
+                '!' + shlex.quote(sys.executable) + ' ' + shlex.quote(str(Path(__file__).resolve())))]
+    for target in dict.fromkeys(('github.com', env['GH_HOST'])):
+        settings.extend([('url.https://' + target + '/.insteadOf', 'git@' + target + ':'),
+                         ('url.https://' + target + '/.insteadOf', 'ssh://git@' + target + '/')])
+    for key, value in settings:
+        env['GIT_CONFIG_KEY_' + str(count)] = key
+        env['GIT_CONFIG_VALUE_' + str(count)] = value
+        count += 1
+    env['GIT_CONFIG_COUNT'] = str(count)
+    return env
+
+
 def credential(action):
     if action != 'get':
         return
