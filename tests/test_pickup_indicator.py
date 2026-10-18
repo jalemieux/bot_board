@@ -103,12 +103,33 @@ run().catch(e => { console.error(e); process.exitCode = 1; });
 
     def test_receipt_labels_and_escaping(self):
         helpers = web.APP_JS[web.APP_JS.index("function esc("):web.APP_JS.index("function el(")]
-        renderer = web.APP_JS[web.APP_JS.index("function receiptHtml("):web.APP_JS.index("var refreshingReceipts")]
+        renderer = web.APP_JS[web.APP_JS.index("function receiptHtml("):web.APP_JS.index("setInterval(function(){ refreshReceipts()")]
         script = "const assert = require('node:assert/strict');\n" + helpers + renderer + r"""
 assert.match(receiptHtml([{handle:'ines', looking:true}]), /👀 Looking.*@ines/);
 assert.match(receiptHtml([{handle:'ines', looking:false}]), /✓ Seen.*@ines/);
 assert.equal(receiptHtml([]), '');
 assert.doesNotMatch(receiptHtml([{handle:'bad"><script>', looking:true}]), /<script>/);
+let chips = [1, 1, 2].map(id => ({dataset:{receiptMessage:String(id)}, isConnected:true, innerHTML:''}));
+let document = {hidden:false, querySelectorAll:() => chips};
+let calls = 0, looking = true;
+async function fetch(url){
+  calls++;
+  assert.equal(url, '/api/message-receipts?message=1&message=2');
+  return {ok:true, json: async () => ({receipts:{1:[{handle:'ines', looking}], 2:[]}})};
+}
+async function check(){
+  await refreshReceipts();
+  assert.match(chips[0].innerHTML, /Looking/);
+  assert.equal(chips[0].innerHTML, chips[1].innerHTML);
+  assert.equal(chips[2].innerHTML, '');
+  looking = false;
+  await refreshReceipts();
+  assert.match(chips[0].innerHTML, /Seen/);
+  document.hidden = true;
+  await refreshReceipts();
+  assert.equal(calls, 2);
+}
+check().catch(e => { console.error(e); process.exitCode = 1; });
 """
         subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
 
