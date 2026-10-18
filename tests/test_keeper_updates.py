@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 import unittest
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,6 +188,61 @@ class ManagedUpdates(unittest.TestCase):
             proc.poll.return_value = 0
             hands.reconcile(want, [{'handle':'legacy', 'status':'stopped'}])
             self.assertEqual(spawn.call_args.args, ('legacy', [keeper.BOT, 'claude', '--name', 'legacy']))
+
+    def test_real_keeper_checks_and_reports_new_revision_automatically(self):
+        shutil.copyfile(ROOT / 'bin/keeper', self.repo / 'bin/keeper')
+        shutil.copyfile(ROOT / 'bin/bot', self.repo / 'bin/bot')
+        os.chmod(self.repo / 'bin/bot', 0o755)
+        os.chmod(self.repo / 'bin/keeper', 0o755)
+        old = self.commit()
+        self.assertTrue(self.updates.check(force=True))
+        self.updates.ready(old)
+        reports = []
+        class Board(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def respond(self, body, code=200):
+                data = json.dumps(body).encode()
+                self.send_response(code); self.send_header('Content-Length', str(len(data))); self.end_headers()
+                self.wfile.write(data)
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get('Content-Length', 0)))
+                self.respond({'token':'test-only-token'}, 201)
+            def do_GET(self):
+                self.respond({'agents':[]})
+            def do_PUT(self):
+                reports.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+                self.respond({'want':[], 'secrets':''})
+        board = ThreadingHTTPServer(('127.0.0.1', 0), Board)
+        threading.Thread(target=board.serve_forever, daemon=True).start()
+        home = self.root / 'home'; home.mkdir()
+        bindir = self.root / 'tools'; bindir.mkdir()
+        gh = bindir / 'gh'; gh.write_text('#!/bin/sh\nexit 0\n'); gh.chmod(0o755)
+        env = {**os.environ, 'HOME':str(home), 'BOT_CONFIG':str(home / 'config'),
+               'BOARD':'http://127.0.0.1:' + str(board.server_port), 'KEEPER_HOST':'update-test',
+               'PATH':str(bindir) + os.pathsep + os.environ['PATH']}
+        env.pop('KEEPER_MANAGED_ROOT', None)
+        env.pop('KEEPER_AUTO_UPDATE', None)
+        env.pop('KEEPER_UPDATE_PIN', None)
+        logpath = self.root / 'integration.log'
+        with logpath.open('wb') as log:
+            proc = subprocess.Popen([sys.executable, str(self.root / 'supervisor.py'), 'supervise', '--root', str(self.root)],
+                                    env=env, stdout=log, stderr=log)
+            try:
+                self.wait_for(lambda: bool(reports))
+                token = home / '.config/bot_board/keeper-update-test.token'
+                self.assertEqual(token.read_text().strip(), 'test-only-token')
+                (self.repo / 'new-release.txt').write_text('publish newer commit')
+                new = self.commit()
+                state = self.updates.read(); state['checked'] = 0; u.save(self.updates.path, state)
+                end = time.monotonic() + 25
+                while time.monotonic() < end and not any(r.get('updates', {}).get('installed') == new for r in reports):
+                    time.sleep(.1)
+                self.assertTrue(any(r.get('updates', {}).get('installed') == new for r in reports), logpath.read_text())
+                self.assertEqual(token.read_text().strip(), 'test-only-token')
+                self.assertEqual((self.root / 'launcher').resolve().name, new)
+            finally:
+                proc.terminate(); proc.wait(8)
+                board.shutdown(); board.server_close()
 
     def test_existing_clean_managed_checkout_migrates_without_touching_external_state(self):
         other = Path(self.tmp.name) / 'old-managed'
