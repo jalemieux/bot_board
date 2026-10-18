@@ -101,6 +101,17 @@ run().catch(e => { console.error(e); process.exitCode = 1; });
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_receipt_labels_and_escaping(self):
+        helpers = web.APP_JS[web.APP_JS.index("function esc("):web.APP_JS.index("function el(")]
+        renderer = web.APP_JS[web.APP_JS.index("function receiptHtml("):web.APP_JS.index("var refreshingReceipts")]
+        script = "const assert = require('node:assert/strict');\n" + helpers + renderer + r"""
+assert.match(receiptHtml([{handle:'ines', looking:true}]), /👀 Looking.*@ines/);
+assert.match(receiptHtml([{handle:'ines', looking:false}]), /✓ Seen.*@ines/);
+assert.equal(receiptHtml([]), '');
+assert.doesNotMatch(receiptHtml([{handle:'bad"><script>', looking:true}]), /<script>/);
+"""
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
 
 if __name__ == "__main__":
     unittest.main()

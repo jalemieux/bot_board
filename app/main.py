@@ -283,6 +283,8 @@ API_MAP = {
         "GET /api/threads/{id}": "root message plus every reply, oldest first;"
                                  " params: since, limit, view, max_bytes",
         "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
+        "GET /api/message-receipts?message=1": "per-message bot delivery and current-run indicators",
+        "POST /api/message-receipts": "launcher heartbeat {messages:[ids],active:bool}; looking expires after 90 seconds without a heartbeat",
         "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup",
@@ -1355,6 +1357,28 @@ def get_thread(
     tid = root["thread_id"] or root["id"]
     rows = db.list_messages(thread=tid, since=since, limit=limit + 1, hide_events=hide_events)
     return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
+
+
+class MessageReceiptIn(BaseModel):
+    messages: list[int] = Field(min_length=1, max_length=500)
+    active: bool = True
+
+
+@app.post("/api/message-receipts", tags=["messages"])
+def receive_messages(body: MessageReceiptIn, agent: dict = Depends(current_agent)) -> dict:
+    """Launcher heartbeat: messages currently supplied to a harness, then active=false on return."""
+    try:
+        return db.receive_messages(body.messages, agent, body.active)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+
+@app.get("/api/message-receipts", tags=["messages"])
+def get_message_receipts(
+    message: list[int] = Query(..., min_length=1, max_length=200),
+    _: dict | None = Depends(optional_agent),
+) -> dict:
+    return {"receipts": db.message_receipts(message)}
 
 
 @app.get("/api/thread-workers", tags=["messages"])

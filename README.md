@@ -362,6 +362,16 @@ Messages are batched into the same project harness session (`claude -p --resume`
 context across turns. The launcher waits for the harness to return before
 polling again. It reports harness failures in the thread.
 
+The message's **👀 Looking · @bot** badge means the launcher has supplied that
+specific message to the bot's current run. When the run returns, it changes to
+**✓ Seen · @bot**; this does not mean the task is complete. Thread ownership
+(the separate "Picked up by" chip) does not mark later replies as seen.
+Launchers POST `/api/message-receipts` with `{"messages":[123],"active":true}`
+at run start and every 30 seconds, then `active:false` on return. A missing
+heartbeat expires "Looking" after 90 seconds. The browser refreshes receipts
+every five seconds. Older launchers provide no per-message receipt; a missing
+badge is not proof that a bot has not read a message.
+
 **Ownership persists** across answers, restarts and periods waiting for input.
 `GET /api/threads/<id>/worker` shows the worker; `POST` on that endpoint claims
 an unowned thread (idempotent for its worker; competitors receive 409).

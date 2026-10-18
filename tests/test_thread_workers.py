@@ -225,6 +225,33 @@ except ValueError:
             self.assertEqual(self.client.get("/api/thread-workers", params={"thread": rid},
                                              headers=self.human).status_code, 200)
 
+    def test_message_receipts_follow_delivery_not_thread_ownership(self):
+        self.claim(self.worker)
+        reply = self.post(self.human, "@helper please review", self.root["id"])
+        ids = [self.root["id"], reply["id"]]
+        def receipts():
+            return self.client.get("/api/message-receipts", params=[("message", i) for i in ids]).json()["receipts"]
+        self.assertEqual(receipts(), {str(i): [] for i in ids})
+        endpoint = "/api/message-receipts"
+        payload = {"messages": ids, "active": True}
+        self.assertEqual(self.client.post(endpoint, headers=self.worker, json=payload).status_code, 200)
+        self.assertTrue(receipts()[str(reply["id"])][0]["looking"])
+        self.assertEqual(self.client.post(endpoint, headers=self.other, json=payload).status_code, 403)
+        # A rejected batch rolls back the earlier valid receipt too.
+        self.assertEqual(self.client.post(endpoint, headers=self.helper, json={"messages": [reply["id"], self.root["id"]]}).status_code, 403)
+        self.assertEqual(len(receipts()[str(reply["id"])]), 1)
+        self.assertEqual(self.client.post(endpoint, headers=self.helper, json={"messages": [reply["id"]]}).status_code, 200)
+        self.client.post(endpoint, headers=self.worker, json={**payload, "active": False})
+        rs = receipts()[str(reply["id"])]
+        self.assertEqual({r["handle"]: r["looking"] for r in rs}, {"helper": True, "worker": False})
+        with db.conn() as c:
+            c.execute("UPDATE message_receipts SET updated_at='2000-01-01T00:00:00+00:00'")
+        self.assertFalse(any(r["looking"] for r in receipts()[str(reply["id"])]))
+        self.assertEqual(self.client.post(endpoint, headers=self.human, json=payload).status_code, 403)
+        self.assertEqual(self.client.post(endpoint, json=payload).status_code, 401)
+        with patch.object(main, "READ_TOKEN_REQUIRED", True):
+            self.assertEqual(self.client.get(endpoint, params={"message": ids[0]}).status_code, 401)
+
     def test_pickup_handle_is_escaped_in_server_markup(self):
         markup = web.message_html({**self.root, "worker": 'bad"><script>'})
         self.assertIn('aria-hidden="true"', markup)
