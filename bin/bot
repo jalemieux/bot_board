@@ -96,6 +96,8 @@
 #      BOT_NAMES (the names new bots are drawn from, space-separated),
 #      BOT_GC_DAYS (how long a session handle may be gone before bot gc removes it; default 7).
 set -euo pipefail
+BOT_LAUNCH_ARGS=("$@")
+BOT_LAUNCH_PATH=$(python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]:-}")
 
 # ---- bot install: stand up a box from nothing, in one command --------------------
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
@@ -114,8 +116,21 @@ if [ "${1:-}" = install ]; then
     _dir=${BOT_BOARD_DIR:-$HOME/.bot_board}; SRC="$_dir/src"
     _repo=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}; _ref=${BOT_BOARD_REF:-main}
     mkdir -p "$_dir"
-    if [ -d "$SRC/.git" ]; then git -C "$SRC" pull -q --ff-only
+    if [ -d "$SRC/.git" ]; then :
     else git clone -q --depth 1 -b "$_ref" "$_repo" "$SRC"; fi
+  fi
+  if [ -n "${_dir:-}" ]; then
+    _helper="$SRC/bin/keeper_update.py"; _bootstrap=""
+    if [ ! -f "$_helper" ]; then
+      # The first managed upgrade must not modify the running old checkout.
+      _bootstrap=$(mktemp -d "$_dir/bootstrap.XXXXXX")
+      trap 'rm -rf "$_bootstrap"' EXIT
+      git clone -q --depth 1 -b "$_ref" "$_repo" "$_bootstrap/src"
+      _helper="$_bootstrap/src/bin/keeper_update.py"
+    fi
+    python3 "$_helper" init --root "$_dir" --repo "$_repo" --ref "$_ref"
+    if [ -n "$_bootstrap" ]; then rm -rf "$_bootstrap"; trap - EXIT; fi
+    export KEEPER_MANAGED_ROOT="$_dir"
   fi
   _cfg=${BOT_CONFIG:-$HOME/.config/bot_board/config}
   _set() { mkdir -p "$(dirname "$_cfg")"; chmod 700 "$(dirname "$_cfg")"; touch "$_cfg"
@@ -832,6 +847,9 @@ else
 fi
 # From here on the bot is running: bot ps lists it, bot stop asks it to leave.
 rm -f "$STATE/stop" "$STATE/busy" "$STATE/poll"; echo $$ > "$STATE/pid"
+if [ -n "${KEEPER_MANAGED_ROOT:-}" ]; then
+  git -C "$(dirname "$BOT_LAUNCH_PATH")/.." rev-parse HEAD > "$STATE/revision" 2>/dev/null || true
+fi
 trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"; rm -rf "$GH_CONFIG_DIR"' EXIT
 [ -f "$BOT_CONFIG" ] && log "config: $BOT_CONFIG"
 # what ended sessions left behind goes at every start; skill clones only on `bot gc`
@@ -1364,6 +1382,7 @@ fi
 OUTAGE_BY_OUTPUT=""   # the outage was read off a run's output, not from the harness's auth status
 OUTAGE=""        # set while the harness is logged out: the time it was found so
 BACKLOG_BEFORE=$((SEEN + 1))
+[ -z "${BOT_UPDATE_RESUME:-}" ] || BACKLOG_BEFORE=0
 BACKLOG_CUTOFF=$(python3 -c 'import time;print(time.time()-7*24*60*60)')
 : > "$STATE/backlog.threads"
 log "startup catch-up: checking the last seven days without rewinding seen=$SEEN"
@@ -1375,6 +1394,12 @@ trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   rotate_logs
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  if [ -n "${KEEPER_MANAGED_ROOT:-}" ] && [ -x "$KEEPER_MANAGED_ROOT/launcher/bin/bot" ] \
+      && ! [ "$KEEPER_MANAGED_ROOT/launcher/bin/bot" -ef "$BOT_LAUNCH_PATH" ]; then
+    log "adopting updated launcher between runs"
+    export BOT_UPDATE_RESUME=1
+    exec "$KEEPER_MANAGED_ROOT/launcher/bin/bot" "${BOT_LAUNCH_ARGS[@]}"
+  fi
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
     if logged_out; then wait_or_stop 60; continue; fi

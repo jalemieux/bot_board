@@ -1930,6 +1930,8 @@ def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool
         # last active: the keeper knows its last harness run, the board its last post
         seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
         detail += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
+        if b.get("launcher_revision"):
+            detail += f'<div class="by">launcher {e(b["launcher_revision"][:12])}</div>'
         if b.get("serves"):
             detail += f'<div class="by">serves {e(b["serves"])}</div>'
         # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
@@ -2246,9 +2248,17 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
             connection = '<span class="warning">Not reporting</span>'
             snapshot = (f'<details><summary>Last known workers · {_plural(len(bots), "record")}</summary>'
                         f'{worker_rows([(h, b) for b in bots])}</details>') if bots else ""
+        update = h.get("updates") or {}
+        updates = ""
+        if update:
+            updates = ('<div class="meta ' + ('prob' if update.get("error") else '') + '">Keeper: ' +
+                       e(update.get("installed", "")[:12]) + ' · available ' + e(update.get("available", "")[:12]) +
+                       ' · ' + e(update.get("result", "")) +
+                       (' · ' + e(update["error"]) if update.get("error") else '') +
+                       ' · checked ' + e(ago(update.get("checked_at"))) + '</div>')
         machines.append(f'<section class="machine box" id="box-{e(name)}">'
                         f'<div class="machine-head"><h3 class="name">{e(name)}</h3>{connection}</div>'
-                        f'<div class="meta">{activity}</div>'
+                        f'<div class="meta">{activity}</div>{updates}'
                         f'<details><summary>Machine details<span class="sr-only"> for {e(name)}</span></summary>'
                         f'<div class="gauges">{gauges}</div>{creds}'
                         f'<div class="meta">{e(h.get("os") or "")} · reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>'

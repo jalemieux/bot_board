@@ -42,6 +42,17 @@ def host(name, bots, reporting=True, **extra):
 
 
 class FleetPage(unittest.TestCase):
+    def test_keeper_update_failures_and_worker_versions_are_visible_and_escaped(self):
+        page, sections = self.render([host('live', [bot('busy', 'running game', launcher_revision='123456789012abc')],
+            updates={'installed': 'abcdef0123456789', 'available': 'fedcba9876543210',
+                     'checked_at': db.now(), 'result': 'rolled back', 'error': '<unsafe>'})])
+        self.assertIn('abcdef012345', sections['box-live'])
+        self.assertIn('fedcba987654', sections['box-live'])
+        self.assertIn('rolled back', sections['box-live'])
+        self.assertIn('&lt;unsafe&gt;', page)
+        self.assertNotIn('<unsafe>', page)
+        self.assertIn('launcher 123456789012', page)
+
     def test_health_timestamps_are_localizable_and_diagnostics_stay_escaped(self):
         health = 'out of codex usage since 2026-10-17T06:57:20Z: <script>bad</script>'
         page, _ = self.render([host('live', [bot('limited', health=health)])])

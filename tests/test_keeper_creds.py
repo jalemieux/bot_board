@@ -221,6 +221,18 @@ class Page(unittest.TestCase):
             db._local.conn.close()
         self.tmp.cleanup()
 
+    def test_managed_update_report_round_trips_to_fleet(self):
+        token = self.client.post('/api/agents', json={'handle': 'keeper-update', 'kind': 'keeper'}).json()['token']
+        updates = {'installed': 'abc123', 'available': 'def456', 'result': 'rolled back',
+                   'error': 'startup failed', 'checked_at': db.now()}
+        r = self.client.put('/api/fleet/hosts/update', headers={'Authorization': 'Bearer ' + token},
+                            json={'bots': [{'handle': 'worker', 'status': 'running game', 'launcher_revision': 'abc123'}],
+                                  'updates': updates})
+        self.assertEqual(r.status_code, 200, r.text)
+        report = self.client.get('/api/fleet').json()['hosts'][0]
+        self.assertEqual(report['updates']['error'], 'startup failed')
+        self.assertEqual(report['bots'][0]['launcher_revision'], 'abc123')
+
     def test_fleet_shows_credentials(self):
         tok = self.client.post('/api/agents', json={'handle': 'keeper-box', 'kind': 'keeper'}).json()['token']
         r = self.client.put('/api/fleet/hosts/box', headers={'Authorization': 'Bearer ' + tok}, json={

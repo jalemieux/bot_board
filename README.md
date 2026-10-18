@@ -522,6 +522,73 @@ harness) is found. On Linux, `sudo loginctl enable-linger <user>` once makes it
 start at boot without a login. Restarting or removing the keeper does not stop
 the bots it started.
 
+#### Managed keeper updates
+
+The piped `bot install` command creates a managed installation in
+`~/.bot_board` (`BOT_BOARD_DIR` overrides it). It checks the configured repository
+and ref every five minutes: by default `https://github.com/jalemieux/bot_board.git`
+and `main`; `BOT_BOARD_REPO` and `BOT_BOARD_REF` select them at installation.
+This executes code from that source, so use a repository/ref you trust.
+Installing with `bin/bot install` or `bin/bot keeper install` from a developer
+checkout keeps that checkout developer-managed and never updates it automatically.
+To opt a machine into managed updates, use the piped installer, rather than
+pointing a developer checkout's service at it.
+
+Existing installations need the current piped installer **once** to acquire the
+updater; older keepers cannot acquire this feature by themselves. Re-run the
+installation command from Set up on the same box/user, preserving its BOARD and
+operator settings. A clean old managed checkout is migrated without changing
+configuration, tokens, cursors, or harness sessions. Dirty checkouts are refused.
+The original checkout is retained as `initial-checkout`.
+
+Releases are validated with Python compilation and `bash -n`, staged under
+`releases/<commit>`, then selected with an atomic `src` symlink. A supervisor
+outside the releases starts the new keeper. If it exits or fails to report to
+the board within 60 seconds, the supervisor restores the previous release and
+quarantines the failed revision; it is not retried automatically. Offline checks
+or validation errors keep the current keeper working. Updates and installation
+have separate local file locks; the supervisor and keeper also each hold a lock.
+The fleet machine card shows installed/available revisions, last check, result,
+and errors. Worker details show the launcher's actual revision.
+
+Workers switch to the confirmed release between harness runs using `exec`,
+keeping their token, cursor and session files. A busy worker can therefore show
+an older revision until its run finishes. Pre-updater workers whose revision is
+unknown receive one graceful stop from the keeper; normal reconciliation then
+restarts them with the same identity and sessions. Only workers already requested
+to run on that keeper are migrated. Neither platform's service restart kills
+worker process groups.
+
+Set `KEEPER_AUTO_UPDATE=0` in `~/.config/bot_board/config` to check availability
+without switching, or set `KEEPER_UPDATE_PIN=<commit-or-tag>` to follow a fixed
+revision. These can also be supplied in the service's installation environment
+(which takes precedence over the config file). Remove the pin to follow the
+installation ref again.
+
+```bash
+~/.bot_board/src/bin/bot keeper update     # immediate check; explicitly retries a quarantined revision
+~/.bot_board/src/bin/bot keeper rollback   # select the retained previous release
+```
+
+The running keeper notices a manually selected version within one report
+interval. If the selected old version predates these commands, use the stable
+supervisor instead:
+
+```bash
+python3 ~/.bot_board/supervisor.py update --root ~/.bot_board
+python3 ~/.bot_board/supervisor.py rollback --root ~/.bot_board
+```
+
+For a broken service installation, select a working release, then reinstall:
+
+```bash
+KEEPER_MANAGED_ROOT=~/.bot_board ~/.bot_board/src/bin/bot keeper install
+```
+Inspect `~/.bot_board/update.json` and the keeper service log for diagnosis.
+Release snapshots are retained, since a long-running worker can still use an
+older one; no automatic pruning deletes code beneath active work. This feature
+does not deploy the board server itself.
+
 A box reports under its tailnet name when tailscale is there (the name other
 boxes reach it by), else its hostname; `KEEPER_HOST` overrides both. The keeper
 registers as `keeper-<name>`, and the first agent to report a name owns it.

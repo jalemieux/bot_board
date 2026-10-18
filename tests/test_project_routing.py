@@ -220,6 +220,50 @@ class Routing(unittest.TestCase):
         self.assertNotEqual(task['gh_config'], personal)
         self.assertTrue(os.path.exists(os.path.join(personal, 'hosts.yml')))
 
+    def test_managed_launcher_update_waits_for_the_active_harness(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        managed = os.path.join(self.tmp, "managed")
+        os.makedirs(managed)
+        os.symlink(ROOT, os.path.join(managed, "launcher"))
+        new = os.path.join(self.tmp, "new", "bin")
+        os.makedirs(new)
+        adopted = os.path.join(self.tmp, "adopted")
+        with open(os.path.join(new, "bot"), "w") as f:
+            f.write('#!/bin/bash\nprintf "%s\\n" "$@" > "$TEST_ADOPTED"\n')
+        os.chmod(os.path.join(new, "bot"), 0o755)
+        entered, release = os.path.join(self.tmp, "entered"), os.path.join(self.tmp, "release")
+        harness = os.path.join(self.tmp, "bin", "claude")
+        with open(harness, "a") as f:
+            f.write("\nif 'upgrade boundary' in a[-1]:\n"
+                    "    import time\n"
+                    "    open(os.environ['TEST_ENTERED'], 'w').close()\n"
+                    "    while not os.path.exists(os.environ['TEST_RELEASE']): time.sleep(.05)\n")
+        self.env.update(KEEPER_MANAGED_ROOT=managed, TEST_ADOPTED=adopted,
+                        TEST_ENTERED=entered, TEST_RELEASE=release)
+        switched = False
+        def until(runs):
+            nonlocal switched
+            if os.path.exists(entered) and not switched:
+                os.unlink(os.path.join(managed, "launcher"))
+                os.symlink(os.path.dirname(new), os.path.join(managed, "launcher"))
+                time.sleep(.2)
+                self.assertFalse(os.path.exists(adopted))
+                open(release, 'w').close()
+                switched = True
+            return os.path.exists(adopted)
+        board = FakeBoard([msg(42, "wordsnap", "upgrade boundary")], {})
+        try:
+            runs = self.run_bot(board, until)
+        finally:
+            board.close()
+        self.assertTrue(switched)
+        self.assertTrue(os.path.exists(adopted))
+        with open(adopted) as f:
+            self.assertEqual(f.read().splitlines(), ['claude', '--pool', self.pool, '--name', ME])
+        state = os.path.join(self.home, '.config/bot_board/bots', ME)
+        self.assertTrue(os.path.getsize(os.path.join(state, 'session.wordsnap')))
+        self.assertTrue(os.path.getsize(os.path.join(self.home, '.config/bot_board', ME + '.token')))
+
     def test_personality_is_fetched_for_each_new_session_not_resumed_turns(self):
         for project in ("game", "other", "third"):
             os.makedirs(os.path.join(self.pool, project))

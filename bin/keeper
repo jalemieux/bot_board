@@ -206,7 +206,11 @@ def bots():
             ran = datetime.fromtimestamp(os.path.getmtime(os.path.join(CFG, "bots", handle, "runs")), timezone.utc)
         except OSError:
             ran = None
-        rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
+        try:
+            revision = Path(CFG, "bots", handle, "revision").read_text().strip()[:64]
+        except OSError:
+            revision = ""
+        rows.append({"launcher_revision": revision, "handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
                      "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool")),
                      "last_run": ran.isoformat(timespec="seconds") if ran else "",
@@ -488,6 +492,13 @@ class Hands:
                     self.spawn(h, [BOT, "stop", h])
                     print(f"keeper: stopping {h}, asked by @{w['set_by']}", flush=True)
             elif h.lower() in up:
+                # Pre-updater launchers cannot re-exec themselves. Stop gracefully
+                # once; normal reconciliation restarts them with their existing state.
+                row = next((b for b in seen if b["handle"].lower() == h.lower()), {})
+                if managed_root() and not row.get("launcher_revision") and "stopping" not in up[h.lower()]:
+                    proc = self.procs.get(h)
+                    if proc is None or proc.poll() is not None:
+                        self.procs[h] = self.spawn(h, [BOT, "stop", h])
                 self.gave_up.pop(h, None)   # it came up after all: if it dies later, that is a new story
             else:
                 when, asked = self.started.get(h, (0, None))
@@ -680,7 +691,12 @@ def service(install):
     Either way the bots it starts must outlive a restart of the keeper, and it needs
     the PATH of the shell that installs it, where the harnesses are."""
     env = {"PATH": os.environ.get("PATH", "")}
-    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER", "GH_HOST"):
+    root = managed_root()
+    command = [BOT, "keeper", "run"]
+    if root:
+        command = [sys.executable, os.path.join(root, "supervisor.py"), "supervise", "--root", root]
+        env["KEEPER_MANAGED_ROOT"] = root
+    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER", "KEEPER_AUTO_UPDATE", "KEEPER_UPDATE_PIN", "GH_HOST"):
         if os.environ.get(k):
             env[k] = os.environ[k]
     if sys.platform.startswith("linux"):
@@ -697,7 +713,7 @@ def service(install):
             fh.write("[Unit]\nDescription=bot_board keeper: reports this box and runs its bots\n"
                      "After=network-online.target\n\n[Service]\n"
                      + "".join(f'Environment="{k}={v}"\n' for k, v in env.items())
-                     + f"ExecStart={BOT} keeper run\nRestart=always\nRestartSec=10\nKillMode=process\n\n"
+                     + f"ExecStart={shlex.join(command)}\nRestart=always\nRestartSec=10\nKillMode=process\n\n"
                      "[Install]\nWantedBy=default.target\n")
         subprocess.run(ctl + ["daemon-reload"], check=True)
         subprocess.run(ctl + ["enable", "bot-board-keeper"], check=True)
@@ -723,7 +739,7 @@ def service(install):
             fh.write('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
                      '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n'
                      "<key>Label</key><string>com.bot-board.keeper</string>\n"
-                     f"<key>ProgramArguments</key><array><string>{x(BOT)}</string><string>keeper</string><string>run</string></array>\n"
+                     "<key>ProgramArguments</key><array>" + "".join(f"<string>{x(arg)}</string>" for arg in command) + "</array>\n"
                      "<key>EnvironmentVariables</key><dict>"
                      + "".join(f"<key>{k}</key><string>{x(v)}</string>" for k, v in env.items()) + "</dict>\n"
                      "<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>AbandonProcessGroup</key><true/>\n"
@@ -735,6 +751,15 @@ def service(install):
         die(f"no service installer for {sys.platform}; run `keeper run` under whatever keeps things running here")
 
 
+def managed_root():
+    root = setting("KEEPER_MANAGED_ROOT")
+    if not root:
+        candidate = Path(__file__).resolve().parents[3]
+        if (candidate / "update.json").is_file():
+            root = str(candidate)
+    return root
+
+
 def main():
     p = argparse.ArgumentParser(prog="bot keeper", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -743,6 +768,8 @@ def main():
     sub.add_parser("show")
     sub.add_parser("install")
     sub.add_parser("uninstall")
+    sub.add_parser("update", help="check and select a managed update now; supervisor adopts it")
+    sub.add_parser("rollback", help="select the previous managed release and quarantine the failed revision")
     rotate = sub.add_parser("rotate-logs", help="rotate local logs between launcher runs")
     rotate.add_argument("paths", nargs="+")
     a = p.parse_args()
@@ -752,6 +779,17 @@ def main():
         return
     if a.cmd in ("install", "uninstall"):
         return service(a.cmd == "install")
+    root = managed_root()
+    if a.cmd in ("update", "rollback"):
+        if not root:
+            die("not a managed installation; use the managed installer or update this developer checkout yourself")
+        from keeper_update import Updates
+        updates = Updates(root)
+        if a.cmd == "rollback":
+            updates.rollback("manual rollback")
+        else:
+            updates.check(setting("KEEPER_UPDATE_PIN"), force=True)
+        return print(json.dumps(updates.report(), indent=2))
     host = host_name()
     if a.cmd == "show":
         creds = Credentials(host)
@@ -769,9 +807,21 @@ def main():
         die("a keeper is already running on this box for this user")
     hands, problems, creds, want = Hands(host), {}, Credentials(host), []
     maintenance = Maintenance()
+    updates = None
+    if root and os.environ.get("KEEPER_SUPERVISED") == "1":
+        from keeper_update import Updates
+        updates = Updates(root)
     while True:
         try:
+            if updates:
+                if Path(BOT).resolve() != (Path(root) / "src/bin/bot").resolve():
+                    return 75
+                if updates.check(setting("KEEPER_UPDATE_PIN"), setting("KEEPER_AUTO_UPDATE", "1").lower() not in ("0", "false", "off")):
+                    return 75
             snap = snapshot()
+            if root:
+                from keeper_update import Updates
+                snap["updates"] = Updates(root).report()
             maintenance.tick(snap["bots"])
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
@@ -779,6 +829,8 @@ def main():
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
                                                                   **moves}, token)
+            if code == 200 and updates:
+                updates.ready(Path(BOT).parent.parent.name)
             if code == 200:     # the board has them now
                 for h in moves["handed"]:
                     hands.handed.pop(h, None)
@@ -806,6 +858,6 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main() or 0)
     except KeyboardInterrupt:
         pass

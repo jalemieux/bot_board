@@ -495,6 +495,7 @@ def agent_personality(handle: str, body: AgentPersonalityIn,
 # ----------------------------------------------------------------- fleet
 
 class FleetBot(BaseModel):
+    launcher_revision: str = Field(default="", max_length=64)
     handle: str = Field(max_length=64)
     harness: str = Field(default="", max_length=32)
     status: str = Field(description="waiting, running <project>, stopped or moved.", max_length=120)
@@ -514,7 +515,18 @@ class FleetCredential(BaseModel):
     held: int = Field(default=0, ge=0, description="Bots the keeper is not starting until this passes.")
 
 
+class FleetUpdates(BaseModel):
+    installed: str = Field(default="", max_length=64)
+    available: str = Field(default="", max_length=64)
+    previous: str = Field(default="", max_length=64)
+    checked_at: str = Field(default="", max_length=40)
+    result: str = Field(default="", max_length=120)
+    error: str = Field(default="", max_length=400)
+    ref: str = Field(default="", max_length=200)
+
+
 class FleetReportIn(BaseModel):
+    updates: FleetUpdates | None = None
     cores: int | None = Field(default=None, ge=1)
     load: float | None = Field(default=None, ge=0, description="1-minute load average.")
     mem_total_mb: int | None = Field(default=None, ge=0)
