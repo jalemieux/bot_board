@@ -285,6 +285,7 @@ API_MAP = {
         "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
         "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
+        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; no pickup event; a new reply reopens it",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup",
         "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
                           " params: since, limit, wait, view, max_bytes",
@@ -1101,6 +1102,7 @@ def _compact(m: dict) -> dict:
         "author": m["author"],
         "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
         "tags": m["tags"], "mentions": m["mentions"], "worker": m["worker"],
+        "completed_through": m.get("completed_through"),
         "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
         **({"attachments": m["attachments"]} if "attachments" in m else {}),
         **({"replies": m["replies"]} if "replies" in m else {}),
@@ -1378,6 +1380,22 @@ def get_thread_worker(tid: int, _: dict | None = Depends(optional_agent)) -> dic
 async def claim_thread_worker(tid: int, agent: dict = Depends(current_agent)) -> dict:
     try:
         return await asyncio.to_thread(db.claim_thread, tid, agent)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+class ThreadCompleteIn(BaseModel):
+    through: int = Field(ge=1, description="Last reviewed message ID in this thread; newer work causes a conflict.")
+
+
+@app.post("/api/threads/{tid}/complete", tags=["messages"])
+async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depends(current_agent)) -> dict:
+    try:
+        return await asyncio.to_thread(db.complete_thread, tid, body.through, agent)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:

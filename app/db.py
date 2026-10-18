@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS thread_workers (
 );
 CREATE INDEX IF NOT EXISTS idx_thread_workers_agent ON thread_workers(agent_id, thread_id);
 
+CREATE TABLE IF NOT EXISTS thread_completions (
+    thread_id INTEGER PRIMARY KEY REFERENCES messages(id),
+    through_id INTEGER NOT NULL REFERENCES messages(id),
+    completed_by INTEGER NOT NULL REFERENCES agents(id),
+    completed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS text_attachments (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id),
     content    TEXT NOT NULL,
@@ -465,6 +472,14 @@ def post_message(
             raise PermissionError('Start context seeding through the group seed API, not message metadata.')
         if seed_reply:
             meta['kind'] = 'context_seed'
+        meta.pop("thread_reopened", None)
+        if parent_thread and meta.get("kind") != "thread_released" and not meta.get("done"):
+            reopened = c.execute(
+                "DELETE FROM thread_completions WHERE thread_id=? AND thread_id IN "
+                "(SELECT id FROM messages WHERE board_id=?)", (parent_thread, board["id"]),
+            ).rowcount
+            if reopened:
+                meta["thread_reopened"] = True
         cur = c.execute(
             "INSERT INTO messages (board_id, agent_id, body, reply_to, thread_id, meta, created_at)"
             " VALUES (?,?,?,?,?,?,?)",
@@ -504,12 +519,13 @@ _MSG_SELECT = """
 SELECT m.id, m.body, m.reply_to, m.thread_id, m.meta, m.created_at,
        b.slug AS board, b.kind AS kind, b.id AS board_id,
        a.handle AS author, a.kind AS author_kind, worker.handle AS worker,
-       w.claimed_at AS worker_claimed_at
+       w.claimed_at AS worker_claimed_at, completion.through_id AS completed_through
 FROM messages m
 JOIN boards b ON b.id = m.board_id
 JOIN agents a ON a.id = m.agent_id
 LEFT JOIN thread_workers w ON w.thread_id = m.thread_id
 LEFT JOIN agents worker ON worker.id = w.agent_id
+LEFT JOIN thread_completions completion ON completion.thread_id = m.thread_id
 """
 
 
@@ -634,6 +650,8 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
         raise KeyError("no such thread")
     if root["thread_id"] != tid:
         raise ValueError("claim the thread root, not a reply")
+    if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
+        raise ValueError("thread is completed; a new ordinary reply reopens it")
     if agent["kind"] in ("human", "keeper", "cron"):
         raise PermissionError("only bots can be thread workers")
     if root["kind"] == "conversation" and not is_member(root["board_id"], agent["id"]):
@@ -648,6 +666,8 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
         "INSERT INTO thread_workers (thread_id,agent_id,claimed_at) VALUES (?,?,?)"
         " ON CONFLICT(thread_id) DO NOTHING", (tid, agent["id"], now()),
     )
+    if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
+        raise ValueError("thread is completed; a new ordinary reply reopens it")
     worker = thread_worker(tid)
     if worker["worker"].lower() != agent["handle"].lower():
         raise ValueError(f"thread already has worker @{worker['worker']}")
@@ -688,6 +708,8 @@ def release_thread(tid: int, agent: dict) -> dict:
         if projects.is_archived(root["board_id"]):
             raise PermissionError("this project or group is archived")
         c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
+        if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
+            return {"thread_id": tid, "worker": None}
         c.execute(
             "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
             " VALUES (?,?,?,?,?,?,?)",
@@ -695,6 +717,31 @@ def release_thread(tid: int, agent: dict) -> dict:
              tid, tid, json.dumps({"kind": "thread_released"}), now()),
         )
     return {"thread_id": tid, "worker": None}
+
+
+def complete_thread(tid: int, through: int, agent: dict) -> dict:
+    """Record no remaining work through a reviewed cursor, never a pickup notice."""
+    from . import projects
+    with _write_lock, conn() as c:
+        c.execute("BEGIN IMMEDIATE")
+        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+        if root is None:
+            raise KeyError("no such thread root")
+        worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+        if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not projects.is_admin(agent):
+            raise PermissionError("only the worker, thread author or an administrator can complete it")
+        if projects.is_archived(root["board_id"]):
+            raise PermissionError("this project or group is archived")
+        reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
+        if not reviewed:
+            raise ValueError("through must identify a reviewed message in this thread")
+        if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
+                     (tid, through)).fetchone():
+            raise ValueError("thread has newer messages; review them before completing it")
+        c.execute("INSERT INTO thread_completions VALUES (?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET "
+                  "through_id=excluded.through_id, completed_by=excluded.completed_by, completed_at=excluded.completed_at",
+                  (tid, through, agent["id"], now()))
+    return {"thread_id": tid, "completed_through": through}
 
 
 def list_messages(

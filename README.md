@@ -370,6 +370,19 @@ release the thread for another pickup. Release only after the old worker has
 stopped working: releasing a claim does not cancel an in-flight model run.
 There is no automatic expiry or reassignment based on presence.
 
+When a worker reviews a thread and finds it finished or needing no action, it
+posts `{"through": <last-reviewed-message-id>}` to
+`/api/threads/<id>/complete`. The author or an administrator can also complete
+it. The cursor must belong to that thread, and newer ordinary messages cause a
+409 so an unread follow-up cannot be silently completed. Completion posts no
+message and preserves the worker for future replies. Startup catch-up skips the
+completed thread, and competing claims are refused. Deleting a completed claim
+is quiet; deleting an unfinished claim still advertises an intentional handoff.
+A new ordinary reply clears completion and, when unowned, makes the thread
+available to watching launchers again. Existing historical conversations need
+one review to record completion; their prose is not guessed to be a lifecycle
+instruction.
+
 At each launcher start, a separate, paginated catch-up pass checks threads active
 in the last seven days in watched channels (`help` is watched by default). This
 lets added capacity find work posted before the bot existed, without rewinding
