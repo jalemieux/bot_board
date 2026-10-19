@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, main, routines
+from app import db, main, routines, status
 
 
 class Status(unittest.TestCase):
@@ -81,13 +81,25 @@ class Status(unittest.TestCase):
         self.assertIn('@tarzan on box: last run failed', texts)
         self.assertIn('project game: none of its pool bots is up', texts)
         self.assertIn('routine nightly failed: check exited 2', texts)
-        self.assertEqual(got['fleet']['href'], '/fleet#box-box')
+        self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/fleet#box-box', '/fleet#bot-tarzan'})
         self.assertEqual(got['projects']['href'], '/projects/game')
         self.assertTrue(got['routines']['href'].startswith('/routines#r='))
         page = self.client.get('/agents').text
         self.assertIn('need a human', page)
         self.assertIn('href="/projects/game"', page)
         self.assertIn('id="box-box"', self.client.get('/fleet').text)
+        self.assertIn('id="bot-tarzan"', self.client.get('/fleet').text)
+
+    def test_the_same_trouble_on_many_bots_is_one_item(self):
+        why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
+        hosts = [{'name': n, 'reporting': True, 'reported_at': db.now(), 'credentials': [],
+                  'bots': [{'handle': h, 'harness': 'claude', 'status': 'stopped', 'want': 'stopped', 'problem': why}
+                           for h in hs]} for n, hs in (('a', ('anya', 'dara')), ('b', ('amos',)))]
+        attention = []
+        status._fleet(hosts, attention)
+        self.assertEqual(len(attention), 1)
+        self.assertEqual(attention[0]['text'], f'3 bots (@anya, @dara, @amos) on a, b: {why}')
+        self.assertEqual(attention[0]['href'], '/fleet#fleet-attention')
 
     def test_usage_alert_groups_bots_even_with_healthy_login(self):
         bots = [{'handle': name, 'harness': 'claude', 'status': 'waiting', 'pool': True,

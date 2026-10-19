@@ -299,13 +299,14 @@ background:none;border:1px solid var(--line);color:var(--dim);border-radius:8px;
 .bell svg{width:17px;height:17px;display:block}
 .bell-count{position:absolute;top:-6px;right:-6px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;
 background:var(--accent);color:#fff;font:600 10px/17px var(--mono);text-align:center;box-shadow:0 0 0 2px var(--panel)}
-.inbox{position:absolute;top:46px;right:12px;z-index:30;width:320px;max-width:calc(100vw - 24px);
+.inbox{position:absolute;top:46px;right:12px;z-index:30;width:400px;white-space:normal;font:13px/1.45 var(--sans);text-align:left;max-width:calc(100vw - 24px);
 background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:10px 12px}
 .inbox .inbox-head{font:600 12px var(--mono);color:var(--ink);margin:0 0 6px}
 .inbox ul{list-style:none;margin:0;padding:0}
-.inbox li{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid var(--line);font-size:12.5px}
-.inbox li .where{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;flex:0 0 auto}
-.inbox li a{color:var(--accent)}
+.inbox li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px}
+.inbox li .where{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;flex:0 0 64px}
+.inbox li a{color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.inbox li a:hover{color:var(--accent)}
 """
 
 SHELL_NAV_JS = """
@@ -1945,61 +1946,132 @@ def _fleet_detail(text: str) -> str:
     return ''.join(parts)
 
 
-def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool = False) -> str:
-    # what the human asked, in the words of the button they pressed
-    asked = lambda b: ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
-                       else "start" if b["want"] == "running" else "stop")
-    rows = []
-    for b in bots:
-        up = b["status"].startswith(("waiting", "running"))
-        st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
-        detail = ""
-        if b.get("want"):
-            detail += f'<div class="by">{e(asked(b))} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
-        # last active: the keeper knows its last harness run, the board its last post
-        seen = [f"last {what} {ago(b[k])}" for what, k in (("run", "last_run"), ("post", "last_post")) if b.get(k)]
-        detail += f'<div class="by">{e(" · ".join(seen) or "has never run or posted")}</div>'
-        if b.get("serves"):
-            detail += f'<div class="by">serves {e(b["serves"])}</div>'
-        # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
-        for why in dict.fromkeys(w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "",
-                                             b.get("health") if up else "") if w):
-            detail += f'<div class="prob">{_fleet_detail(why)}</div>'
-        # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
-        can = b["status"] != "moved" and (up or b.get("harness"))
-        # no second start or stop for one already asked; a kill can still follow a stop
-        again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
-        btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
-               f'data-run="{0 if up else 1}">{"stop" if up else "start"}</button>') if can and not again else ""
-        # a start asked of a box whose keeper never answers would otherwise leave no way back
-        if can and again and not up:
-            btn = (f'<button type="button" class="act" data-handle="{e(b["handle"])}" data-host="{e(host)}" '
-                   f'data-run="0" title="withdraw the start">cancel</button>')
-        # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
-        if up and can:
-            btn += (f' <button type="button" class="act kill" data-handle="{e(b["handle"])}" data-host="{e(host)}"'
-                    f' data-run="0" data-kill="1" title="stop now, ending the run it is in">kill</button>')
-        # a pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
-        if can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
-            btn += (f' <select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
-                    '<option value="">move to…</option>'
-                    + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
-        identity = e(b.get("harness") or "unknown harness")
-        if show_host:
-            identity += f' · <a href="#box-{e(host)}">{e(host)}</a>'
-        if b.get("project"):
-            identity += f' · <a href="/projects/{e(b["project"])}">{e(b["project"])}</a>'
-        if b.get("clear_key"):
-            item = e(json.dumps([{"host": host, "handle": b["handle"], "key": b["clear_key"]}]))
-            btn += f' <button type="button" class="clear-alert" data-items="{item}">Clear alert; leave stopped</button>'
-        tone = " run" if st["can_work"] and not st["reason"] else " prob" if st["reason"] else ""
-        warning = '<div class="prob">Last run failed · can retry</div>' if st["state"] == "failing" and st["can_work"] else ""
-        rows.append(
-            f'<tr><td><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a><div class="by">{identity}</div></td>'
-            f'<td class="st{tone}">{e(st["words"])}{warning}'
-            f'<details><summary>Details<span class="sr-only"> for @{e(b["handle"])}</span></summary>{detail}'
-            f'<div class="worker-controls">{btn}</div></details></td></tr>')
-    return "".join(rows)
+def _bot_row(b: dict, host: str, others: list) -> str:
+    """One bot as one table row: who, what it is doing, its group, harness, box, when last active, and its buttons."""
+    st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
+    up = b["status"].startswith(fleet_mod.UP)
+    tone = ("run" if st["state"] == "working" else "ok" if st["can_work"] and not st["reason"]
+            else "warn" if st["can_work"] or st["state"] in ("starting", "stopping", "moving", "at capacity", "out of usage")
+            else "off" if st["state"] in ("stopped", "unknown") and not st["reason"] else "bad")
+    # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
+    why = "".join(f'<div class="why" title="{e(w)}">{_fleet_detail(w)}</div>' for w in dict.fromkeys(
+        w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "", b.get("health") if up else "") if w))
+    if b.get("want") and st["state"] not in ("stopped", "working", "waiting"):
+        asked = ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
+                 else "start" if b["want"] == "running" else "stop")
+        why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+    group = (f'<a href="/projects/{e(b["project"])}">{e(b["project"])}</a>' if b.get("project")
+             else "shared pool" if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
+    # last active: the keeper knows its last harness run, the board its last post
+    last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
+    # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
+    can = b["status"] != "moved" and (up or b.get("harness")) and st["state"] != "unknown"
+    # no second start or stop for one already asked; a kill can still follow a stop
+    again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
+    act = lambda label, run, extra="": (f'<button type="button" class="act{" kill" if "kill" in extra else ""}" '
+                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"{extra}>{label}</button>')
+    btn = act("stop" if up else "start", 0 if up else 1) if can and not again else ""
+    # a start asked of a box whose keeper never answers would otherwise leave no way back
+    if can and again and not up:
+        btn = act("cancel", 0, ' title="withdraw the start"')
+    # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
+    if up and can:
+        btn += act("kill", 0, ' data-kill="1" title="stop now, ending the run it is in"')
+    # a running pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
+    if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
+        btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
+                '<option value="">move…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
+    return (f'<tr id="bot-{e(b["handle"])}"><td class="who"><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
+            f'<td class="doing"><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
+            f'<td data-label="group">{group}</td><td data-label="harness">{e(b.get("harness") or "?")}</td>'
+            f'<td data-label="machine"><a href="#box-{e(host)}">{e(host)}</a></td>'
+            f'<td data-label="active" class="dim nw">{e(ago(last)) if last else "never"}</td>'
+            f'<td class="acts">{btn}</td></tr>')
+
+
+def _bot_table(entries: list, others_of) -> str:
+    head = ('<thead><tr><th>Bot</th><th>Doing</th><th>Group</th><th>Harness</th><th>Machine</th>'
+            '<th>Active</th><th><span class="sr-only">Actions</span></th></tr></thead>')
+    rows = "".join(_bot_row(b, h["name"], others_of(h)) for h, b in entries)
+    return f'<table class="bots">{head}<tbody>{rows}</tbody></table>'
+
+
+def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
+    names = (" ".join(f'<a class="chip" href="#bot-{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
+                      for h, b in bots))
+    return (f'<div class="fleet-alert"><div class="atext"><h3>{title}</h3><p>{text}</p>'
+            + (f'<div class="chips">{names}</div>' if names else "") + '</div>'
+            + (f'<div class="abtns">{buttons}</div>' if buttons else "") + '</div>')
+
+
+def _alerts(hosts: list) -> list:
+    """What needs a human, each said once, in plain words, with the button that deals with it."""
+    groups = {}
+    for h in hosts:
+        if not h["reporting"]:
+            continue
+        no_login = {c["name"] for c in h.get("credentials") or [] if c["state"] != "ok"}
+        for b in h["bots"]:
+            st = b["state"]
+            if st["state"] == "needs login" and not b.get("problem") and b.get("harness") in no_login:
+                continue
+            problem = b.get("problem") or ""
+            limited = st["state"] in ("out of usage", "at capacity")
+            if not (problem or limited or st["state"] == "needs login" or (st["state"] == "failing" and not st["can_work"])):
+                continue
+            # the same trouble on many bots, on many boxes, is one alert
+            reason = problem or (st["reason"].split(":")[0] if limited else st["reason"])
+            groups.setdefault((st["state"] if not problem else "problem", b.get("harness") or "", reason), []).append((h["name"], b))
+    out = []
+    for (kind, harness, reason), bots in groups.items():
+        n = len(bots)
+        boxes = sorted({h for h, _ in bots})
+        clear = [{"host": h, "handle": b["handle"], "key": b["clear_key"]} for h, b in bots if b.get("clear_key")]
+        dismiss = (f'<button type="button" class="clear-alert" data-items="{e(json.dumps(clear))}">Dismiss</button>'
+                   if len(clear) == n else "")
+        redo = lambda label, run, cls="": (f'<button type="button" class="redo{cls}" data-items="'
+                                           + e(json.dumps([{"handle": b["handle"], "host": h, "run": run} for h, b in bots]))
+                                           + f'">{label}</button>')
+        stopped = all(not b["status"].startswith(fleet_mod.UP) for _, b in bots)
+        m = re.search(r"@(\S+) is not an operator", reason)
+        if m:
+            asked = {b.get("want") for _, b in bots}
+            verb = "stop" if asked == {"stopped"} else "start" if asked == {"running"} else "change"
+            done = verb == "stop" and stopped
+            text = (f'@{e(m.group(1))} asked to {verb} {_plural(n, "bot")}, but is not in <code>KEEPER_OPERATORS</code> on '
+                    f'{e(", ".join(boxes))}, so the keeper ignored it. '
+                    + ("The bots are already stopped, so nothing is lost: dismiss it." if done else
+                       f"Do it yourself, or dismiss it. To let @{e(m.group(1))} run bots there, add them to "
+                       "<code>KEEPER_OPERATORS</code> in <code>~/.config/bot_board/config</code> on the machine."))
+            buttons = dismiss if done else redo(f"{verb.title()} {'them' if n > 1 else 'it'} as me", 1 if verb == "start" else 0) + dismiss
+            out.append(_alert(f"Request from @{e(m.group(1))} ignored", text, bots, buttons))
+        elif kind in ("out of usage", "at capacity"):
+            title = f"{e(harness)} usage limit reached" if kind == "out of usage" else f"{e(harness)} is at capacity"
+            text = (f'{_fleet_detail(bots[0][1]["state"]["reason"].rstrip("."))}. Nothing to do: '
+                    f'{"they carry on" if n > 1 else "it carries on"} by itself once the limit resets.')
+            out.append(_alert(title, text, bots, "" if stopped else redo("Stop them" if n > 1 else "Stop it", 0)))
+        elif kind == "needs login":
+            text = (f'{_fleet_detail(reason)}. On {e(", ".join(boxes))}, open a terminal, run <code>{e(harness)}</code> '
+                    'and sign in; the bots carry on by themselves.')
+            out.append(_alert(f"{e(harness)} needs a login on {e(', '.join(boxes))}", text, bots))
+        else:
+            asked_start = any(b.get("want") == "running" for _, b in bots)
+            title = f"{'Could not start' if asked_start and stopped else 'Trouble with'} {_plural(n, 'bot')}"
+            buttons = (redo("Try again", 1) + redo("Leave stopped", 0, " quiet")) if asked_start and stopped else dismiss
+            out.append(_alert(title, _fleet_detail(reason), bots, buttons))
+    for h in hosts:
+        if not h["reporting"]:
+            out.append(_alert(f'{e(h["name"])} stopped reporting',
+                              f'Last heard {e(ago(h["reported_at"]))}. Its bots may still run, but the board cannot see or '
+                              f'control them. On {e(h["name"])}, run <code>~/.bot_board/src/bin/bot install</code> to restart '
+                              f'its keeper.'))
+            continue
+        for c in h.get("credentials") or []:
+            if c["state"] != "ok":
+                out.append(_alert(f'{e(c["name"])} {e(c["state"])} on {e(h["name"])}',
+                                  e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
+                                  + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "")))
+    return out
 
 
 FLEET_JS = """
@@ -2054,14 +2126,29 @@ document.addEventListener('click', function (ev) {
 document.addEventListener('click', function (ev) {
   var button = ev.target.closest('button.clear-alert'); if (!button) return;
   if (!ME) { alert('Sign in on the board page first.'); return; }
-  if (!confirm('Cancel these pending requests and clear the displayed failures? Workers stay stopped. Identity, sessions and project membership are preserved.')) return;
-  button.disabled = true;
+    button.disabled = true;
   fetch('/api/fleet/clear', {method: 'POST',
     headers: {'content-type':'application/json', 'Authorization':'Bearer ' + ME.token},
     body: JSON.stringify({items:JSON.parse(button.dataset.items)})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else { button.disabled = false; alert(d.detail || 'State changed; refresh and try again.'); }
   }); }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
+});
+// An alert's own fix: the same start or stop, asked again by this human, for each bot it names.
+document.addEventListener('click', function (ev) {
+  var button = ev.target.closest('button.redo'); if (!button) return;
+  if (!ME) { alert('Sign in on the board page first.'); return; }
+  button.disabled = true;
+  Promise.all(JSON.parse(button.dataset.items).map(function (x) {
+    return fetch('/api/fleet/bots/' + encodeURIComponent(x.handle), {method: 'PUT',
+      headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
+      body: JSON.stringify({host: x.host, run: !!x.run, harness: null})})
+    .then(function (r) { return r.ok ? null : r.json().then(function (d) { return '@' + x.handle + ': ' + (d.error || d.detail || r.status); }); });
+  })).then(function (errs) {
+    errs = errs.filter(Boolean);
+    if (errs.length) alert(errs.join('\\n'));
+    location.reload();
+  }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
 });
 document.addEventListener('change', function (ev) {
   var s = ev.target.closest('select.move'); if (!s || !s.value) return;
@@ -2087,11 +2174,6 @@ document.addEventListener('click', function (ev) {
       .concat(Object.keys(d.skipped || {}).map(function (k) { return '@' + k + ' not moved: ' + d.skipped[k]; }));
     alert('Draining ' + b.dataset.host + ':\\n' + lines.join('\\n')); location.reload(); }); })
   .catch(function () { alert('could not reach the board'); });
-});
-document.addEventListener('submit', function (ev) {
-  var f = ev.target.closest('form.newbot'); if (!f) return;
-  ev.preventDefault();
-  ask(f.elements.handle.value.trim().replace(/^@/, ''), f.dataset.host, true, f.elements.harness.value);
 });
 // The top-of-page "Add a bot" form: machine, harness, optional project, optional name.
 document.addEventListener('submit', function (ev) {
@@ -2129,6 +2211,13 @@ document.addEventListener('submit', function (ev) {
   secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
   .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
 });
+// A link to a bot in a folded list (an alert's chip, a status item) opens the list first.
+function showTarget() {
+  var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  for (var d = t && t.closest('details'); d; d = d.parentElement.closest('details')) d.open = true;
+  if (t) t.scrollIntoView({block: 'center'});
+}
+window.addEventListener('hashchange', showTarget); showTarget();
 // Preserve expanded worker details while refreshing recovered failures off the page.
 function fleetDetailKey(detail) {
   var section = detail.closest('[id]');
@@ -2160,194 +2249,164 @@ setInterval(function () {
 
 
 FLEET_CSS = """
-.fleet-page .machine-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.fleet-page h2{font-size:18px;margin:0 0 8px}.fleet-page h3{font-size:15px;margin:0}
-.fleet-page .fleet-summary{color:var(--dim);margin:0 0 22px}
-.fleet-page>.sub{color:var(--dim);margin:2px 0 14px;font-size:13px}
-.fleet-page .statstrip{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0 0 20px}
-.fleet-page .statstrip .stat{font:12.5px var(--mono);color:var(--dim);border:1px solid var(--line);
-border-radius:999px;padding:4px 12px;white-space:nowrap}
+.fleet-page{max-width:1100px}
+.fleet-page .fleet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.fleet-page h1{margin:0 0 12px}
+.fleet-page h2{font-size:13px;margin:0 0 10px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.fleet-page h3{font-size:14px;margin:0}
+.fleet-page .sub{color:var(--dim);margin:2px 0 12px;font-size:13px}
+.fleet-page .dim{color:var(--dim)}.fleet-page .nw{white-space:nowrap}
+.fleet-page .statstrip{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0 0 22px}
+.fleet-page .statstrip .stat{font:12.5px var(--mono);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
 .fleet-page .statstrip .stat b{color:var(--ink);font-weight:600}
 .fleet-page .statstrip .stat.run b{color:var(--good)}
 .fleet-page .statstrip .stat.warn{border-color:var(--accent)}.fleet-page .statstrip .stat.warn b{color:var(--accent)}
+.fleet-page .fleet-section{margin:0 0 28px}
 .fleet-page #fleet-attention h2{color:var(--accent)}
-.fleet-page #fleet-attention{border:1px solid var(--accent);border-radius:10px;padding:14px 16px;margin:0 0 24px}
-.fleet-page .fleet-section{margin:24px 0}
-.fleet-page .fleet-alert{padding:14px 16px;margin:12px 0;background:var(--accent-soft);border-radius:8px}
-.fleet-page .fleet-alert p{margin:7px 0;overflow-wrap:anywhere;font-size:13px}
-.fleet-page .fleet-alert summary{color:var(--accent)}
-.fleet-page .box table{table-layout:fixed;margin:10px 0 0}
-.fleet-page .box td{padding:12px 10px 12px 0;overflow-wrap:anywhere}
-.fleet-page .box td:first-child{width:44%}
-.fleet-page .box td.st{font:13px system-ui,sans-serif}
-.fleet-page .box .by{font-size:12px;margin-top:4px;overflow-wrap:anywhere}
-.fleet-page .worker-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.fleet-page .worker-controls select{max-width:100%}
+.fleet-page .fleet-alert{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
+ margin:0 0 8px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px}
+.fleet-page .fleet-alert .atext{min-width:0}
+.fleet-page .fleet-alert p{margin:5px 0 0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.fleet-page .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.fleet-page .chip{font:12px var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
+.fleet-page .chip span{color:var(--dim)}
+.fleet-page .abtns{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+.fleet-page button.act,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page select.move{
+ font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
+.fleet-page button.redo,.fleet-page .fleet-alert button.clear-alert{border-color:var(--accent);color:var(--accent)}
+.fleet-page button.redo.quiet{border-color:var(--line);color:var(--ink)}
+.fleet-page button.kill{color:var(--accent)}
+.fleet-page button:hover{border-color:var(--accent)}
+.fleet-page table.bots{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel);
+ border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.fleet-page table.bots th{text-align:left;font:600 11px var(--sans);color:var(--dim);text-transform:uppercase;
+ letter-spacing:.05em;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.fleet-page table.bots td{padding:9px 10px;border-top:1px solid var(--line);vertical-align:top}
+.fleet-page table.bots tr:first-child td{border-top:0}
+.fleet-page table.bots tr:target td{background:var(--accent-soft)}
+.fleet-page table.bots td.who{font-family:var(--mono);white-space:nowrap}
+.fleet-page table.bots td.doing{min-width:180px}
+.fleet-page table.bots td.acts{text-align:right;white-space:nowrap}
+.fleet-page table.bots td.acts>*{margin-left:4px}
+.fleet-page .why{color:var(--accent);font-size:12px;margin-top:3px;overflow-wrap:anywhere;
+ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fleet-page .by{color:var(--dim);font-size:12px;margin-top:3px}
+.fleet-page .pip{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--line)}
+.fleet-page .pip.run{background:var(--good)}
+.fleet-page .pip.ok{background:transparent;box-shadow:inset 0 0 0 2px var(--good)}
+.fleet-page .pip.warn{background:var(--warn)}.fleet-page .pip.bad{background:var(--accent)}
+.fleet-page .prob{color:var(--accent)}
+.fleet-page .gauge{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.fleet-page .gauge .bar{display:inline-block;width:46px;height:5px;background:var(--line);border-radius:3px;overflow:hidden}
+.fleet-page .gauge .bar i{display:block;height:100%;background:var(--good)}
+.fleet-page .gauge .bar i.warn{background:var(--warn)}.fleet-page .gauge .bar i.full{background:var(--accent)}
+.fleet-page details.stopped{margin-top:10px}
+.fleet-page details.stopped>summary,.fleet-page .fleet-settings>summary{cursor:pointer;color:var(--dim);font-size:13px;padding:6px 0}
+.fleet-page details.stopped[open]>summary{margin-bottom:8px}
+.fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:8px}
+.fleet-page .fleet-settings h3{margin:14px 0 6px}
+.fleet-page .fleet-settings pre{white-space:pre-wrap;overflow-wrap:anywhere}
 .fleet-page .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.fleet-page .machine{padding:16px 0;border-top:1px solid var(--line)}
-.fleet-page .machine .meta{margin:6px 0;font-size:13px;color:var(--dim)}
-.fleet-page .machine-head .name{font-size:15px}
-.fleet-page .good{color:var(--good)}.fleet-page .warning{color:var(--accent)}
-.fleet-page .machine-actions{margin-top:12px;display:flex;gap:10px;flex-wrap:wrap}
-.fleet-page .newbot{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.fleet-page .newbot input{min-width:0;max-width:100%}
-.fleet-page .history,.fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:22px}
-.fleet-page .fleet-settings p{font-size:13px;color:var(--dim)}
-body.out .fleet-page .clear-alert,body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{display:none}
-/* Add a bot: the obvious entry point, a button up top that opens one form. */
-.fleet-page .addbot-cta{margin:0 0 24px}
-.fleet-page details#addbot{border:1px solid var(--line);border-radius:10px;background:var(--panel)}
-.fleet-page details#addbot>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;
-padding:12px 16px;flex-wrap:wrap}
+body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .addbot-cta{display:none}
+.fleet-page details#addbot{position:relative}
+.fleet-page details#addbot>summary{list-style:none;cursor:pointer}
 .fleet-page details#addbot>summary::-webkit-details-marker{display:none}
-.fleet-page .addbot-btn{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;
-padding:8px 16px;font:600 14px var(--sans)}
-.fleet-page .addbot-hint{color:var(--dim);font-size:13px}
-.fleet-page details#addbot[open]>summary .addbot-hint{display:none}
-.fleet-page form.newbot-top{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:4px 16px 14px}
+.fleet-page .addbot-btn{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;font-weight:600;font-size:13.5px}
+.fleet-page details#addbot[open]{flex-basis:100%;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:0 0 16px;padding:10px 0 0}
+.fleet-page details#addbot[open]>summary{padding:0 16px 8px}
+.fleet-page form.newbot-top{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;padding:4px 16px 12px}
 .fleet-page form.newbot-top .fld{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)}
-.fleet-page form.newbot-top .fld small{color:var(--dim);font-weight:400}
 .fleet-page form.newbot-top select,.fleet-page form.newbot-top input{background:var(--bg);border:1px solid var(--line);
-color:var(--ink);border-radius:6px;padding:6px 9px;font:13px var(--mono);min-width:150px}
-.fleet-page .addbot-go{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 18px;
-font:600 13px var(--sans);cursor:pointer}
+ color:var(--ink);border-radius:6px;padding:6px 8px;font:13px var(--mono)}
+.fleet-page .addbot-go{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 18px;font-weight:600;cursor:pointer}
 .fleet-page .addbot-note{color:var(--dim);font-size:12px;margin:0;padding:0 16px 14px}
-.fleet-page .addbot-empty{border:1px dashed var(--line);border-radius:10px;padding:14px 16px;color:var(--dim);font-size:13px}
-body.out .fleet-page .addbot-cta{display:none}
-@media(max-width:600px){
- .fleet-page .box table,.fleet-page .box tbody,.fleet-page .box tr,.fleet-page .box td{display:block;width:100%}
- .fleet-page .box td:first-child{width:100%;padding-bottom:4px}
- .fleet-page .box td.st{border-top:0;padding-top:0}
- .fleet-page .box .gauges{display:block}.fleet-page .box .gauge{flex-wrap:wrap;margin:8px 0}
+.fleet-page .addbot-empty{color:var(--dim);font-size:13px}
+@media(max-width:760px){
+ .fleet-page table.bots thead{display:none}
+ .fleet-page table.bots,.fleet-page table.bots tbody,.fleet-page table.bots tr{display:block}
+ .fleet-page table.bots tr{padding:10px 12px;border-top:1px solid var(--line)}
+ .fleet-page table.bots tr:first-child{border-top:0}
+ .fleet-page table.bots td{display:inline-block;border:0;padding:2px 10px 2px 0;font-size:12.5px}
+ .fleet-page table.bots td.who{display:block;font-size:14px}
+ .fleet-page table.bots td.doing{display:block;padding:2px 0 4px}
+ .fleet-page table.bots td[data-label]:not(.doing)::before{content:attr(data-label) " ";color:var(--dim)}
+ .fleet-page table.bots td.acts{display:block;text-align:left;padding-top:6px}
+ .fleet-page table.bots td.acts>*{margin:0 4px 0 0}
+ .fleet-page .fleet-alert{flex-direction:column}
+ .fleet-page .abtns{justify-content:flex-start}
  .fleet-page form.secret input{max-width:100%}
 }
 """
 
 
 def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
-    running, idle, pending, history, blockers, machines = [], [], [], [], {}, []
-    reporting = sum(h["reporting"] for h in hosts)
-
-    def worker_rows(entries):
-        rows = ""
-        for host, bot in entries:
-            others = [h["name"] for h in hosts if h["reporting"] and h["name"] != host["name"]]
-            rows += _bot_rows([bot], host["name"], others if host["reporting"] else [], show_host=True)
-        return f'<table aria-label="Workers"><tbody>{rows}</tbody></table>'
-
+    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
+    reporting = [h["name"] for h in hosts if h["reporting"]]
+    others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
+    order = {"working": 0, "waiting": 1, "failing": 2, "starting": 3, "stopping": 4, "moving": 5}
+    active, stopped = [], []
     for h in hosts:
-        bots = [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]
-        for b in bots:
-            st = b["state"]
-            entry = (h, b)
-            if not h["reporting"]:
-                continue
-            if st["can_work"]:
-                (running if b["status"].startswith("running") else idle).append(entry)
-            elif st["state"] in ("out of usage", "at capacity", "needs login", "failing") or b.get("problem"):
-                blockers.setdefault((h["name"], b.get("harness") or "unknown harness", st["state"]), []).append(entry)
-            elif st["state"] != "stopped":
-                pending.append(entry)
-            else:
-                history.append(entry)
-        up = [b for b in bots if b["status"].startswith(("waiting", "running"))]
-        ready = sum(b["state"]["can_work"] for b in bots)
-        blocked = sum(not b["state"]["can_work"] and
-                      (b["state"]["state"] in ("out of usage", "at capacity", "needs login", "failing") or bool(b.get("problem")))
-                      for b in bots)
+        for b in h["bots"]:
+            st = b["state"]["state"]
+            # a box gone dark shows what it last ran, and nothing it had stopped
+            live = st != "stopped" and (h["reporting"] or b["status"].startswith(fleet_mod.UP))
+            (active if live else stopped if h["reporting"] else []).append((h, b))
+    active.sort(key=lambda x: (order.get(x[1]["state"]["state"], 6), x[1]["handle"].lower()))
+    stopped.sort(key=lambda x: x[1]["handle"].lower())
+    working = sum(b["state"]["state"] == "working" for _, b in active)
+    waiting = sum(b["state"]["can_work"] for _, b in active) - working
+    alerts = _alerts(hosts)
+
+    attention = (f'<section class="fleet-section" id="fleet-attention"><h2>Needs you · {len(alerts)}</h2>'
+                 f'{"".join(alerts)}</section>') if alerts else ""
+    bots_html = (_bot_table(active, others_of) if active else
+                 '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from the stopped list below.</p>')
+    stopped_html = (f'<details class="stopped" id="fleet-stopped"><summary>Stopped · {len(stopped)}</summary>'
+                    f'{_bot_table(stopped, others_of)}</details>') if stopped else ""
+
+    machines = []
+    for h in hosts:
+        name, bots = h["name"], h["bots"]
+        up = [b for b in bots if b["status"].startswith(fleet_mod.UP)]
         load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
-        gauges = _gauge("load", load, cores, f"{load:.1f} of {cores} cores" if load is not None and cores else "")
-        gauges += _gauge("memory", None if free is None or total is None else total - free, total,
-                         f"{(free or 0) / 1024:.1f} GB free of {(total or 0) / 1024:.0f}")
-        name = h["name"]
-        others = [o["name"] for o in hosts if o["name"] != name and o["reporting"]] if h["reporting"] else []
-        options = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
-        newbot = (f'<form class="newbot" data-host="{e(name)}">new bot here: '
-                 '<input name="handle" placeholder="name (optional)" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{1,31}" autocomplete="off"> '
-                 f'<select name="harness" aria-label="harness on {e(name)}">{options}</select> <button type="submit">start</button></form>')
+        gauges = (_gauge("", load, cores, f"{load:.1f}/{cores}" if load is not None and cores else ""),
+                  _gauge("", None if free is None or total is None else total - free, total,
+                         f"{(free or 0) / 1024:.0f} of {(total or 0) / 1024:.0f} GB free"))
+        creds = ", ".join(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(c["name"])}'
+                           f'{"" if c["state"] == "ok" else " " + e(c["state"])}</span>' for c in h.get("credentials") or [])
         # drain: every pool bot up here goes to the least loaded other box
         drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
-        drain = (f' <button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
+        drain = (f'<button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
                  f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
-                 if h["reporting"] and drainable and others else "")
-        # what its bots need (#83): a login missing here holds them, nothing is posted about it
-        parts = []
-        for c in h.get("credentials") or []:
-            text = f'{c["name"]} {c["state"]}'
-            if c.get("held"):
-                text += f' (held {c["held"]} bot{"" if c["held"] == 1 else "s"})'
-            if c["state"] != "ok" and c.get("detail"):
-                text += f': {c["detail"]}'
-            parts.append(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(text)}</span>')
-        creds = " · ".join(parts)
-        creds = f'<div class="meta creds">credentials: {creds}</div>' if creds else ""
-        if h["reporting"]:
-            activity = f'{ready} available · {blocked} blocked · {_plural(len(up), "launcher")} alive' if up or ready or blocked else 'No live workers'
-            connection = '<span class="good">Reporting</span>'
-            snapshot = ""
-        else:
-            activity = f'Worker availability unknown · last report {e(ago(h["reported_at"]))}'
-            connection = '<span class="warning">Not reporting</span>'
-            snapshot = (f'<details><summary>Last known workers · {_plural(len(bots), "record")}</summary>'
-                        f'{worker_rows([(h, b) for b in bots])}</details>') if bots else ""
-        machines.append(f'<section class="machine box" id="box-{e(name)}">'
-                        f'<div class="machine-head"><h3 class="name">{e(name)}</h3>{connection}</div>'
-                        f'<div class="meta">{activity}</div>'
-                        f'<details><summary>Machine details<span class="sr-only"> for {e(name)}</span></summary>'
-                        f'<div class="gauges">{gauges}</div>{creds}'
-                        f'<div class="meta">{e(h.get("os") or "")} · reported {e(ago(h["reported_at"]))} by @{e(h["keeper"])}</div>'
-                        f'<div class="machine-actions">{drain}</div>'
-                        f'{newbot if h["reporting"] else ""}</details>{snapshot}</section>')
+                 if h["reporting"] and drainable and others_of(h) else "")
+        seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
+                f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
+        machines.append(
+            f'<tr id="box-{e(name)}"><td class="who">{e(name)}<div class="by">{e(h.get("os") or "")}</div></td>'
+            f'<td data-label="status" class="nw">{seen}</td>'
+            f'<td data-label="bots" class="nw">{len(up)} up · {len(bots) - len(up)} stopped</td>'
+            f'<td data-label="load">{gauges[0]}</td><td data-label="memory">{gauges[1]}</td>'
+            f'<td data-label="logins">{creds or "—"}</td><td class="acts">{drain}</td></tr>')
+    machines_html = (('<table class="bots machines"><thead><tr><th>Machine</th><th>Status</th><th>Bots</th><th>Load</th>'
+                      '<th>Memory</th><th>Logins</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'
+                      + "".join(machines) + '</tbody></table>') if machines else
+                     '<div class="empty">No box has reported yet. Add a machine below.</div>')
     # which projects keep their own bots; every other project shares the rest
     pooled = ""
     if pools:
-        pooled = ('<details><summary>Project assignments</summary><p class="sub">Dedicated bot pools: ' + "; ".join(
+        pooled = ('<p class="sub">Dedicated bot pools: ' + "; ".join(
             f'<a href="/projects/{e(p["project"])}">{e(p["project"])}</a>: '
             + (", ".join(f'@{e(b)}' for b in p["bots"]) or "none, so no pool bot works there")
-            for p in pools) + '. Every other project is served by the remaining pool bots.</p></details>')
-    alerts = []
-    for (host, harness, state), entries in blockers.items():
-        words = {"out of usage": "usage limit reached", "at capacity": "model temporarily at capacity", "needs login": "login required"}.get(state, "workers need attention")
-        reasons = list(dict.fromkeys(b["state"]["reason"] or b.get("problem") or "" for _, b in entries))
-        clearable = [{"host": h["name"], "handle": b["handle"], "key": b["clear_key"]}
-                     for h, b in entries if b.get("clear_key")]
-        clear = (f'<button type="button" class="clear-alert" data-items="{e(json.dumps(clearable))}">Clear {len(clearable)} stopped alert(s)</button>'
-                 if clearable else "")
-        alerts.append(f'<div class="fleet-alert box"><h3>{e(harness)}: {e(words)} on {e(host)} · {len(entries)}</h3>'
-                      + (f'<p>{_fleet_detail(reasons[0])}</p>' if reasons[0] else "")
-                      + clear + f'<details><summary>View {_plural(len(entries), "worker")}</summary>{worker_rows(entries)}</details></div>')
-    for h in hosts:
-        if not h["reporting"]:
-            alerts.append(f'<div class="fleet-alert"><h3>{e(h["name"])} is not reporting</h3>'
-                          f'<p>Last heard {e(ago(h["reported_at"]))}. Current worker availability is unknown.</p>'
-                          f'<a href="#box-{e(h["name"])}">View machine</a></div>')
-        else:
-            for credential in h.get("credentials") or []:
-                if credential["state"] != "ok":
-                    alerts.append(f'<div class="fleet-alert"><h3>{e(credential["name"])} {e(credential["state"])} on {e(h["name"])}</h3>'
-                                  f'<p>{e(credential.get("detail") or "Check credentials on this machine.")}</p>'
-                                  f'<a href="#box-{e(h["name"])}">View machine</a></div>')
-    attention = f'<section class="fleet-section" id="fleet-attention"><h2>Needs your attention · {len(alerts)}</h2>{"".join(alerts)}</section>' if alerts else ""
-    running_html = worker_rows(running) if running else '<p class="sub">No workers are running right now.</p>'
-    idle_html = worker_rows(idle) if idle else '<p class="sub">No workers are available to take work.</p>'
-    pending_html = (f'<section class="fleet-section box" id="fleet-pending"><h2>Starting, stopping &amp; moving · {len(pending)}</h2>'
-                    f'{worker_rows(pending)}</section>') if pending else ""
-    history_html = (f'<details class="history box" id="fleet-history"><summary>Stopped &amp; historical bots · {_plural(len(history), "record")}</summary>'
-                    f'{worker_rows(history)}</details>') if history else ""
-    machines_html = "".join(machines) or ('<div class="empty">No box has reported yet. Run <code>bin/bot keeper install</code> '
-                                         'on each box that runs bots.</div>')
-    blocked_count = sum(len(entries) for entries in blockers.values())
-    # The obvious way to add a bot: a button up top that opens one form, where the box,
-    # harness and (optionally) the project to dedicate it to are all chosen in one place.
-    reporting_boxes = [h["name"] for h in hosts if h["reporting"]]
-    if reporting_boxes:
-        host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting_boxes)
+            for p in pools) + '. Every other project is served by the shared pool.</p>')
+    # The obvious way to add a bot: one form, where the box, harness and (optionally)
+    # the project to dedicate it to are all chosen in one place.
+    if reporting:
+        host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
         project_opts = '<option value="">No project (shared pool)</option>' + "".join(
             f'<option value="{e(p)}">{e(p)}</option>' for p in projects)
-        add_bot = f"""<section class="addbot-cta">
-<details id="addbot">
-<summary><span class="addbot-btn">+ Add a bot</span><span class="addbot-hint">pick a machine, a harness, and optionally a project</span></summary>
+        add_bot = f"""<details id="addbot" class="addbot-cta">
+<summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">
 <label class="fld"><span>Machine</span><select name="host" aria-label="machine">{host_opts}</select></label>
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
@@ -2355,32 +2414,25 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
 <button type="submit" class="addbot-go">Start bot</button>
 </form>
-<p class="addbot-note">The box's keeper starts the bot on its next report. A project dedicates the bot to that project's pool once it is online.</p>
-</details>
-</section>"""
+<p class="addbot-note">The machine's keeper starts it within a few seconds. A project dedicates the bot to that project once it is online.</p>
+</details>"""
     else:
-        add_bot = ('<section class="addbot-cta"><div class="addbot-empty">To add a bot, a box must be reporting. '
-                   'Run <code>bin/bot keeper install</code> on a machine first.</div></section>')
+        add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <style>{FLEET_CSS}</style>
 <div class="fleet-page">
-<h1>Fleet</h1>
-<p class="sub">Your bots first: who needs you, who is running, who is idle. Machines and environment are below.</p>
+<div class="fleet-head"><h1>Fleet</h1>{add_bot}</div>
 <div class="statstrip" role="status">
-<span class="stat run"><b>{len(running)}</b> running</span>
-<span class="stat idle"><b>{len(idle)}</b> idle, ready</span>
-<span class="stat warn"><b>{blocked_count}</b> need attention</span>
-<span class="stat"><b>{reporting} of {_plural(len(hosts), "box", "boxes")}</b> reporting</span>
+<span class="stat run"><b>{working}</b> working</span>
+<span class="stat idle"><b>{waiting}</b> waiting for work</span>
+<span class="stat{" warn" if alerts else ""}"><b>{len(alerts)}</b> need{"s" if len(alerts) == 1 else ""} you</span>
+<span class="stat"><b>{len(stopped)}</b> stopped</span>
+<span class="stat"><b>{len(reporting)} of {_plural(len(hosts), "machine")}</b> reporting</span>
 </div>
-{add_bot}
 {attention}
-<section class="fleet-section card box" id="fleet-running"><h2>Running · {len(running)}</h2>{running_html}</section>
-<section class="fleet-section card box" id="fleet-idle"><h2>Idle, ready for work · {len(idle)}</h2>{idle_html}</section>
-{pending_html}
-<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>
-<p class="sub">Where bots are deployed, and each box's specs and spare capacity.</p>{machines_html}</section>
-<section class="fleet-section card" id="fleet-add-machine">
-<h2>Add a machine</h2>
+<section class="fleet-section" id="fleet-bots"><h2>Bots · {len(active)}</h2>{bots_html}{stopped_html}</section>
+<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+<details class="fleet-settings" id="fleet-add-machine"><summary>Add a machine</summary>
 <p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
 <h3>1. Before you start</h3>
 <p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
@@ -2395,13 +2447,11 @@ For GitHub work, also install <code>gh</code> and run <code>gh auth login</code>
 No sudo needed. Dependencies and coding harnesses are installed separately.
 If this board requires an invite code, configure it on the machine before installing.</p>
 <h3>3. Your machine appears here</h3>
-<p class="sub">Once the keeper reports in, start a worker from the machine's card.</p>
-</section>
-{history_html}
-<details class="fleet-settings"><summary>Fleet controls &amp; project assignments</summary>
-<p>Start and stop requests are carried out by the keeper; stop finishes the current run, kill cuts it short.
-<span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}</details>
-<details class="fleet-settings" id="secrets"><summary>Environment configuration</summary>
+<p class="sub">Once the keeper reports in, add a bot on it.</p>
+</details>
+<details class="fleet-settings" id="secrets"><summary>Settings: shared secrets and project pools</summary>
+<p class="sub">Stop finishes the run a bot is in; kill cuts it short. The keeper on each machine carries out requests
+within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}
 <p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
 shown again. Board admins only.</p>

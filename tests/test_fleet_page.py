@@ -57,88 +57,131 @@ class FleetPage(unittest.TestCase):
         page = web.fleet_page('board', hosts)
         return page, FleetSections(page).sections
 
-    def test_available_counts_exclude_blocked_transitions_history_and_stale_hosts(self):
+    def test_active_bots_lead_and_counts_match_what_they_do(self):
         page, sections = self.render([
             host('live', [bot('ready'), bot('busy', 'running game'),
                           bot('limited', health='out of codex usage: resets Monday'),
                           bot('login', health='logged out of codex'),
                           bot('leaving', 'running game, stopping'), bot('old', 'stopped')]),
-            host('offline', [bot('ghost')], reporting=False),
+            host('offline', [bot('ghost'), bot('gone', 'stopped')], reporting=False),
         ])
-        self.assertIn('1</b> running', page)
-        self.assertIn('1</b> idle', page)
-        self.assertIn('2</b> need attention', page)
-        self.assertIn('1 of 2 boxes', page)
-        self.assertIn('@ready', sections['fleet-idle'])
-        self.assertIn('@busy', sections['fleet-running'])
-        for handle in ('limited', 'login', 'leaving', 'old', 'ghost'):
-            self.assertNotIn('@' + handle, sections['fleet-idle'])
-            self.assertNotIn('@' + handle, sections['fleet-running'])
-        self.assertIn('@leaving', sections['fleet-pending'])
-        self.assertIn('2 available · 2 blocked · 5 launchers alive', sections['box-live'])
-        self.assertIn('availability unknown', sections['box-offline'])
-        self.assertNotIn('@ghost', sections['box-offline'])
+        self.assertIn('1</b> working', page)
+        self.assertIn('1</b> waiting for work', page)
+        self.assertIn('3</b> need you', page)     # the usage limit, the login, the box gone dark
+        self.assertIn('1</b> stopped', page)
+        self.assertIn('1 of 2 machines', page)
+        bots = sections['fleet-bots']
+        # working first, then waiting, then the rest; stopped bots fold away
+        self.assertLess(bots.index('@busy'), bots.index('@ready'))
+        self.assertLess(bots.index('@ready'), bots.index('@leaving'))
+        self.assertNotIn('@old', bots)
+        self.assertIn('@old', page)
+        # a box gone dark shows what it last ran, not what it had stopped
+        self.assertIn('waiting when last heard', bots)
+        self.assertNotIn('data-handle="ghost"', page)     # nothing there would carry a stop out
+        self.assertNotIn('@gone', page)
+        self.assertIn('5 up · 1 stopped', sections['fleet-machines'])
+        self.assertIn('not reporting', sections['fleet-machines'])
+        self.assertIn('offline stopped reporting', sections['fleet-attention'])
 
-    def test_usage_alert_is_grouped_and_stopped_usage_block_is_visible(self):
+    def test_each_row_says_group_harness_machine_and_last_active(self):
+        page, sections = self.render([host('live', [
+            bot('ded', project='game', pool=True, last_run=db.now()),
+            bot('shared', pool=True), bot('single', serves='/home/me/src/wordsnap/')])])
+        bots = sections['fleet-bots']
+        self.assertIn('href="/projects/game"', page)
+        self.assertIn('shared pool', bots)
+        self.assertIn('wordsnap', bots)
+        self.assertNotIn('/home/me/src', bots)
+        self.assertIn('codex', bots)
+        self.assertIn('href="#box-live"', page)
+        self.assertIn('0s ago', bots)
+        self.assertIn('never', bots)
+
+    def test_usage_alert_is_grouped_and_says_nothing_needs_doing(self):
         reason = 'out of codex usage: weekly limit; resets Monday'
         page, sections = self.render([host('live', [
             bot('one', health=reason),
             bot('two', 'stopped', health=reason, want='running', set_by='op', set_at=db.now()),
         ])])
-        self.assertEqual(sections['fleet-attention'].count('codex: usage limit reached'), 1)
-        self.assertEqual(sections['fleet-attention'].count(reason), 1)
-        self.assertIn('View 2 workers', page)
-        self.assertIn('0</b> running', page)
-        self.assertIn('0</b> idle', page)
-        self.assertNotIn('id="fleet-history"', page)
+        attention = sections['fleet-attention']
+        self.assertEqual(attention.count('codex usage limit reached'), 1)
+        self.assertIn('once the limit resets', attention)
+        self.assertIn('@one', attention)
+        self.assertIn('@two', attention)
+        self.assertIn('Stop them', attention)
+        self.assertIn('0</b> working', page)
+        self.assertIn('0</b> waiting', page)
 
-    def test_history_and_worker_controls_are_collapsed_but_preserved(self):
+    def test_controls_sit_on_the_row(self):
         page, sections = self.render([host('live', [
             bot('ready', pool=True, serves='/saved/sessions'),
             bot('retired', 'stopped', health='out of codex usage: old limit', want='stopped',
                 set_by='op', set_at=db.now()),
         ]), host('other', [])])
         self.assertNotIn('fleet-attention', sections)
-        self.assertIn('1 record', page)
-        self.assertNotIn('@retired', sections.get('fleet-history', ''))
-        self.assertNotIn('/saved/sessions', sections['fleet-idle'])
+        self.assertIn('Stopped · 1', page)
         self.assertIn('data-kill="1"', page)
         self.assertIn('class="move" data-handle="ready"', page)
+        self.assertNotIn('class="move" data-handle="retired"', page)
         self.assertIn('data-handle="retired" data-host="live" data-run="1"', page)
         self.assertIn('class="drain"', page)
 
-    def test_requested_start_and_failure_do_not_disappear_into_history(self):
+    def test_requested_start_and_failure_stay_in_view_with_a_fix(self):
         page, sections = self.render([host('live', [
             bot('starting', 'stopped', want='running', set_by='op', set_at=db.now()),
             bot('broken', 'stopped', want='running', problem='codex not installed',
                 set_by='op', set_at=db.now()),
         ])])
-        self.assertIn('@starting', sections['fleet-pending'])
+        self.assertIn('@starting', sections['fleet-bots'])
+        self.assertIn('start asked by @op', sections['fleet-bots'])
+        self.assertIn('Could not start 1 bot', sections['fleet-attention'])
         self.assertIn('codex not installed', sections['fleet-attention'])
-        self.assertNotIn('id="fleet-history"', page)
+        self.assertIn('Try again', sections['fleet-attention'])
+        self.assertIn('Leave stopped', sections['fleet-attention'])
         self.assertIn('title="withdraw the start">cancel', page)
 
     def test_failed_last_run_keeps_worker_available(self):
         page, sections = self.render([host('live', [bot('retry', health='last run failed: temporary error')])])
-        self.assertIn('1</b> idle', page)
-        self.assertIn('@retry', sections['fleet-idle'])
-        self.assertIn('Last run failed · can retry', sections['fleet-idle'])
-        self.assertIn('0</b> need attention', page)
-        self.assertIn('last run failed: temporary error', page)
+        self.assertIn('1</b> waiting', page)
+        self.assertIn('@retry', sections['fleet-bots'])
+        self.assertIn('last run failed: temporary error', sections['fleet-bots'])
+        self.assertIn('0</b> need you', page)
 
-    def test_stopped_worker_with_a_problem_has_consistent_blocked_counts(self):
-        page, sections = self.render([host('live', [bot('broken', 'stopped', problem='failed to stop cleanly')])])
-        self.assertIn('1</b> need attention', page)
-        self.assertIn('0 available · 1 blocked · 0 launchers alive', sections['box-live'])
-        self.assertIn('failed to stop cleanly', sections['fleet-attention'])
+    def test_ignored_request_from_a_non_operator_is_one_dismissable_alert(self):
+        why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
+        stale = dict(want='stopped', set_by='billy', set_at=db.now(), problem=why)
+        page, sections = self.render([
+            host('a', [bot('anya', 'stopped', clear_key='ka', **stale), bot('dara', 'stopped', clear_key='kd', **stale)]),
+            host('b', [bot('amos', 'stopped', clear_key='km', **stale)])])
+        attention = sections['fleet-attention']
+        self.assertEqual(attention.count('Request from @billy ignored'), 1)
+        self.assertIn('already stopped', attention)
+        self.assertIn('Dismiss', attention)
+        self.assertIn('1</b> needs you', page)
+        for h in ('anya', 'dara', 'amos'):
+            self.assertIn('href="#bot-' + h + '"', page)
+            self.assertIn('id="bot-' + h + '"', page)
+
+    def test_ignored_start_offers_to_do_it_as_me(self):
+        why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
+        page, sections = self.render([host('a', [bot('anya', 'stopped', want='running', set_by='billy',
+                                                     set_at=db.now(), problem=why)])])
+        self.assertIn('Start it as me', sections['fleet-attention'])
+        self.assertIn('KEEPER_OPERATORS', sections['fleet-attention'])
 
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),
         ])])
         self.assertIn('Run claude /login', sections['fleet-attention'])
-        self.assertIn('No live workers', sections['box-empty'])
-        self.assertIn('No workers are available', sections['fleet-idle'])
+        # the bots it holds are not one more alert each
+        held, held_sections = self.render([host('box', [bot('dex', health='logged out of codex')],
+                                           credentials=[dict(name='codex', state='missing', detail='not logged in')])])
+        self.assertIn('1</b> needs you', held)
+        self.assertIn('codex missing on box', held_sections['fleet-attention'])
+        self.assertIn('0 up · 0 stopped', sections['fleet-machines'])
+        self.assertIn('No bot is running', sections['fleet-bots'])
         self.assertIn('No box has reported yet', self.render([])[0])
 
     def test_untrusted_names_and_health_are_escaped(self):
@@ -164,11 +207,11 @@ class FleetPage(unittest.TestCase):
     def test_add_bot_form_absent_without_a_reporting_box(self):
         page = web.fleet_page('board', [host('dark', [], reporting=False)], projects=['falco'])
         self.assertNotIn('class="newbot-top"', page)
-        self.assertIn('a box must be reporting', page)
+        self.assertIn('a machine must be reporting', page)
 
     def test_add_machine_section_is_present_even_without_hosts(self):
-        page, sections = self.render([])
-        setup = sections['fleet-add-machine']
+        page, _ = self.render([])
+        setup = page[page.index('id="fleet-add-machine"'):]
         self.assertIn('Before you start', setup)
         self.assertIn('Python 3', setup)
         self.assertIn('gh auth login', setup)

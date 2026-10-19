@@ -18,6 +18,7 @@ def _item(text: str, href: str, where: str) -> dict:
 
 def _fleet(hosts: list, attention: list) -> list:
     out = []
+    troubles = {}      # why -> [(box, handle)]: the same trouble on many bots is one item
     for h in hosts:
         if not h["reporting"]:
             attention.append(_item(f"{h['name']} is not reporting: last heard {ago(h['reported_at'])}",
@@ -45,7 +46,7 @@ def _fleet(hosts: list, attention: list) -> list:
             # box gone dark (the box's own item covers it) or one held by a login the box lacks (ditto)
             held = st["state"] == "needs login" and (b.get("harness") or "") in out_of
             if why and h["reporting"] and not held and (b["status"].startswith(fleet.UP) or b.get("want")):
-                attention.append(_item(f"@{b['handle']} on {h['name']}: {why}", f"/fleet#box-{h['name']}", "fleet"))
+                troubles.setdefault(why, []).append((h["name"], b["handle"]))
         for harness, blocked in limited.items():
             names = ", ".join("@" + b["handle"] for b in blocked)
             attention.append(_item(f"{harness} usage limit reached on {h['name']}: "
@@ -54,6 +55,13 @@ def _fleet(hosts: list, attention: list) -> list:
         out.append({"name": h["name"], "reporting": h["reporting"], "reported_at": h["reported_at"],
                     "load": h.get("load"), "cores": h.get("cores"), "credentials": h.get("credentials") or [],
                     "bots": bots, "up": sum(b["up"] for b in bots)})
+    for why, bots in troubles.items():
+        boxes = ", ".join(dict.fromkeys(box for box, _ in bots))
+        if len(bots) == 1:
+            attention.append(_item(f"@{bots[0][1]} on {boxes}: {why}", f"/fleet#bot-{bots[0][1]}", "fleet"))
+        else:
+            attention.append(_item(f"{len(bots)} bots ({', '.join('@' + h for _, h in bots)}) on {boxes}: {why}",
+                                   "/fleet#fleet-attention", "fleet"))
     return out
 
 
