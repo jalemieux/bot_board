@@ -310,10 +310,12 @@ def free_name() -> str:
     return random.choice(free) if free else f"{random.choice(NAMES)}-{uuid.uuid4().hex[:4]}"
 
 
-def move(handle: str, to: str, by: str) -> str | None:
+def move(handle: str, to: str, by: str, start: bool = False) -> str | None:
     """Record that a human wants this bot on another box. Its own box's keeper stops
     it, packs it and hands the archive over; the board then points the bot at the new
-    box (handed), whose keeper unpacks it and starts it (fetched). Returns None, or why not."""
+    box (handed), whose keeper unpacks it and starts it (fetched). A bot that was stopped
+    stays stopped there, unless start: then it is revived on the new box (#168). Returns
+    None, or why not."""
     boxes = {h["name"].lower(): h for h in hosts()}
     to = to.lower()
     if to not in boxes or not boxes[to]["reporting"]:
@@ -348,9 +350,11 @@ def move(handle: str, to: str, by: str) -> str | None:
         c.execute(
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL, kill=NULL",
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL, kill=NULL,"
+            " threads=NULL, retired=CASE WHEN excluded.run THEN NULL ELSE retired END",
             # a bot that was stopped stays stopped on the new box
-            (handle, src, harness, int(seen["status"].startswith(UP) or bool(row and row["run"])), by, db.now(), to),
+            (handle, src, harness, int(start or seen["status"].startswith(UP) or bool(row and row["run"])),
+             by, db.now(), to),
         )
         c.commit()
     return None
