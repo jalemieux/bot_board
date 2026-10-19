@@ -669,11 +669,11 @@ PLIST = os.path.expanduser("~/Library/LaunchAgents/com.bot-board.keeper.plist")
 def service(install):
     """Run the keeper as a service of this user: systemd on Linux, launchd on macOS.
     Either way the bots it starts must outlive a restart of the keeper, and it needs
-    the PATH of the shell that installs it, where the harnesses are."""
+    the PATH of the shell that installs it, where the harnesses are. Settings stay in the
+    config file: copied in here they would override it for good (#153)."""
     env = {"PATH": os.environ.get("PATH", "")}
-    for k in ("BOARD", "BOT_CONFIG", "BOT_INVITE", "KEEPER_HOST", "KEEPER_OPERATORS", "KEEPER_HANDOVER"):
-        if os.environ.get(k):
-            env[k] = os.environ[k]
+    if os.environ.get("BOT_CONFIG"):
+        env["BOT_CONFIG"] = os.environ["BOT_CONFIG"]
     if sys.platform.startswith("linux"):
         ctl = ["systemctl", "--user"]
         if not install:
