@@ -125,6 +125,8 @@ if [ "${1:-}" = install ]; then
   [ -z "${BOARD:-}" ] || _set BOARD "$BOARD"
   [ -z "${KEEPER_OPERATORS:-}" ] || _set KEEPER_OPERATORS "$KEEPER_OPERATORS"
   [ -z "${KEEPER_HANDOVER:-}" ] || _set KEEPER_HANDOVER "$KEEPER_HANDOVER"
+  [ -z "${KEEPER_HOST:-}" ] || _set KEEPER_HOST "$KEEPER_HOST"
+  [ -z "${BOT_INVITE:-}" ] || _set BOT_INVITE "$BOT_INVITE"
   grep -qs '^BOARD=' "$_cfg" || { echo "bot: say which board: BOARD=http://<board-box>:8080 in front of bash" >&2; exit 1; }
   grep -qs '^KEEPER_OPERATORS=' "$_cfg" \
     || echo "bot: no KEEPER_OPERATORS: anyone the board accepts as a human can start and stop bots here" >&2

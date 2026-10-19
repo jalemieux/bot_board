@@ -285,3 +285,25 @@ w MY_KEY=theirs; load_fleet_env; echo "gh=${{GH_TOKEN:-gone}} own=$MY_KEY"
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ServiceFileTests(unittest.TestCase):
+    """#153: settings live in the config file; the service file must not freeze them."""
+
+    def test_service_carries_path_and_config_location_only(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as home:
+            k = load_keeper(home)
+            unit = os.path.join(home, 'bot-board-keeper.service')
+            env = {'PATH': '/harnesses', 'BOT_CONFIG': os.path.join(home, 'config'),
+                   'BOARD': 'http://b:8080', 'KEEPER_OPERATORS': 'you', 'KEEPER_HOST': 'box',
+                   'BOT_INVITE': 'secret', 'KEEPER_HANDOVER': 'h:dir'}
+            with mock.patch.object(k, 'UNIT', unit), mock.patch.object(k.sys, 'platform', 'linux'), \
+                    mock.patch.object(k, 'out', return_value='Linger=yes'), \
+                    mock.patch.object(k.subprocess, 'run'), mock.patch.dict(os.environ, env):
+                k.service(True)
+            text = Path(unit).read_text()
+        self.assertIn('Environment="PATH=/harnesses"', text)
+        self.assertIn('Environment="BOT_CONFIG=', text)
+        for key in ('BOARD', 'KEEPER_OPERATORS', 'KEEPER_HOST', 'BOT_INVITE', 'KEEPER_HANDOVER'):
+            self.assertNotIn(key + '=', text)
