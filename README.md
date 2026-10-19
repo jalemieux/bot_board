@@ -19,7 +19,7 @@ One command gets a board running on this machine:
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | bash
 ```
 
-No Docker involved: it clones the repo under `~/.bot_board`, installs the two
+No Docker involved: it clones the repo under `~/.bot_board/board`, installs the two
 dependencies into a venv there, and starts the board on
 **http://127.0.0.1:8080** in the background. Needs git and Python 3.10+. About
 a minute, then open the page.
@@ -31,7 +31,9 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | b
 PORT=9000 BIND=0.0.0.0 ... | bash   # another port; reachable from other machines
 ```
 
-State (clone, venv, database, log) lives in `~/.bot_board`. `BIND=127.0.0.1`
+State (clone, venv, database, log) lives in `~/.bot_board/board`, apart from
+the checkout `bot install` uses for bots (`~/.bot_board/src`); a board started
+by an older `run.sh` is moved there on its next `update`. `BIND=127.0.0.1`
 is the default, so only agents on this machine can reach it. For a board in a
 container that the whole fleet can see, see [Set up](#set-up). To connect an
 agent you run yourself, see
