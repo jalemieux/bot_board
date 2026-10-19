@@ -63,7 +63,11 @@ SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")
 MOVE_COLUMNS = ("move_to", "fetch")
 # kill: when a human asked for the bot to stop now, cutting its harness run short
 # (a stuck or runaway bot); cleared by the next request for it.
-EXTRA_COLUMNS = MOVE_COLUMNS + ("kill",)
+# threads: what to do with the bot's open threads once it has stopped (#167): handoff or
+# retire releases them when the keeper reports it stopped; NULL keeps them. retired: when it
+# was retired, so it leaves the stopped list; cleared by the next start.
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired")
+THREADS = ("keep", "handoff", "retire")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
 HARNESSES = ("claude", "codex", "opencode", "copilot")
@@ -112,7 +116,28 @@ def report(name: str, agent_id: int, data: dict) -> bool:
         projects.apply_pending_dedications()
     except Exception:
         pass
+    hand_off(name, data.get("bots") or [])
     return True
+
+
+def hand_off(host: str, bots: list[dict]) -> None:
+    """Release the open threads of the bots on this box that were asked to hand them off,
+    once its keeper reports them stopped: not before, or the old bot's last run could post
+    into a thread another bot has just claimed."""
+    c = db.conn()
+    seen = {b["handle"].lower(): b for b in bots}
+    for r in c.execute("SELECT * FROM fleet_bots WHERE host=? AND run=0 AND threads IS NOT NULL",
+                       (host,)).fetchall():
+        b = seen.get(r["handle"].lower())
+        if b and b.get("status", "").startswith(UP):
+            continue
+        by = db.get_agent_by_handle(r["set_by"])
+        if by and db.get_agent_by_handle(r["handle"]):
+            db.hand_off_threads(r["handle"], by)
+        with db._write_lock:
+            c.execute("UPDATE fleet_bots SET retired=CASE WHEN threads='retire' THEN ? ELSE retired END,"
+                      " threads=NULL WHERE handle=? AND set_at=?", (db.now(), r["handle"], r["set_at"]))
+            c.commit()
 
 
 def secrets() -> list[dict]:
@@ -162,24 +187,33 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def _set_want(c, handle, host, harness, run, by, now, kill=False, project=None):
+def _set_want(c, handle, host, harness, run, by, now, kill=False, project=None, threads=None):
     c.execute(
-        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project) VALUES (?,?,?,?,?,?,?,?)"
+        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project, threads)"
+        " VALUES (?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-        " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill",
-        (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None),
+        " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill,"
+        " threads=excluded.threads, retired=CASE WHEN excluded.run THEN NULL ELSE retired END",
+        (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None,
+         threads if threads in ("handoff", "retire") else None),
     )
 
 
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
-         project: str | None = None) -> str | None:
+         project: str | None = None, threads: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
     harness run it is in. project: dedicate the bot to this project once it comes
-    online (kept on the row until applied). Returns None, or why not."""
+    online (kept on the row until applied). threads, with a stop: keep its open threads,
+    handoff (release them once it has stopped) or retire (hand off, and drop it from the
+    stopped list). Returns None, or why not."""
     if kill and run:
         return "a kill stops the bot: ask for run false"
+    if threads not in (None,) + THREADS:
+        return f"threads: one of {', '.join(THREADS)}"
+    if threads and threads != "keep" and run:
+        return "threads are handed off when a bot stops: ask for run false"
     c = db.conn()
     boxes = {h["name"].lower(): h for h in hosts()}
     if host.lower() not in boxes:
@@ -205,7 +239,7 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         now = db.now()
         if harness not in HARNESSES:
             return f"say which harness {handle} runs: one of {', '.join(HARNESSES)}"
-        _set_want(c, handle, host, harness, run, by, now, kill, project)
+        _set_want(c, handle, host, harness, run, by, now, kill, project, threads)
         c.commit()
     return None
 
@@ -237,6 +271,9 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
         # asked, and the keeper has not acted yet: say what was asked; once it has, "stopping"
         words = "stopping" if "stopping" in st else ""
         words = ", ".join(w for w in (words, "kill asked" if b.get("kill") else "" if words else "stop asked") if w)
+        if b.get("threads") and b.get("open_threads"):
+            n = b["open_threads"]
+            words += f" · hands off {n} thread{'s' * (n != 1)} once stopped"
         return out("stopping", words)
     if up and health.startswith("logged out"):
         return out("needs login", "needs a login", health)
@@ -273,10 +310,12 @@ def free_name() -> str:
     return random.choice(free) if free else f"{random.choice(NAMES)}-{uuid.uuid4().hex[:4]}"
 
 
-def move(handle: str, to: str, by: str) -> str | None:
+def move(handle: str, to: str, by: str, start: bool = False) -> str | None:
     """Record that a human wants this bot on another box. Its own box's keeper stops
     it, packs it and hands the archive over; the board then points the bot at the new
-    box (handed), whose keeper unpacks it and starts it (fetched). Returns None, or why not."""
+    box (handed), whose keeper unpacks it and starts it (fetched). A bot that was stopped
+    stays stopped there, unless start: then it is revived on the new box (#168). Returns
+    None, or why not."""
     boxes = {h["name"].lower(): h for h in hosts()}
     to = to.lower()
     if to not in boxes or not boxes[to]["reporting"]:
@@ -311,9 +350,11 @@ def move(handle: str, to: str, by: str) -> str | None:
         c.execute(
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
             " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
-            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL, kill=NULL",
+            " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=excluded.move_to, fetch=NULL, kill=NULL,"
+            " threads=NULL, retired=CASE WHEN excluded.run THEN NULL ELSE retired END",
             # a bot that was stopped stays stopped on the new box
-            (handle, src, harness, int(seen["status"].startswith(UP) or bool(row and row["run"])), by, db.now(), to),
+            (handle, src, harness, int(start or seen["status"].startswith(UP) or bool(row and row["run"])),
+             by, db.now(), to),
         )
         c.commit()
     return None
@@ -474,6 +515,7 @@ def hosts() -> list[dict]:
             " JOIN projects p ON p.id = pb.project_id WHERE p.archived = 0")}
     except db.sqlite3.OperationalError:     # a board without projects yet
         dedicated = {}
+    holding = db.open_threads()     # each bot's claimed, not completed threads (#167)
     out = []
     clears = {r["handle"].lower(): dict(r) for r in db.conn().execute("SELECT * FROM fleet_alert_clears")}
     for r in rows:
@@ -492,10 +534,12 @@ def hosts() -> list[dict]:
             if w:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
-                         move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"])
+                         move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"],
+                         threads=w["threads"], retired=w["retired"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
-                       "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"]} for w in asked.values()]
+                       "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"],
+                       "threads": w["threads"], "retired": w["retired"]} for w in asked.values()]
         for b in h["bots"]:
             ack = clears.get(b["handle"].lower())
             if ack and h["reporting"] and b["status"] == "stopped" and ack["host"].lower() == h["name"].lower():
@@ -505,6 +549,8 @@ def hosts() -> list[dict]:
                 b["clear_key"] = alert_key(h["name"], b)
             b["last_post"] = posted.get(b["handle"].lower(), "")
             b["project"] = dedicated.get(b["handle"].lower())
+            held = holding.get(b["handle"].lower(), [])
+            b["open_threads"], b["open_thread_list"] = len(held), held[:20]
             b["state"] = bot_state(b, h["reporting"])
         out.append(h)
     return out

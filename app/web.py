@@ -1960,6 +1960,9 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         asked = ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
                  else "start" if b["want"] == "running" else "stop")
         why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+    held = b.get("open_threads") or 0
+    if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
+        why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
     group = (f'<a href="/projects/{e(b["project"])}">{e(b["project"])}</a>' if b.get("project")
              else "shared pool" if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
     # last active: the keeper knows its last harness run, the board its last post
@@ -1968,8 +1971,11 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     can = b["status"] != "moved" and (up or b.get("harness")) and st["state"] != "unknown"
     # no second start or stop for one already asked; a kill can still follow a stop
     again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
+    # a stop of a bot holding open threads first asks what to do with them
+    asks = up and held and not b.get("move_to")
     act = lambda label, run, extra="": (f'<button type="button" class="act{" kill" if "kill" in extra else ""}" '
-                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"{extra}>{label}</button>')
+                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"'
+                                        f'{f" data-open={held}" if asks and run == 0 else ""}{extra}>{label}</button>')
     btn = act("stop" if up else "start", 0 if up else 1) if can and not again else ""
     # a start asked of a box whose keeper never answers would otherwise leave no way back
     if can and again and not up:
@@ -1986,7 +1992,27 @@ def _bot_row(b: dict, host: str, others: list) -> str:
             f'<td data-label="group">{group}</td><td data-label="harness">{e(b.get("harness") or "?")}</td>'
             f'<td data-label="machine"><a href="#box-{e(host)}">{e(host)}</a></td>'
             f'<td data-label="active" class="dim nw">{e(ago(last)) if last else "never"}</td>'
-            f'<td class="acts">{btn}</td></tr>')
+            f'<td class="acts">{btn}</td></tr>' + (_stop_panel(b, host) if asks and can else ""))
+
+
+def _stop_panel(b: dict, host: str) -> str:
+    """Opened by stop or kill on a bot that holds open threads: keep them, hand them off
+    once it has stopped, or retire it (#167)."""
+    h, n = e(b["handle"]), b["open_threads"]
+    items = "".join(f'<li><a href="/t/{t["thread_id"]}">#{e(t["channel"])} · {e(t["title"] or "(untitled)")}</a>'
+                    f' <span class="dim">{e(ago(t["last_at"]))}</span></li>' for t in b.get("open_thread_list") or [])
+    more = n - len(b.get("open_thread_list") or [])
+    items += f'<li class="dim">and {more} more</li>' if more > 0 else ""
+    opt = lambda v, label, note, on="": (f'<label><input type="radio" name="threads-{h}" value="{v}"{on}> <b>{label}</b>'
+                                         f' <span class="dim">{note}</span></label>')
+    return (f'<tr class="stop-panel" id="stop-{h}" hidden><td colspan="7">'
+            f'<p>@{h} holds {n} open thread{"s" * (n != 1)}. What should happen to {"them" if n != 1 else "it"}?</p>'
+            f'<ul>{items}</ul><div class="opts">'
+            + opt("keep", "Keep them", "for a restart or a move; nobody else can pick them up", " checked")
+            + opt("handoff", "Hand them off", "released once it has stopped; the next watching bot claims each")
+            + opt("retire", "Retire", "hand them off, and drop it from the stopped list")
+            + f'</div><button type="button" class="act stop-go" data-handle="{h}" data-host="{e(host)}" data-run="0">'
+              'Stop</button> <button type="button" class="stop-cancel">cancel</button></td></tr>')
 
 
 def _bot_table(entries: list, others_of) -> str:
@@ -2108,18 +2134,43 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, project) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, project, threads) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null}
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null,
+                                   threads: threads || null}
                                 : {host: host, harness: harness, project: project || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 }
+// A stop of a bot holding open threads opens its panel first; its button then sends the choice.
+function stopLabel(panel) {
+  var v = panel.querySelector('input:checked').value, verb = panel.dataset.kill ? 'Kill' : 'Stop';
+  panel.querySelector('.stop-go').textContent = verb + (v === 'handoff' ? ' and hand off' : v === 'retire' ? ' and retire' : '');
+}
+document.addEventListener('change', function (ev) {
+  var panel = ev.target.closest('tr.stop-panel'); if (panel) stopLabel(panel);
+});
+document.addEventListener('click', function (ev) {
+  if (ev.target.closest('button.stop-cancel')) ev.target.closest('tr.stop-panel').hidden = true;
+});
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.act'); if (!b) return;
+  var panel = document.getElementById('stop-' + b.dataset.handle);
+  if (b.dataset.open && panel) {
+    panel.hidden = false;
+    if (b.dataset.kill) panel.dataset.kill = '1'; else delete panel.dataset.kill;
+    stopLabel(panel);
+    return;
+  }
+  if (b.classList.contains('stop-go')) {
+    var kill = !!panel.dataset.kill;
+    if (kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
+    ask(b.dataset.handle, b.dataset.host, false, null, kill, null, panel.querySelector('input:checked').value);
+    return;
+  }
   if (b.dataset.kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
   ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1', null, b.dataset.kill === '1');
 });
@@ -2181,6 +2232,39 @@ document.addEventListener('submit', function (ev) {
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
       f.elements.harness.value, false, f.elements.project.value);
+});
+// Add a bot suggests reviving a stopped bot of the same harness and project instead (#168): it
+// keeps its name, sessions and claimed threads. On another machine, a pool bot moves here and starts.
+var REVIVE = JSON.parse((document.getElementById('revive-data') || {}).textContent || '[]');
+function reviveList() {
+  var f = document.querySelector('form.newbot-top'), box = document.getElementById('revive'); if (!f || !box) return;
+  var host = f.elements.host.value, rows = REVIVE.filter(function (b) {
+    return b.harness === f.elements.harness.value && b.project === f.elements.project.value && (b.host === host || b.pool);
+  });
+  box.hidden = !rows.length;
+  box.innerHTML = rows.length ? '<h3>Revive a stopped bot instead?</h3>' + rows.map(function (b) {
+    var here = b.host === host, bits = ['@' + esc(b.handle)];
+    if (b.open) bits.push('<b>' + b.open + ' open thread' + (b.open === 1 ? '' : 's') + '</b>');
+    if (b.stopped) bits.push('stopped ' + esc(b.stopped));
+    bits.push('on ' + esc(b.host));
+    return '<div class="rv"><span>' + bits.join(' · ') + '</span> <button type="button" class="revive-go" data-handle="'
+      + esc(b.handle) + '" data-host="' + esc(b.host) + '"' + (here ? '' : ' data-to="' + esc(host) + '"') + '>'
+      + (here ? 'Revive' : 'Move here and revive') + '</button></div>';
+  }).join('') : '';
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
+document.addEventListener('change', function (ev) { if (ev.target.closest('form.newbot-top')) reviveList(); });
+reviveList();
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.revive-go'); if (!b) return;
+  if (!b.dataset.to) { ask(b.dataset.handle, b.dataset.host, true); return; }
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/move', {method: 'POST',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
+    body: JSON.stringify({to: b.dataset.to, start: true})})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
 });
 // The fleet's secrets: names only, from the admin API.
 function secretCall(method, name, body) {
@@ -2291,6 +2375,10 @@ FLEET_CSS = """
 .fleet-page .why{color:var(--accent);font-size:12px;margin-top:3px;overflow-wrap:anywhere;
  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fleet-page .by{color:var(--dim);font-size:12px;margin-top:3px}
+.fleet-page tr.stop-panel[hidden]{display:none}
+.fleet-page tr.stop-panel td{background:var(--accent-soft);font-size:13px}
+.fleet-page tr.stop-panel p{margin:0 0 6px}.fleet-page tr.stop-panel ul{margin:0 0 8px;padding-left:18px}
+.fleet-page tr.stop-panel .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .fleet-page .pip{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--line)}
 .fleet-page .pip.run{background:var(--good)}
 .fleet-page .pip.ok{background:transparent;box-shadow:inset 0 0 0 2px var(--good)}
@@ -2319,6 +2407,9 @@ body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .add
 .fleet-page form.newbot-top select,.fleet-page form.newbot-top input{background:var(--bg);border:1px solid var(--line);
  color:var(--ink);border-radius:6px;padding:6px 8px;font:13px var(--mono)}
 .fleet-page .addbot-go{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 18px;font-weight:600;cursor:pointer}
+.fleet-page .revive{flex-basis:100%;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft);padding:8px 12px;font-size:13px}
+.fleet-page .revive h3{font-size:13px;margin:0 0 6px}.fleet-page .revive .rv{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:3px 0}
+.fleet-page .revive button{border:1px solid var(--accent);color:var(--accent);background:var(--panel);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12.5px}
 .fleet-page .addbot-note{color:var(--dim);font-size:12px;margin:0;padding:0 16px 14px}
 .fleet-page .addbot-empty{color:var(--dim);font-size:13px}
 @media(max-width:760px){
@@ -2350,6 +2441,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
             st = b["state"]["state"]
             # a box gone dark shows what it last ran, and nothing it had stopped
             live = st != "stopped" and (h["reporting"] or b["status"].startswith(fleet_mod.UP))
+            if not live and b.get("retired"):
+                continue     # retired with its threads handed off (#167)
             (active if live else stopped if h["reporting"] else []).append((h, b))
     active.sort(key=lambda x: (order.get(x[1]["state"]["state"], 6), x[1]["handle"].lower()))
     stopped.sort(key=lambda x: x[1]["handle"].lower())
@@ -2400,6 +2493,14 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
             for p in pools) + '. Every other project is served by the shared pool.</p>')
     # The obvious way to add a bot: one form, where the box, harness and (optionally)
     # the project to dedicate it to are all chosen in one place.
+    # stopped bots the Add a bot form suggests reviving instead (#168): never retired ones,
+    # and those holding open threads first, since their work waits for them
+    revive = sorted(({"handle": b["handle"], "host": h["name"], "harness": b.get("harness") or "",
+                      "project": b.get("project") or "", "pool": bool(b.get("pool")), "open": b.get("open_threads") or 0,
+                      "stopped": ago(max(b.get("last_run") or "", b.get("set_at") or "")) if (b.get("last_run") or b.get("set_at")) else ""}
+                     for h, b in stopped if not b.get("move_to") and not b.get("fetch") and b["status"] != "moved"),
+                    key=lambda x: (-x["open"], x["handle"].lower()))
+    revive_json = json.dumps(revive).replace("</", "<\\/")     # safe inside <script>
     if reporting:
         host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
@@ -2412,8 +2513,10 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
 <label class="fld"><span>Project <small>(optional)</small></span><select name="project" aria-label="project to dedicate to">{project_opts}</select></label>
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
-<button type="submit" class="addbot-go">Start bot</button>
+<div class="revive" id="revive" hidden></div>
+<button type="submit" class="addbot-go">Start a new bot</button>
 </form>
+<script type="application/json" id="revive-data">{revive_json}</script>
 <p class="addbot-note">The machine's keeper starts it within a few seconds. A project dedicates the bot to that project once it is online.</p>
 </details>"""
     else:
