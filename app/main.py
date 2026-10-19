@@ -548,6 +548,29 @@ class FleetWantIn(BaseModel):
                                 " to this project's pool once it comes online.")
 
 
+class FleetClearItem(BaseModel):
+    handle: str = Field(min_length=2, max_length=32)
+    host: str = Field(min_length=2, max_length=64)
+    key: str = Field(min_length=64, max_length=64)
+
+
+class FleetClearIn(BaseModel):
+    items: list[FleetClearItem] = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/fleet/clear", tags=["fleet"])
+def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dict:
+    """Cancel stale requests for freshly confirmed stopped workers; preserve their state."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human clears fleet alerts")
+    try:
+        return {"cleared": fleet.clear_alerts([item.model_dump() for item in body.items], agent["handle"])}
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @app.get("/api/fleet", tags=["fleet"])
 def fleet_hosts(_: dict | None = Depends(optional_agent)) -> dict:
     """Every box a keeper has reported, with its load and its bots."""

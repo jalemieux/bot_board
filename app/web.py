@@ -1960,6 +1960,9 @@ def _bot_rows(bots: list, host: str, others: list | None = None, show_host: bool
             identity += f' · <a href="#box-{e(host)}">{e(host)}</a>'
         if b.get("project"):
             identity += f' · <a href="/projects/{e(b["project"])}">{e(b["project"])}</a>'
+        if b.get("clear_key"):
+            item = e(json.dumps([{"host": host, "handle": b["handle"], "key": b["clear_key"]}]))
+            btn += f' <button type="button" class="clear-alert" data-items="{item}">Clear alert; leave stopped</button>'
         tone = " run" if st["can_work"] and not st["reason"] else " prob" if st["reason"] else ""
         warning = '<div class="prob">Last run failed · can retry</div>' if st["state"] == "failing" and st["can_work"] else ""
         rows.append(
@@ -2018,6 +2021,18 @@ document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.act'); if (!b) return;
   if (b.dataset.kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
   ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1', null, b.dataset.kill === '1');
+});
+document.addEventListener('click', function (ev) {
+  var button = ev.target.closest('button.clear-alert'); if (!button) return;
+  if (!ME) { alert('Sign in on the board page first.'); return; }
+  if (!confirm('Cancel these pending requests and clear the displayed failures? Workers stay stopped. Identity, sessions and project membership are preserved.')) return;
+  button.disabled = true;
+  fetch('/api/fleet/clear', {method: 'POST',
+    headers: {'content-type':'application/json', 'Authorization':'Bearer ' + ME.token},
+    body: JSON.stringify({items:JSON.parse(button.dataset.items)})})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else { button.disabled = false; alert(d.detail || 'State changed; refresh and try again.'); }
+  }); }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
 });
 document.addEventListener('change', function (ev) {
   var s = ev.target.closest('select.move'); if (!s || !s.value) return;
@@ -2149,7 +2164,7 @@ border-radius:999px;padding:4px 12px;white-space:nowrap}
 .fleet-page .newbot input{min-width:0;max-width:100%}
 .fleet-page .history,.fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:22px}
 .fleet-page .fleet-settings p{font-size:13px;color:var(--dim)}
-body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{display:none}
+body.out .fleet-page .clear-alert,body.out .fleet-page .worker-controls,body.out .fleet-page .machine-actions{display:none}
 /* Add a bot: the obvious entry point, a button up top that opens one form. */
 .fleet-page .addbot-cta{margin:0 0 24px}
 .fleet-page details#addbot{border:1px solid var(--line);border-radius:10px;background:var(--panel)}
@@ -2265,9 +2280,13 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
     for (host, harness, state), entries in blockers.items():
         words = {"out of usage": "usage limit reached", "at capacity": "model temporarily at capacity", "needs login": "login required"}.get(state, "workers need attention")
         reasons = list(dict.fromkeys(b["state"]["reason"] or b.get("problem") or "" for _, b in entries))
+        clearable = [{"host": h["name"], "handle": b["handle"], "key": b["clear_key"]}
+                     for h, b in entries if b.get("clear_key")]
+        clear = (f'<button type="button" class="clear-alert" data-items="{e(json.dumps(clearable))}">Clear {len(clearable)} stopped alert(s)</button>'
+                 if clearable else "")
         alerts.append(f'<div class="fleet-alert box"><h3>{e(harness)}: {e(words)} on {e(host)} · {len(entries)}</h3>'
                       + (f'<p>{_fleet_detail(reasons[0])}</p>' if reasons[0] else "")
-                      + f'<details><summary>View {_plural(len(entries), "worker")}</summary>{worker_rows(entries)}</details></div>')
+                      + clear + f'<details><summary>View {_plural(len(entries), "worker")}</summary>{worker_rows(entries)}</details></div>')
     for h in hosts:
         if not h["reporting"]:
             alerts.append(f'<div class="fleet-alert"><h3>{e(h["name"])} is not reporting</h3>'
