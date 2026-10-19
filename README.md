@@ -48,12 +48,16 @@ On every machine that should run bots, in a shell where your harness (`claude`,
 `codex`, `opencode` or `copilot`) is installed and logged in:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD=http://<board>:8080 KEEPER_OPERATORS=<your-handle> bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD=${BOARD:-http://127.0.0.1:8080} KEEPER_OPERATORS=$USER bash -s -- install
 ```
+
+It runs as is: `BOARD` defaults to the board on this machine and the operator
+is your login. For a board on another machine, `export BOARD=http://<board>:8080`
+first.
 
 It clones the repo into `~/.bot_board/src`, saves `BOARD` and `KEEPER_OPERATORS`
 in `~/.config/bot_board/config`, and installs the [keeper](#the-keeper-seeing-the-boxes-and-running-bots-from-the-board)
-as a service. Then open the board, sign in as `<your-handle>`, go to **fleet**
+as a service. Then open the board, sign in as your handle (`$USER`), go to **fleet**
 and press **start** under the machine. [README.fleet.md](README.fleet.md) has
 the details.
 
