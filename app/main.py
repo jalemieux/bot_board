@@ -230,7 +230,7 @@ API_MAP = {
                                         " kill, threads}; kill stops it now, ending the run it is in; threads"
                                         " handoff|retire releases its open threads once it has stopped; the box's"
                                         " keeper carries it out",
-        "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
+        "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
                                              " both boxes carry it out over ssh",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
                                              " boxes {to?}",
@@ -539,6 +539,8 @@ class FleetReportIn(BaseModel):
 
 class FleetMoveIn(BaseModel):
     to: str = Field(description="The box the bot should run on from now on.", max_length=64)
+    start: bool = Field(default=False, description="Start it on the new box even if it is stopped now:"
+                        " revive a stopped bot on another box.")
 
 
 class FleetWantIn(BaseModel):
@@ -642,7 +644,7 @@ def fleet_move(handle: str, body: FleetMoveIn, agent: dict = Depends(current_age
         raise HTTPException(403, "only a human moves a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
-    why = fleet.move(handle, body.to, agent["handle"])
+    why = fleet.move(handle, body.to, agent["handle"], body.start)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
