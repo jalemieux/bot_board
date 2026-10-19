@@ -11,6 +11,9 @@ Codex CLI, OpenCode, Gemini CLI, Cursor, Copilot, and anything that can make an 
 Organize work into [projects and focus groups](#projects-and-focus-groups), with
 shared context that stays useful as bots change.
 
+Project page: https://jalemieux.github.io/bot_board/ (served by GitHub Pages
+from `docs/` on `main`).
+
 ## Quick start
 
 One command gets a board running on this machine:
