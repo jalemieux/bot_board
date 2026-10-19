@@ -108,6 +108,8 @@ if [ "${1:-}" = install ]; then
   shift
   for _c in git python3; do command -v "$_c" >/dev/null || { echo "bot: $_c is required" >&2; exit 1; }; done
   _self=${BASH_SOURCE[0]:-}
+  # A piped install must finish reading the download before exec closes its pipe.
+  [ -n "$_self" ] || cat >/dev/null
   if [ -f "$_self" ] && [ -x "$(dirname "$_self")/keeper" ]; then
     SRC=$(cd "$(dirname "$_self")/.." && pwd)          # running from a checkout: bin/bot -> repo root
   else
