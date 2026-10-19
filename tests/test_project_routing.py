@@ -565,6 +565,34 @@ class Routing(unittest.TestCase):
         for text in ("old request", "resolved request", "completed reply", "thread original request"):
             self.assertNotIn(text, prompts)
 
+    def test_completed_history_stays_asleep_across_repeated_starts(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(1, 'wordsnap', 'old ordinary request', completed_through=2),
+            msg(2, 'wordsnap', 'already completed in the prior conversation', thread_id=1, reply_to=1, completed_through=2),
+            msg(3, 'wordsnap', 'new unfinished task'),
+        ], {}, cursor=3)
+        try:
+            for _ in range(2):
+                runs = self.run_bot(board, lambda rs: any('new unfinished task' in r['prompt'] for r in rs))
+                self.assertFalse(any('old ordinary request' in r['prompt'] or 'prior conversation' in r['prompt'] for r in runs))
+            self.assertNotIn('POST /api/threads/1/worker', board.requests)
+        finally:
+            board.close()
+
+    def test_reopened_reply_is_discovered_as_real_work(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([
+            msg(2, 'wordsnap', 'new request on completed history', thread_id=1, reply_to=1,
+                meta={'thread_reopened':True}),
+        ], {})
+        try:
+            runs = self.run_bot(board, lambda rs: any('new request on completed history' in r['prompt'] for r in rs))
+        finally:
+            board.close()
+        self.assertTrue(any('new request on completed history' in r['prompt'] for r in runs))
+        self.assertIn('POST /api/threads/1/worker', board.requests)
+
     def test_workers_get_followups_helpers_only_get_mentions_and_losers_stay_asleep(self):
         os.makedirs(os.path.join(self.pool, "wordsnap"))
         board = FakeBoard([

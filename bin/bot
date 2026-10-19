@@ -1188,7 +1188,7 @@ for m in messages:
     if str(tid) in threads:
         continue
     threads.add(str(tid))
-    if meta.get("done") is True:
+    if meta.get("done") is True or m.get("completed_through"):
         continue
     kind=kind if kind.replace("_","").isalnum() else ""
     out.append("\t".join([str(m["id"]),ch,str(tid),m["author"],"backlog",kind,m["body"].replace("\n","\\n")]))
@@ -1231,7 +1231,7 @@ def watched(b):
 alld=json.load(open(sys.argv[5])); msgs=alld.get("messages",[])
 hi=max([m["id"] for m in msgs],default=seen)   # never skip past what we have not looked at
 for m in msgs:
-    if m["author"]==me: continue
+    if m["author"]==me or m.get("completed_through"): continue
     # A notice from a launcher (a failed run, a lost login) is for humans. Waking a bot
     # with it makes that bot fail and post one too: two broken bots then loop for ever.
     if (m.get("meta") or {}).get("launcher")=="bin/bot": continue
@@ -1239,7 +1239,8 @@ for m in msgs:
     if m.get("worker")==me or me.lower() in [h.lower() for h in m.get("mentions",[])]: why="for you"
     elif (watched(m["board"]) or (goal and str(tid)==goal)) and (
             m.get("reply_to") is None or (m.get("meta") or {}).get("kind")=="thread_released"
-            or (m.get("meta") or {}).get("worker_released") is True):
+            or (m.get("meta") or {}).get("worker_released") is True
+            or (m.get("meta") or {}).get("thread_reopened") is True):
         if m.get("mentions"): continue
         if (m.get("meta") or {}).get("done") is True: continue
         why="channel"
@@ -1405,6 +1406,7 @@ while :; do
     PROMPT+="New message(s) on the board. Handle them as agents.md says, in the repo $DIR, then return. Do not stand by, do not long-poll: the launcher will prompt you again when there is more. Your token is at $TOKFILE.${SKILL_PATHS:+ Skills you are equipped with, to use when a message asks for what one covers: $SKILL_PATHS.}${NOREPO:+ $NOREPO}"$'\n'
     if [ -n "$proj" ] && [ -s "$STATE/route/$proj.ctx" ]; then PROMPT+=$'\n'"$(cat "$STATE/route/$proj.ctx")"$'\n\n'; fi
     PROMPT+="One thread, one worker. The launcher has atomically claimed threads marked 'channel' or 'backlog' for you. 'for you' is a worker-thread update or an explicit mention: if you are a tagged helper, answer that request without taking over. Only the worker follows all replies; tag anyone else whose attention you need, including humans. No prose claims or back-off messages are needed. FYIs need no reply."$'\n'
+    PROMPT+="When a worker finds a thread completed or needing no action, POST $BOARD/api/threads/<thread>/complete with {\"through\":<last-reviewed-message-id>} after reading the current thread. This records completion without advertising pickup. Do not DELETE its worker for completed work. DELETE is for intentionally handing unfinished work back. A 409 from completion means newer messages need review."$'\n'
     PROMPT+="For 'backlog', read the current thread first (paginate with next_since while has_more); do not repeat completed work. Ownership is shown by GET $BOARD/api/threads/<thread>/worker. It persists across restarts and follow-ups; release work you cannot continue with DELETE on that endpoint."$'\n'
     while IFS=$'\t' read -r id board thread author why kind note body; do
       if [ "$kind" = - ]; then kind=""; fi

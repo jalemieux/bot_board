@@ -225,6 +225,45 @@ except ValueError:
             self.assertEqual(self.client.get("/api/thread-workers", params={"thread": rid},
                                              headers=self.human).status_code, 200)
 
+    def test_completion_is_durable_silent_and_blocks_two_watchers(self):
+        self.claim(self.worker)
+        reply = self.post(self.worker, "The PR is merged; nothing remains.", self.root["id"])
+        endpoint = f'/api/threads/{self.root["id"]}/complete'
+        done = self.client.post(endpoint, headers=self.worker, json={"through":reply["id"]})
+        self.assertEqual(done.status_code, 200, done.text)
+        for auth in (self.helper, self.other, self.worker):
+            self.assertEqual(self.claim(auth).status_code, 409)
+        thread = self.client.get(f'/api/threads/{self.root["id"]}').json()
+        self.assertEqual(len(thread['messages']), 2)
+        self.assertTrue(all(m['completed_through'] == reply['id'] for m in thread['messages']))
+        compact = self.client.get('/api/messages', params={'channel':'work', 'view':'compact'}).json()
+        self.assertEqual(compact['messages'][0]['completed_through'], reply['id'])
+        # Releasing a finished claim is quiet, not an invitation to another watcher.
+        self.assertEqual(self.client.delete(self.endpoint, headers=self.worker).status_code, 200)
+        self.assertEqual(len(self.client.get(f'/api/threads/{self.root["id"]}').json()['messages']), 2)
+        self.assertEqual(self.claim(self.helper).status_code, 409)
+        # A genuine new request reopens the thread, even if its claim was removed.
+        request = self.post(self.human, 'Please also add a regression test.', self.root['id'])
+        self.assertTrue(request['meta']['thread_reopened'])
+        self.assertIsNone(request['completed_through'])
+        self.assertEqual(self.claim(self.helper).status_code, 200)
+
+    def test_completion_rejects_unreviewed_work_and_unrelated_callers(self):
+        self.claim(self.worker)
+        endpoint = f'/api/threads/{self.root["id"]}/complete'
+        reply = self.post(self.human, 'One more requirement', self.root['id'])
+        self.assertEqual(self.client.post(endpoint, headers=self.worker, json={'through':self.root['id']}).status_code, 409)
+        self.assertEqual(self.client.post(endpoint, headers=self.other, json={'through':reply['id']}).status_code, 403)
+        self.assertEqual(self.client.post(endpoint, headers=self.worker, json={'through':999999}).status_code, 409)
+        self.assertEqual(self.client.post(endpoint, json={'through':reply['id']}).status_code, 401)
+        self.assertEqual(self.client.post(endpoint, headers=self.worker, json={'through':reply['id']}).status_code, 200)
+        # A cross-channel reply must not clear another channel’s completion.
+        self.post(self.worker, 'old release notice', self.root['id'], channel='elsewhere')
+        self.assertEqual(self.claim(self.helper).status_code, 409)
+        newer = self.post(self.human, 'Actual follow-up', self.root['id'])
+        self.assertTrue(newer['meta']['thread_reopened'])
+        self.assertEqual(self.client.get(f'/api/messages/{reply["id"]}').json()['message']['completed_through'], None)
+
     def test_pickup_handle_is_escaped_in_server_markup(self):
         markup = web.message_html({**self.root, "worker": 'bad"><script>'})
         self.assertIn('aria-hidden="true"', markup)
