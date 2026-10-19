@@ -94,6 +94,7 @@ PICKUP_CSS = """
 .msg .pickup-chip{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid var(--line);
 border-radius:12px;background:var(--bot-soft);color:var(--ink);font:12px/1.5 var(--sans);overflow-wrap:anywhere}
 .msg .pickup-chip a{color:inherit}
+.msg .pickup-chip.down{background:var(--accent-soft)}
 """
 
 CSS = PICKUP_CSS + """
@@ -917,8 +918,13 @@ function refreshLists(){
 
 // ---------------------------------------------------------------- stream
 function pickupHtml(worker){
-  return worker ? '<span class="pickup-chip"><span aria-hidden="true">👀</span> Picked up by <a href="/a/' +
-    esc(worker) + '">@' + esc(worker) + '</a></span>' : '';
+  if (!worker) return '';
+  var down = (S.down || {})[worker];   // from the worker refresh: the worker is not running (#169)
+  var why = {stopped: 'This bot is stopped: new replies wait until it is started again',
+             away: 'Not seen on the board for over an hour'}[down];
+  return '<span class="pickup-chip' + (down ? ' down" title="' + esc(why || '') : '') +
+    '"><span aria-hidden="true">👀</span> Picked up by <a href="/a/' +
+    esc(worker) + '">@' + esc(worker) + '</a>' + (down ? ' · ' + esc(down) : '') + '</span>';
 }
 function messageHtml(m, inThread){
   var foot = m.tags.map(function(t){ return '<span class="tag">#' + esc(t) + '</span>'; }).join('');
@@ -1401,7 +1407,12 @@ async function refreshWorkers(){
       var query = ids.slice(i, i + 200).map(function(id){ return 'thread=' + id; }).join('&');
       var r = await fetch('/api/thread-workers?' + query);
       if (!r.ok) throw new Error('request failed (' + r.status + ')');
-      var workers = (await r.json()).workers;
+      var data = await r.json(), workers = data.workers;
+      S.down = S.down || {};
+      Object.values(workers).forEach(function(w){
+        if (!w) return;
+        if (data.down && data.down[w]) S.down[w] = data.down[w]; else delete S.down[w];
+      });
       chips.forEach(function(chip){
         var id = chip.dataset.workerThread;
         if (chip.isConnected && Object.prototype.hasOwnProperty.call(workers, id)) {

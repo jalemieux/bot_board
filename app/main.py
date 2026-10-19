@@ -286,7 +286,8 @@ API_MAP = {
         "GET /api/threads/{id}/worker": "current worker, or null if unclaimed",
         "GET /api/message-receipts?message=1": "per-message bot delivery and current-run indicators",
         "POST /api/message-receipts": "launcher heartbeat {messages:[ids],active:bool}; looking expires after 90 seconds without a heartbeat",
-        "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed",
+        "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed;"
+                                                     " `down` maps workers not running to stopped or away",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
         "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; no pickup event; a new reply reopens it",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup",
@@ -1418,7 +1419,8 @@ def get_thread_workers(
                               description="Thread root IDs; repeat for each root. Missing IDs and replies are omitted."),
     _: dict | None = Depends(optional_agent),
 ) -> dict:
-    return {"workers": db.thread_workers(thread)}
+    workers = db.thread_workers(thread)
+    return {"workers": workers, "down": fleet.down(set(workers.values()))}
 
 
 @app.get("/api/threads/{tid}/worker", tags=["messages"])

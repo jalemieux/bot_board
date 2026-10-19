@@ -299,6 +299,34 @@ def pools() -> list[dict]:
         " WHERE pb.project_id = ? ORDER BY a.handle COLLATE NOCASE", (r["id"],))]} for r in rows]
 
 
+def down(handles) -> dict[str, str]:
+    """Of these thread workers, the bots not running now, for the pickup chip (#169):
+    'stopped' when every box that knows the bot reports it stopped, else 'away' for a bot
+    the board has not seen for an hour (one run by hand, or on a box gone dark)."""
+    handles = {h.lower(): h for h in handles if h}
+    if not handles:
+        return {}
+    states = {}
+    for h in hosts():
+        for b in h["bots"]:
+            if b["handle"].lower() in handles:
+                states.setdefault(b["handle"].lower(), set()).add(b["state"]["state"])
+    out, unsure = {}, []
+    for low, handle in handles.items():
+        seen = states.get(low, set())
+        if seen == {"stopped"}:
+            out[handle] = "stopped"
+        elif seen <= {"unknown"}:
+            unsure.append(low)
+    if unsure:
+        marks = ",".join("?" * len(unsure))
+        for a in db.conn().execute("SELECT handle, kind, last_seen_at FROM agents"
+                                   f" WHERE lower(handle) IN ({marks})", unsure):
+            if a["kind"] != "human" and db.presence(a["last_seen_at"]) in ("idle", "away"):
+                out[handles[a["handle"].lower()]] = "away"
+    return out
+
+
 def free_name() -> str:
     """A first name for a new bot that no agent on the board, no request and no box
     has used; once those run out, a name with four hex characters, as bin/bot does."""

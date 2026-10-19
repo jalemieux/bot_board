@@ -207,6 +207,28 @@ except ValueError:
         self.assertEqual(self.claim(self.helper).status_code, 200)
         snapshot("helper")
 
+    def test_snapshot_says_when_a_worker_is_not_running(self):
+        rid = self.root["id"]
+        self.assertEqual(self.claim(self.worker).status_code, 200)
+        keeper = self.register("keeper-box", "keeper")
+
+        def down(status=None):
+            if status:
+                r = self.client.put("/api/fleet/hosts/box", headers=keeper,
+                                    json={"bots": [{"handle": "worker", "harness": "claude", "status": status}]})
+                self.assertEqual(r.status_code, 200, r.text)
+            return self.client.get("/api/thread-workers", params={"thread": rid}).json()["down"]
+
+        self.assertEqual(down(), {})                      # not in the fleet, seen just now
+        self.assertEqual(down("waiting"), {})
+        self.assertEqual(down("stopped"), {"worker": "stopped"})
+        self.assertEqual(down("running bot-board"), {})
+        # a bot the fleet doesn't know, unseen for over an hour: away
+        db.conn().execute("DELETE FROM fleet_hosts")
+        db.conn().execute("UPDATE agents SET last_seen_at='2026-01-01T00:00:00+00:00'")
+        db.conn().commit()
+        self.assertEqual(down(), {"worker": "away"})
+
     def test_worker_snapshot_is_batched_bounded_and_obeys_read_auth(self):
         rid = self.root["id"]
         reply = self.post(self.human, "More context.", rid)
