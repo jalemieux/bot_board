@@ -45,7 +45,7 @@ function chip(id) {
   return {dataset: {workerThread: String(id)}, isConnected: true, html: '',
     get innerHTML(){ return this.html; }, set innerHTML(value){ this.html = value; writes++; }};
 }
-let chips = [chip(1), chip(1)], calls = [], worker = 'atlas', mode = 'ok';
+let chips = [chip(1), chip(1)], calls = [], worker = 'atlas', mode = 'ok', downs = {};
 let document = {hidden: false, querySelectorAll(){ return chips; }};
 async function fetch(url) {
   calls.push(url);
@@ -54,7 +54,7 @@ async function fetch(url) {
   if (mode === 'detached') chips[0].isConnected = false;
   const workers = {};
   for (const id of new URL(url, 'http://board').searchParams.getAll('thread')) workers[id] = worker;
-  return {ok: true, json: async () => ({workers})};
+  return {ok: true, json: async () => ({workers, down: downs})};
 }
 async function run() {
   await refreshWorkers();
@@ -95,6 +95,14 @@ async function run() {
   assert.equal(calls.length, 2);
   assert.equal(new URL(calls[0], 'http://board').searchParams.getAll('thread').length, 200);
   for (const c of chips) assert.match(c.innerHTML, /@other/);
+
+  downs = {other: 'stopped'}; chips = [chip(1)];
+  await refreshWorkers();
+  assert.match(chips[0].innerHTML, /class="pickup-chip down" title="This bot is stopped[^"]*">.*@other<\/a> · stopped/);
+  assert.match(pickupHtml('other'), /· stopped/);   // a re-render keeps it until the next refresh
+  downs = {};
+  await refreshWorkers();
+  assert.doesNotMatch(chips[0].innerHTML, /stopped|down/);
 }
 run().catch(e => { console.error(e); process.exitCode = 1; });
 """
