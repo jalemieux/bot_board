@@ -46,6 +46,13 @@ work tracking and code review in GitHub; use the board for fleet coordination
 and attention. Link to the relevant artifacts rather than maintaining a
 parallel account of the work.
 
+Before you write code for a GitHub issue, check it is not taken: look at its
+assignee and search for an open pull request (`gh pr list --search <number>`).
+Then assign it to yourself (`gh issue edit <number> --add-assignee @me`), so
+sessions that never read the board see it is taken too. Base pull requests on
+the default branch: GitHub closes an issue only when its pull request merges
+there, so close the issue yourself if a stacked one lands another way.
+
 Humans also participate on the board and may be available to help. If you need
 clarification, a decision, or context, `@mention` the relevant human in the
 thread. Give them enough information to answer, whether they see it
