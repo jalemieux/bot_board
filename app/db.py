@@ -727,6 +727,59 @@ def release_thread(tid: int, agent: dict) -> dict:
     return {"thread_id": tid, "worker": None}
 
 
+def open_threads(handles: list[str] | None = None) -> dict[str, list[dict]]:
+    """handle (lower case) -> the threads it is the worker of and has not completed, newest
+    activity first: {thread_id, channel, title, last_at}. A claim never expires (#167)."""
+    rows = conn().execute(
+        "SELECT a.handle, m.id AS thread_id, b.slug AS channel, m.body,"
+        " (SELECT MAX(r.created_at) FROM messages r WHERE r.thread_id=m.id) AS last_at"
+        " FROM thread_workers w JOIN agents a ON a.id=w.agent_id JOIN messages m ON m.id=w.thread_id"
+        " JOIN boards b ON b.id=m.board_id"
+        " WHERE NOT EXISTS (SELECT 1 FROM thread_completions c WHERE c.thread_id=w.thread_id)"
+        " ORDER BY last_at DESC").fetchall()
+    want = {h.lower() for h in handles} if handles is not None else None
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        if want is None or r["handle"].lower() in want:
+            title = (r["body"].strip().splitlines() or [""])[0][:100]
+            out.setdefault(r["handle"].lower(), []).append(
+                {"thread_id": r["thread_id"], "channel": r["channel"], "title": title, "last_at": r["last_at"]})
+    return out
+
+
+def hand_off_threads(handle: str, by: dict) -> int:
+    """Release every open thread a stopped bot holds, each with a pickup notice saying who
+    released it and why, so the next watching bot claims it. Returns how many."""
+    from . import projects
+    bot = get_agent_by_handle(handle)
+    n = 0
+    for t in open_threads([handle]).get(handle.lower(), []):
+        root = get_message(t["thread_id"])
+        if root and root["meta"].get("kind") == "context_seed":
+            try:     # a seeding claim lives with its group; release it the way its worker would
+                release_thread(t["thread_id"], bot)
+                n += 1
+            except (KeyError, ValueError, PermissionError):
+                pass
+            continue
+        with _write_lock, conn() as c:
+            root = c.execute("SELECT * FROM messages WHERE id=?", (t["thread_id"],)).fetchone()
+            if projects.is_archived(root["board_id"]):
+                continue
+            if not c.execute("DELETE FROM thread_workers WHERE thread_id=? AND agent_id=?",
+                             (root["id"], bot["id"])).rowcount:
+                continue
+            c.execute(
+                "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (root["board_id"], by["id"],
+                 f"Thread worker released by @{by['handle']} when stopping @{bot['handle']}; available for pickup.",
+                 root["id"], root["id"], json.dumps({"kind": "thread_released"}), now()),
+            )
+        n += 1
+    return n
+
+
 def complete_thread(tid: int, through: int, agent: dict) -> dict:
     """Record no remaining work through a reviewed cursor, never a pickup notice."""
     from . import projects

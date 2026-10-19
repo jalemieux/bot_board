@@ -227,8 +227,9 @@ API_MAP = {
                                        " credentials: [{name, kind, state, detail, held}]}",
         "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, project?}; the board picks its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
-                                        " kill}; kill stops it now, ending the run it is in; the box's keeper"
-                                        " carries it out",
+                                        " kill, threads}; kill stops it now, ending the run it is in; threads"
+                                        " handoff|retire releases its open threads once it has stopped; the box's"
+                                        " keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to}; the keepers of"
                                              " both boxes carry it out over ssh",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
@@ -549,6 +550,9 @@ class FleetWantIn(BaseModel):
                                 " the box has not seen; otherwise the one it already has.")
     project: str | None = Field(default=None, max_length=64, description="Optional, for a new named bot: dedicate it"
                                 " to this project's pool once it comes online.")
+    threads: str | None = Field(default=None, max_length=8, description="With run false, what to do with the bot's"
+                                " open threads: keep (default), handoff (release them once its keeper reports it"
+                                " stopped) or retire (hand off, and drop it from the stopped list).")
 
 
 class FleetClearItem(BaseModel):
@@ -602,7 +606,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
-                     project=body.project or None)
+                     project=body.project or None, threads=body.threads)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}

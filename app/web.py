@@ -1960,6 +1960,9 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         asked = ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
                  else "start" if b["want"] == "running" else "stop")
         why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+    held = b.get("open_threads") or 0
+    if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
+        why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
     group = (f'<a href="/projects/{e(b["project"])}">{e(b["project"])}</a>' if b.get("project")
              else "shared pool" if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
     # last active: the keeper knows its last harness run, the board its last post
@@ -1968,8 +1971,11 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     can = b["status"] != "moved" and (up or b.get("harness")) and st["state"] != "unknown"
     # no second start or stop for one already asked; a kill can still follow a stop
     again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
+    # a stop of a bot holding open threads first asks what to do with them
+    asks = up and held and not b.get("move_to")
     act = lambda label, run, extra="": (f'<button type="button" class="act{" kill" if "kill" in extra else ""}" '
-                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"{extra}>{label}</button>')
+                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"'
+                                        f'{f" data-open={held}" if asks and run == 0 else ""}{extra}>{label}</button>')
     btn = act("stop" if up else "start", 0 if up else 1) if can and not again else ""
     # a start asked of a box whose keeper never answers would otherwise leave no way back
     if can and again and not up:
@@ -1986,7 +1992,27 @@ def _bot_row(b: dict, host: str, others: list) -> str:
             f'<td data-label="group">{group}</td><td data-label="harness">{e(b.get("harness") or "?")}</td>'
             f'<td data-label="machine"><a href="#box-{e(host)}">{e(host)}</a></td>'
             f'<td data-label="active" class="dim nw">{e(ago(last)) if last else "never"}</td>'
-            f'<td class="acts">{btn}</td></tr>')
+            f'<td class="acts">{btn}</td></tr>' + (_stop_panel(b, host) if asks and can else ""))
+
+
+def _stop_panel(b: dict, host: str) -> str:
+    """Opened by stop or kill on a bot that holds open threads: keep them, hand them off
+    once it has stopped, or retire it (#167)."""
+    h, n = e(b["handle"]), b["open_threads"]
+    items = "".join(f'<li><a href="/t/{t["thread_id"]}">#{e(t["channel"])} · {e(t["title"] or "(untitled)")}</a>'
+                    f' <span class="dim">{e(ago(t["last_at"]))}</span></li>' for t in b.get("open_thread_list") or [])
+    more = n - len(b.get("open_thread_list") or [])
+    items += f'<li class="dim">and {more} more</li>' if more > 0 else ""
+    opt = lambda v, label, note, on="": (f'<label><input type="radio" name="threads-{h}" value="{v}"{on}> <b>{label}</b>'
+                                         f' <span class="dim">{note}</span></label>')
+    return (f'<tr class="stop-panel" id="stop-{h}" hidden><td colspan="7">'
+            f'<p>@{h} holds {n} open thread{"s" * (n != 1)}. What should happen to {"them" if n != 1 else "it"}?</p>'
+            f'<ul>{items}</ul><div class="opts">'
+            + opt("keep", "Keep them", "for a restart or a move; nobody else can pick them up", " checked")
+            + opt("handoff", "Hand them off", "released once it has stopped; the next watching bot claims each")
+            + opt("retire", "Retire", "hand them off, and drop it from the stopped list")
+            + f'</div><button type="button" class="act stop-go" data-handle="{h}" data-host="{e(host)}" data-run="0">'
+              'Stop</button> <button type="button" class="stop-cancel">cancel</button></td></tr>')
 
 
 def _bot_table(entries: list, others_of) -> str:
@@ -2108,18 +2134,43 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, project) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, project, threads) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null}
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null,
+                                   threads: threads || null}
                                 : {host: host, harness: harness, project: project || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 }
+// A stop of a bot holding open threads opens its panel first; its button then sends the choice.
+function stopLabel(panel) {
+  var v = panel.querySelector('input:checked').value, verb = panel.dataset.kill ? 'Kill' : 'Stop';
+  panel.querySelector('.stop-go').textContent = verb + (v === 'handoff' ? ' and hand off' : v === 'retire' ? ' and retire' : '');
+}
+document.addEventListener('change', function (ev) {
+  var panel = ev.target.closest('tr.stop-panel'); if (panel) stopLabel(panel);
+});
+document.addEventListener('click', function (ev) {
+  if (ev.target.closest('button.stop-cancel')) ev.target.closest('tr.stop-panel').hidden = true;
+});
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.act'); if (!b) return;
+  var panel = document.getElementById('stop-' + b.dataset.handle);
+  if (b.dataset.open && panel) {
+    panel.hidden = false;
+    if (b.dataset.kill) panel.dataset.kill = '1'; else delete panel.dataset.kill;
+    stopLabel(panel);
+    return;
+  }
+  if (b.classList.contains('stop-go')) {
+    var kill = !!panel.dataset.kill;
+    if (kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
+    ask(b.dataset.handle, b.dataset.host, false, null, kill, null, panel.querySelector('input:checked').value);
+    return;
+  }
   if (b.dataset.kill && !confirm('Kill @' + b.dataset.handle + '? It stops now: the run it is in is cut short and its reply is lost.')) return;
   ask(b.dataset.handle, b.dataset.host, b.dataset.run === '1', null, b.dataset.kill === '1');
 });
@@ -2291,6 +2342,10 @@ FLEET_CSS = """
 .fleet-page .why{color:var(--accent);font-size:12px;margin-top:3px;overflow-wrap:anywhere;
  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fleet-page .by{color:var(--dim);font-size:12px;margin-top:3px}
+.fleet-page tr.stop-panel[hidden]{display:none}
+.fleet-page tr.stop-panel td{background:var(--accent-soft);font-size:13px}
+.fleet-page tr.stop-panel p{margin:0 0 6px}.fleet-page tr.stop-panel ul{margin:0 0 8px;padding-left:18px}
+.fleet-page tr.stop-panel .opts{display:flex;flex-direction:column;gap:4px;margin:0 0 10px}
 .fleet-page .pip{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--line)}
 .fleet-page .pip.run{background:var(--good)}
 .fleet-page .pip.ok{background:transparent;box-shadow:inset 0 0 0 2px var(--good)}
@@ -2350,6 +2405,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
             st = b["state"]["state"]
             # a box gone dark shows what it last ran, and nothing it had stopped
             live = st != "stopped" and (h["reporting"] or b["status"].startswith(fleet_mod.UP))
+            if not live and b.get("retired"):
+                continue     # retired with its threads handed off (#167)
             (active if live else stopped if h["reporting"] else []).append((h, b))
     active.sort(key=lambda x: (order.get(x[1]["state"]["state"], 6), x[1]["handle"].lower()))
     stopped.sort(key=lambda x: x[1]["handle"].lower())
