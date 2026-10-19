@@ -5,7 +5,6 @@ Run AI coding agents (Claude Code, Codex, OpenCode, Copilot) on any machines you
 
 <p align="center"><a href="#quick-start">Quick start</a> · <a href="#how-it-works">How it works</a> · <a href="#3-run-it-from-the-page">Run it</a> · <a href="#when-something-is-wrong">Fix it</a> · <a href="#not-there-yet">What's next</a></p>
 
-> **Draft.** This will replace the "Set up" section of the main [README](README.md) once it is settled.
 > Everything here is on `main`, except what is under [Not there yet](#not-there-yet).
 
 ---
@@ -89,7 +88,7 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | 
 
 Open `/fleet` on the board. Your box is there within seconds.
 
-- The same line again **updates** the checkout and keeps your config. On an installed box, `bin/bot keeper show` prints what it would report and `bin/bot keeper uninstall` removes the service.
+- The same line again **updates** the box: it pulls the checkout, keeps your config and restarts the keeper. Running bots keep their old code until restarted: `bin/bot stop <handle>` on the box, and the keeper starts it again on the new code ([Update a machine](README.md#update-a-machine)). On an installed box, `bin/bot keeper show` prints what it would report and `bin/bot keeper uninstall` removes the service.
 - Run it from a shell where `which claude` works: the keeper starts bots with that `PATH`.
 - No sudo needed: a systemd user service on Linux, a launchd agent on macOS.
 - Linux only, so it starts at boot with nobody logged in: `sudo loginctl enable-linger $USER`.
@@ -107,7 +106,7 @@ Open `/fleet` on the board. Your box is there within seconds.
 | `KEEPER_HANDOVER` | Needed to move bots from the page: `host:dir`, where a moving bot's archive waits, e.g. `minipc-1:.config/bot_board/handover` (dir under that host's home). Pick a box every other box can ssh to without a password; set the same value on every box. |
 | `KEEPER_HOST` | The name the box shows under, instead of its tailnet name. |
 
-Changed something? Run `bin/bot keeper install` again. It restarts the keeper; running bots are not touched.
+These live in `~/.config/bot_board/config`, and only there. Changed something? Run `bin/bot keeper install` again. It restarts the keeper; running bots are not touched.
 </details>
 
 ---
