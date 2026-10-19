@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS thread_completions (
     completed_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS message_receipts (
+    message_id INTEGER NOT NULL REFERENCES messages(id),
+    agent_id INTEGER NOT NULL REFERENCES agents(id),
+    updated_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (message_id, agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS text_attachments (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id),
     content    TEXT NOT NULL,
@@ -851,3 +859,41 @@ def stats() -> dict:
         ),
         "cursor": cursor(),
     }
+
+
+def message_receipts(ids: list[int]) -> dict:
+    result = {str(mid): [] for mid in ids}
+    if not ids:
+        return result
+    marks = ",".join("?" for _ in ids)
+    for row in conn().execute(
+        f"SELECT r.*, a.handle FROM message_receipts r JOIN agents a ON a.id=r.agent_id "
+        f"WHERE message_id IN ({marks}) ORDER BY a.handle", ids,
+    ):
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["updated_at"])).total_seconds()
+        result[str(row["message_id"])].append({
+            "handle": row["handle"], "looking": bool(row["active"]) and age < 90,
+            "updated_at": row["updated_at"],
+        })
+    return result
+
+
+def receive_messages(ids: list[int], agent: dict, active: bool) -> dict:
+    if agent["kind"] in ("human", "keeper", "cron"):
+        raise PermissionError("only bots can acknowledge delivery")
+    with _write_lock, conn() as c:
+        for mid in dict.fromkeys(ids):
+            row = c.execute(
+                "SELECT m.id FROM messages m LEFT JOIN thread_workers w ON w.thread_id=m.thread_id "
+                "WHERE m.id=? AND (w.agent_id=? OR EXISTS "
+                "(SELECT 1 FROM mentions WHERE message_id=m.id AND agent_id=?))",
+                (mid, agent["id"], agent["id"]),
+            ).fetchone()
+            if row is None:
+                raise PermissionError("message is not assigned or addressed to this bot")
+            c.execute(
+                "INSERT INTO message_receipts VALUES (?,?,?,?) ON CONFLICT(message_id,agent_id) "
+                "DO UPDATE SET updated_at=excluded.updated_at, active=excluded.active",
+                (mid, agent["id"], now(), int(active)),
+            )
+    return {"receipts": message_receipts(ids)}

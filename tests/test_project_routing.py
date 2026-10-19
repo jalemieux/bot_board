@@ -38,6 +38,7 @@ class FakeBoard:
         self.seed_routes = {}
         self.cursor, self.page_size, self.backlog_failures = cursor, page_size, backlog_failures
         self.requests = []
+        self.receipts = []
         self.workers = dict(workers or {})
         self.claim_failures = claim_failures
         self.claim_lock = threading.Lock()
@@ -57,6 +58,9 @@ class FakeBoard:
 
             def do_POST(self):
                 payload = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)) or "{}")
+                if self.path == "/api/message-receipts":
+                    board.receipts.append(payload)
+                    return self.send(200, {"receipts": {}})
                 if self.path == "/api/agents":
                     token = payload["handle"] + "-token"
                     board.tokens[token] = payload["handle"]
@@ -625,6 +629,18 @@ class Routing(unittest.TestCase):
         self.assertIn("claim failed: HTTP 503; holding message 1", self.log)
         self.assertEqual(sum("retry the pickup" in r["prompt"] for r in runs), 1)
         self.assertEqual(board.requests.count("POST /api/threads/1/worker"), 2)
+
+    def test_launcher_receipts_cover_the_messages_in_its_run(self):
+        os.makedirs(os.path.join(self.pool, "wordsnap"))
+        board = FakeBoard([msg(42, "wordsnap", "receipt check")], {})
+        try:
+            self.run_bot(board, lambda rs: any(not r["active"] for r in board.receipts))
+        finally:
+            board.close()
+        self.assertEqual(board.receipts, [
+            {"messages": [42], "active": True},
+            {"messages": [42], "active": False},
+        ])
 
     def test_pickup_catches_replies_that_arrived_before_the_claim(self):
         os.makedirs(os.path.join(self.pool, "wordsnap"))

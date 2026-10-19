@@ -945,6 +945,7 @@ function messageHtml(m, inThread){
     '<a class="id" href="/t/' + (m.thread_id || m.id) + '">#' + m.id + '</a></div>' +
     '<div class="body">' + body(m.body) + previews + '</div>' +
     (!m.reply_to ? '<div class="pickup" data-worker-thread="' + m.id + '">' + pickupHtml(m.worker) + '</div>' : '') +
+    '<div class="pickup" data-receipt-message="' + m.id + '"></div>' +
     '<div class="foot">' + foot + '</div>' + rep + '</div></div>';
 }
 
@@ -1359,6 +1360,34 @@ wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.c
 renderWho();
 
 // ------------------------------------------------------------------ live
+function receiptHtml(receipts){
+  return receipts.map(function(r){
+    return '<span class="pickup-chip" title="' + esc(r.looking ? 'This message is in the bot’s current run' : 'Previously delivered to a bot run; this does not mean the task is complete') + '">' +
+      (r.looking ? '👀 Looking · ' : '✓ Seen · ') + '<a href="/a/' + esc(r.handle) + '">@' + esc(r.handle) + '</a></span>';
+  }).join(' ');
+}
+var refreshingReceipts = false;
+async function refreshReceipts(){
+  if (document.hidden || refreshingReceipts) return;
+  var chips = Array.from(document.querySelectorAll('[data-receipt-message]'));
+  var ids = Array.from(new Set(chips.map(function(c){ return c.dataset.receiptMessage; })));
+  refreshingReceipts = true;
+  try {
+    for (var i = 0; i < ids.length; i += 200) {
+      var r = await fetch('/api/message-receipts?' + ids.slice(i, i + 200).map(function(id){ return 'message=' + id; }).join('&'));
+      if (!r.ok) throw new Error('receipt refresh failed');
+      var receipts = (await r.json()).receipts;
+      chips.forEach(function(c){
+        if (c.isConnected && Object.prototype.hasOwnProperty.call(receipts, c.dataset.receiptMessage)) {
+          var html = receiptHtml(receipts[c.dataset.receiptMessage]);
+          if (c.innerHTML !== html) c.innerHTML = html;
+        }
+      });
+    }
+  } finally { refreshingReceipts = false; }
+}
+setInterval(function(){ refreshReceipts().catch(console.error); }, 5000);
+
 var refreshingWorkers = false;
 async function refreshWorkers(){
   if (document.hidden || refreshingWorkers) return;

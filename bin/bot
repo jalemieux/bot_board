@@ -1417,10 +1417,22 @@ while :; do
     done <<<"$GROUP"
     rotate_logs
     OFF=$(wc -c <"$LOG" 2>/dev/null || echo 0)
-    if run_harness "$DIR" "$SFILE" "$PROMPT"; then log "harness returned ok"; rm -f "$STATE/health"
+    # Report only this batch, not all threads the bot owns. Expiring heartbeats
+    # avoid a permanent "looking" badge after a killed launcher or lost network.
+    RECEIPTS=$(cut -f1 <<<"$GROUP" | python3 -c 'import sys,json;print(json.dumps({"messages":[int(x) for x in sys.stdin.read().split()],"active":True}))')
+    receipt() { api --max-time 5 -X POST "$BOARD/api/message-receipts" -H 'Content-Type: application/json' -d "$1" >/dev/null 2>&1 || true; }
+    receipt "$RECEIPTS"
+    (while sleep 30; do kill -0 $$ 2>/dev/null || exit; receipt "$RECEIPTS"; done) &
+    RECEIPT_PID=$!
+    RUN_RC=0
+    run_harness "$DIR" "$SFILE" "$PROMPT" || RUN_RC=$?
+    kill "$RECEIPT_PID" 2>/dev/null || true
+    wait "$RECEIPT_PID" 2>/dev/null || true
+    receipt "${RECEIPTS/true/false}"
+    if [ "$RUN_RC" -eq 0 ]; then log "harness returned ok"; rm -f "$STATE/health"
       DONE_IDS+=" $(cut -f2 <<<"$GROUP" | tr '\n' ' ')"
     else
-      rc=$?; log "harness exited $rc"
+      rc=$RUN_RC; log "harness exited $rc"
       if [ -e "$STATE/stop" ]; then log "stopping: bot stop or kill (seen=$SEEN)"; exit 0; fi
       # the notice answers the last message addressed to this bot; a run on channel posts
       # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
