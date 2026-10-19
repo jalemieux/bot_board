@@ -11,6 +11,49 @@ SOURCE = (ROOT / "bin/bot").read_text()
 WAIT = SOURCE[SOURCE.index("wait_or_stop() {"):SOURCE.index("fetch_new() {")]
 
 
+class InstallTests(unittest.TestCase):
+    def test_piped_install_consumes_download_before_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            checkout = home / "checkout/src"
+            (checkout / ".git").mkdir(parents=True)
+            (checkout / "bin").mkdir()
+            bot = checkout / "bin/bot"
+            bot.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+            bot.chmod(0o755)
+            commands = home / "commands"
+            commands.mkdir()
+            git = commands / "git"
+            git.write_text("#!/usr/bin/env bash\nexit 0\n")
+            git.chmod(0o755)
+            download = home / "download"
+            download.write_text(SOURCE + "\n#" + " " * 1024 * 1024 + "\n")
+            config = home / "config"
+            env = {
+                **os.environ, "HOME": tmp, "BOT_CONFIG": str(config),
+                "BOT_BOARD_DIR": str(home / "checkout"),
+                "BOARD": "http://board.invalid:8080", "KEEPER_OPERATORS": "jac",
+                "PATH": str(commands) + os.pathsep + os.environ["PATH"],
+            }
+            with subprocess.Popen(
+                ["cat", str(download)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            ) as producer:
+                try:
+                    result = subprocess.run(
+                        ["bash", "-s", "--", "install", "--example"],
+                        stdin=producer.stdout, env=env, capture_output=True,
+                        text=True, timeout=10,
+                    )
+                finally:
+                    producer.stdout.close()
+                    _, error = producer.communicate(timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), ["keeper", "install", "--example"])
+                self.assertEqual(producer.returncode, 0, error.decode())
+            self.assertIn('BOARD="http://board.invalid:8080"', config.read_text())
+            self.assertIn('KEEPER_OPERATORS="jac"', config.read_text())
+
+
 class CopilotLauncherTests(unittest.TestCase):
     def test_permissions_on_first_and_resumed_turns(self):
         source = (ROOT / "bin/bot").read_text()
