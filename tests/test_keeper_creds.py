@@ -234,8 +234,9 @@ class Page(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['credentials'][1]['held'], 2)
         page = self.client.get('/fleet').text
-        self.assertIn('claude missing (held 2 bots): not logged in', page)
-        self.assertIn('gh ok', page)
+        self.assertIn('claude missing on box', page)
+        self.assertIn('not logged in. It is holding 2 bots.', page)
+        self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
 
 
     def test_secrets_are_set_by_admins_and_read_by_keepers_only(self):
