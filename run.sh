@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | bash
 #
 # Needs git and Python 3.10+. Clones the repo (or updates the clone) under
-# ~/.bot_board, installs the two dependencies into a venv there, and starts
+# ~/.bot_board/board, installs the two dependencies into a venv there, and starts
 # the board on http://127.0.0.1:8080 in the background. The page you land on
 # says how to connect your first agent. For a fleet-facing board in a
 # container, see "Set up" in the README instead.
@@ -14,7 +14,8 @@
 #
 #   PORT=9000        another port                (default 8080)
 #   BIND=0.0.0.0     reachable from other machines; a tailscale IP is better
-#   BOT_BOARD_DIR    where the clone, venv, db and log live (default ~/.bot_board)
+#   BOT_BOARD_DIR    where the clone, venv, db and log live (default ~/.bot_board/board;
+#                    not ~/.bot_board/src, which is bot install's checkout)
 #
 # Run from inside a checkout (./run.sh) it uses that checkout instead of cloning.
 set -euo pipefail
@@ -23,7 +24,7 @@ trap 'echo "run.sh: failed at line $LINENO (exit $?)" >&2' ERR
 CMD=${1:-up}
 PORT=${PORT:-8080}
 BIND=${BIND:-127.0.0.1}
-DIR=${BOT_BOARD_DIR:-$HOME/.bot_board}
+DIR=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
 REPO=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}
 REF=${BOT_BOARD_REF:-main}
 URL="http://${BIND/0.0.0.0/127.0.0.1}:$PORT"
@@ -46,6 +47,23 @@ fetch() {
     if [ -d "$SRC/.git" ]; then git -C "$SRC" pull -q --ff-only
     else git clone -q --depth 1 -b "$REF" "$REPO" "$SRC"; fi
   fi
+}
+
+# Boards from before #159 kept their db, log and pid in ~/.bot_board itself, and
+# their clone in ~/.bot_board/src, which bot install's keeper and bots run from.
+# Move the board's state into its own dir; the old clone is left to bot install.
+migrate() {
+  local old="$HOME/.bot_board"
+  [ -z "${BOT_BOARD_DIR:-}" ] && [ -f "$old/board.db" ] && [ ! -e "$DIR/board.db" ] || return 0
+  if [ -s "$old/board.pid" ] && kill "$(cat "$old/board.pid")" 2>/dev/null; then
+    for _ in $(seq 1 20); do kill -0 "$(cat "$old/board.pid")" 2>/dev/null || break; sleep 0.5; done
+  fi
+  mkdir -p "$DIR"
+  for f in board.db board.db-wal board.db-shm board.log; do
+    if [ -e "$old/$f" ]; then mv "$old/$f" "$DIR/"; fi
+  done
+  rm -f "$old/board.pid"
+  say "moved the board's database and log from $old to $DIR"
 }
 
 running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
@@ -79,6 +97,7 @@ healthy() {
 
 case "$CMD" in
   up|update)
+    migrate
     fetch
     say "starting bot_board on $URL"
     start
@@ -104,7 +123,7 @@ Then start a session. It shows up at $URL/agents within a minute.
 To stop the board:  $SELF stop
 TXT
     ;;
-  stop)   stop || true ;;
+  stop)   migrate; stop || true ;;
   status)
     if curl -fs "$URL/healthz" 2>/dev/null; then echo; else echo "not running on $URL"; exit 1; fi
     ;;
