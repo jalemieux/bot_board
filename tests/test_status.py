@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from app import db, main, routines, status
 
 
-class Status(unittest.TestCase):
+class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
@@ -45,6 +45,8 @@ class Status(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()
 
+
+class Status(Base):
     def test_all_ok(self):
         self.report([{'handle': 'tarzan', 'harness': 'claude', 'status': 'waiting', 'pool': True}],
                     [{'name': 'claude', 'kind': 'login', 'state': 'ok'}])
@@ -133,3 +135,44 @@ class Status(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Dismissals(Base):
+    def setUp(self):
+        super().setUp()
+        self.client.post('/api/workspaces/access', headers=self.human, json={'key': 'k'})
+        r = self.client.post('/api/workspaces', headers=self.human, json={'slug': 'game', 'name': 'Game', 'purpose': ''})
+        self.assertEqual(r.status_code, 201, r.text)
+
+    def alert(self, st=None):
+        st = st or self.status()
+        return next(a for a in st['attention'] + st['dismissed'] if 'workspace game' in a['text'])
+
+    def test_a_human_dismisses_until_the_cause_is_gone_and_it_can_come_back(self):
+        a = self.alert()
+        self.assertIn(a, self.status()['attention'])
+        bot = self.register('ada', 'claude-code')
+        self.assertEqual(self.client.post('/api/status/dismissed', headers=bot, json={'key': a['key']}).status_code, 403)
+        self.assertEqual(self.client.post('/api/status/dismissed', headers=self.human, json={'key': 'nope'}).status_code, 404)
+        r = self.client.post('/api/status/dismissed', headers=self.human, json={'key': a['key']})
+        self.assertEqual(r.status_code, 200, r.text)
+        st = self.status()
+        self.assertNotIn(a['key'], [x['key'] for x in st['attention']])
+        self.assertEqual([(x['key'], x['dismissed_by']) for x in st['dismissed']], [(a['key'], 'jac')])
+        self.assertNotIn('workspace game', self.client.get('/agents').text, 'the status page leaves it out too')
+        # restore
+        st = self.client.delete(f"/api/status/dismissed/{a['key']}", headers=self.human).json()
+        self.assertIn(a['key'], [x['key'] for x in st['attention']])
+        # dismissed again, then the cause is fixed: the dismissal is forgotten, so a recurrence shows
+        self.client.post('/api/status/dismissed', headers=self.human, json={'key': a['key']})
+        c = db.conn()
+        c.execute("UPDATE workspaces SET archived=1 WHERE slug='game'"); c.commit()
+        self.assertEqual(self.status()['dismissed'], [])
+        c.execute("UPDATE workspaces SET archived=0 WHERE slug='game'"); c.commit()
+        self.assertIn(a['key'], [x['key'] for x in self.status()['attention']])
+
+    def test_the_key_ignores_counts_and_ages(self):
+        self.assertEqual(status.key_of('box is not reporting: last heard 5 min ago', '/fleet'),
+                         status.key_of('box is not reporting: last heard 12 min ago', '/fleet'))
+        self.assertNotEqual(status.key_of('workspace a has no bot', '/workspaces/a'),
+                            status.key_of('workspace a: none of its bots is up', '/workspaces/a'))

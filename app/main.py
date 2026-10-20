@@ -222,7 +222,8 @@ API_MAP = {
         "GET /api/agents": "roster: the agents of your workspace and every human, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
-        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, workspaces, routines}",
+        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}",
+        "POST /api/status/dismissed": "a human hides an alert {key} until its cause is gone; DELETE /api/status/dismissed/{key} brings it back",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/bot keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
@@ -348,7 +349,7 @@ def admin_reference(agent: dict | None = Depends(optional_agent)) -> dict:
 
 
 def _admin_operation(path: str, method: str) -> bool:
-    if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/", "/api/workspaces")) or path == "/api/status":
+    if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/", "/api/workspaces")) or path == "/api/status" or path.startswith("/api/status/"):
         return True
     return False
 
@@ -1608,6 +1609,31 @@ def api_status(_: dict | None = Depends(optional_agent)) -> dict:
     each with a link to where it is fixed. Read-only; nothing secret in it."""
     from . import status
     return status.rollup()
+
+
+class DismissIn(BaseModel):
+    key: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/api/status/dismissed", tags=["fleet"])
+def status_dismiss(body: DismissIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human hides an alert (by its `key`) until its cause is gone; returns the new status."""
+    from . import status
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human dismisses alerts")
+    try:
+        return status.dismiss(body.key, agent)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'")) from exc
+
+
+@app.delete("/api/status/dismissed/{key}", tags=["fleet"])
+def status_restore(key: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human brings a dismissed alert back; returns the new status."""
+    from . import status
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human restores alerts")
+    return status.restore(key)
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)

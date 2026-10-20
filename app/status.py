@@ -1,10 +1,17 @@
 """System status: the fleet, the workspaces and the routines in one rollup (#92).
 
-Nothing here is stored. It reads what /fleet, /workspaces and /routines read, and
-says in one list what needs a human, each item pointing to where it is fixed.
-GET /api/status returns it; /agents shows it above the roster.
+It reads what /fleet, /workspaces and /routines read, and says in one list what
+needs a human, each item pointing to where it is fixed. GET /api/status returns it;
+/agents shows it above the roster.
+
+The only thing stored is which items a human dismissed. A dismissed item leaves the
+list (and the bell count) while it holds; once its cause is gone the dismissal is
+forgotten, so the same trouble coming back later shows again.
 """
 from __future__ import annotations
+
+import hashlib
+import re
 
 from . import db, fleet, workspaces
 from .web import ago
@@ -12,8 +19,66 @@ from .web import ago
 RUNNER_STALE = 15 * 60      # an enabled routine whose runner has not been seen for this long is not running
 
 
+DISMISS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS status_dismissals (
+    key TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    by_agent INTEGER NOT NULL REFERENCES agents(id),
+    at TEXT NOT NULL
+);
+"""
+# Counts and ages change while the trouble stays the same ("last heard 5 min ago"): the
+# key leaves them out, so a dismissal outlives a refresh of the wording.
+_VOLATILE = re.compile(r"\d+(\.\d+)?\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)?\b")
+
+
+def key_of(text: str, href: str) -> str:
+    return hashlib.sha1((href + "\n" + _VOLATILE.sub("#", text)).encode()).hexdigest()[:16]
+
+
 def _item(text: str, href: str, where: str) -> dict:
-    return {"text": text, "href": href, "where": where}
+    return {"text": text, "href": href, "where": where, "key": key_of(text, href)}
+
+
+def _ensure_table(c) -> None:
+    c.executescript(DISMISS_SCHEMA)
+
+
+def dismiss(key: str, agent: dict) -> dict:
+    """Hide the item with this key until its cause is gone. KeyError when no current item has it."""
+    item = next((a for a in rollup()["attention"] if a["key"] == key), None)
+    if item is None:
+        raise KeyError("no current alert has that key")
+    with db._write_lock, db.conn() as c:
+        _ensure_table(c)
+        c.execute("INSERT OR REPLACE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)",
+                  (key, item["text"], agent["id"], db.now()))
+    return rollup()
+
+
+def restore(key: str) -> dict:
+    with db._write_lock, db.conn() as c:
+        _ensure_table(c)
+        c.execute("DELETE FROM status_dismissals WHERE key=?", (key,))
+    return rollup()
+
+
+def _split(attention: list) -> tuple[list, list]:
+    """(shown, dismissed); forgets dismissals whose item is gone."""
+    c = db.conn()
+    with db._write_lock:
+        _ensure_table(c)
+    rows = {r["key"]: dict(r) for r in c.execute(
+        "SELECT d.key, d.at, a.handle FROM status_dismissals d LEFT JOIN agents a ON a.id=d.by_agent")}
+    current = {a["key"] for a in attention}
+    gone = [k for k in rows if k not in current]
+    if gone:
+        with db._write_lock, c:
+            c.executemany("DELETE FROM status_dismissals WHERE key=?", [(k,) for k in gone])
+    shown = [a for a in attention if a["key"] not in rows]
+    hidden = [{**a, "dismissed_by": rows[a["key"]]["handle"], "dismissed_at": rows[a["key"]]["at"]}
+              for a in attention if a["key"] in rows]
+    return shown, hidden
 
 
 def _fleet(hosts: list, attention: list) -> list:
@@ -123,10 +188,12 @@ def _routines(attention: list) -> list:
 
 
 def rollup(hosts: list | None = None) -> dict:
-    """{ok, attention: [{text, href, where}], fleet, workspaces, routines}. hosts: fleet.hosts(),
-    when the caller has it already (each call scans the messages for last posts)."""
+    """{ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}.
+    hosts: fleet.hosts(), when the caller has it already (each call scans the messages for last posts).
+    `ok` and `attention` leave out what a human dismissed; `dismissed` lists those."""
     attention: list = []
     hosts = fleet.hosts() if hosts is None else hosts
     out = {"fleet": _fleet(hosts, attention), "workspaces": _workspaces(hosts, attention),
            "routines": _routines(attention)}
-    return {"ok": not attention, "attention": attention, **out}
+    shown, hidden = _split(attention)
+    return {"ok": not shown, "attention": shown, "dismissed": hidden, **out}

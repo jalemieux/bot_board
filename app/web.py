@@ -245,8 +245,38 @@ def render_body(body: str) -> str:
 
 ADMIN_ALERT_JS = """
 (function () {
+  var showDismissed = false;
+  function token() { try { var me = JSON.parse(localStorage.getItem('bb.me')); return me && me.token; } catch (err) { return null; } }
+  async function act(method, path, body) {
+    var t = token(), headers = {'Content-Type': 'application/json'};
+    if (t) headers.Authorization = 'Bearer ' + t;
+    var r = await fetch(path, {method: method, headers: headers, body: body ? JSON.stringify(body) : undefined});
+    var d = await r.json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(d.error || d.detail || ('HTTP ' + r.status));
+    render(d);
+  }
+  function row(a, dismissed) {
+    var li = document.createElement('li'), link = document.createElement('a');
+    if (a.where) { var w = document.createElement('span'); w.className = 'where'; w.textContent = a.where; li.appendChild(w); }
+    link.href = a.href; link.textContent = a.text; li.appendChild(link);
+    if (a.key && token()) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'dismiss';
+      b.textContent = dismissed ? 'restore' : '×';
+      b.title = dismissed ? 'Show this alert again' + (a.dismissed_by ? ' (dismissed by @' + a.dismissed_by + ')' : '')
+                          : 'Dismiss: hidden until its cause is gone, then it can come back';
+      b.setAttribute('aria-label', dismissed ? 'Restore alert' : 'Dismiss alert');
+      b.addEventListener('click', function (ev) {
+        ev.stopPropagation(); b.disabled = true;
+        (dismissed ? act('DELETE', '/api/status/dismissed/' + encodeURIComponent(a.key))
+                   : act('POST', '/api/status/dismissed', {key: a.key}))
+          .catch(function (e) { b.disabled = false; b.title = e.message; b.textContent = '!'; });
+      });
+      li.appendChild(b);
+    }
+    return li;
+  }
   function render(st) {
-    var items = (st && st.attention) || [];
+    var items = (st && st.attention) || [], gone = (st && st.dismissed) || [];
     var count = document.getElementById('bell-count');
     if (count) { count.textContent = items.length || ''; count.hidden = !items.length; }
     var box = document.getElementById('inbox');
@@ -259,12 +289,19 @@ ADMIN_ALERT_JS = """
       box.appendChild(h);
       if (items.length) {
         var ul = document.createElement('ul');
-        items.forEach(function (a) {
-          var li = document.createElement('li'), link = document.createElement('a');
-          if (a.where) { var w = document.createElement('span'); w.className = 'where'; w.textContent = a.where; li.appendChild(w); }
-          link.href = a.href; link.textContent = a.text; li.appendChild(link); ul.appendChild(li);
-        });
+        items.forEach(function (a) { ul.appendChild(row(a, false)); });
         box.appendChild(ul);
+      }
+      if (gone.length) {
+        var t = document.createElement('button'); t.type = 'button'; t.className = 'inbox-toggle';
+        t.textContent = (showDismissed ? 'hide ' : 'show ') + gone.length + ' dismissed';
+        t.addEventListener('click', function (ev) { ev.stopPropagation(); showDismissed = !showDismissed; render(st); });
+        box.appendChild(t);
+        if (showDismissed) {
+          var dl = document.createElement('ul'); dl.className = 'dismissed';
+          gone.forEach(function (a) { dl.appendChild(row(a, true)); });
+          box.appendChild(dl);
+        }
       }
     }
     var legacy = document.getElementById('admin-alerts');   // the standalone /admin page
@@ -332,6 +369,13 @@ background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shad
 .inbox li .where{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;flex:0 0 64px}
 .inbox li a{color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .inbox li a:hover{color:var(--accent)}
+.inbox li a{flex:1}
+.inbox li .dismiss{flex:none;align-self:center;background:none;border:1px solid transparent;border-radius:6px;color:var(--dim);
+cursor:pointer;font:13px var(--mono);padding:1px 7px}
+.inbox li .dismiss:hover{border-color:var(--line);color:var(--ink);background:var(--sel)}
+.inbox .inbox-toggle{margin-top:8px;background:none;border:0;padding:0;color:var(--dim);font:12px var(--mono);cursor:pointer;text-decoration:underline}
+.inbox ul.dismissed li{opacity:.65}
+.inbox ul.dismissed li .dismiss{font-size:11px}
 """
 
 SHELL_NAV_JS = """
