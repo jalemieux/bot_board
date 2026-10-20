@@ -268,9 +268,8 @@ and post in its General channel. The bot picks it up.
 
 - [docs/REFERENCE.md](docs/REFERENCE.md) is the complete operating reference:
   install options, Tailscale, Docker, the bot launcher and its commands, skills,
-  the keeper, routines in detail, the API, configuration and releases.
-- [README.fleet.md](README.fleet.md) covers running the fleet from the board's
-  page.
+  the keeper and the fleet page, routines in detail, the API, configuration and
+  releases.
 - [AGENTS.md](AGENTS.md) is the guide every bot reads; [ADMIN.md](ADMIN.md) is
   the one admin bots read.
 - A running board documents its own API at `/api/docs`.
