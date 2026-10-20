@@ -1,8 +1,9 @@
-"""The routines page: what recurring work exists, and a way to delete it.
+"""The routines page: what recurring work exists, and a way to pause, enable or delete it.
 
 Routines are stored on the board (app/routines.py) and asked for in a
 conversation with the admin bot, which stores, tests and enables them. This page
-reads GET /api/routines; its one write is Delete (DELETE /api/routines/{id}),
+reads GET /api/routines; its writes are Pause and Enable (POST /api/routines/{id}/pause
+and /enable) and Delete (DELETE /api/routines/{id}),
 with the identity the board page keeps in this browser (localStorage bb.me).
 Data from the API is only ever put on the page as text, never as HTML.
 """
@@ -28,6 +29,7 @@ ROUTINES_CSS = """
 .rt textarea.code{min-height:14em;white-space:pre;tab-size:4}
 .rt button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 13px;font:600 12px var(--mono);cursor:pointer;justify-self:start}
 .rt button.quiet{background:var(--accent-soft);color:var(--accent)}
+.rt button.quiet+button.quiet{margin-left:6px}
 .rt button:disabled{opacity:.5;cursor:default}
 .rt .row{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-end}
 .rt .note{font-size:12px;color:var(--dim)}
@@ -140,7 +142,7 @@ function draw(failed) {
   clear(root);
   add(root, h('div', {'class': 'bar'},
     ME ? h('span', {text: 'Signed in as @' + ME.handle + '.'})
-       : h('span', null, 'Read only. To delete a routine, sign in on the ', h('a', {href: '/', text: 'board page'}), ' first, then come back.'),
+       : h('span', null, 'Read only. To pause, enable or delete a routine, sign in on the ', h('a', {href: '/', text: 'board page'}), ' first, then come back.'),
     h('a', {href: '/workspaces/' + encodeURIComponent(ADMIN_PROJECT), text: 'workspace ' + ADMIN_PROJECT})));
   if (failed) { add(root, h('p', {'class': 'msg-err', text: 'Could not load routines: ' + why(failed)})); return; }
   if (!data) { add(root, h('p', {'class': 'sub', text: 'Loading routines…'})); return; }
@@ -194,19 +196,27 @@ function detail(r) {
       h('dt', {text: 'done within'}), h('dd', {text: fmtDur(r.done_timeout)}),
       h('dt', {text: 'sent again'}), h('dd', {text: (r.resends != null ? r.resends : '?') + ' time(s) before it counts as failed'}),
       r.skill ? [h('dt', {text: 'needs skill'}), h('dd', {text: r.skill})] : null),
-    h('p', {'class': 'note'}, 'To change, pause or test it, ask the admin bot', r.thread ? [' in ', thread(r.thread, 'the thread it came from')] : null, '.'));
+    h('p', {'class': 'note'}, 'To change or test it, ask the admin bot', r.thread ? [' in ', thread(r.thread, 'the thread it came from')] : null, '.'));
   add(root, sec);
   if (ME) {
     var out = h('div', {role: 'status', 'aria-live': 'polite'});
-    add(sec, h('button', {type: 'button', 'class': 'quiet', text: 'Delete', onclick: function (ev) {
-      if (!window.confirm('Delete the routine ' + (r.name || '#' + r.id) + '? It stops for good.')) return;
-      var btn = ev.currentTarget; btn.disabled = true;
-      api('DELETE', '/api/routines/' + encodeURIComponent(r.id)).then(function (res) {
-        btn.disabled = false;
-        if (!res.ok) { status(out, false, why(res)); return; }
-        location.hash = ''; load();
-      });
-    }}), out);
+    // pause keeps the routine and its history; delete stops it for good
+    function act(text, method, path, ask, done) {
+      return h('button', {type: 'button', 'class': 'quiet', text: text, onclick: function (ev) {
+        if (ask && !window.confirm(ask)) return;
+        var btn = ev.currentTarget; btn.disabled = true;
+        api(method, path).then(function (res) {
+          btn.disabled = false;
+          if (!res.ok) { status(out, false, why(res)); return; }
+          done();
+        });
+      }});
+    }
+    var path = '/api/routines/' + encodeURIComponent(r.id);
+    add(sec, r.state === 'enabled' ? act('Pause', 'POST', path + '/pause', null, load) : null,
+      r.state !== 'enabled' && !r.problem ? act('Enable', 'POST', path + '/enable', null, load) : null,
+      act('Delete', 'DELETE', path, 'Delete the routine ' + (r.name || '#' + r.id) + '? It stops for good.',
+          function () { location.hash = ''; load(); }), out);
   }
   add(sec, testResult(r));
 
