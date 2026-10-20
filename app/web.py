@@ -30,7 +30,9 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # first thing to collapse into the overflow menu. Agent reference — the roster, /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
-ADMIN_LINKS = (("/fleet", "fleet"), ("/workspaces", "workspaces"), ("/routines", "routines"))
+ADMIN_LINKS = (("/fleet", "Fleet", "Boxes and bots: start, stop, add"),
+               ("/workspaces", "Workspaces", "Channels, bots and knowledge per workspace"),
+               ("/routines", "Routines", "Scheduled checks that post work"))
 UTIL_LINKS = (("/onboard", "connect your harness"),)
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
@@ -47,18 +49,26 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .links a[aria-current]{background:var(--sel);color:var(--ink)}
 .topnav .divider{width:1px;height:22px;background:var(--line);flex:none}
 /* fleet/projects/routines: the human admin console */
-.topnav .admins{display:inline-flex;align-items:center;background:var(--human-soft);
-border:1px solid color-mix(in srgb,var(--human) 32%,transparent);border-radius:8px;padding:2px}
-.topnav .admins .glyph{color:var(--human);font:600 9px var(--sans);text-transform:uppercase;letter-spacing:.06em;padding:0 8px 0 9px;opacity:.85;white-space:nowrap}
-.topnav .admins a{color:var(--human);padding:4px 9px;border-radius:6px;font:12.5px var(--mono);white-space:nowrap}
-.topnav .admins a:hover{background:color-mix(in srgb,var(--human) 14%,transparent);text-decoration:none}
-.topnav .admins a[aria-current]{background:var(--panel);color:var(--human);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.topnav .admins{position:relative}
+.topnav .admins>summary{list-style:none;display:flex;align-items:center;gap:7px;height:32px;padding:0 11px;border-radius:8px;cursor:pointer;
+background:var(--human-soft);border:1px solid color-mix(in srgb,var(--human) 32%,transparent);color:var(--human);font:600 12.5px var(--mono);white-space:nowrap}
+.topnav .admins>summary::-webkit-details-marker{display:none}
+.topnav .admins>summary:hover{background:color-mix(in srgb,var(--human) 18%,var(--human-soft))}
+.topnav .admins>summary svg{flex:none}
+.topnav .admins .menu{position:absolute;top:calc(100% + 6px);right:0;width:300px;background:var(--panel);border:1px solid var(--line);
+border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.14);padding:6px;display:flex;flex-direction:column;gap:2px;z-index:20}
+.topnav .admins .menu .who{font:600 10px var(--sans);text-transform:uppercase;letter-spacing:.07em;color:var(--dim);padding:6px 10px 4px}
+.topnav .admins .menu a{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:7px;color:var(--ink);white-space:normal}
+.topnav .admins .menu a:hover{background:var(--sel);text-decoration:none}
+.topnav .admins .menu a b{font:600 13px var(--mono)}
+.topnav .admins .menu a span{font:12px var(--sans);color:var(--dim)}
+.topnav .admins .menu a[aria-current]{background:var(--human-soft)}
+.topnav .admins .menu a[aria-current] b{color:var(--human)}
 .topnav .me{margin-left:auto;display:flex;align-items:center;gap:14px;font:12px var(--mono);color:var(--dim);white-space:nowrap}
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
-TOPNAV_RESPONSIVE_CSS = """@media (max-width:1180px){.topnav .admins .glyph{display:none}}
-@media (max-width:1100px){.topnav .links a.x{display:none}}
+TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
 border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.15);min-width:200px}
@@ -73,12 +83,26 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 
 
 def admin_segment(here: str = "") -> str:
-    out = []
-    for href, text in ADMIN_LINKS:
-        cur = ' aria-current="page"' if href == here else ""
-        out.append(f'<a href="{href}"{cur}>{text}</a>')
-    return ('<div class="admins" title="Fleet management">'
-            '<span class="glyph">Fleet management</span>' + "".join(out) + "</div>")
+    """The operator pages behind one Manage menu: a <details>, so it opens without script;
+    a click elsewhere or Escape closes it."""
+    gear = ('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle>'
+            '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 '
+            '1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 '
+            '1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 '
+            '9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 '
+            '1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06'
+            '.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>')
+    caret = ('<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" '
+             'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>')
+    cur = ' aria-current="page"'
+    items = "".join(f'<a href="{href}"{cur if href == here else ""}><b>{text}</b><span>{about}</span></a>'
+                    for href, text, about in ADMIN_LINKS)
+    return ('<details class="admins" id="manage"><summary>' + gear + "Manage" + caret + "</summary>"
+            '<nav class="menu" aria-label="Manage"><div class="who">Operators only</div>' + items + "</nav></details>"
+            "<script>(function(){var d=document.getElementById('manage');if(!d)return;"
+            "document.addEventListener('click',function(e){if(d.open&&!d.contains(e.target))d.open=false;});"
+            "document.addEventListener('keydown',function(e){if(e.key==='Escape'&&d.open){d.open=false;d.querySelector('summary').focus();}});})();</script>")
 
 
 def util_links(here: str = "") -> str:
