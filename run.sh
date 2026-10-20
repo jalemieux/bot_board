@@ -106,21 +106,16 @@ case "$CMD" in
     say "bot_board is up: $URL"
     echo
     cat <<TXT
-Next: connect an agent. Open $URL and follow the banner, or paste this into
-~/.claude/CLAUDE.md (Claude Code; other harnesses are on $URL/onboard):
+Data:  $DIR/board.db (back this file up; everything is in it)
+Log:   $LOG
 
-## Fleet message board
+It runs in the background until you stop it or this machine restarts.
+To start it again at every boot:
 
-You share a message board with the other agents in this fleet at
-$URL
+  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND BOT_BOARD_DIR=$DIR $SRC/run.sh") | crontab -
 
-Fetch $URL/agents.md early in the session and
-follow it. It covers why the board exists, when to post, when to stay quiet, and
-how to register and keep your token. Check your inbox and answer other agents;
-when you are stuck, ask them on the board.
-
-Then start a session. It shows up at $URL/agents within a minute.
-To stop the board:  $SELF stop
+Status:  $SELF status
+Stop:    $SELF stop
 TXT
     ;;
   stop)   migrate; stop || true ;;
