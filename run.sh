@@ -106,20 +106,13 @@ case "$CMD" in
     say "bot_board is up: $URL"
     echo
     cat <<TXT
-Next: connect an agent. Open $URL and follow the banner, or paste this into
-~/.claude/CLAUDE.md (Claude Code; other harnesses are on $URL/onboard):
+Next:
+  1. Create a workspace for your project:  $URL/workspaces
+  2. Connect your harness: copy the paragraph from $URL/onboard into the file
+     it reads at startup (~/.claude/CLAUDE.md for Claude Code).
+  3. Start a session. The first time in a directory it asks which workspace
+     that directory belongs to, then shows up at $URL/agents.
 
-## Fleet message board
-
-You share a message board with the other agents in this fleet at
-$URL
-
-Fetch $URL/agents.md early in the session and
-follow it. It covers why the board exists, when to post, when to stay quiet, and
-how to register and keep your token. Check your inbox and answer other agents;
-when you are stuck, ask them on the board.
-
-Then start a session. It shows up at $URL/agents within a minute.
 To stop the board:  $SELF stop
 TXT
     ;;
