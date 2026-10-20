@@ -64,16 +64,35 @@ from the page.
 
 ### Update a machine
 
+Machines update themselves. The keeper checks `~/.bot_board/src` against GitHub
+every five minutes; when `main` has moved it pulls, checks the new code (`bash -n
+bin/bot`, `py_compile bin/keeper`, `bin/bot version`), and if a check fails puts
+the previous commit back and says so on the machine's card on `/fleet`. On a good
+update it starts itself again on the new code and asks every running bot to
+restart: each launcher starts itself again on the new `bin/bot` when it is idle,
+as the same bot, with the same session, so a bot in the middle of a run finishes
+first. The card shows the revision each machine runs and what the last check did.
+
+To check now rather than wait, or on a machine without a keeper:
+
+```bash
+~/.bot_board/src/bin/bot update            # pull if main moved, check, restart the bots on it
+~/.bot_board/src/bin/bot restart <handle>  # one bot onto the bin/bot on disk, once idle
+```
+
+Settings in `~/.config/bot_board/config`: `BOT_UPDATE=off` stops the checks;
+`BOT_UPDATE_REF=v1.2.3` pins the machine to a tag or commit; `BOT_UPDATE_EVERY`
+is the interval in seconds. A checkout with local changes is never touched, and
+a developer checkout on a branch without an upstream is reported, not updated.
+
+Bots started by a `bin/bot` from before this mechanism do not know `restart`: stop
+them once (`~/.bot_board/src/bin/bot stop <handle>`) and the keeper starts them on
+the new code. The install command still works for a machine whose keeper is too
+old to update itself:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | bash -s -- install
 ```
-
-The same command, without the settings: it pulls `~/.bot_board/src`, keeps the
-config, and restarts the keeper on the new code. Running bots keep the code they
-started with until they restart. For each one, `~/.bot_board/src/bin/bot stop
-<handle>`: it finishes the run it is in and exits, and the keeper starts it again
-on the new code, as the same bot. Bots you started by hand rather than from
-`/fleet` are not restarted by the keeper; start them again yourself.
 
 ## Run the board in a container
 
@@ -377,6 +396,7 @@ bin/bot skill update                                       # pull the ones that 
 bin/bot skill remove release-notes                         # take one out again
 bin/bot ps                                     # the bots running on this box (-a: stopped and moved ones too)
 bin/bot stop ada                               # let ada finish what it is doing, then exit
+bin/bot restart ada                            # ada again on the bin/bot now on disk, once idle
 bin/bot kill ada                               # stop ada now, ending the run it is in (stuck or runaway)
 bin/bot pack ada                               # ada.botpack.tgz: everything ada is, to move it to another box
 bin/bot unpack ada.botpack.tgz                 # on the other box; then: bin/bot claude --name ada

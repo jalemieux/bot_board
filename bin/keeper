@@ -6,6 +6,7 @@
   bot keeper run [--interval 15]    the keeper itself, in the foreground
   bot keeper once               one report and one round of what the board asks, then exit
   bot keeper show               print what would be reported; sends nothing, does nothing
+  bot keeper update             check the checkout against its origin now, and update if it moved
 
 The board cannot look at a box or act on one, so each box has a keeper that
 does both. Every few seconds it tells the board how many cores, the load, the
@@ -54,6 +55,18 @@ that file before every harness run, so a rotated token is used from each bot's
 next run. With no secrets on the board, a fleet.env kept here by hand is left
 alone. Each credential's state goes out with the report and shows on /fleet;
 nothing about it is ever posted to a channel.
+
+The keeper also keeps the checkout it runs from current (#107). Every five minutes
+(BOT_UPDATE_EVERY seconds) it fetches the checkout's origin; when the branch it tracks
+has moved, it pulls fast-forward, checks the new code (bash -n bin/bot, py_compile
+bin/keeper, bin/bot version) and, if a check fails, puts the previous commit back and
+reports why. On a good update it asks every running bot to restart (bin/bot restart:
+each launcher starts itself again on the new bin/bot when idle, same bot, same session)
+and starts itself again on the new bin/keeper. Only a clean clone is touched: a checkout
+with local changes is left alone and reported as such. BOT_UPDATE=off turns this off;
+BOT_UPDATE_REF=<tag or commit> pins the checkout to that revision instead of the branch.
+`bot update` runs one check by hand. What the updater last did is in each report, under
+update, and on the machine's card on /fleet.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST,
 KEEPER_OPERATORS (handles, space or comma separated: only what they asked is carried
@@ -149,6 +162,130 @@ class Maintenance:
             self.retry_at = now + 300
             detail = (e.stderr or e.stdout or str(e)) if isinstance(e, subprocess.CalledProcessError) else str(e)
             print(f"keeper: gc failed; retrying in 5 minutes: {detail}", file=sys.stderr, flush=True)
+
+
+SRC = os.path.dirname(os.path.dirname(BOT))     # the checkout bin/bot and bin/keeper run from
+
+
+def git(*args, cwd=None, timeout=60):
+    return subprocess.run(["git", "-C", cwd or SRC, *args], capture_output=True, text=True, timeout=timeout)
+
+
+def _said(r):
+    return " ".join((r.stderr or r.stdout).split())[-200:]
+
+
+class Updater:
+    """Keeps the checkout current with its origin, and rolls the bots and the keeper onto it (#107).
+    state is what each report carries: revision (git describe of what runs here), checked (when),
+    result (what the last check found or did), available (a revision pulled but not in use)."""
+
+    def __init__(self, src=None, bot=None):
+        self.src = src or SRC
+        self.bot = bot or BOT
+        self.every = int(setting("BOT_UPDATE_EVERY", "300") or 300)
+        self.mode = setting("BOT_UPDATE", "on").strip().lower()
+        self.ref = setting("BOT_UPDATE_REF").strip()
+        self.checked = 0
+        self.quarantined = ""       # a commit that failed its checks: not tried again until the target moves
+        self.loaded = self.head()   # the commit this process's code came from
+        self.state = {"revision": self.revision(), "checked": "", "result": "", "available": ""}
+
+    def head(self):
+        r = git("rev-parse", "HEAD", cwd=self.src)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    def revision(self):
+        r = git("describe", "--tags", "--always", "--dirty", cwd=self.src)
+        return r.stdout.strip() if r.returncode == 0 else "dev"
+
+    def eligible(self):
+        """None when the checkout may be updated, else why not."""
+        if self.mode in ("off", "0", "no", "false"):
+            return "updates are off (BOT_UPDATE=off)"
+        if git("rev-parse", "--is-inside-work-tree", cwd=self.src).stdout.strip() != "true":   # .git may be a file (a worktree)
+            return f"{self.src} is not a git checkout"
+        r = git("status", "--porcelain", "--untracked-files=no", cwd=self.src)   # a stray file is not a change
+        if r.returncode:
+            return f"git status failed: {_said(r)}"
+        if r.stdout.strip():
+            return "the checkout has local changes; left alone"
+        if not self.ref and git("rev-parse", "--abbrev-ref", "@{upstream}", cwd=self.src).returncode:
+            return "HEAD tracks no remote branch; check out a branch, or pin with BOT_UPDATE_REF"
+        return None
+
+    def verify(self):
+        """None when the code now in the checkout passes its checks, else what failed."""
+        checks = (["bash", "-n", self.bot], [sys.executable, "-m", "py_compile", os.path.join(self.src, "bin", "keeper")],
+                  [self.bot, "version"])
+        for cmd in checks:
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            except (OSError, subprocess.SubprocessError) as e:
+                return f"{os.path.basename(cmd[0])} {' '.join(cmd[1:2])}: {e}"[:200]
+            if r.returncode:
+                return f"`{os.path.basename(cmd[-2]) if len(cmd) > 2 else os.path.basename(cmd[0])} {cmd[-1] if cmd[-1] != self.bot else ''}`".replace("  ", " ")                     + f" exited {r.returncode}: {_said(r)}"
+        return None
+
+    def tick(self, bots, force=False):
+        """When due: fetch; if the target moved, pull, check, roll the bots. True when the code changed."""
+        now = time.time()
+        if not force and now - self.checked < self.every:
+            return False
+        self.checked = now
+        self.state["checked"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        why = self.eligible()
+        if why:
+            self.state["result"] = why
+            return False
+        try:
+            f = git("fetch", "-q", "--tags", "origin", cwd=self.src, timeout=180)
+        except subprocess.SubprocessError as e:
+            self.state["result"] = f"fetch failed: {e}"[:200]
+            return False
+        if f.returncode:
+            self.state["result"] = f"fetch failed: {_said(f)}"
+            return False
+        target = self.ref if self.ref else "@{upstream}"
+        want = git("rev-parse", target + "^{commit}", cwd=self.src)
+        if want.returncode:
+            self.state["result"] = f"no such revision {target}: {_said(want)}"
+            return False
+        want, old = want.stdout.strip(), self.head()
+        if want == old:
+            self.state.update(result="up to date", available="")
+            return False
+        if want == self.quarantined and not force:
+            return False        # the result still says why it was rolled back
+        self.state["available"] = want[:12]
+        r = git("checkout", "-q", "--detach", want, cwd=self.src) if self.ref else git("merge", "-q", "--ff-only", want, cwd=self.src)
+        if r.returncode:
+            self.state["result"] = f"cannot move to {want[:12]}: {_said(r)}"
+            return False
+        problem = self.verify()
+        if problem:
+            back = git("checkout", "-q", old, cwd=self.src) if self.ref else git("reset", "-q", "--hard", old, cwd=self.src)
+            self.quarantined = want
+            self.state["result"] = (f"{want[:12]} failed its checks and was rolled back to {old[:12]}: {problem}"
+                                    if back.returncode == 0 else f"{want[:12]} failed its checks ({problem}) AND could not be rolled back: {_said(back)}")
+            print(f"keeper: update: {self.state['result']}", file=sys.stderr, flush=True)
+            return False
+        self.quarantined = ""
+        self.state.update(revision=self.revision(), available="", result=f"updated {old[:12]} -> {want[:12]}")
+        print(f"keeper: update: {self.state['result']}; asking running bots to restart on it", flush=True)
+        for b in bots:
+            if b["status"].startswith(("waiting", "running")):
+                try:
+                    r = subprocess.run([self.bot, "restart", b["handle"]], capture_output=True, text=True, timeout=30)
+                    print(f"keeper: {(r.stdout or r.stderr).strip()}", flush=True)
+                except (OSError, subprocess.SubprocessError) as e:
+                    print(f"keeper: could not ask {b['handle']} to restart: {e}", file=sys.stderr, flush=True)
+        return True
+
+    def code_changed(self):
+        """The keeper's own code on disk is not the code running: time to start again."""
+        head = self.head()
+        return bool(head) and head != self.loaded
 
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
@@ -761,6 +898,7 @@ def main():
     sub.add_parser("run").add_argument("--interval", type=int, default=15)
     sub.add_parser("once")
     sub.add_parser("show")
+    sub.add_parser("update")
     sub.add_parser("install")
     sub.add_parser("uninstall")
     rotate = sub.add_parser("rotate-logs", help="rotate local logs between launcher runs")
@@ -772,11 +910,17 @@ def main():
         return
     if a.cmd in ("install", "uninstall"):
         return service(a.cmd == "install")
+    if a.cmd == "update":
+        u = Updater()
+        changed = u.tick(bots(), force=True)
+        _print(f"keeper: {u.state['result']}" + (" (restart the keeper to run it: bot keeper install)" if changed else ""))
+        return sys.exit(0 if "failed" not in u.state["result"] and "cannot" not in u.state["result"] else 1)
     host = host_name()
     if a.cmd == "show":
         creds = Credentials(host)
         creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True)
-        return _print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({})}, indent=1))
+        return _print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({}),
+                                  "update": Updater().state}, indent=1))
     try:
         token = token_for(host)
     except ConnectionError as e:
@@ -788,11 +932,16 @@ def main():
     except OSError:
         die("a keeper is already running on this box for this user")
     hands, problems, creds, want = Hands(host), {}, Credentials(host), []
-    maintenance = Maintenance()
+    maintenance, updater = Maintenance(), Updater()
     while True:
         try:
             snap = snapshot()
             maintenance.tick(snap["bots"])
+            try:
+                updater.tick(snap["bots"])
+            except (OSError, subprocess.SubprocessError) as e:
+                updater.state["result"] = f"update check failed: {e}"[:200]
+            snap["update"] = updater.state
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
@@ -821,6 +970,12 @@ def main():
             print(f"keeper: will retry: {e}", file=sys.stderr, flush=True)
         if a.cmd == "once":
             break
+        if updater.code_changed():
+            # bin/keeper on disk is newer than what runs (an update, by the updater or by hand):
+            # start again on it, in place. The service sees the same process; the bots, nothing.
+            print(f"keeper: bin/keeper changed on disk ({updater.revision()}); starting again on it", flush=True)
+            sys.stdout.flush(); sys.stderr.flush()
+            os.execv(sys.executable, [sys.executable, os.path.realpath(__file__), *sys.argv[1:]])
         time.sleep(a.interval)
 
 

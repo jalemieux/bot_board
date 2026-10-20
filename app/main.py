@@ -561,6 +561,9 @@ class FleetReportIn(BaseModel):
                                    " packed and handed over for a move since its last report.")
     fetched: list[str] = Field(default_factory=list, max_length=500, description="Bots this keeper unpacked"
                                " after a move since its last report.")
+    update: dict[str, str] | None = Field(default=None, description="The keeper's updater: revision (git describe of"
+                                          " the bin/bot and bin/keeper running there), checked (when it last looked),"
+                                          " result (what it found or did), available (a revision pulled but not in use).")
 
 
 class FleetMoveIn(BaseModel):

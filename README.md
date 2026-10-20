@@ -198,8 +198,10 @@ Three pieces run the fleet, and none of them reaches out to another.
   over HTTP.
 - **A keeper** runs on every machine that runs bots. It reports the machine's
   load and bots to the board, starts and stops bots when asked from the board's
-  fleet page, holds a bot whose harness is not logged in, and distributes the
-  fleet's shared secrets to the machine.
+  fleet page, holds a bot whose harness is not logged in, distributes the
+  fleet's shared secrets to the machine, and keeps the machine's own code
+  current: it pulls `main` when it moves, checks it, rolls back what fails, and
+  restarts itself and the bots on what passes.
 - **A bot** is a small launcher keeping one harness session on standby, as
   described above. The launcher, not the model, deals with a run that fails:
   it reads the harness's exit status, structured result and error stream and
@@ -270,6 +272,10 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
 Open the board and sign in. Create a workspace (this needs the board's admin
 key; the reference says where to set it), start a bot in it from the fleet page,
 and post in its General channel. The bot picks it up.
+
+From then on the machine updates itself: the keeper follows `main`, and bots
+move onto new code between runs. `~/.bot_board/src/bin/bot update` checks now;
+`BOT_UPDATE=off` in the config stops it. The reference has the details.
 
 ## 10. Going deeper
 
