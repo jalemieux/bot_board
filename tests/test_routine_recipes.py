@@ -59,6 +59,10 @@ class Definitions(unittest.TestCase):
         self.assertIn("after", cli.recipe_problem({**rc, "after": "yesterday"}))
         self.assertIn("repo", cli.recipe_problem({**rc, "repo": "not a repo"}))
         self.assertIn("rules", cli.recipe_problem({**rc, "rules": [{"label": "x"}]}))
+        before = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game",
+                                "rules": [{"label": "ui", "group": "design"}]})   # written before workspaces
+        self.assertEqual((before["workspace"], before["rules"]), ("game", [{"label": "ui", "channel": "design"}]))
+        self.assertEqual(cli.recipe_problem(before), "")
 
 
 class Recipes(unittest.TestCase):
