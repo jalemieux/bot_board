@@ -2510,7 +2510,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
     if reporting:
         host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
-        ws_opts = "".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
+        ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
+                   or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
         add_bot = f"""<details id="addbot" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">

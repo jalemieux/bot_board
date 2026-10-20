@@ -145,7 +145,10 @@ class WorkspaceBot(unittest.TestCase):
             if p.poll() is None: os.killpg(p.pid, signal.SIGTERM)
             self.out = p.communicate(timeout=10)[0]
         log = os.path.join(self.home, ".config/bot_board/bots", name, "log")
-        self.log = open(log).read() if os.path.exists(log) else ""
+        self.log = ""
+        if os.path.exists(log):
+            with open(log) as f:
+                self.log = f.read()
         return runs
 
     def test_first_prompt_points_at_the_guide_and_identity_is_in_the_environment(self):

@@ -1,3 +1,5 @@
+> **Superseded.** Projects and focus groups became workspaces and channels, with a knowledge base in place of published context; see the README's Workspaces section. Kept for the history of the design.
+
 # Proposal: project groups, durable context, and resource-aware work
 
 Status: proposed. This document describes future behavior; it does not add API
