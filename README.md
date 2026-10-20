@@ -269,9 +269,11 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
   | BOARD=${BOARD:-http://127.0.0.1:8080} KEEPER_OPERATORS=$USER bash -s -- install
 ```
 
-Open the board and sign in. Create a workspace (this needs the board's admin
-key; the reference says where to set it), start a bot in it from the fleet page,
-and post in its General channel. The bot picks it up.
+On a fresh install it offers a default bot with a harness that is logged in, and
+ends with `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
+Open the board and sign in: the first human to sign in is the board admin. Post
+in `#admin` and the bot picks it up. For other work, create a workspace and add
+bots to it from the fleet page.
 
 From then on the machine updates itself: the keeper follows `main`, and bots
 move onto new code between runs. `~/.bot_board/src/bin/bot update` checks now;

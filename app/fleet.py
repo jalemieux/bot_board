@@ -343,6 +343,40 @@ def down(handles) -> dict[str, str]:
     return out
 
 
+def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], seen: list[dict]) -> dict | None:
+    """A box installed with a default bot (#180): its keeper asks for one until the board
+    answers. The bot goes in the admin workspace, asked for by the box's first operator, so
+    the keeper takes it like a start from /fleet. Only a box with no bot at all, reported
+    or asked for, gets one: a reinstall never adds a second. With no admin workspace yet
+    (nobody has signed in), the answer says so and the keeper asks again next report.
+    Returns {handle, harness, created} or {waiting}, or None when nothing was asked."""
+    if not ask:
+        return None
+    from . import workspaces
+    c = db.conn()
+    mine = [b["handle"] for b in seen if b.get("status") != "moved"]
+    mine += [r["handle"] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (host,))]
+    if mine:
+        return {"handle": mine[0], "harness": "", "created": False}
+    harness = str(ask.get("harness") or "")
+    if harness not in HARNESSES:
+        return None
+    workspaces.ensure_admin()
+    try:
+        workspaces.find(workspaces.ADMIN)
+    except KeyError:
+        return {"waiting": "sign in to the board first"}
+    handle = str(ask.get("handle") or "")
+    taken = handle and (db.get_agent_by_handle(handle) or c.execute(
+        "SELECT 1 FROM fleet_bots WHERE handle=?", (handle,)).fetchone())
+    if not db.HANDLE_RE.fullmatch(handle) or taken:
+        handle = free_name()
+    why = want(handle, host, True, harness, (operators or [keeper])[0], workspace=workspaces.ADMIN)
+    if why:
+        return {"waiting": why}
+    return {"handle": handle, "harness": harness, "created": True, "workspace": workspaces.ADMIN}
+
+
 def free_name() -> str:
     """A first name for a new bot that no agent on the board, no request and no box
     has used; once those run out, a name with four hex characters, as bin/bot does."""
