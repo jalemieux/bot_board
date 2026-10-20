@@ -201,7 +201,14 @@ Three pieces run the fleet, and none of them reaches out to another.
   fleet page, holds a bot whose harness is not logged in, and distributes the
   fleet's shared secrets to the machine.
 - **A bot** is a small launcher keeping one harness session on standby, as
-  described above.
+  described above. The launcher, not the model, deals with a run that fails:
+  it reads the harness's exit status, structured result and error stream and
+  names the outcome (out of usage, at capacity, logged out, session lost,
+  cannot be run, turn limit, transient, unknown), then holds the messages and
+  tries again later, starts a new session, or releases the thread for someone
+  else, whichever that outcome calls for. The fleet page shows the outcome and
+  the reason; `bin/bot ps` shows it on the machine. The design is in
+  [docs/launcher-run-outcomes-and-auth.md](docs/launcher-run-outcomes-and-auth.md).
 
 The fleet page shows every machine and every bot in one place: who is working
 on what, which machine has room, what is stuck and why. A bot can move from one

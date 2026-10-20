@@ -67,6 +67,10 @@ from pathlib import Path
 CFG = os.path.expanduser("~/.config/bot_board")
 BOT = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bot")
 
+_print = print
+def print(*args, **kw):   # noqa: A001  every keeper line says when, since the log is read after the fact
+    _print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), *args, **kw)
+
 
 def die(msg):
     sys.exit(f"keeper: {msg}")
@@ -152,6 +156,7 @@ OPERATORS = setting("KEEPER_OPERATORS").replace(",", " ").split()
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 HANDLE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}", re.I)
 QUICK = 120     # a bot that dies this soon after we start it has a problem; later, it is restarted
+BACKOFF = (60, 120, 300, 900)   # the waits before a bot that died quickly is started again
 HANDOVER = setting("KEEPER_HANDOVER")
 SSH = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
 
@@ -197,17 +202,28 @@ def memory_mb():
 def bots():
     rows = []
     for line in out(BOT, "ps", "-a", "--tsv").splitlines():
-        handle, harness, status, _pid, _seen, serves, health = (line.split("\t") + [""] * 7)[:7]
-        # bin/bot rewrites a bot's run counter as each harness run ends
+        handle, harness, status, _pid, _seen, serves, _last, health = (line.split("\t") + [""] * 8)[:8]
+        state = os.path.join(CFG, "bots", handle)
+        # bin/bot rewrites a bot's run counter as each harness run ends, and last.json says how it ended
         try:
-            ran = datetime.fromtimestamp(os.path.getmtime(os.path.join(CFG, "bots", handle, "runs")), timezone.utc)
+            ran = datetime.fromtimestamp(os.path.getmtime(os.path.join(state, "runs")), timezone.utc)
         except OSError:
             ran = None
+        try:
+            with open(os.path.join(state, "last.json"), encoding="utf-8") as fh:
+                outcome = str(json.load(fh).get("outcome") or "")[:32]
+        except (OSError, ValueError, AttributeError):
+            outcome = ""
+        try:
+            with open(os.path.join(state, "version"), encoding="utf-8") as fh:
+                launcher = fh.read().strip()[:64]
+        except OSError:
+            launcher = ""
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
-                     "pool": any(os.path.exists(os.path.join(CFG, "bots", handle, f)) for f in ("pool", "dir")),
+                     "pool": any(os.path.exists(os.path.join(state, f)) for f in ("pool", "dir")),
                      "last_run": ran.isoformat(timespec="seconds") if ran else "",
-                     "health": health.strip()})
+                     "health": health.strip(), "outcome": outcome, "launcher": launcher})
     return rows
 
 
@@ -440,6 +456,7 @@ class Hands:
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
         self.killed = {}        # handle -> the kill request (its time) already carried out
+        self.quick = {}         # handle -> how many times in a row it died soon after a start
         self.blocked = {}       # harness -> why its bots are not started now (Credentials.blocked)
         self.held = {}          # harness -> how many bots that held in the last round
 
@@ -479,7 +496,7 @@ class Hands:
                     self.spawn(h, [BOT, "stop", h])
                     print(f"keeper: stopping {h}, asked by @{w['set_by']}", flush=True)
             elif h.lower() in up:
-                self.gave_up.pop(h, None)   # it came up after all: if it dies later, that is a new story
+                self.gave_up.pop(h, None); self.quick.pop(h, None)   # it came up after all: if it dies later, that is a new story
             else:
                 when, asked = self.started.get(h, (0, None))
                 proc = self.procs.get(h)
@@ -498,10 +515,19 @@ class Hands:
                 elif self.gave_up.get(h, ("",))[0] == w["set_at"]:
                     problems[h] = self.gave_up[h][1]
                 elif asked == w["set_at"] and time.time() - when < QUICK:
-                    why = f"started and did not stay up: {self.last_words(h)}"
-                    self.gave_up[h] = (w["set_at"], why)
-                    problems[h] = why
-                    print(f"keeper: {h} {why}", flush=True)
+                    # it died within QUICK of our start: wait longer each time (1, 2, 5, 15 min),
+                    # then give the request up; a board that was down at start is a common cause
+                    n = self.quick.get(h, 0) + 1
+                    if n > len(BACKOFF):
+                        why = f"started {n} times and did not stay up: {self.last_words(h)}"
+                        self.gave_up[h] = (w["set_at"], why)
+                        problems[h] = why
+                        self.quick.pop(h, None)
+                        print(f"keeper: {h} {why}", flush=True)
+                    else:
+                        self.quick[h] = n
+                        problems[h] = f"did not stay up ({self.last_words(h)}); starting it again in {BACKOFF[n - 1] // 60} min"
+                        self.started[h] = (time.time() + BACKOFF[n - 1] - QUICK, w["set_at"])   # due when QUICK has passed
                 else:   # a new request, or a bot that ran a while and died: start it
                     self.started[h] = (time.time(), w["set_at"])
                     cmd = [BOT, w["harness"], "--name", h]
@@ -750,7 +776,7 @@ def main():
     if a.cmd == "show":
         creds = Credentials(host)
         creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True)
-        return print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({})}, indent=1))
+        return _print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({})}, indent=1))
     try:
         token = token_for(host)
     except ConnectionError as e:
