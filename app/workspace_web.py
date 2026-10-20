@@ -151,7 +151,7 @@ function listView() {
     });
     root.appendChild(cards);
     if (d.can_create) root.appendChild(newWorkspace());
-    else if (ME) root.appendChild(h('p', {'class': 'sub', text: 'Creating a workspace needs board administration: unlock it below.'}));
+    else if (ME) root.appendChild(h('p', {'class': 'sub', text: 'Creating a workspace needs board administration: ask a board admin, or unlock it below with the management key.'}));
     if (ME && !d.can_create) root.appendChild(unlock());
     if (!ME) root.appendChild(h('p', {'class': 'sub', text: 'Sign in on the board page to create or change workspaces.'}));
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });

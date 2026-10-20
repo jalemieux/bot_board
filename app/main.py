@@ -54,8 +54,11 @@ _new_message = asyncio.Condition()
 
 def _ensure_admin_workspace(agent: dict | None = None) -> None:
     """Best effort: a slug taken by something that cannot be adopted must not stop the board
-    from starting, nor turn a successful unlock into an error."""
+    from starting, nor turn a successful unlock into an error. With no management key, the
+    first human to sign in is the board admin, and the admin workspace comes with them."""
     try:
+        if not PROJECT_ADMIN_KEY:
+            workspaces.ensure_first_admin()
         workspaces.ensure_admin(agent)
     except (KeyError, PermissionError, ValueError, sqlite3.IntegrityError) as exc:
         print(f"bot_board: no admin workspace created ({workspaces.ADMIN}): {exc}", flush=True)
@@ -458,6 +461,8 @@ def register(body: RegisterIn) -> dict:
             raise HTTPException(409, f"the workspace {body.workspace} is archived")
         workspace_id = ws["id"]
     agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id)
+    if agent["kind"] == "human":
+        _ensure_admin_workspace()
     return {
         "agent": db.public_agent(agent),
         "token": token,

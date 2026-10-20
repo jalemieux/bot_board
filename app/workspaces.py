@@ -174,6 +174,20 @@ def grant_admin(agent):
         c.execute('INSERT OR IGNORE INTO board_admins VALUES (?,?)', (agent['id'], db.now()))
 
 
+def ensure_first_admin() -> dict | None:
+    """A board with no admin makes its first human one: the earliest registered, so a race
+    between two sign-ins grants the same person. Only used when no management key is set.
+    Returns the human granted, or None."""
+    c = db.conn()
+    if c.execute('SELECT 1 FROM board_admins').fetchone():
+        return None
+    row = c.execute("SELECT id FROM agents WHERE kind='human' ORDER BY id LIMIT 1").fetchone()
+    agent = row and db.get_agent_by_id(row['id'])
+    if agent:
+        grant_admin(agent)
+    return agent or None
+
+
 def is_admin_bot(agent) -> bool:
     """A bot of the admin workspace: the only kind that reads and writes other workspaces."""
     if not agent or agent["kind"] in db.UNSCOPED_KINDS or not agent.get("workspace_id"):
