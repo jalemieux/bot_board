@@ -162,7 +162,8 @@ def _migrate(c) -> None:
 # ---------------------------------------------------------------- who may
 
 def is_admin(agent):
-    """A human who unlocked board administration (POST /api/workspaces/access)."""
+    """A human with board administration: the board's first human, one an admin granted,
+    or one who unlocked it with the management key (POST /api/workspaces/access)."""
     return bool(agent and agent['kind'] == 'human' and db.conn().execute(
         'SELECT 1 FROM board_admins WHERE agent_id=?', (agent['id'],)).fetchone())
 
@@ -172,6 +173,67 @@ def grant_admin(agent):
         raise PermissionError('Board administration requires a human identity.')
     with db._write_lock, db.conn() as c:
         c.execute('INSERT OR IGNORE INTO board_admins VALUES (?,?)', (agent['id'], db.now()))
+
+
+def admins():
+    """The board admins: [{handle, granted_at}], first first."""
+    return [dict(r) for r in db.conn().execute(
+        'SELECT a.handle, b.granted_at FROM board_admins b JOIN agents a ON a.id=b.agent_id'
+        ' ORDER BY b.granted_at, b.rowid')]
+
+
+def _box_operators(c):
+    """Every handle a reporting keeper names in KEEPER_OPERATORS: the people who run the fleet's boxes."""
+    ops = set()
+    try:
+        for r in c.execute('SELECT report FROM fleet_hosts'):
+            ops |= {o.lower() for o in json.loads(r['report']).get('operators') or []}
+    except db.sqlite3.OperationalError:
+        pass
+    return ops
+
+
+def can_claim_first(agent):
+    """A board with no admin and no key (#181): its first human takes administration.
+    Once a box's keeper names its operators, only one of them can, so a stranger who
+    reaches the board first does not."""
+    if not agent or agent['kind'] != 'human':
+        return False
+    c = db.conn()
+    if c.execute('SELECT 1 FROM board_admins').fetchone():
+        return False
+    ops = _box_operators(c)
+    return not ops or agent['handle'].lower() in ops
+
+
+def claim_first(agent):
+    """Grant the first admin, atomically: two humans racing both see no admin, one wins."""
+    with db._write_lock, db.conn() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if not can_claim_first(agent):
+            return False
+        c.execute('INSERT OR IGNORE INTO board_admins VALUES (?,?)', (agent['id'], db.now()))
+    return True
+
+
+def set_admin(handle, grant, by):
+    """An admin grants or revokes board administration for another human. The last admin
+    cannot be revoked, so a board is never left with nobody to grant it again."""
+    if not is_admin(by):
+        raise PermissionError('Only a board admin grants or revokes administration.')
+    target = db.get_agent_by_handle(handle)
+    if not target:
+        raise KeyError(f'no agent @{handle}')
+    if grant:
+        grant_admin(target)
+        return admins()
+    with db._write_lock, db.conn() as c:
+        c.execute('BEGIN IMMEDIATE')
+        held = c.execute('SELECT 1 FROM board_admins WHERE agent_id=?', (target['id'],)).fetchone()
+        if held and c.execute('SELECT COUNT(*) FROM board_admins').fetchone()[0] == 1:
+            raise Conflict('That is the last admin: grant someone else first.')
+        c.execute('DELETE FROM board_admins WHERE agent_id=?', (target['id'],))
+    return admins()
 
 
 def is_admin_bot(agent) -> bool:
@@ -325,7 +387,7 @@ def _references(value) -> list[dict]:
 def create(data, agent) -> dict:
     """A workspace with its General channel; `seed` material becomes a thread for the admin bots."""
     if not is_admin(agent):
-        raise PermissionError('Unlock board administration with the management key first (POST /api/workspaces/access).')
+        raise PermissionError('Creating a workspace needs board administration: ask a board admin, or unlock it (POST /api/workspaces/access).')
     slug = data['slug']
     with db._write_lock, db.conn() as c:
         if c.execute('SELECT 1 FROM workspaces WHERE slug=?', (slug,)).fetchone():
