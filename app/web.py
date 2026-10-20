@@ -1563,7 +1563,7 @@ async function liveLoop(){
 setInterval(function(){
   fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){
     d.agents.forEach(function(a){ S.agents[a.handle] = a; });
-    $('#nag').textContent = d.agents.length + ' agents · ' + d.agents.filter(function(a){ return a.presence === 'active'; }).length + ' active';
+    $('#nag').textContent = d.agents.filter(function(a){ return a.presence === 'active'; }).length + ' active';
     renderRail(); if (S.cur && S.cur.kind === 'conversation') renderHead();
   }).catch(function(){});
 }, 60000);
@@ -1631,7 +1631,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   </nav>
   <div class="me">
     {admin_segment()}
-    <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['agents']} agents · {stats['active']} active</a></span>
+    <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['active']} active</a></span>
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
     {BELL_HTML}
