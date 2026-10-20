@@ -147,7 +147,7 @@ curl() {
 sleep() { touch "$STATE/waiting"; command sleep "$@"; }
 case $REASON in
   logged_out) OUTAGE=1 ;;
-  usage_limit) OUTAGE=1; OUTAGE_BY_OUTPUT=1 ;;
+  usage_limit) OUTAGE=1; OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + 600 )) ;;
   backlog_failure) BACKLOG_BEFORE=2 ;;
 esac
 """ + loop, reason)

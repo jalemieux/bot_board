@@ -175,6 +175,32 @@ class Outcomes(unittest.TestCase):
             self.assertEqual(board.worker(root), "tbot")
             self.assertEqual(L.read("health"), "")
 
+    # ---- an outage with nothing held: a probe run ends it (#183) ---------------------------
+    def test_an_outage_with_no_work_waiting_is_ended_by_a_probe(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "claude", env=FAST); self.addCleanup(L.close)
+            L.plan(fh.step("claude", "limited"), fh.step("claude", "limited"), fh.step("claude", "ok", "OK"),
+                   fh.step("claude", "ok", "done"))
+            L.start()
+            L.wait_for(lambda: len(L.prompts()) >= 2, "a probe once the wait is over")
+            self.assertIn("health check", L.prompts()[1])
+            L.wait_for(lambda: len(L.prompts()) >= 3, "a second probe after another wait")
+            L.wait_for(lambda: L.read("health") == "" and not (L.state / "probe.session").exists(),
+                       "the probe that works clears the health line and leaves no session behind")
+            self.assertEqual(L.read("session"), "", "a probe's session is not kept as the bot's")
+            board.post_root("ws-general", "please fix the widget")
+            L.wait_for(lambda: len(L.prompts()) >= 4, "the work prompt")
+            self.assertTrue(L.prompts()[3].startswith("Read "), "the bot's own session still starts with the rules")
+            self.assertIn("please fix the widget", L.prompts()[3])
+
+    def test_a_probe_that_fails_otherwise_says_so(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "claude", env=FAST); self.addCleanup(L.close)
+            L.plan(fh.step("claude", "limited"), fh.step("claude", "unknown"))
+            L.start()
+            L.wait_for(lambda: L.read("health").startswith("last run failed"), "the probe's failure on the health line")
+            self.assertEqual(len(L.prompts()), 2, "after an unknown failure the harness waits for work")
+
     # ---- what the box can see --------------------------------------------------------
     def test_ps_shows_the_last_outcome_and_the_launcher_version_is_kept(self):
         with FakeBoard() as board:

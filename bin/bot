@@ -1181,6 +1181,15 @@ hold_batch() {
   printf '%s\n' "$RAW" >>"$STATE/held"
   awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"
 }
+# health_check: one small run in a throwaway session, with no batch, the bot's own session
+# untouched. run_harness sets OUTCOME and the health line: ok removes it, an outage gets a
+# fresh one (its wait starts now), any other failure replaces it with what went wrong (#183)
+health_check() {
+  RUN_MESSAGES=""; rm -f "$STATE/probe.session"
+  run_harness "$DIR" "$STATE/probe.session" \
+    "This is a health check from your launcher. Reply with OK and nothing else. Do not use any tools." || true
+  rm -f "$STATE/probe.session"
+}
 # release_claims: the threads this batch claimed go back to the board, so another bot or a
 # human can take them; threads this bot already owned (replies, mentions) stay its own
 release_claims() {
@@ -1221,6 +1230,7 @@ fi
 OUTAGE_BY_OUTPUT=""   # the outage was read off a run's output, not from the harness's auth status
 OUTAGE=""        # set while the harness cannot work: the time it was found so
 OUTAGE_UNTIL=0   # epoch seconds: when an outage read off a run's output is tried again
+PROBE=""         # set when an outage's wait is over and no run has tried the harness since
 RETRY_UNTIL=0    # epoch seconds: when a held batch is offered to the harness again
 mtime() { python3 -c 'import os,sys;print(int(os.stat(sys.argv[1]).st_mtime))' "$1" 2>/dev/null || date +%s; }
 BACKLOG_BEFORE=$((SEEN + 1))
@@ -1257,6 +1267,7 @@ while :; do
       wait_or_stop $(( OUTAGE_UNTIL - NOW < 60 ? OUTAGE_UNTIL - NOW : 60 )); continue
     fi
     log "retrying $HARNESS; keeping its last failure visible until a run succeeds"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
+    PROBE=1   # if no work comes to try the harness with, a probe run does (#183)
   fi
   if [ "$NOW" -lt "${RETRY_UNTIL:-0}" ]; then wait_or_stop $(( RETRY_UNTIL - NOW < 5 ? RETRY_UNTIL - NOW : 5 )); continue; fi
   if [ "$BACKLOG_BEFORE" -gt 1 ]; then
@@ -1273,7 +1284,17 @@ while :; do
   if [ -s "$STATE/held" ]; then      # held last time: a claim that could not be made
     NEW=$(cat "$STATE/held"; if [ -n "$NEW" ]; then echo "$NEW"; fi); rm -f "$STATE/held"
   fi
+  if [ -z "$NEW" ] && [ -n "$PROBE" ]; then
+    # an outage's wait is over and no work came: one probe run says whether it still holds
+    PROBE=""; health_check; log "health check: $OUTCOME${DETAIL:+: $DETAIL}"
+    case $OUTCOME in
+      ok|exhausted|unknown) ;;   # the harness runs: the next batch goes to it
+      bad_invocation) OUTAGE=$(date -u +%FT%TZ); OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + BOT_BAD_WAIT )) ;;
+      *) OUTAGE=$(date -u +%FT%TZ); OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + BOT_LIMIT_WAIT )) ;;
+    esac
+  fi
   [ -n "$NEW" ] || continue
+  PROBE=""
   RAW=$NEW;   # as fetched: what a logged-out harness keeps for later
   NEW=$(claim_batch <<<"$NEW" 2>>"$LOG")
   [ -n "$NEW" ] || continue

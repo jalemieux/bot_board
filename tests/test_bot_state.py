@@ -30,6 +30,14 @@ class BotState(unittest.TestCase):
                              'at capacity', False, 'model temporarily at capacity')
             self.assertEqual(got['reason'], reason)
 
+    def test_a_start_after_the_outage_shows_starting(self):
+        # #183: the launcher probes its harness as it comes up, so the old outage is not news
+        bot = {'status': 'stopped', 'want': 'running', 'set_at': '2026-10-19T20:00:00+00:00',
+               'health': 'out of claude usage since 2026-10-16T15:16:00Z: hit your weekly limit'}
+        self.check(bot, 'starting', False)
+        self.check({**bot, 'set_at': '2026-10-16T10:00:00+00:00'}, 'out of usage', False)
+        self.check({**bot, 'status': 'waiting'}, 'out of usage', False)   # up: its own word
+
     def test_every_state(self):
         self.check({'status': 'running wordsnap'}, 'working', True, 'working on wordsnap')
         self.check({'status': 'waiting'}, 'waiting', True, 'waiting for work')

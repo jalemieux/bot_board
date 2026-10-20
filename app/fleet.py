@@ -260,6 +260,14 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     return None
 
 
+def _when(stamp: str) -> datetime:
+    try:
+        t = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def bot_state(b: dict, reporting: bool = True) -> dict:
     """What a bot is doing, in the one vocabulary /fleet, /projects and /status share (#100):
     {state, words, reason, can_work}. can_work: it would take a message now, or once its
@@ -277,6 +285,12 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
         return out("moving", f"moving to {b['move_to']}: " + ("stopping" if up else "packing"))
     if b.get("fetch") and not up:
         return out("moving", "arriving: unpacking")
+    # a start asked after the outage began: the bot will probe its harness as it comes up,
+    # so until it is up, it is starting, not out of usage (#183)
+    since = re.search(r" since (\S+?):", health)
+    if (not up and b.get("want") == "running" and since and b.get("set_at")
+            and _when(b["set_at"]) > _when(since.group(1))):
+        health = ""
     if (up or b.get("want") == "running") and health.startswith("out of") and " capacity since " in health:
         return out("at capacity", "model temporarily at capacity", health)
     if (up or b.get("want") == "running") and health.startswith("out of"):
