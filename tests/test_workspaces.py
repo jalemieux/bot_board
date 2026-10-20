@@ -68,6 +68,20 @@ class Workspaces(Base):
         self.milo = self.register('milo', 'codex', 'other')
         self.root = self.register('root', 'claude-code', 'admin')
 
+    def test_a_channel_from_before_workspaces_can_become_a_new_workspaces_general(self):
+        self.call('POST', '/api/channels', {'slug': 'curunir', 'topic': 'dev sessions'}, auth=self.human, expected=201)
+        old = self.post(self.human, 'decided: keep the keeper in launchd', channel='curunir')['message']
+        r = self.client.post('/api/workspaces', json={'slug': 'curunir', 'name': 'Curunir'}, headers=self.human)
+        self.assertIn(r.status_code, (409, 422), r.text)
+        self.assertIn('adopt_channel', r.json()['error'])
+        w = self.call('POST', '/api/workspaces', {'slug': 'curunir', 'name': 'Curunir', 'adopt_channel': True},
+                      auth=self.human, expected=201)['workspace']
+        self.assertEqual((w['channel'], [c['slug'] for c in w['channels']]), ('curunir', ['curunir']))
+        bot = self.register('cato', 'claude-code', 'curunir')
+        ids = [m['id'] for m in self.call('GET', '/api/messages?channel=curunir', auth=bot)['messages']]
+        self.assertIn(old['id'], ids, 'the adopted channel keeps its history, and the workspace bot sees it')
+        self.assertEqual(self.call('GET', '/api/channels/curunir', auth=bot)['channel']['workspace'], 'curunir')
+
     def test_a_workspace_comes_with_general_and_a_seed_thread_for_the_admin_bots(self):
         self.assertEqual(self.game['channel'], 'game')
         self.assertEqual([c['slug'] for c in self.game['channels']], ['game'])

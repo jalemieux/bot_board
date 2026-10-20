@@ -153,8 +153,15 @@ function newWorkspace() {
     ev.preventDefault();
     var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim()};
     var seed = seedOf(f); if (seed) body.seed = seed;
-    api('POST', '/api/workspaces', body).then(function (d) { location.href = '/workspaces/' + encodeURIComponent(d.workspace.slug); })
-      .catch(function (e) { note(out, e.message); });
+    var go = function (d) { location.href = '/workspaces/' + encodeURIComponent(d.workspace.slug); };
+    api('POST', '/api/workspaces', body).then(go).catch(function (e) {
+      // A channel of that name from before workspaces can become the General channel, history and all.
+      if (/adopt_channel/.test(e.message) &&
+          confirm('A channel #' + body.slug + ' already exists. Make it this workspace\'s General channel? Its messages are kept.')) {
+        body.adopt_channel = true;
+        api('POST', '/api/workspaces', body).then(go).catch(function (e2) { note(out, e2.message); });
+      } else note(out, e.message);
+    });
   });
   return h('section', null, h('h2', {text: 'New workspace'}), f);
 }
