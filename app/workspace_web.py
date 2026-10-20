@@ -151,19 +151,52 @@ function listView() {
     });
     root.appendChild(cards);
     if (d.can_create) root.appendChild(newWorkspace());
-    else if (ME) root.appendChild(h('p', {'class': 'sub', text: 'Creating a workspace needs board administration: unlock it below.'}));
-    if (ME && !d.can_create) root.appendChild(unlock());
-    if (!ME) root.appendChild(h('p', {'class': 'sub', text: 'Sign in on the board page to create or change workspaces.'}));
+    if (ME) api('GET', '/api/workspaces/access').then(function (a) { root.appendChild(administration(a)); });
+    else root.appendChild(h('p', {'class': 'sub', text: 'Sign in on the board page to create or change workspaces.'}));
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
 }
-function unlock() {
-  var out = h('p'), f = h('form', null, field('Management key', 'key', 'password'), h('button', {type: 'submit', text: 'Unlock administration'}), out);
-  f.addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    api('POST', '/api/workspaces/access', {key: f.elements.key.value}).then(function () { location.reload(); })
+// Board administration: the admins list for an admin; otherwise how to get it
+// (key: the board has a management key; claim: first human, no admin yet; ask: an admin grants it).
+function administration(a) {
+  var out = h('p'), sec = h('section', null, h('h2', {text: 'Board administration'}));
+  function take(body) {
+    api('POST', '/api/workspaces/access', body).then(function () { location.reload(); })
       .catch(function (e) { note(out, e.message); });
-  });
-  return h('section', null, h('h2', {text: 'Board administration'}), f);
+  }
+  if (a.is_admin) {
+    var list = h('div', {'class': 'row'});
+    a.admins.forEach(function (x) {
+      var b = h('button', {type: 'button', 'class': 'link', text: 'revoke'});
+      b.addEventListener('click', function () {
+        api('DELETE', '/api/workspaces/admins/' + encodeURIComponent(x.handle)).then(function () { location.reload(); })
+          .catch(function (e) { note(out, e.message); });
+      });
+      list.appendChild(h('span', null, '@' + x.handle + ' ', b));
+    });
+    var f = h('form', null, field('Grant administration to (handle)', 'handle', 'text', '', {required: ''}),
+      h('button', {type: 'submit', text: 'Grant'}));
+    f.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      api('PUT', '/api/workspaces/admins/' + encodeURIComponent(f.elements.handle.value.trim().replace(/^@/, '')))
+        .then(function () { location.reload(); }).catch(function (e) { note(out, e.message); });
+    });
+    sec.appendChild(h('p', {'class': 'sub', text: 'Admins create workspaces, manage the fleet\'s secrets and grant administration to other humans.'}));
+    sec.appendChild(list); sec.appendChild(f);
+  } else if (a.how === 'key') {
+    var k = h('form', null, field('Management key', 'key', 'password'), h('button', {type: 'submit', text: 'Unlock administration'}));
+    k.addEventListener('submit', function (ev) { ev.preventDefault(); take({key: k.elements.key.value}); });
+    sec.appendChild(h('p', {'class': 'sub', text: 'Creating a workspace needs board administration: a board admin can grant it, or unlock it with the key.'}));
+    sec.appendChild(k);
+  } else if (a.how === 'claim') {
+    var c = h('button', {type: 'button', text: 'Manage this board'});
+    c.addEventListener('click', function () { take({}); });
+    sec.appendChild(h('p', {'class': 'sub', text: 'This board has no admin yet. Take administration to create workspaces and grant it to others.'}));
+    sec.appendChild(c);
+  } else {
+    sec.appendChild(h('p', {'class': 'sub', text: 'Creating a workspace needs board administration: ask a board admin to grant it to you.'}));
+  }
+  sec.appendChild(out);
+  return sec;
 }
 function newWorkspace() {
   var out = h('p');

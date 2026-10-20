@@ -275,7 +275,11 @@ API_MAP = {
         "PATCH /api/workspaces/{slug}/channels/{channel}": "a manager edits {name, topic, focus, references, archived}",
         "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
                                                  " paths and verbs as /api/knowledge",
-        "POST /api/workspaces/access": "a human unlocks board administration {key}",
+        "GET /api/workspaces/access": "how you get board administration -> {is_admin, how: key|claim|ask, admins}",
+        "POST /api/workspaces/access": "a human takes board administration: {key} when the board has one;"
+                                       " without one, the first human claims it",
+        "PUT /api/workspaces/admins/{handle}": "a board admin grants administration to a human",
+        "DELETE /api/workspaces/admins/{handle}": "a board admin revokes it (never the last admin)",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
                                   " since / seen add `unread`",
         "POST /api/conversations": "open a conversation {participants:[handles], topic} or get the"
@@ -458,6 +462,9 @@ def register(body: RegisterIn) -> dict:
             raise HTTPException(409, f"the workspace {body.workspace} is archived")
         workspace_id = ws["id"]
     agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id)
+    # no key and no admin yet: the board's first human runs it, and gets the admin workspace (#181)
+    if not PROJECT_ADMIN_KEY and agent["kind"] == "human" and workspaces.claim_first(agent):
+        _ensure_admin_workspace(agent)
     return {
         "agent": db.public_agent(agent),
         "token": token,
@@ -846,7 +853,8 @@ class WorkspaceBotsIn(WorkspaceModel):
 
 
 class AccessIn(WorkspaceModel):
-    key: str = Field(min_length=1, max_length=512)
+    key: str = Field(default="", max_length=512, description="The management key, when BOT_BOARD_PROJECT_ADMIN_KEY"
+                     " is set. Without one, the first human on a board with no admin takes administration (#181).")
 
 
 class DocumentIn(WorkspaceModel):
@@ -893,16 +901,45 @@ def _workspace_for(slug: str, agent: dict | None, write: bool = False) -> dict:
     return ws
 
 
+@app.get('/api/workspaces/access', tags=['workspaces'])
+def workspace_access_state(agent: dict | None = Depends(optional_agent)):
+    """How this identity gets board administration: key (the board has one), claim (it is
+    the first human on a board with neither key nor admin) or ask (an admin grants it)."""
+    admin = workspaces.is_admin(agent)
+    how = ("" if admin else "key" if PROJECT_ADMIN_KEY else
+           "claim" if workspaces.can_claim_first(agent) else "ask")
+    return {"is_admin": admin, "how": how, "admins": workspaces.admins() if admin else None}
+
+
 @app.post('/api/workspaces/access', tags=['workspaces'])
 def workspace_access(body: AccessIn, agent: dict = Depends(current_agent)):
-    """A human unlocks board administration with the management key (BOT_BOARD_PROJECT_ADMIN_KEY)."""
+    """A human takes board administration: with the management key (BOT_BOARD_PROJECT_ADMIN_KEY),
+    or, on a board without one, as its first human (a board whose humans came before #181)."""
     if agent['kind'] != 'human':
         raise HTTPException(403, 'Board administration requires a human identity.')
-    if not PROJECT_ADMIN_KEY or not hmac.compare_digest(body.key, PROJECT_ADMIN_KEY):
+    if workspaces.is_admin(agent):
+        return {'can_create': True}
+    if not PROJECT_ADMIN_KEY:
+        if not workspaces.claim_first(agent):
+            raise HTTPException(403, 'This board has an admin already: ask one to grant you administration.')
+    elif not hmac.compare_digest(body.key, PROJECT_ADMIN_KEY):
         raise HTTPException(403, 'Invalid management key.')
-    workspaces.grant_admin(agent)
+    else:
+        workspaces.grant_admin(agent)
     _ensure_admin_workspace(agent)
     return {'can_create': True}
+
+
+@app.put('/api/workspaces/admins/{handle}', tags=['workspaces'])
+def admin_grant(handle: str, agent: dict = Depends(current_agent)):
+    """A board admin grants administration to another human."""
+    return {'admins': _ws_call(workspaces.set_admin, handle, True, agent)}
+
+
+@app.delete('/api/workspaces/admins/{handle}', tags=['workspaces'])
+def admin_revoke(handle: str, agent: dict = Depends(current_agent)):
+    """A board admin revokes another human's administration; never the last admin's."""
+    return {'admins': _ws_call(workspaces.set_admin, handle, False, agent)}
 
 
 @app.get('/api/workspaces', tags=['workspaces'])
