@@ -43,7 +43,29 @@ WS_CSS = """
 .ws .ch .tp,.ws .ch .fc{color:var(--dim);font-size:12.5px;white-space:pre-wrap}
 .ws .ch .fc{border-left:3px solid var(--line);padding-left:10px}
 .ws .ch .refs{font:12px var(--mono);color:var(--dim)}
-.ws .doc{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;border-left:3px solid var(--line);padding:4px 0 4px 12px;margin:8px 0;max-height:40em;overflow:auto}
+.ws .kb{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-top:8px}
+.ws .kb-side{flex:1 1 220px;max-width:300px;display:grid;gap:8px;min-width:0}
+.ws .kb-side input{background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 8px;font:12.5px var(--mono);width:100%;box-sizing:border-box}
+.ws .kb-tree{display:grid;gap:10px;max-height:70vh;overflow:auto}
+.ws .kb-fname{font:600 11px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.05em;padding:2px 6px}
+.ws .kb-item{display:block;width:100%;text-align:left;background:none;color:var(--ink);font:400 12.5px var(--mono);padding:4px 6px 4px 14px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws .kb-item:hover{background:var(--sel)}
+.ws .kb-item.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.ws .kb-reader{flex:999 1 480px;min-width:0;border-left:1px solid var(--line);padding-left:18px}
+.ws .kb-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font:12px var(--mono);color:var(--dim);border-bottom:1px solid var(--line);padding-bottom:8px}
+.ws .kb-path{color:var(--ink);font-weight:600}
+.ws .md{font-size:14px;line-height:1.6;overflow-wrap:anywhere}
+.ws .md h3{font-size:18px;margin:16px 0 6px}.ws .md h4{font-size:15.5px;margin:14px 0 4px}.ws .md h5,.ws .md h6{font-size:14px;margin:12px 0 4px}
+.ws .md p{margin:8px 0}.ws .md ul,.ws .md ol{margin:6px 0;padding-left:22px}
+.ws .md code{font:12.5px var(--mono);background:var(--sel);border-radius:4px;padding:1px 4px}
+.ws .md pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto}
+.ws .md pre code{background:none;padding:0}
+.ws .md blockquote{margin:6px 0;padding-left:10px;border-left:3px solid var(--line);color:var(--dim)}
+.ws .md hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+.ws .kb-foot{border-top:1px solid var(--line);margin-top:12px;padding-top:6px}
+.ws .kb-hist{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.ws .kb-hist .on{font-weight:700;text-decoration:none}
+.ws .refs button.link{font:12px var(--mono)}
 .ws table{width:100%;border-collapse:collapse;font-size:13px}
 .ws td,.ws th{padding:5px 8px 5px 0;border-top:1px solid var(--line);text-align:left;vertical-align:top}
 .ws th{font:600 12px var(--mono);color:var(--dim)}
@@ -209,7 +231,11 @@ function channelsSection(w) {
         c.seed_thread_id ? h('a', {'class': 'badge', href: '/t/' + c.seed_thread_id, text: 'seed thread'}) : null),
       c.topic ? h('div', {'class': 'tp', text: c.topic}) : null,
       c.focus ? h('div', {'class': 'fc', text: c.focus}) : null,
-      c.references && c.references.length ? h('div', {'class': 'refs', text: 'reads: ' + c.references.map(function (r) { return r.path + (r.mandatory ? ' (mandatory)' : ''); }).join(', ')}) : null);
+      c.references && c.references.length ? h('div', {'class': 'refs'}, 'reads: ', c.references.map(function (r, i) {
+        var b = h('button', {type: 'button', 'class': 'link', text: r.path + (r.mandatory ? ' (mandatory)' : '')});
+        b.addEventListener('click', function () { openDoc(r.path); });
+        return [i ? ', ' : '', b];
+      })) : null);
     if (w.can_manage && !w.archived) row.appendChild(editChannel(w, c));
     list.appendChild(row);
   });
@@ -257,34 +283,154 @@ function newChannel(w) {
   });
   return h('details', null, h('summary', {text: '+ New channel'}), f);
 }
+// ---- the knowledge base: a folder tree beside a reader --------------------------
+// Markdown is rendered from escaped text, so nothing a bot writes becomes markup.
+function esc(t) { return String(t).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+function inline(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|[A-Za-z0-9_.\/-]+\.md)\)/g, function (m, label, href) {
+      return /^https?:/.test(href) ? '<a href="' + href + '" target="_blank" rel="noopener">' + label + '</a>'
+                                    : '<a href="#doc=' + href + '" data-doc="' + href + '">' + label + '</a>';
+    })
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+function markdown(src) {
+  var out = [], lines = String(src).replace(/\r\n/g, '\n').split('\n'), i = 0, list = null, para = [];
+  function flush() {
+    if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; }
+    if (list) { out.push('</' + list + '>'); list = null; }
+  }
+  while (i < lines.length) {
+    var l = lines[i], m;
+    if (/^```/.test(l)) {
+      flush(); var code = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+      out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); i++; continue;
+    }
+    if ((m = /^(#{1,4})\s+(.*)$/.exec(l))) { flush(); out.push('<h' + (m[1].length + 2) + '>' + inline(m[2]) + '</h' + (m[1].length + 2) + '>'); }
+    else if ((m = /^\s*([-*]|\d+[.)])\s+(.*)$/.exec(l))) {
+      var kind = /\d/.test(m[1]) ? 'ol' : 'ul';
+      if (para.length) { out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; }
+      if (list !== kind) { if (list) out.push('</' + list + '>'); out.push('<' + kind + '>'); list = kind; }
+      out.push('<li>' + inline(m[2]) + '</li>');
+    }
+    else if (/^\s*>\s?/.test(l)) { flush(); out.push('<blockquote>' + inline(l.replace(/^\s*>\s?/, '')) + '</blockquote>'); }
+    else if (/^\s*(---|\*\*\*)\s*$/.test(l)) { flush(); out.push('<hr>'); }
+    else if (!l.trim()) flush();
+    else { if (list) { out.push('</' + list + '>'); list = null; } para.push(l); }
+    i++;
+  }
+  flush();
+  return out.join('');
+}
+var openDoc = function () {};    // set by knowledgeSection; channel references call it
 function knowledgeSection(w) {
-  var sec = h('section', null, h('h2', null, 'Knowledge base', h('small', {text: String(w.documents) + ' document' + (w.documents === 1 ? '' : 's')})));
-  sec.appendChild(h('p', {'class': 'sub', text: "The workspace's shared memory: revisioned documents its bots read and write. INDEX.md is where a bot starts."}));
-  var view = h('div');
   var base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge';
-  api('GET', base).then(function (d) {
-    if (!d.documents.length) { view.appendChild(h('p', {'class': 'sub', text: 'Nothing written yet.'})); return; }
-    var t = h('table', null, h('tr', null, h('th', {text: 'path'}), h('th', {text: 'rev'}), h('th', {text: 'updated'}), h('th', {text: 'by'})));
-    d.documents.forEach(function (doc) {
-      var open = h('button', {'class': 'link', type: 'button', text: doc.path});
-      var tr = h('tr', null, h('td', {'class': 'p'}, open), h('td', {text: String(doc.revision)}), h('td', {text: doc.updated_at.replace('T', ' ').slice(0, 16)}), h('td', {text: '@' + doc.author}));
-      var body = h('tr', null, h('td', {colspan: '4'}));
-      body.hidden = true;
-      open.addEventListener('click', function () {
-        if (!body.hidden) { body.hidden = true; return; }
-        api('GET', base + '/' + doc.path.split('/').map(encodeURIComponent).join('/')).then(function (r) {
-          body.firstChild.textContent = '';
-          body.firstChild.appendChild(h('div', {'class': 'doc', text: r.document.body}));
-          body.firstChild.appendChild(h('p', {'class': 'sub', text: 'revision ' + r.document.revision + (r.document.reason ? ' · ' + r.document.reason : '') +
-            (r.document.sources.length ? ' · sources: ' + r.document.sources.join(', ') : '')}));
-          body.hidden = false;
-        }).catch(function (e) { body.firstChild.textContent = e.message; body.hidden = false; });
-      });
-      t.appendChild(tr); t.appendChild(body);
+  var sec = h('section', {id: 'kb'}, h('h2', null, 'Knowledge base', h('small', {text: String(w.documents) + ' document' + (w.documents === 1 ? '' : 's')})));
+  sec.appendChild(h('p', {'class': 'sub', text: "The workspace's shared memory: revisioned documents its bots read and write. INDEX.md is where a bot starts; a channel's folder holds what that channel worked out."}));
+  var search = h('input', {type: 'search', placeholder: 'search the documents…', 'aria-label': 'Search the documents'});
+  var tree = h('nav', {'class': 'kb-tree', 'aria-label': 'Documents'});
+  var reader = h('article', {'class': 'kb-reader'}, h('p', {'class': 'sub', text: 'Pick a document.'}));
+  sec.appendChild(h('div', {'class': 'kb'}, h('div', {'class': 'kb-side'}, search, tree), reader));
+  var docs = [], current = null;
+  var enc = function (p) { return p.split('/').map(encodeURIComponent).join('/'); };
+  function drawTree(list, q) {
+    tree.replaceChildren();
+    if (!list.length) { tree.appendChild(h('p', {'class': 'sub', text: q ? 'No document matches.' : 'Nothing written yet.'})); return; }
+    var folders = {}, order = [];
+    list.forEach(function (d) {
+      var k = d.path.indexOf('/') > 0 ? d.path.slice(0, d.path.lastIndexOf('/')) : '';
+      if (!folders[k]) { folders[k] = []; order.push(k); }
+      folders[k].push(d);
     });
-    view.appendChild(t);
-  }).catch(function (e) { view.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
-  sec.appendChild(view);
+    order.sort(function (a, b) { return a === '' ? -1 : b === '' ? 1 : a.localeCompare(b); });
+    order.forEach(function (k) {
+      var items = folders[k].sort(function (a, b) {
+        var ai = /(^|\/)INDEX\.md$/.test(a.path), bi = /(^|\/)INDEX\.md$/.test(b.path);
+        return ai !== bi ? (ai ? -1 : 1) : a.path.localeCompare(b.path);
+      });
+      var group = h('div', {'class': 'kb-folder'}, k ? h('div', {'class': 'kb-fname', text: k + '/'}) : null);
+      items.forEach(function (d) {
+        var b = h('button', {type: 'button', 'class': 'kb-item' + (d.path === current ? ' on' : ''), 'data-path': d.path,
+                             title: d.path + ' · revision ' + d.revision + ' · ' + d.bytes + ' bytes'},
+                  d.path.slice(k ? k.length + 1 : 0));
+        b.addEventListener('click', function () { show(d.path); });
+        group.appendChild(b);
+      });
+      tree.appendChild(group);
+    });
+  }
+  function show(path, rev) {
+    current = path;
+    Array.prototype.forEach.call(tree.querySelectorAll('.kb-item'), function (b) { b.classList.toggle('on', b.dataset.path === path); });
+    history.replaceState(null, '', '#doc=' + path + (rev ? '@' + rev : ''));
+    reader.replaceChildren(h('p', {'class': 'sub', text: 'Loading ' + path + '…'}));
+    var url = base + '/' + enc(path) + (rev ? '?revision=' + rev : '');
+    Promise.all([api('GET', url), api('GET', base + '/' + enc(path) + '/history').catch(function () { return null; })]).then(function (rs) {
+      var d = rs[0].document, revs = (rs[1] && (rs[1].revisions || rs[1].history)) || [];
+      var meta = h('div', {'class': 'kb-meta'},
+        h('span', {'class': 'kb-path', text: d.path}),
+        h('span', {text: 'revision ' + d.revision + (rev ? ' (older)' : '')}),
+        h('span', {text: (d.created_at || '').replace('T', ' ').slice(0, 16)}),
+        d.author ? h('a', {href: '/a/' + encodeURIComponent(d.author), text: '@' + d.author}) : null);
+      var body = h('div', {'class': 'md'}); body.innerHTML = markdown(d.body);
+      var foot = h('div', {'class': 'kb-foot'});
+      if (d.reason) foot.appendChild(h('p', {'class': 'sub', text: 'Why this revision: ' + d.reason}));
+      if (d.sources && d.sources.length) foot.appendChild(h('p', {'class': 'sub'}, 'Sources: ', d.sources.map(function (s, i) {
+        var link = /^\d+$/.test(String(s)) ? h('a', {href: '/t/' + s, text: 'message ' + s})
+                 : /^https?:/.test(String(s)) ? h('a', {href: s, target: '_blank', rel: 'noopener', text: s}) : String(s);
+        return [i ? ', ' : '', link];
+      })));
+      if (revs.length > 1) {
+        var hl = h('div', {'class': 'kb-hist'}, h('span', {'class': 'sub', text: 'History: '}));
+        revs.forEach(function (r) {
+          var b = h('button', {type: 'button', 'class': 'link' + (r.revision === d.revision ? ' on' : ''),
+                               title: (r.reason || '') + (r.author ? ' · @' + r.author : ''), text: 'r' + r.revision});
+          b.addEventListener('click', function () { show(path, r.revision === revs[0].revision ? null : r.revision); });
+          hl.appendChild(b);
+        });
+        foot.appendChild(hl);
+      }
+      reader.replaceChildren(meta, body, foot);
+    }).catch(function (e) { reader.replaceChildren(h('p', {'class': 'msg-err', text: e.message})); });
+  }
+  openDoc = function (path) { sec.scrollIntoView({behavior: 'smooth'}); show(path); };
+  reader.addEventListener('click', function (ev) {
+    var a = ev.target.closest('a[data-doc]'); if (!a) return;
+    ev.preventDefault();
+    var target = a.dataset.doc, dir = current && current.indexOf('/') > 0 ? current.slice(0, current.lastIndexOf('/') + 1) : '';
+    var resolve = function (p) {      // a link is relative to the document holding it
+      var out = [];
+      p.split('/').forEach(function (seg) { if (seg === '..') out.pop(); else if (seg && seg !== '.') out.push(seg); });
+      return out.join('/');
+    };
+    var exists = function (p) { return docs.some(function (d) { return d.path === p; }); };
+    var rel = resolve(dir + target);
+    show(exists(rel) || !exists(resolve(target)) ? rel : resolve(target));
+  });
+  var timer = null;
+  search.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      var q = search.value.trim();
+      if (!q) { drawTree(docs, ''); return; }
+      api('GET', base + '?q=' + encodeURIComponent(q)).then(function (d) { drawTree(d.documents, q); })
+        .catch(function (e) { tree.replaceChildren(h('p', {'class': 'msg-err', text: e.message})); });
+    }, 250);
+  });
+  window.addEventListener('hashchange', function () {     // a pasted or edited #doc= link
+    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(decodeURIComponent(location.hash));
+    if (m) show(m[1], m[2] ? Number(m[2]) : null);
+  });
+  api('GET', base).then(function (d) {
+    docs = d.documents; drawTree(docs, '');
+    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(decodeURIComponent(location.hash));
+    if (m) show(m[1], m[2] ? Number(m[2]) : null);
+    else if (docs.some(function (x) { return x.path === 'INDEX.md'; })) show('INDEX.md');
+  }).catch(function (e) { tree.replaceChildren(h('p', {'class': 'msg-err', text: e.message})); });
   return sec;
 }
 function settingsSection(w) {
