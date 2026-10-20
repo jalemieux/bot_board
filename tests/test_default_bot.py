@@ -23,7 +23,7 @@ class Install(unittest.TestCase):
     """A piped install against a stand-in checkout: its bin/keeper answers `harnesses` with
     the rows a test gives, its bin/bot plays `keeper install` and writes the keeper's note."""
 
-    def install(self, rows, *args, note=None, tty=None, installed=False, env=None):
+    def install(self, rows, *args, note=None, tty=None, installed=False, env=None, me=None):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             src = home / "src"
@@ -41,6 +41,9 @@ class Install(unittest.TestCase):
             (home / "commands").mkdir()
             (home / "commands/git").write_text("#!/usr/bin/env bash\nexit 0\n")
             (home / "commands/git").chmod(0o755)
+            if me:     # what the board answers GET /api/me with the keeper's token
+                (home / "commands/curl").write_text(f"#!/usr/bin/env bash\nprintf {me}\n")
+                (home / "commands/curl").chmod(0o755)
             config = home / "config"
             r = subprocess.run(["bash", "-s", "--", "install", *args], input=SOURCE, capture_output=True, text=True,
                                timeout=20, env={**os.environ, "HOME": tmp, "BOT_CONFIG": str(config),
@@ -49,6 +52,7 @@ class Install(unittest.TestCase):
                                                 "BOT_TTY": str(home / ("tty" if tty is not None else "none")),
                                                 **(env or {})})
             self.assertEqual(r.returncode, 0, r.stderr)
+            self.tokens = sorted(p.name for p in (home / ".config/bot_board").glob("keeper-*"))
             return r, config.read_text()
 
     CLAUDE_OK = [("claude", "ok", ""), ("codex", "missing", "not logged in"), ("copilot", "absent", ""),
@@ -85,6 +89,12 @@ class Install(unittest.TestCase):
         self.assertIn("no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install"
                       f" or use + Add a bot on {BOARD}/fleet", r.stderr)
 
+    def test_a_keeper_token_the_board_does_not_know_is_set_aside_and_counts_as_fresh(self):
+        r, config = self.install(self.CLAUDE_OK, installed=True, tty="y\n", me=401)
+        self.assertIn("does not know this box's keeper token; it registers again", r.stderr)
+        self.assertEqual(self.tokens, ["keeper-box.token.stale"])
+        self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
+
     def test_waiting_for_a_sign_in_says_so(self):
         r, _ = self.install(self.CLAUDE_OK, note="waiting: no board admin yet")
         self.assertIn(f"open {BOARD} and sign in; your bot (claude) starts then", r.stderr)
@@ -93,6 +103,9 @@ class Install(unittest.TestCase):
         r, config = self.install(self.CLAUDE_OK, installed=True, tty="y\n")
         self.assertNotIn("KEEPER_DEFAULT_BOT", config)
         self.assertNotIn("Start a default bot", r.stderr)
+        r, config = self.install(self.CLAUDE_OK, installed=True, tty="y\n", me=200)
+        self.assertNotIn("KEEPER_DEFAULT_BOT", config)
+        self.assertEqual(self.tokens, ["keeper-box.token"])
         r, config = self.install(self.CLAUDE_OK, "--no-bot", tty="y\n")
         self.assertEqual(r.stdout.splitlines(), ["keeper", "install"])
         self.assertNotIn("KEEPER_DEFAULT_BOT", config)

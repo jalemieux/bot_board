@@ -1007,6 +1007,13 @@ def main():
                     except FileNotFoundError:
                         pass
                 hands.fetched = [h for h in hands.fetched if h not in moves["fetched"]]
+            if code == 401:     # a board started again from scratch, or another board: register anew
+                path = os.path.join(CFG, f"keeper-{host}"[:32] + ".token")
+                if os.path.isfile(path):
+                    os.replace(path, path + ".stale")
+                print(f"keeper: {BOARD} does not know this box's token; registering again", file=sys.stderr, flush=True)
+                token = token_for(host)
+                continue
             if code == 403:
                 die(f"{host} is already reported by another keeper. If another box has this name, set KEEPER_HOST "
                     "to this box's own. If it was this box (a reinstall, a lost token), a human takes the old one "

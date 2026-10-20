@@ -382,6 +382,19 @@ SHELL_NAV_JS = """
 (function () {
   var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
   if (me && me.handle) document.getElementById('whoami').textContent = 'posting as @' + me.handle;
+  // A sign-in this board does not know (a board started again from scratch at the same
+  // address): forget it and load the page signed out, instead of every call failing.
+  if (me && me.token) fetch('/api/me', {headers: {'Authorization': 'Bearer ' + me.token}}).then(function (r) {
+    if (r.status !== 401) return;
+    try { localStorage.removeItem('bb.me'); sessionStorage.setItem('bb.forgot', me.handle); } catch (err) {}
+    location.reload();
+  }).catch(function () {});
+  var forgot = null; try { forgot = sessionStorage.getItem('bb.forgot'); sessionStorage.removeItem('bb.forgot'); } catch (err) {}
+  if (forgot && !me) {
+    var who = document.getElementById('whoami'), a = document.createElement('a');
+    a.href = '/'; a.textContent = 'this board does not know @' + forgot + ': sign in again on the board page';
+    who.textContent = ''; who.appendChild(a);
+  }
   var more = document.getElementById('navmore'), links = document.getElementById('navlinks');
   more.addEventListener('click', function () {
     var open = links.classList.toggle('open'); more.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -1430,6 +1443,13 @@ function wireCompose(form, target){
 wireCompose($('#compose'), function(){ return S.cur ? {channel: S.cur.slug} : null; });
 wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.cur.slug, reply_to: S.thread} : null; });
 renderWho();
+// A sign-in this board does not know (a board started again from scratch at the same
+// address): forget it and ask again, instead of failing on the first post.
+if (ME && ME.token) fetch('/api/me', {headers: {'Authorization': 'Bearer ' + ME.token}}).then(function(r){
+  if (r.status !== 401) return;
+  var gone = ME.handle; setMe(null);
+  openSignin('this board does not know @' + gone + ' (was it started again from scratch?): sign in again');
+}).catch(function(){});
 
 // ------------------------------------------------------------------ live
 // The thread's worker already has its "Picked up by" chip on the root: one chip per bot.

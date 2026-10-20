@@ -139,6 +139,14 @@ if [ "${1:-}" = install ]; then
   grep -qs '^KEEPER_OPERATORS=' "$_cfg" \
     || echo "bot: no KEEPER_OPERATORS: anyone the board accepts as a human can start and stop bots here" >&2
   _board=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$_cfg" | tail -1)
+  # A keeper token this board does not know is from another board (or this one started again
+  # from scratch): set it aside, so the keeper registers anew and the install counts as fresh.
+  for _t in "$HOME"/.config/bot_board/keeper-*.token; do
+    [ -s "$_t" ] || continue
+    _code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$_t")" "$_board/api/me" || true)
+    if [ "$_code" = 401 ]; then mv "$_t" "$_t.stale"; _fresh=1
+      echo "bot: $_board does not know this box's keeper token; it registers again (old token kept as $(basename "$_t").stale)" >&2; fi
+  done
   # harness <TAB> ok|missing|unknown|absent, checked as the keeper checks logins
   _rows=$(python3 "$SRC/bin/keeper" harnesses 2>/dev/null || true)
   _state() { awk -F'\t' -v h="$1" '$1 == h {print $2}' <<<"$_rows"; }
