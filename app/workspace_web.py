@@ -67,12 +67,13 @@ function h(tag, attrs) {
     else if (k === 'html') return;
     else if (attrs[k] !== null && attrs[k] !== undefined) el.setAttribute(k, attrs[k]);
   });
-  for (var i = 2; i < arguments.length; i++) {
-    var c = arguments[i];
-    if (c === null || c === undefined) continue;
-    if (Array.isArray(c)) c.forEach(function (x) { if (x) el.appendChild(typeof x === 'string' ? document.createTextNode(x) : x); });
-    else el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
-  }
+  // Children: nodes, text, numbers, arrays of those; null, undefined and false (from `cond && el`) are skipped.
+  var add = function (x) {
+    if (x === null || x === undefined || x === false || x === true) return;
+    if (Array.isArray(x)) x.forEach(add);
+    else el.appendChild(x instanceof Node ? x : document.createTextNode(String(x)));
+  };
+  for (var i = 2; i < arguments.length; i++) add(arguments[i]);
   return el;
 }
 function api(method, path, body) {

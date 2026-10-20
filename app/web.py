@@ -527,7 +527,10 @@ color:var(--dim);font-size:13.5px;line-height:1.3}
 .rail li.unread{color:var(--ink);font-weight:600}
 .rail li .sigil{font-family:var(--mono);opacity:.6;width:12px;text-align:center;flex:none}
 .rail li .fold{flex:none;width:14px;margin-left:-6px;margin-right:-6px;background:none;border:0;padding:0;color:var(--dim);cursor:pointer;font:11px var(--mono)}
-.rail li.sub{padding-left:30px}
+.rail li.sub{padding-left:26px}
+.rail li.ws{font:600 12px var(--mono);color:var(--dim);margin-top:6px}
+.rail li.ws.unread,.rail li.ws:has(.sum){color:var(--ink)}
+.rail li.ws .fold{margin:0}
 .rail li .badge.sum{background:var(--dim)}
 .rail li .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail li .conv{font-family:var(--mono);font-size:12px}
@@ -849,54 +852,48 @@ function renderRail(){
   };
   $('#channels').innerHTML = channelTree(lis);
   $('#convs').innerHTML = lis(S.convs, true);
-  $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.length;
+  $('#nch').textContent = S.channels.reduce(function(a, b){ if (b.workspace && a.indexOf(b.workspace) < 0) a.push(b.workspace); return a; }, []).length; $('#ncv').textContent = S.convs.length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
 }
-// A project's group channels are named <project>.<group>: list them under the
-// project as a tree, folded unless opened (bb.open) or holding the open channel
-// or something unread. Most recently active first, at each level.
+// Channels are listed by workspace: the workspace is a heading, not a channel, and
+// its channels sit under it by name (General first). A workspace is folded unless
+// opened (bb.open) or holding the open channel or something unread; folded, it shows
+// what is unread inside it. A channel outside any workspace is listed after them.
 function channelTree(lis){
-  var tops = [], kids = {};
+  var order = [], byWs = {}, loose = [];
   S.channels.forEach(function(b){
-    var i = b.slug.indexOf('.');
-    if (i > 0) (kids[b.slug.slice(0, i)] = kids[b.slug.slice(0, i)] || []).push(b);
+    if (!b.workspace) { loose.push(b); return; }
+    if (!byWs[b.workspace]) { byWs[b.workspace] = []; order.push(b.workspace); }
+    byWs[b.workspace].push(b);
   });
-  var done = {};
-  S.channels.forEach(function(b){
-    var i = b.slug.indexOf('.'), p = i > 0 ? b.slug.slice(0, i) : b.slug;
-    if (done[p]) return;
-    if (!kids[p]) { done[p] = 1; tops.push(lis([b], false)); return; }
-    done[p] = 1;
-    var parent = null;
-    for (var j = 0; j < S.channels.length; j++) if (S.channels[j].slug === p) parent = S.channels[j];
-    var group = kids[p], open = !!S.open[p], hidden = 0;
-    var shown = group.filter(function(c){
-      var keep = open || (S.unread[c.slug] && !(S.cur && S.cur.slug === c.slug)) || (S.cur && S.cur.slug === c.slug);
+  var label = function(c){ return c.name || (c.slug.indexOf('.') > 0 ? c.slug.slice(c.slug.indexOf('.') + 1) : c.slug); };
+  var out = order.map(function(w){
+    var chans = byWs[w].slice().sort(function(a, b){ return (b.slug === w) - (a.slug === w); });   // General first
+    var cur = S.cur && S.cur.slug, open = !!S.open[w], hidden = 0;
+    var shown = chans.filter(function(c){
+      var keep = open || c.slug === cur || (S.unread[c.slug] && c.slug !== cur);
       if (!keep) hidden += S.unread[c.slug] || 0;
       return keep;
     });
-    var head = parent ? lis([parent], false) : '<li class="proj" data-proj="' + esc(p) + '"><span class="sigil">#</span><span class="name">' + esc(p) + '</span></li>';
-    // the caret folds and unfolds; the rest of the row opens the project's channel
-    var caret = '<button type="button" class="fold" data-proj="' + esc(p) + '" aria-expanded="' + open + '" title="' +
-      (open ? 'fold' : 'show') + ' its ' + group.length + ' group channel' + (group.length === 1 ? '' : 's') + '">' + (open ? '▾' : '▸') + '</button>';
-    head = head.replace(/^<li([^>]*)>/, '<li$1>' + caret);
-    if (!open && hidden) head = head.replace(/<\/li>$/, '<span class="badge sum" title="unread in its groups">' + (hidden > 99 ? '99+' : hidden) + '</span></li>');
-    var sub = shown.map(function(c){
+    var head = '<li class="ws" data-proj="' + esc(w) + '" title="workspace ' + esc(w) + ': ' + chans.length + ' channel' +
+      (chans.length === 1 ? '' : 's') + '"><button type="button" class="fold" data-proj="' + esc(w) + '" aria-expanded="' + open +
+      '">' + (open ? '▾' : '▸') + '</button><span class="name">' + esc(w) + '</span>' +
+      (!open && hidden ? '<span class="badge sum" title="unread in this workspace">' + (hidden > 99 ? '99+' : hidden) + '</span>' : '') + '</li>';
+    return head + shown.map(function(c){
       return lis([c], false).replace('<span class="name">' + esc(c.slug) + '</span>',
-        '<span class="name" title="' + esc(c.slug) + '">' + esc(c.slug.slice(p.length + 1)) + '</span>').replace('<li class="', '<li class="sub ');
+        '<span class="name" title="#' + esc(c.slug) + '">' + esc(label(c)) + '</span>').replace('<li class="', '<li class="sub ');
     }).join('');
-    tops.push(head + sub);
-  });
-  return tops.join('') || lis([], false);
+  }).join('');
+  return (out + (loose.length ? lis(loose, false) : '')) || lis([], false);
 }
 function totalUnread(){
   return S.channels.concat(S.convs).reduce(function(n, b){ return n + (S.unread[b.slug] || 0); }, 0);
 }
 rail.addEventListener('click', function(ev){
   if (ev.target.closest('#unreadli')) { openUnread(true); return; }
-  var f = ev.target.closest('button.fold, li.proj');
+  var f = ev.target.closest('button.fold, li.ws');
   if (f) { var p = f.dataset.proj; if (S.open[p]) delete S.open[p]; else S.open[p] = 1; save('bb.open', S.open); renderRail(); return; }
   var li = ev.target.closest('li[data-slug]'); if (!li) return;
   openChannel(li.dataset.slug, true);
@@ -1367,8 +1364,9 @@ wireCompose($('#tcompose'), function(){ return S.cur && S.thread ? {channel: S.c
 renderWho();
 
 // ------------------------------------------------------------------ live
-function receiptHtml(receipts){
-  return receipts.map(function(r){
+// The thread's worker already has its "Picked up by" chip on the root: one chip per bot.
+function receiptHtml(receipts, worker){
+  return receipts.filter(function(r){ return r.handle !== worker; }).map(function(r){
     return '<span class="pickup-chip" title="' + esc(r.looking ? 'This message is in the bot’s current run' : 'Previously delivered to a bot run; this does not mean the task is complete') + '">' +
       (r.looking ? '👀 Looking · ' : '✓ Seen · ') + '<a href="/a/' + esc(r.handle) + '">@' + esc(r.handle) + '</a></span>';
   }).join(' ');
@@ -1386,7 +1384,8 @@ async function refreshReceipts(){
       var receipts = (await r.json()).receipts;
       chips.forEach(function(c){
         if (c.isConnected && Object.prototype.hasOwnProperty.call(receipts, c.dataset.receiptMessage)) {
-          var html = receiptHtml(receipts[c.dataset.receiptMessage]);
+          var w = document.querySelector('[data-worker-thread="' + c.dataset.receiptMessage + '"] a');
+          var html = receiptHtml(receipts[c.dataset.receiptMessage], w ? w.textContent.replace(/^@/, '') : null);
           if (c.innerHTML !== html) c.innerHTML = html;
         }
       });
@@ -1574,7 +1573,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <nav class="rail" id="rail">
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li></ul>
-  <h2>Channels <span id="nch"></span></h2>
+  <h2>Workspaces <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2>Conversations <span id="ncv"></span></h2>
   <ul id="convs"></ul>

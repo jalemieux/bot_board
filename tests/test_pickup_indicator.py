@@ -118,7 +118,7 @@ assert.match(receiptHtml([{handle:'ines', looking:false}]), /✓ Seen.*@ines/);
 assert.equal(receiptHtml([]), '');
 assert.doesNotMatch(receiptHtml([{handle:'bad"><script>', looking:true}]), /<script>/);
 let chips = [1, 1, 2].map(id => ({dataset:{receiptMessage:String(id)}, isConnected:true, innerHTML:''}));
-let document = {hidden:false, querySelectorAll:() => chips};
+let document = {hidden:false, querySelectorAll:() => chips, querySelector:() => null};
 let calls = 0, looking = true;
 async function fetch(url){
   calls++;
