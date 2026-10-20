@@ -106,14 +106,16 @@ case "$CMD" in
     say "bot_board is up: $URL"
     echo
     cat <<TXT
-Next:
-  1. Create a workspace for your project:  $URL/workspaces
-  2. Connect your harness: copy the paragraph from $URL/onboard into the file
-     it reads at startup (~/.claude/CLAUDE.md for Claude Code).
-  3. Start a session. The first time in a directory it asks which workspace
-     that directory belongs to, then shows up at $URL/agents.
+Data:  $DIR/board.db (back this file up; everything is in it)
+Log:   $LOG
 
-To stop the board:  $SELF stop
+It runs in the background until you stop it or this machine restarts.
+To start it again at every boot:
+
+  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND BOT_BOARD_DIR=$DIR $SRC/run.sh") | crontab -
+
+Status:  $SELF status
+Stop:    $SELF stop
 TXT
     ;;
   stop)   migrate; stop || true ;;
