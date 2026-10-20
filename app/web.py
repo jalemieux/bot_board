@@ -30,7 +30,7 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # first thing to collapse into the overflow menu. Agent reference — the roster, /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
-ADMIN_LINKS = (("/fleet", "fleet"), ("/projects", "projects"), ("/routines", "routines"))
+ADMIN_LINKS = (("/fleet", "fleet"), ("/workspaces", "workspaces"), ("/routines", "routines"))
 UTIL_LINKS = (("/onboard", "connect your harness"),)
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
@@ -1638,7 +1638,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 
 
 SESSION_RE = re.compile(r"^(.+?)-([0-9a-f]{4})$", re.IGNORECASE)
-POOL_RE = re.compile(r"^standby pool on ([^:\s]+)", re.IGNORECASE)
+POOL_RE = re.compile(r"^standby (?:pool )?on ([^:\s]+)", re.IGNORECASE)
 
 
 def _box(host: str) -> str:
@@ -1646,11 +1646,11 @@ def _box(host: str) -> str:
 
 
 def classify_agent(a: dict, hosts: set[str], channels: set[str]) -> dict:
-    """Role, box and project for the roster, read from the conventions in AGENTS.md:
-    session handles are <host>-<project>-<seed> (host+project cut to 27 characters),
-    pool bots say "standby pool on <host>" in their description."""
+    """Role, box and project (its workspace, for a launcher bot) for the roster, read from
+    the board and the conventions: session handles are <host>-<project>-<seed> (host+project
+    cut to 27 characters); bots bin/bot starts say "standby on <host>" in their description."""
     desc = a.get("description") or ""
-    out = {"role": "session", "box": "", "project": ""}
+    out = {"role": "session", "box": "", "project": a.get("workspace") or ""}
     if a["kind"] in ("human", "keeper"):
         out["role"] = "people"
         return out
@@ -1773,10 +1773,10 @@ def status_html(st: dict | None, overview: bool = True) -> str:
         + "".join(f' · <span class="{"" if c["state"] == "ok" else "bad"}">{e(c["name"])} {e(c["state"])}</span>'
                   for c in h["credentials"]) + "</li>" for h in st["fleet"]) or "<li>No box has reported yet.</li>"
     projs = "".join(
-        f'<li><a href="/projects/{e(p["slug"])}">{e(p["name"] or p["slug"])}</a> '
-        + (f'dedicated pool: {", ".join("@" + e(b) for b in p["bots"]) or "empty"}' if p["dedicated"]
-           else "shared pool") + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
-        for p in st["projects"]) or "<li>No project yet.</li>"
+        f'<li><a href="/workspaces/{e(p["slug"])}">{e(p["name"] or p["slug"])}</a> '
+        + (f'bots: {", ".join("@" + e(b) for b in p["bots"])}' if p["bots"] else "no bot")
+        + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
+        for p in st["workspaces"]) or "<li>No workspace yet.</li>"
     def every(s):
         for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):    # as /routines says it: 1d, not 1440 min
             if s and s >= n and s % n == 0:
@@ -1790,7 +1790,7 @@ def status_html(st: dict | None, overview: bool = True) -> str:
            if r["last_job"] else "") + "</li>" for r in st["routines"]) or "<li>No routine yet.</li>"
     return (f'<style>{STATUS_CSS}</style>{head}<div class="stgrid">'
             f'<section><h2><a href="/fleet">Fleet</a></h2><ul>{boxes}</ul></section>'
-            f'<section><h2><a href="/projects">Projects</a></h2><ul>{projs}</ul></section>'
+            f'<section><h2><a href="/workspaces">Workspaces</a></h2><ul>{projs}</ul></section>'
             f'<section><h2><a href="/routines">Routines</a></h2><ul>{rts}</ul></section></div>')
 
 
@@ -1821,8 +1821,8 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), stat
             words = st["words"] + (f": {st['reason']}" if st["reason"] and st["state"] != "unknown" else "")
             cls = ("run" if st["state"] == "working" else "wait") if st["can_work"] else \
                 "prob" if st["reason"] or st["state"] in ("starting", "stopping", "moving") else "off"
-            if b.get("project"):
-                words += f" · dedicated to {b['project']}"
+            if b.get("workspace"):
+                words += f" · workspace {b['workspace']}"
             key = b["handle"].lower()
             if key not in live or cls in ("run", "wait"):   # a bot seen on two boxes: the one it is up on
                 live[key] = (h["name"], words, cls)
@@ -1915,12 +1915,12 @@ def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), stat
 {status_html(status)}
 <h2 class="roster">Who is on the board</h2>
 <p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} active in the last hour ·
-<b>{pool_up}</b> of {len(pool)} pool bots up · {len(ended)} ended sessions · {stats['agents']} registered</p>
-<input class="afilter" id="afilter" type="search" placeholder="filter by handle, project, box or what it is doing…" autocomplete="off" aria-label="filter agents">
+<b>{pool_up}</b> of {len(pool)} standby bots up · {len(ended)} ended sessions · {stats['agents']} registered</p>
+<input class="afilter" id="afilter" type="search" placeholder="filter by handle, workspace, box or what it is doing…" autocomplete="off" aria-label="filter agents">
 {presence_legend()}
 <div class="ag">
 {section("Active now", len(working), "Sessions heard from in the last hour, with what each one says it is doing.", work_html)}
-{section("Pool bots", len(pool), "Standby bots that take work from any project channel, by box. The words are what the box's keeper sees now: working on a project, waiting for work, or stopped.", f'<div class="pools">{pool_html}</div>') if pool else ""}
+{section("Standby bots", len(pool), "Bots bin/bot keeps on standby, by box, each in its workspace. The words are what the box's keeper sees now: working, waiting for work, or stopped.", f'<div class="pools">{pool_html}</div>') if pool else ""}
 {section("Quiet today", len(quiet), "Sessions last heard from 1 to 24 hours ago: most have finished or are waiting on someone.", quiet_html) if quiet else ""}
 {section("People and keepers", len(people), "", f'<div class="people">{people_html}</div>') if people else ""}
 {section("Ended sessions", len(ended), "Not seen for a day or more, by project, most recent first.",
@@ -1974,8 +1974,8 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     held = b.get("open_threads") or 0
     if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
         why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
-    group = (f'<a href="/projects/{e(b["project"])}">{e(b["project"])}</a>' if b.get("project")
-             else "shared pool" if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
+    group = (f'<a href="/workspaces/{e(b["workspace"])}">{e(b["workspace"])}</a>' if b.get("workspace")
+             else '<span class="prob">no workspace</span>' if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
     # last active: the keeper knows its last harness run, the board its last post
     last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
     # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
@@ -2145,13 +2145,13 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, project, threads) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, workspace, threads) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, project: project || null,
+    body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, workspace: workspace || null,
                                    threads: threads || null}
-                                : {host: host, harness: harness, project: project || null})})
+                                : {host: host, harness: harness, workspace: workspace || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -2237,20 +2237,20 @@ document.addEventListener('click', function (ev) {
     alert('Draining ' + b.dataset.host + ':\\n' + lines.join('\\n')); location.reload(); }); })
   .catch(function () { alert('could not reach the board'); });
 });
-// The top-of-page "Add a bot" form: machine, harness, optional project, optional name.
+// The top-of-page "Add a bot" form: machine, harness, workspace, optional name.
 document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot-top'); if (!f) return;
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
-      f.elements.harness.value, false, f.elements.project.value);
+      f.elements.harness.value, false, f.elements.workspace.value);
 });
-// Add a bot suggests reviving a stopped bot of the same harness and project instead (#168): it
-// keeps its name, sessions and claimed threads. On another machine, a pool bot moves here and starts.
+// Add a bot suggests reviving a stopped bot of the same harness and workspace instead (#168): it
+// keeps its name, sessions and claimed threads. On another machine, a bot moves here and starts.
 var REVIVE = JSON.parse((document.getElementById('revive-data') || {}).textContent || '[]');
 function reviveList() {
   var f = document.querySelector('form.newbot-top'), box = document.getElementById('revive'); if (!f || !box) return;
   var host = f.elements.host.value, rows = REVIVE.filter(function (b) {
-    return b.harness === f.elements.harness.value && b.project === f.elements.project.value && (b.host === host || b.pool);
+    return b.harness === f.elements.harness.value && b.workspace === f.elements.workspace.value && (b.host === host || b.pool);
   });
   box.hidden = !rows.length;
   box.innerHTML = rows.length ? '<h3>Revive a stopped bot instead?</h3>' + rows.map(function (b) {
@@ -2441,7 +2441,7 @@ body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .add
 """
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
@@ -2495,19 +2495,14 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
                       '<th>Memory</th><th>Logins</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
                      '<div class="empty">No box has reported yet. Add a machine below.</div>')
-    # which projects keep their own bots; every other project shares the rest
+    # which workspace each bot serves is on its row; the form below puts a new one in a workspace
     pooled = ""
-    if pools:
-        pooled = ('<p class="sub">Dedicated bot pools: ' + "; ".join(
-            f'<a href="/projects/{e(p["project"])}">{e(p["project"])}</a>: '
-            + (", ".join(f'@{e(b)}' for b in p["bots"]) or "none, so no pool bot works there")
-            for p in pools) + '. Every other project is served by the shared pool.</p>')
-    # The obvious way to add a bot: one form, where the box, harness and (optionally)
-    # the project to dedicate it to are all chosen in one place.
+    # The obvious way to add a bot: one form, where the box, harness and the workspace
+    # it belongs to are all chosen in one place.
     # stopped bots the Add a bot form suggests reviving instead (#168): never retired ones,
     # and those holding open threads first, since their work waits for them
     revive = sorted(({"handle": b["handle"], "host": h["name"], "harness": b.get("harness") or "",
-                      "project": b.get("project") or "", "pool": bool(b.get("pool")), "open": b.get("open_threads") or 0,
+                      "workspace": b.get("workspace") or "", "pool": bool(b.get("pool")), "open": b.get("open_threads") or 0,
                       "stopped": ago(max(b.get("last_run") or "", b.get("set_at") or "")) if (b.get("last_run") or b.get("set_at")) else ""}
                      for h, b in stopped if not b.get("move_to") and not b.get("fetch") and b["status"] != "moved"),
                     key=lambda x: (-x["open"], x["handle"].lower()))
@@ -2515,20 +2510,20 @@ def fleet_page(board_name, hosts, pools=(), status=None, projects=()) -> str:
     if reporting:
         host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
-        project_opts = '<option value="">No project (shared pool)</option>' + "".join(
-            f'<option value="{e(p)}">{e(p)}</option>' for p in projects)
+        ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
+                   or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
         add_bot = f"""<details id="addbot" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">
 <label class="fld"><span>Machine</span><select name="host" aria-label="machine">{host_opts}</select></label>
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
-<label class="fld"><span>Project <small>(optional)</small></span><select name="project" aria-label="project to dedicate to">{project_opts}</select></label>
+<label class="fld"><span>Workspace</span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
 <div class="revive" id="revive" hidden></div>
 <button type="submit" class="addbot-go">Start a new bot</button>
 </form>
 <script type="application/json" id="revive-data">{revive_json}</script>
-<p class="addbot-note">The machine's keeper starts it within a few seconds. A project dedicates the bot to that project once it is online.</p>
+<p class="addbot-note">The machine's keeper starts it within a few seconds. The bot belongs to the workspace you pick and sees only that workspace.</p>
 </details>"""
     else:
         add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'

@@ -61,12 +61,10 @@ class Status(unittest.TestCase):
         self.report([{'handle': 'tarzan', 'harness': 'claude', 'status': 'waiting', 'pool': True,
                       'health': 'last run failed (exit 1): boom'}],
                     [{'name': 'claude', 'kind': 'login', 'state': 'missing', 'detail': 'not logged in', 'held': 2}])
-        # a project with its own pool, none of whose bots is up
-        self.client.post('/api/projects/access', json={'key': 'k'}, headers=self.human)
-        self.client.post('/api/projects', json={'slug': 'game', 'name': 'Game', 'purpose': 'A game'}, headers=self.human)
-        db.conn().execute("INSERT INTO project_pools (project_id, configured, revision) "
-                          "SELECT id, 1, 1 FROM projects WHERE slug='game'")
-        db.conn().commit()
+        # a workspace none of whose bots is up
+        self.client.post('/api/workspaces/access', json={'key': 'k'}, headers=self.human)
+        self.client.post('/api/workspaces', json={'slug': 'game', 'name': 'Game', 'purpose': 'A game'}, headers=self.human)
+        self.client.post('/api/agents', json={'handle': 'jane', 'kind': 'claude-code', 'workspace': 'game'})
         # a routine the runner said failed
         now = db.now()
         db.conn().execute("INSERT INTO routines (definition, state, defined_at, failure, created_by, updated_by,"
@@ -79,14 +77,15 @@ class Status(unittest.TestCase):
         texts = ' | '.join(a['text'] for a in st['attention'])
         self.assertIn('claude missing on box, 2 bots held', texts)
         self.assertIn('@tarzan on box: last run failed', texts)
-        self.assertIn('project game: none of its pool bots is up', texts)
+        self.assertIn('workspace game: none of its bots is up (@jane)', texts)
+        self.assertIn('workspace admin has no bot', texts)
         self.assertIn('routine nightly failed: check exited 2', texts)
         self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/fleet#box-box', '/fleet#bot-tarzan'})
-        self.assertEqual(got['projects']['href'], '/projects/game')
+        self.assertEqual(got['workspaces']['href'], '/workspaces/game')
         self.assertTrue(got['routines']['href'].startswith('/routines#r='))
         page = self.client.get('/agents').text
         self.assertIn('need a human', page)
-        self.assertIn('href="/projects/game"', page)
+        self.assertIn('href="/workspaces/game"', page)
         self.assertIn('id="box-box"', self.client.get('/fleet').text)
         self.assertIn('id="bot-tarzan"', self.client.get('/fleet').text)
 

@@ -1,12 +1,12 @@
-"""System status: the fleet, the projects and the routines in one rollup (#92).
+"""System status: the fleet, the workspaces and the routines in one rollup (#92).
 
-Nothing here is stored. It reads what /fleet, /projects and /routines read, and
+Nothing here is stored. It reads what /fleet, /workspaces and /routines read, and
 says in one list what needs a human, each item pointing to where it is fixed.
 GET /api/status returns it; /agents shows it above the roster.
 """
 from __future__ import annotations
 
-from . import db, fleet, projects
+from . import db, fleet, workspaces
 from .web import ago
 
 RUNNER_STALE = 15 * 60      # an enabled routine whose runner has not been seen for this long is not running
@@ -35,7 +35,7 @@ def _fleet(hosts: list, attention: list) -> list:
         limited = {}
         for b in h["bots"]:
             st = b.get("state") or fleet.bot_state(b, h["reporting"])
-            row = {k: b.get(k) for k in ("handle", "harness", "status", "want", "problem", "project", "pool")}
+            row = {k: b.get(k) for k in ("handle", "harness", "status", "want", "problem", "workspace")}
             row.update(state=st, up=st["can_work"], health=b.get("health") or "")
             bots.append(row)
             if st["state"] == "out of usage" and h["reporting"]:
@@ -65,37 +65,30 @@ def _fleet(hosts: list, attention: list) -> list:
     return out
 
 
-def _admin_project() -> str:
-    from . import routines     # loads bin/routines; only when asked
-    return routines.ADMIN_PROJECT
-
-
-def _projects(hosts: list, attention: list) -> list:
+def _workspaces(hosts: list, attention: list) -> list:
     # up: can take work now (#100); a logged-out bot on a reporting box is not up
     can = lambda h, b: (b.get("state") or fleet.bot_state(b, h["reporting"]))["can_work"]
     up = {b["handle"].lower() for h in hosts for b in h["bots"] if can(h, b)}
-    pool_up = sorted({b["handle"] for h in hosts for b in h["bots"]
-                      if b.get("pool") and can(h, b) and not b.get("project")})
     out = []
-    for p in db.conn().execute("SELECT * FROM projects WHERE archived=0 ORDER BY slug").fetchall():
-        p = dict(p)
-        pool = projects.pool_settings(p)
-        channel = db.get_board_by_id(p["board_id"])["slug"]
-        if pool["configured"]:
-            working = [b for b in pool["bots"] if b.lower() in up]
-            if not working:
-                attention.append(_item(f"project {p['slug']}: none of its pool bots is up"
-                                       + (f" ({', '.join('@' + b for b in pool['bots'])})" if pool["bots"] else
-                                          " (its pool is empty)"), f"/projects/{p['slug']}", "projects"))
-        else:
-            working = pool_up      # a project without its own pool shares the free pool bots
-            if p["slug"] == _admin_project():
-                # routines need a bot of their own here: a shared pool bot is not an admin bot (#103)
-                attention.append(_item(f"project {p['slug']} has no admin bot: dedicate a pool bot to it, so "
-                                       "requests for routines are answered", f"/projects/{p['slug']}", "projects"))
-        out.append({"slug": p["slug"], "name": p["name"], "channel": channel, "dedicated": pool["configured"],
-                    "bots": pool["bots"] if pool["configured"] else [], "up": working,
-                    "readiness": projects.readiness(p["board_id"])})
+    try:
+        rows = db.conn().execute("SELECT * FROM workspaces WHERE archived=0 ORDER BY slug").fetchall()
+    except db.sqlite3.OperationalError:
+        return out
+    for w in rows:
+        w = dict(w)
+        bots = workspaces.bots_of(w)
+        working = [b for b in bots if b.lower() in up]
+        if not bots:
+            if w["slug"] == workspaces.ADMIN:
+                attention.append(_item(f"workspace {w['slug']} has no bot: add one on /fleet, so seed and routine "
+                                       "requests are answered", f"/workspaces/{w['slug']}", "workspaces"))
+            else:
+                attention.append(_item(f"workspace {w['slug']} has no bot", f"/workspaces/{w['slug']}", "workspaces"))
+        elif not working:
+            attention.append(_item(f"workspace {w['slug']}: none of its bots is up "
+                                   f"({', '.join('@' + b for b in bots)})", f"/workspaces/{w['slug']}", "workspaces"))
+        out.append({"slug": w["slug"], "name": w["name"], "channel": workspaces.home_slug(w),
+                    "bots": bots, "up": working})
     return out
 
 
@@ -130,10 +123,10 @@ def _routines(attention: list) -> list:
 
 
 def rollup(hosts: list | None = None) -> dict:
-    """{ok, attention: [{text, href, where}], fleet, projects, routines}. hosts: fleet.hosts(),
+    """{ok, attention: [{text, href, where}], fleet, workspaces, routines}. hosts: fleet.hosts(),
     when the caller has it already (each call scans the messages for last posts)."""
     attention: list = []
     hosts = fleet.hosts() if hosts is None else hosts
-    out = {"fleet": _fleet(hosts, attention), "projects": _projects(hosts, attention),
+    out = {"fleet": _fleet(hosts, attention), "workspaces": _workspaces(hosts, attention),
            "routines": _routines(attention)}
     return {"ok": not attention, "attention": attention, **out}

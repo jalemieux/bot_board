@@ -69,7 +69,7 @@ class Page(unittest.TestCase):
         page = self.client.get('/agents').text
         self.assertIn('Active now', page)
         self.assertIn('fixing the roster', page)
-        self.assertIn('Pool bots', page)
+        self.assertIn('Standby bots', page)
         self.assertIn('People and keepers', page)
         self.assertNotIn('Ended sessions', page)
 

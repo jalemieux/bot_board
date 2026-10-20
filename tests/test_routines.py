@@ -26,8 +26,8 @@ class Routines(unittest.TestCase):
         self.stranger = self.register('visitor', 'human')
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
-        self.call('POST', '/api/projects/access', {'key': 'k'})
-        self.assertEqual(self.call('GET', '/api/projects/admin')['project']['readiness'], 'ready')   # comes with the first admin (#103)
+        self.call('POST', '/api/workspaces/access', {'key': 'k'})
+        self.assertEqual(self.call('GET', '/api/workspaces/admin')['workspace']['slug'], 'admin')   # comes with the first admin (#103)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -55,10 +55,9 @@ class Routines(unittest.TestCase):
         return self.call('POST', '/api/routines', data, auth=auth, expected=expected)
 
     def make_admin(self, handle='ada'):
-        """As a human does with Bot pool controls on the admin project, without a keeper to report the bot."""
+        """As a human does with Save bots on the admin workspace, without a keeper to report the bot."""
         c = db.conn()
-        c.execute('INSERT INTO project_pool_bots(project_id, agent_id) SELECT p.id, a.id FROM projects p, agents a'
-                  ' WHERE p.slug=? AND a.handle=?', ('admin', handle))
+        c.execute("UPDATE agents SET workspace_id=(SELECT id FROM workspaces WHERE slug='admin') WHERE handle=?", (handle,))
         c.commit()
 
     def test_admin_discovery_is_only_given_to_authorized_agents(self):
@@ -72,7 +71,8 @@ class Routines(unittest.TestCase):
         self.assertNotIn('/api/routines', schema['paths'])
         self.assertNotIn('RoutineIn', schema['components']['schemas'])
         self.assertIn('/api/messages', schema['paths'])
-        self.assertIn('/api/projects/{slug}/groups/{group_slug}/context', schema['paths'])
+        self.assertIn('/api/knowledge/{path}', schema['paths'])
+        self.assertNotIn('/api/workspaces/{slug}/knowledge/{path}', schema['paths'])
         self.assertEqual(self.client.get('/api/docs').status_code, 200)
         self.assertNotIn('POST /api/routines', self.client.get('/agents.md').text)
         self.make_admin()
@@ -81,40 +81,47 @@ class Routines(unittest.TestCase):
             self.assertIn('POST /api/routines', self.client.get('/api/admin', headers=headers).json()['endpoints'])
             self.assertIn('/api/routines', self.client.get('/api/admin/openapi.json', headers=headers).json()['paths'])
             self.assertIn('POST /api/routines', self.client.get('/admin/agents.md', headers=headers).text)
-        db.conn().execute('DELETE FROM project_pool_bots'); db.conn().commit()
+        db.conn().execute('UPDATE agents SET workspace_id=NULL'); db.conn().commit()
         self.assertEqual(self.client.get('/admin/agents.md', headers=self.bot).status_code, 403)
 
-    def test_the_admin_project_comes_seeded_and_asks_for_its_bot(self):
-        # #103: created with the first admin, context published, and flagged until a bot is dedicated to it
-        p = self.call('GET', '/api/projects/admin')['project']
-        self.assertEqual(p['context']['revision'], 1)
-        self.assertIn('Nothing runs without a human yes', p['context']['body'])
-        self.assertTrue(any('has no admin bot' in a['text'] for a in self.call('GET', '/api/status')['attention']))
+    def test_the_admin_workspace_comes_seeded_and_asks_for_its_bot(self):
+        # #103: created with the first admin, its index written, and flagged until it has a bot
+        p = self.call('GET', '/api/workspaces/admin')['workspace']
+        self.assertEqual(p['channel'], 'admin')
+        index = self.call('GET', '/api/workspaces/admin/knowledge/INDEX.md')['document']
+        self.assertEqual(index['revision'], 1)
+        self.assertIn('Seed requests', index['body'])
+        self.assertTrue(any('workspace admin has no bot' in a['text'] for a in self.call('GET', '/api/status')['attention']))
         self.assertFalse(routines.ensure_admin_project())     # an existing one is left as it is
-        self.call('PATCH', '/api/projects/admin', {'name': 'Ops'})
-        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)
-        self.assertEqual(self.call('GET', '/api/projects/admin')['project']['name'], 'Ops')
+        self.call('PATCH', '/api/workspaces/admin', {'name': 'Ops'})
+        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)
+        self.assertEqual(self.call('GET', '/api/workspaces/admin')['workspace']['name'], 'Ops')
 
-    def test_a_board_with_an_admin_but_no_admin_project_gets_one_at_startup(self):
+    def drop_admin(self, c):
+        c.execute("DELETE FROM knowledge_docs WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug='admin')")
+        c.execute("DELETE FROM workspace_audit WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug='admin')")
+        c.execute("DELETE FROM workspaces WHERE slug='admin'")
+        c.execute("UPDATE boards SET workspace_id=NULL WHERE slug='admin'"); c.commit()
+
+    def test_a_board_with_an_admin_but_no_admin_workspace_gets_one_at_startup(self):
         c = db.conn()
-        for t in ('project_pool_bots', 'project_pools', 'context_revisions', 'project_audit'):
-            c.execute(f'DELETE FROM {t}')
-        c.execute("DELETE FROM projects WHERE slug='admin'"); c.commit()
-        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)   # a later admin
-        c.execute("DELETE FROM projects WHERE slug='admin'"); c.execute('DELETE FROM context_revisions'); c.commit()
+        self.drop_admin(c)
+        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)   # a later admin
+        self.drop_admin(c)
         main._startup()
-        p = self.call('GET', '/api/projects/admin')['project']
-        self.assertEqual(p['context']['revision'], 1)
-        owner = c.execute("SELECT a.handle FROM projects p JOIN agents a ON a.id=p.owner_id WHERE p.slug='admin'").fetchone()
+        p = self.call('GET', '/api/workspaces/admin')['workspace']
+        self.assertEqual(p['channel'], 'admin')
+        self.assertEqual(self.call('GET', '/api/workspaces/admin/knowledge/INDEX.md')['document']['revision'], 1)
+        owner = c.execute("SELECT a.handle FROM workspaces w JOIN agents a ON a.id=w.owner_id WHERE w.slug='admin'").fetchone()
         self.assertEqual(owner[0], 'jac')     # the first admin, not the latest
 
     def test_a_slug_that_cannot_be_adopted_does_not_break_start_or_unlock(self):
         c = db.conn()
-        c.execute("DELETE FROM projects WHERE slug='admin'"); c.execute('DELETE FROM context_revisions')
+        self.drop_admin(c)
         c.execute("UPDATE boards SET kind='conversation' WHERE slug='admin'"); c.commit()
         main._startup()
-        self.call('POST', '/api/projects/access', {'key': 'k'}, auth=self.stranger)
-        self.call('GET', '/api/projects/admin', expected=404)
+        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)
+        self.call('GET', '/api/workspaces/admin', expected=404)
 
     def test_a_stored_routine_is_paused_and_posts_nothing(self):
         before = db.cursor()
@@ -187,7 +194,7 @@ class Routines(unittest.TestCase):
         self.add(check='  ', expected=422)
         self.add(every=0, expected=422)
         self.add(name=None, expected=422)
-        self.add(check='x' * 10, recipe={'type': 'github-issues', 'repo': 'o/r', 'project': 'nope'}, expected=404)
+        self.add(check='x' * 10, recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'nope'}, expected=404)
         self.add(thread=999999, expected=404)
         self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
 

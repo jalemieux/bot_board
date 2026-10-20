@@ -3,10 +3,11 @@
 A routine is a row here, not a message: only the API changes it, and nobody has
 to read machinery in a channel. What people do read stays in channels: the
 conversation in which a human asks the admin bot for a routine (its `thread`),
-the jobs the runner fires into project channels, and a heads-up when one fails.
+the jobs the runner fires into workspace channels, and a notice in the admin
+channel when one fails.
 
-Who may change one: a human who manages the admin project (or the board), or an
-admin bot, a bot in that project's bot pool. An admin bot's enable and test need
+Who may change one: a human who manages the admin workspace (or the board), or
+an admin bot, a bot of that workspace. An admin bot's enable and test need
 `approved_by`, the id of such a human's reply in the routine's thread posted
 after the current version was written, so nothing a bot wrote runs on the
 runner's box before a human said yes to it. Every change to the definition is a
@@ -25,7 +26,7 @@ import os
 import threading
 import time
 
-from . import db, fleet, projects
+from . import db, fleet, workspaces
 
 _PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "routines")
 
@@ -39,7 +40,7 @@ def _load():
 
 cli = _load()
 DEFAULTS = cli.DEFAULTS
-ADMIN_PROJECT = cli.setting("ROUTINES_PROJECT", "admin")
+ADMIN_PROJECT = workspaces.ADMIN      # the admin workspace's slug
 JOBS_SHOWN = 5
 ITEMS_SHOWN = 30
 FIELDS = ("name", "channel", "check", "prompt", "every", "claim_timeout", "done_timeout", "resends",
@@ -105,71 +106,21 @@ def init():
         db.conn().executescript(SCHEMA)
 
 
-# ---------------------------------------------------------------- the admin project
+# ---------------------------------------------------------------- the admin workspace
 
-# What a new board's admin project starts from (#103), so its bot knows its job before anyone writes it down.
-ADMIN_CONTEXT = """The admin project runs the board itself. Its bot pool holds the admin bot(s); its human managers
-approve what they do.
+ensure_admin_project = workspaces.ensure_admin      # the admin workspace comes with the board
 
-- **Routines.** A request for recurring work comes to this project's channels. The admin bot works it out in
-  that thread, writes the check and the prompt, dry-runs the check (`bin/routines check --file <check>`), and
-  stores the routine paused with `thread` set to the request (`POST /api/routines`).
-- **Nothing runs without a human yes.** Test and enable cite `approved_by`: the id of a reply from a manager of
-  this project, in the routine's thread, posted after its current version. Every change is a new version,
-  paused again, and needs a new yes.
-- **Test before enable.** `POST /api/routines/<id>/test`, read `last_test`, then `enable`.
-- A routine that fails is stopped; the runner says so in `heads-up`. The operator sees every routine at `/routines`.
-- The admin bot changes routines only through `/api/routines`, never by posting machinery in a channel.
-
-Before work: read `/admin/agents.md` and `GET /api/routines`; change an existing routine rather than add a twin."""
-ADMIN_SOURCES = ["ADMIN.md", "bin/routines", "app/routines.py"]
-
-
-def ensure_admin_project(agent: dict | None = None) -> bool:
-    """Create the admin project, with ADMIN_CONTEXT published, when it is missing. Its owner is
-    `agent`, else the first board admin; with no admin yet, it waits for one. True when created."""
-    try:
-        projects.find_project(ADMIN_PROJECT)
-        return False
-    except KeyError:
-        pass
-    if not (agent and projects.is_admin(agent)):
-        row = db.conn().execute("SELECT agent_id FROM project_admins ORDER BY granted_at LIMIT 1").fetchone()
-        agent = row and db.get_agent_by_id(row["agent_id"])
-        if not agent:
-            return False
-    channel = db.get_board(ADMIN_PROJECT)
-    projects.create_project({"slug": ADMIN_PROJECT, "name": "Admin", "repositories": [],
-                             "purpose": "Runs the board: routines and other fleet chores, by the admin bot in its bot pool.",
-                             "adopt_channel": bool(channel and channel["kind"] == "channel")}, agent)
-    projects.save_context(ADMIN_PROJECT, None, {"base_revision": 0, "body": ADMIN_CONTEXT, "sources": ADMIN_SOURCES,
-                                                "reason": "default context of a new board's admin project (#103)",
-                                                "mode": "publish"}, agent)
-    return True
-
-
-# ---------------------------------------------------------------- who
 
 def admins() -> list[str]:
-    """The admin bots: the bot pool a human set on the admin project."""
+    """The admin bots: the bots of the admin workspace."""
     try:
-        return projects.pool_settings(projects.find_project(ADMIN_PROJECT))["bots"]
+        return workspaces.bots_of(workspaces.find(ADMIN_PROJECT))
     except KeyError:
         return []
 
 
-def is_operator(agent: dict | None) -> bool:
-    """A human who manages the admin project, or the board when there is none."""
-    if not agent or agent["kind"] != "human":
-        return False
-    try:
-        return projects.can_manage(projects.find_project(ADMIN_PROJECT), agent)
-    except KeyError:
-        return projects.is_admin(agent)
-
-
-def is_admin_bot(agent: dict) -> bool:
-    return agent["kind"] != "human" and agent["handle"].lower() in {a.lower() for a in admins()}
+is_operator = workspaces.is_operator
+is_admin_bot = workspaces.is_admin_bot
 
 
 def is_runner(agent: dict) -> bool:
@@ -178,8 +129,8 @@ def is_runner(agent: dict) -> bool:
 
 def _require_switch(agent: dict) -> None:
     if not (is_operator(agent) or is_admin_bot(agent)):
-        raise PermissionError(f"only a human who manages the `{ADMIN_PROJECT}` project, or an admin bot (its bot "
-                              "pool), changes routines")
+        raise PermissionError(f"only a human who manages the `{ADMIN_PROJECT}` workspace, or an admin bot (a bot "
+                              "of that workspace), changes routines")
 
 
 # ---------------------------------------------------------------- reading
@@ -263,11 +214,11 @@ def _definition(data: dict, old: dict | None = None) -> dict:
         problem = cli.recipe_problem(rc)
         if problem:
             raise ValueError(problem)
-        project = projects.find_project(rc["project"])   # KeyError when there is none
-        if project["archived"]:
-            raise ValueError(f"the project `{rc['project']}` is archived")
+        ws = workspaces.find(rc["workspace"])   # KeyError when there is none
+        if ws["archived"]:
+            raise ValueError(f"the workspace `{rc['workspace']}` is archived")
         r.update(recipe=rc, recipe_version=cli.RECIPE_VERSION, check=cli.recipe_check(rc), prompt=cli.recipe_prompt(rc))
-        r["channel"] = r["channel"] or db.get_board_by_id(project["board_id"])["slug"]
+        r["channel"] = r["channel"] or workspaces.home_slug(ws)
     else:
         r.pop("recipe", None)
         r.pop("recipe_version", None)
@@ -315,7 +266,7 @@ def _approval(row: dict, agent: dict, approved_by: int | None, action: str) -> i
     if yes is None or row["thread_id"] is None or (yes["thread_id"] or yes["id"]) != row["thread_id"] \
             or not is_operator(author) or yes["id"] <= row["defined_at"]:
         raise ValueError(f"an admin bot's {action} needs `approved_by`: the id of a reply from a human who manages "
-                         f"the `{ADMIN_PROJECT}` project, in this routine's thread, posted after its current version")
+                         f"the `{ADMIN_PROJECT}` workspace, in this routine's thread, posted after its current version")
     return approved_by
 
 

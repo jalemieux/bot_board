@@ -87,9 +87,12 @@ def init() -> None:
     with db._write_lock:
         c.executescript(SCHEMA)
         have = {r["name"] for r in c.execute("PRAGMA table_info(fleet_bots)")}
-        # project: the project a new bot should be dedicated to once it comes online (deferred
-        # because a bot has no agent row until its keeper starts it and it registers).
-        for col in EXTRA_COLUMNS + ("project",):
+        # workspace: the workspace the bot was created in. The keeper passes it to bin/bot,
+        # which registers with it; a bot registered before that is put in it once it reports.
+        if "project" in have and "workspace" not in have:
+            c.execute("ALTER TABLE fleet_bots RENAME COLUMN project TO workspace")
+            have.add("workspace")
+        for col in EXTRA_COLUMNS + ("workspace",):
             if col not in have:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
@@ -109,11 +112,11 @@ def report(name: str, agent_id: int, data: dict) -> bool:
             (name, agent_id, db.now(), json.dumps(data)),
         )
         c.commit()
-    # A box's report is when its newly-started bots become known; honor any project a
-    # bot was asked to be dedicated to when it was created, now that it is online.
+    # A box's report is when its newly-started bots become known; a bot created for a
+    # workspace from the page that registered without one joins it now.
     try:
-        from . import projects
-        projects.apply_pending_dedications()
+        from . import workspaces
+        workspaces.apply_pending_assignments()
     except Exception:
         pass
     hand_off(name, data.get("bots") or [])
@@ -187,27 +190,28 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def _set_want(c, handle, host, harness, run, by, now, kill=False, project=None, threads=None):
+def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None, threads=None):
     c.execute(
-        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, project, threads)"
+        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, workspace, threads)"
         " VALUES (?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
         " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill,"
-        " threads=excluded.threads, retired=CASE WHEN excluded.run THEN NULL ELSE retired END",
-        (handle, host.lower(), harness, int(run), by, now, now if kill else None, project or None,
+        " threads=excluded.threads, retired=CASE WHEN excluded.run THEN NULL ELSE retired END,"
+        " workspace=COALESCE(excluded.workspace, workspace)",
+        (handle, host.lower(), harness, int(run), by, now, now if kill else None, workspace or None,
          threads if threads in ("handoff", "retire") else None),
     )
 
 
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
-         project: str | None = None, threads: str | None = None) -> str | None:
+         workspace: str | None = None, threads: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
-    harness run it is in. project: dedicate the bot to this project once it comes
-    online (kept on the row until applied). threads, with a stop: keep its open threads,
-    handoff (release them once it has stopped) or retire (hand off, and drop it from the
-    stopped list). Returns None, or why not."""
+    harness run it is in. workspace: the workspace a new bot belongs to; the keeper
+    starts it with that, and a registered bot of no workspace is put in it. threads,
+    with a stop: keep its open threads, handoff (release them once it has stopped) or
+    retire (hand off, and drop it from the stopped list). Returns None, or why not."""
     if kill and run:
         return "a kill stops the bot: ask for run false"
     if threads not in (None,) + THREADS:
@@ -233,14 +237,26 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
             seen = find(h)
             if seen and name != host.lower() and h["reporting"] and seen["status"].startswith(UP):
                 return f"{handle} is running on {name}; stop it there first"
+    from . import workspaces
+    if workspace:
+        try:
+            if workspaces.find(workspace)["archived"]:
+                return f"the workspace {workspace} is archived"
+        except KeyError:
+            return f"no workspace named {workspace}"
     with db._write_lock:
-        row = c.execute("SELECT harness FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        row = c.execute("SELECT harness, workspace FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
         harness = harness or (row["harness"] if row else None)
         now = db.now()
         if harness not in HARNESSES:
             return f"say which harness {handle} runs: one of {', '.join(HARNESSES)}"
-        _set_want(c, handle, host, harness, run, by, now, kill, project, threads)
+        known = db.get_agent_by_handle(handle)
+        if run and not workspace and not (row and row["workspace"]) and not (known and known.get("workspace_id")):
+            return f"say which workspace {handle} belongs to"
+        _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads)
         c.commit()
+    if workspace and known and not known.get("workspace_id"):
+        workspaces.assign_bot(handle, workspace)
     return None
 
 
@@ -287,16 +303,14 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
 
 
 def pools() -> list[dict]:
-    """Projects with a dedicated bot pool, and its bots (none: no pool bot works there)."""
+    """Every active workspace and its bots."""
     c = db.conn()
     try:
-        rows = c.execute("SELECT p.id, p.slug FROM project_pools pp JOIN projects p ON p.id = pp.project_id"
-                         " WHERE pp.configured = 1 AND p.archived = 0 ORDER BY p.slug").fetchall()
-    except db.sqlite3.OperationalError:     # a board without projects yet
+        rows = c.execute("SELECT id, slug FROM workspaces WHERE archived = 0 ORDER BY slug").fetchall()
+    except db.sqlite3.OperationalError:     # a board without workspaces yet
         return []
-    return [{"project": r["slug"], "bots": [b[0] for b in c.execute(
-        "SELECT a.handle FROM project_pool_bots pb JOIN agents a ON a.id = pb.agent_id"
-        " WHERE pb.project_id = ? ORDER BY a.handle COLLATE NOCASE", (r["id"],))]} for r in rows]
+    return [{"workspace": r["slug"], "bots": [b[0] for b in c.execute(
+        "SELECT handle FROM agents WHERE workspace_id = ? ORDER BY handle COLLATE NOCASE", (r["id"],))]} for r in rows]
 
 
 def down(handles) -> dict[str, str]:
@@ -536,12 +550,13 @@ def hosts() -> list[dict]:
     # when each bot last posted, from the board's side of what it does
     posted = {p["handle"].lower(): p["at"] for p in db.conn().execute(
         "SELECT a.handle, MAX(m.created_at) AS at FROM messages m JOIN agents a ON a.id = m.agent_id GROUP BY a.id")}
-    # each bot's dedicated project, if a project's bot pool names it
+    # each bot's workspace: the one it registered in, else the one it was created for
     try:
         dedicated = {r["handle"].lower(): r["slug"] for r in db.conn().execute(
-            "SELECT a.handle, p.slug FROM project_pool_bots pb JOIN agents a ON a.id = pb.agent_id"
-            " JOIN projects p ON p.id = pb.project_id WHERE p.archived = 0")}
-    except db.sqlite3.OperationalError:     # a board without projects yet
+            "SELECT a.handle, w.slug FROM agents a JOIN workspaces w ON w.id = a.workspace_id")}
+        for r in db.conn().execute("SELECT handle, workspace FROM fleet_bots WHERE workspace IS NOT NULL"):
+            dedicated.setdefault(r["handle"].lower(), r["workspace"])
+    except db.sqlite3.OperationalError:     # a board without workspaces yet
         dedicated = {}
     holding = db.open_threads()     # each bot's claimed, not completed threads (#167)
     out = []
@@ -576,7 +591,7 @@ def hosts() -> list[dict]:
             if h["reporting"] and b["handle"].lower() in observed and b["status"] == "stopped" and any(b.get(k) for k in ("health", "problem", "move_to", "fetch")):
                 b["clear_key"] = alert_key(h["name"], b)
             b["last_post"] = posted.get(b["handle"].lower(), "")
-            b["project"] = dedicated.get(b["handle"].lower())
+            b["workspace"] = dedicated.get(b["handle"].lower())
             held = holding.get(b["handle"].lower(), [])
             b["open_threads"], b["open_thread_list"] = len(held), held[:20]
             b["state"] = bot_state(b, h["reporting"])

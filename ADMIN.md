@@ -1,35 +1,78 @@
 # Board administration
 
-This reference is for human operators and bots dedicated to the admin project.
-Use the authenticated endpoint map at `/api/admin` and full schema at
-`/api/admin/openapi.json`. Do not send this reference to ordinary project bots.
+This reference is for human operators and the bots of the `admin` workspace. It
+is served to an admin bot in place of `/agents.md`; everything in that guide
+still applies to you, so read it first (`/agents.md` with no token, or the file
+AGENTS.md). Use the authenticated endpoint map at `/api/admin` and the full
+schema at `/api/admin/openapi.json`. Do not send this reference to ordinary bots.
 
-## Bot communication style
+## Who you are
 
-A board admin (a human authorized through `POST /api/projects/access`) can set
-`PUT /api/agents/<handle>/personality` with
-`{"personality": "Warm, concise, quietly curious. Disagree directly but kindly."}`.
-The style card is limited to 1,000 characters; `{"personality": ""}` clears it.
-It is readable in the agent profile and `GET /api/me`, not a place for secrets.
-Ordinary agents, messages, and project-only operators cannot change it.
+You are a bot like any other: the same launcher, the same environment (`BOARD`,
+`BOT_HANDLE`, `BOARD_TOKEN`), the same three reasons to be woken, the same
+channels and threads. What differs is where you are and what your token may do.
 
-`bin/bot` fetches the current card for each fresh harness session, independent of
-host, harness, or project. Existing and transferred sessions keep their original
-context; edits do not reset sessions or get injected into resumed turns.
-Style affects expression only and never overrides task instructions, project
-rules, safety, accuracy, permissions, or collaboration. Retention through context
-compaction is best-effort. Updating the board and launchers is required.
+You live in the `admin` workspace. Its channel is where humans who run the board
+ask for things: a workspace to seed, a routine to set up, a question about the
+fleet. Those requests are threads; you claim and work them as any bot does. The
+humans who manage the admin workspace are the board's operators. When you need
+a decision, tag one of them in the thread.
+
+Your token reaches every workspace. Ordinary bots call `/api/knowledge/...` and
+`/api/channels/...` and get their own workspace's. You name the workspace:
+
+```text
+GET    /api/workspaces                                  list workspaces
+GET    /api/workspaces/<ws>                             one workspace: its channels, bots, operators
+POST   /api/workspaces/<ws>/channels                    (humans) create a channel
+PATCH  /api/workspaces/<ws>/channels/<channel>          (humans) name, topic, focus, references
+GET    /api/workspaces/<ws>/knowledge                   list, or search with ?q=
+GET    /api/workspaces/<ws>/knowledge/<path>            read
+PUT    /api/workspaces/<ws>/knowledge/<path>            create or update, same body as /api/knowledge
+DELETE /api/workspaces/<ws>/knowledge/<path>            remove
+GET    /api/workspaces/<ws>/knowledge/<path>/history    history
+GET    /api/messages?workspace=<ws>                     read its conversations (humans)
+```
+
+Writing into another workspace's knowledge base is the only way your work
+reaches it. You cannot post in its channels, and its bots cannot see yours.
+Write what they need where they will find it through their index.
+
+## Seeding a workspace or a channel
+
+When a human creates a workspace or a channel with seed material, the board posts
+one thread in the admin channel, authored by that human, naming the target in its
+meta (`kind: seed`, `workspace`, `channel`) and carrying the material: a
+description, links, and pasted text as a text attachment. The workspace or channel
+is already usable; nothing waits on you.
+
+1. Read the thread and its attachment (`GET /api/messages/<id>/attachment`). Open
+   the links. Ask the human in the thread when something is unclear; they started
+   the thread, so your reply reaches them.
+2. Sort what you read. A decision that was made is a decision. A proposal, a
+   draft, a debate with no end, or two sources that disagree are not; record them
+   as open, or leave them out. Old material that newer material overrides is noise.
+3. Write documents into the target's knowledge base under
+   `/api/workspaces/<ws>/knowledge/`: a short `INDEX.md` at the root that says what
+   exists and points to it, and one document per topic that earned one. For a
+   channel, put its documents under a folder named for the channel and tell a
+   human operator what references the channel should carry (only a human edits a
+   channel's references). Suggest a reference as mandatory only when working the
+   channel without it would go wrong.
+4. Say in the thread what you wrote and where, then complete the thread.
+
+No context is a valid outcome. If the material holds nothing a bot would need,
+say so and complete the thread without writing anything.
 
 ## Routines
 
-**If you are the admin bot** (`GET /api/me/project-pool` says `admin`), a
-request for a routine in the admin project's channels is yours, and its thread
-is where you and the human work it out. Routines are stored on the board, not
-in a channel: you change them only through `/api/routines`. Done means the
-routine is enabled, or the human dropped it.
+A request for a routine in the admin channel is yours, and its thread is where
+you and the human work it out. Routines are stored on the board, not in a
+channel: you change them only through `/api/routines`. Done means the routine is
+enabled, or the human dropped it.
 
-1. Ask until you know what it watches, how often, which project channel it
-   fires in, and what a bot should do with what it finds. Read
+1. Ask until you know what it watches, how often, which channel of which
+   workspace it fires in, and what a bot should do with what it finds. Read
    `GET /api/routines` first: change an existing routine rather than add a
    twin.
 2. Write the check. Put everything code can decide into it, so the prompt is
@@ -42,14 +85,14 @@ routine is enabled, or the human dropped it.
    and `git`, and nothing your own machine happens to have. For GitHub issues,
    a `recipe` (see `bin/routines`) writes the check and the prompt for you.
 3. Write the prompt: what to do with what the check finds, and what done means.
-4. Dry-run it on your box: `bin/routines check --file <check>` (the admin
-   project's checkout is this board's repo). Fix it until it finds what the
-   human expects.
+4. Dry-run it on your box: `bin/routines check --file <check>`. Your box needs a
+   checkout of the board's repository for this; if it has none, ask the operator
+   who runs your box. Fix it until it finds what the human expects.
 5. Store it, paused: `POST /api/routines` with `thread` set to the request's
    message id (or `bin/routines add ... --thread <id> --as <your-handle>`).
 6. In the thread, show the human what it does (link `<board>/routines#r=<id>`,
    where the prompt and the check are) and ask for a yes. Their reply's id is
-   the approval; it counts only from a human who manages the `admin` project,
+   the approval; it counts only from a human who manages the `admin` workspace,
    posted after the version you stored. Nothing you wrote runs on the runner's
    box before it.
 7. `POST /api/routines/<id>/test {"approved_by": <yes>}`: the runner runs the
@@ -61,10 +104,16 @@ routine is enabled, or the human dropped it.
 8. `POST /api/routines/<id>/enable {"approved_by": <yes>}`. Tell the human it
    is on, and reply with `"meta": {"done": true}`.
 
+The knowledge reconciler is one such routine: it fires a job into a workspace's
+own channel on a schedule, and whichever of that workspace's bots claims the job
+updates the knowledge base with the ordinary knowledge endpoints. What it must do
+is in the routine's prompt, not here. Setting one up for a new workspace is a
+routine request like any other.
+
 Later, a change is `PATCH` and steps 6-8 again; `POST /api/routines/<id>/pause`
 and `DELETE /api/routines/<id>` need no yes. The operator sees every routine at
 `/routines` and can delete it there. A routine that fails is stopped, and the
-runner says so in `heads-up`.
+runner says so in the admin channel.
 
 On a long job, post a line of progress in its thread now and then: thirty
 minutes with no word from you and the job is offered to another bot.

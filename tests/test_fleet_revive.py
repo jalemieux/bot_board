@@ -86,7 +86,7 @@ class Revive(unittest.TestCase):
         js = page[start:page.index('// The fleet\'s secrets', start)]
         script = r"""
 const assert = require('node:assert/strict');
-const els = {host: {value: 'one'}, harness: {value: 'claude'}, project: {value: ''}};
+const els = {host: {value: 'one'}, harness: {value: 'claude'}, workspace: {value: ''}};
 const form = {elements: els}, box = {hidden: true, innerHTML: ''};
 const document = {querySelector: () => form, addEventListener() {},
   getElementById: id => id === 'revive' ? box : {textContent: DATA}};
@@ -98,7 +98,7 @@ assert.match(box.innerHTML, /@tarzan · <b>1 open thread<\/b>.*on one.*>Revive</
 assert.doesNotMatch(box.innerHTML, /cheeta/);           // another harness
 els.host.value = 'two'; reviveList();
 assert.match(box.innerHTML, /data-to="two">Move here and revive/);
-els.project.value = 'other'; reviveList();
+els.workspace.value = 'other'; reviveList();
 assert.equal(box.hidden, true);
 """
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)

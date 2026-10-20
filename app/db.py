@@ -4,10 +4,15 @@ One file, one process, WAL mode. Message ids are the global cursor agents
 poll on, so everything an agent needs to catch up is "give me > N".
 
 Vocabulary: the `boards` table holds both kinds of place a message can go.
-A *channel* (kind='channel') is open: anyone posts, it is created on first
-post. A *conversation* (kind='conversation') is a chat between a fixed set of
+A *channel* (kind='channel') belongs to a workspace (`workspace_id`); a
+*conversation* (kind='conversation') is a chat between a fixed set of
 participants held in `members`; only they can post. Inbox delivery is to
-explicit mentions and the thread's worker. Everything is readable by everyone.
+explicit mentions and the thread's worker.
+
+Scope: a bot belongs to one workspace (`agents.workspace_id`) and every read
+and write it makes is filtered to that workspace's channels, plus the
+conversations it is in. `scope(agent)` says which: None for a human, a keeper
+or the routines runner, who see the whole board.
 """
 
 from __future__ import annotations
@@ -36,7 +41,8 @@ CREATE TABLE IF NOT EXISTS agents (
     description TEXT NOT NULL DEFAULT '',
     personality TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
-    last_seen_at TEXT
+    last_seen_at TEXT,
+    workspace_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS boards (
@@ -45,7 +51,13 @@ CREATE TABLE IF NOT EXISTS boards (
     topic      TEXT NOT NULL DEFAULT '',
     kind       TEXT NOT NULL DEFAULT 'channel',
     created_at TEXT NOT NULL,
-    created_by INTEGER REFERENCES agents(id)
+    created_by INTEGER REFERENCES agents(id),
+    workspace_id INTEGER,
+    name       TEXT NOT NULL DEFAULT '',
+    focus      TEXT NOT NULL DEFAULT '',
+    refs       TEXT NOT NULL DEFAULT '[]',
+    seed_thread_id INTEGER,
+    archived   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS members (
@@ -149,14 +161,44 @@ def init() -> None:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(boards)")}
         if "kind" not in cols:
             c.execute("ALTER TABLE boards ADD COLUMN kind TEXT NOT NULL DEFAULT 'channel'")
-        if "personality" not in {r["name"] for r in c.execute("PRAGMA table_info(agents)")}:
+        acols = {r["name"] for r in c.execute("PRAGMA table_info(agents)")}
+        if "personality" not in acols:
             c.execute("ALTER TABLE agents ADD COLUMN personality TEXT NOT NULL DEFAULT ''")
+        if "workspace_id" not in acols:
+            c.execute("ALTER TABLE agents ADD COLUMN workspace_id INTEGER")
+        # Channels gained a workspace, a display name, focus instructions and references.
+        for col, ddl in (("workspace_id", "INTEGER"), ("name", "TEXT NOT NULL DEFAULT ''"),
+                         ("focus", "TEXT NOT NULL DEFAULT ''"), ("refs", "TEXT NOT NULL DEFAULT '[]'"),
+                         ("seed_thread_id", "INTEGER"), ("archived", "INTEGER NOT NULL DEFAULT 0")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE boards ADD COLUMN {col} {ddl}")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_boards_workspace ON boards(workspace_id, kind)")
         c.commit()
-    # A fleet always needs somewhere to say hello.
-    ensure_board("lobby", topic="Open floor. Introduce yourself, ask anything.")
-    from . import projects, routines
-    projects.init()
+    from . import workspaces, routines
+    workspaces.init()
     routines.init()
+
+
+# ---------------------------------------------------------------- scope
+
+UNSCOPED_KINDS = ("human", "keeper", "cron")
+
+
+def scope(agent: dict | None) -> int | None:
+    """The workspace an agent's reads and writes are confined to: its own, for a bot.
+    None for a human, a keeper or the routines runner (and for an anonymous read),
+    who see the whole board; None too for a bot registered with no workspace (a
+    direct client, or a bot from before workspaces), which sees the board as before."""
+    if not agent or agent["kind"] in UNSCOPED_KINDS:
+        return None
+    return agent.get("workspace_id") or None
+
+
+def _scope_clause(workspace_id: int | None, alias: str = "b") -> tuple[str, list]:
+    """SQL that keeps a board inside `workspace_id`; conversations pass whatever the scope."""
+    if workspace_id is None:
+        return "", []
+    return f"({alias}.kind = 'conversation' OR {alias}.workspace_id = ?)", [workspace_id]
 
 
 # ---------------------------------------------------------------- agents
@@ -165,17 +207,24 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def register_agent(handle: str, kind: str = "agent", description: str = "") -> tuple[dict, str]:
+def register_agent(handle: str, kind: str = "agent", description: str = "",
+                   workspace_id: int | None = None) -> tuple[dict, str]:
     token = "bb_" + secrets.token_urlsafe(32)
     c = conn()
     with _write_lock:
         cur = c.execute(
-            "INSERT INTO agents (handle, token_hash, kind, description, created_at)"
-            " VALUES (?,?,?,?,?)",
-            (handle, hash_token(token), kind, description, now()),
+            "INSERT INTO agents (handle, token_hash, kind, description, created_at, workspace_id)"
+            " VALUES (?,?,?,?,?,?)",
+            (handle, hash_token(token), kind, description, now(), workspace_id),
         )
         c.commit()
     return get_agent_by_id(cur.lastrowid), token
+
+
+def set_agent_workspace(agent_id: int, workspace_id: int | None) -> dict:
+    with _write_lock, conn() as c:
+        c.execute("UPDATE agents SET workspace_id=? WHERE id=?", (workspace_id, agent_id))
+    return get_agent_by_id(agent_id)
 
 
 def rotate_token(agent_id: int) -> str:
@@ -185,12 +234,6 @@ def rotate_token(agent_id: int) -> str:
         c.execute("UPDATE agents SET token_hash=? WHERE id=?", (hash_token(token), agent_id))
         c.commit()
     return token
-
-
-def set_agent_personality(agent_id: int, personality: str) -> dict:
-    with _write_lock, conn() as c:
-        c.execute("UPDATE agents SET personality=? WHERE id=?", (personality, agent_id))
-    return get_agent_by_id(agent_id)
 
 
 def agent_by_token(token: str) -> dict | None:
@@ -248,12 +291,26 @@ def get_agent_by_handle(handle: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_agents() -> list[dict]:
+def list_agents(workspace_id: int | None = None) -> list[dict]:
+    """Every agent, or with `workspace_id` the bots of that workspace plus every human,
+    keeper and runner (who belong to no workspace but are reachable from any)."""
+    where, params = "", []
+    if workspace_id is not None:
+        where = f" WHERE a.workspace_id = ? OR a.kind IN ({','.join('?' * len(UNSCOPED_KINDS))})"
+        params = [workspace_id, *UNSCOPED_KINDS]
     rows = conn().execute(
-        "SELECT a.*, (SELECT COUNT(*) FROM messages m WHERE m.agent_id=a.id) AS message_count"
-        " FROM agents a ORDER BY a.handle"
+        "SELECT a.*, (SELECT COUNT(*) FROM messages m WHERE m.agent_id=a.id) AS message_count,"
+        " (SELECT w.slug FROM workspaces w WHERE w.id=a.workspace_id) AS workspace"
+        f" FROM agents a{where} ORDER BY a.handle", params
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def workspace_slug(workspace_id: int | None) -> str | None:
+    if not workspace_id:
+        return None
+    row = conn().execute("SELECT slug FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+    return row["slug"] if row else None
 
 
 def public_agent(a: dict) -> dict:
@@ -261,7 +318,7 @@ def public_agent(a: dict) -> dict:
         "handle": a["handle"],
         "kind": a["kind"],
         "description": a["description"],
-        "personality": a["personality"],
+        "workspace": a["workspace"] if "workspace" in a else workspace_slug(a.get("workspace_id")),
         "created_at": a["created_at"],
         "last_seen_at": a["last_seen_at"],
         "presence": presence(a["last_seen_at"]),
@@ -272,20 +329,18 @@ def public_agent(a: dict) -> dict:
 # ---------------------------------------------------------------- boards
 
 def ensure_board(
-    slug: str, topic: str = "", created_by: int | None = None, force_topic: bool = False
+    slug: str, topic: str = "", created_by: int | None = None, force_topic: bool = False,
+    workspace_id: int | None = None, name: str = "",
 ) -> dict:
-    """Create the channel if new. An explicit POST /api/channels (force_topic) may
-    retopic an existing channel; auto-creation from a first post never clobbers."""
+    """Create the channel if new, in `workspace_id`. An explicit POST /api/channels
+    (force_topic) may retopic an existing channel; auto-creation from a first post
+    never clobbers. A channel that exists stays in the workspace it is in."""
     c = conn()
     with _write_lock:
-        if c.execute("SELECT 1 FROM sqlite_master WHERE name='projects'").fetchone():
-            for p in c.execute('SELECT slug FROM projects'):
-                if slug.lower().startswith(p['slug'].lower() + '.') and not get_board(slug):
-                    raise PermissionError('Create managed group channels through the project groups API.')
         c.execute(
-            "INSERT OR IGNORE INTO boards (slug, topic, kind, created_at, created_by)"
-            " VALUES (?,?,'channel',?,?)",
-            (slug, topic, now(), created_by),
+            "INSERT OR IGNORE INTO boards (slug, topic, kind, created_at, created_by, workspace_id, name)"
+            " VALUES (?,?,'channel',?,?,?,?)",
+            (slug, topic, now(), created_by, workspace_id, name),
         )
         if topic:
             sql = "UPDATE boards SET topic=? WHERE slug=?"
@@ -296,19 +351,39 @@ def ensure_board(
     return get_board(slug)
 
 
+def _board_dict(row) -> dict:
+    b = dict(row)
+    b["workspace"] = workspace_slug(b.get("workspace_id"))
+    try:
+        b["references"] = json.loads(b.pop("refs", None) or "[]")
+    except ValueError:
+        b["references"] = []
+    b["archived"] = bool(b.get("archived"))
+    return b
+
+
 def get_board(slug: str) -> dict | None:
     row = conn().execute("SELECT * FROM boards WHERE slug=?", (slug,)).fetchone()
     if row is None:
         return None
-    b = dict(row)
+    b = _board_dict(row)
     if b["kind"] == "conversation":
         b["participants"] = board_members(b["id"])
     return b
 
 
+def in_scope(board: dict | None, workspace_id: int | None) -> bool:
+    """Whether a board is visible to an agent of that scope (None: everything is)."""
+    if board is None:
+        return False
+    if workspace_id is None or board["kind"] == "conversation":
+        return True
+    return board.get("workspace_id") == workspace_id
+
+
 def get_board_by_id(board_id: int) -> dict:
     row = conn().execute('SELECT * FROM boards WHERE id=?', (board_id,)).fetchone()
-    return dict(row)
+    return _board_dict(row)
 
 
 def board_members(board_id: int) -> list[str]:
@@ -388,13 +463,15 @@ def list_boards(
     agent_id: int | None = None,
     seen: dict[str, int] | None = None,
     hide_events: bool = False,
+    workspace_id: int | None = None,
 ) -> list[dict]:
     """Boards with activity, most recently active first.
 
     `since` (one cursor for all) or `seen` ({slug: last id read} per board)
     adds an `unread` count per board: how many messages have a higher id.
     `kind` filters channels from conversations; None returns both.
-    `agent_id` restricts conversations to the ones that agent belongs to."""
+    `agent_id` restricts conversations to the ones that agent belongs to.
+    `workspace_id` restricts channels to that workspace (conversations pass)."""
     where, params = [], []
     if kind:
         where.append("b.kind = ?")
@@ -402,11 +479,16 @@ def list_boards(
     if agent_id is not None:
         where.append("(b.kind = 'channel' OR b.id IN (SELECT board_id FROM members WHERE agent_id = ?))")
         params.append(agent_id)
+    sc, sp = _scope_clause(workspace_id)
+    if sc:
+        where.append(sc)
+        params += sp
     clause = f"WHERE {' AND '.join(where)}" if where else ""
     visible = f" AND {HUMAN_MESSAGE}" if hide_events else ""
     rows = conn().execute(
         f"""
-        SELECT b.id, b.slug, b.topic, b.kind, b.created_at,
+        SELECT b.id, b.slug, b.topic, b.kind, b.created_at, b.workspace_id, b.name, b.archived,
+               (SELECT w.slug FROM workspaces w WHERE w.id=b.workspace_id) AS workspace,
                (SELECT COUNT(*) FROM messages m WHERE m.board_id=b.id{visible}) AS message_count,
                (SELECT MAX(m.id) FROM messages m WHERE m.board_id=b.id{visible}) AS last_message_id,
                (SELECT MAX(m.created_at) FROM messages m WHERE m.board_id=b.id{visible}) AS last_activity
@@ -418,6 +500,8 @@ def list_boards(
     out = []
     for r in rows:
         b = dict(r)
+        b["archived"] = bool(b["archived"])
+        del b["workspace_id"]
         cursor_for = _seen_map(seen, b["slug"], since)
         if cursor_for is not None:
             if b["last_message_id"] is None or b["last_message_id"] <= cursor_for:
@@ -445,12 +529,18 @@ def post_message(
     meta: dict | None = None,
     text_attachment: str | None = None,
     image_attachment: tuple[bytes, str, str] | None = None,
+    workspace_id: int | None = None,
 ) -> dict:
+    """`workspace_id`: the poster's scope (db.scope). A bot may post only in its own
+    workspace's channels and its conversations; a channel it names that does not
+    exist is created in its workspace. Unscoped posters create unattached channels."""
     board = get_board(board_slug)
     if board is None:
-        board = ensure_board(board_slug, created_by=agent_id)
+        board = ensure_board(board_slug, created_by=agent_id, workspace_id=workspace_id or None)
     elif board["kind"] == "conversation" and not is_member(board["id"], agent_id):
         raise PermissionError(f"you are not a participant in conversation {board_slug}")
+    elif not in_scope(board, workspace_id):
+        raise PermissionError(f"#{board_slug} is outside your workspace")
     parent_thread = None
     if reply_to is not None:
         parent = conn().execute(
@@ -465,21 +555,12 @@ def post_message(
 
     c = conn()
     with _write_lock, c:
-        from . import projects
-        if projects.is_archived(board['id']):
-            raise PermissionError('This project or group is archived; its history remains readable.')
+        from . import workspaces
+        if workspaces.is_archived(board['id']):
+            raise PermissionError('This workspace or channel is archived; its history remains readable.')
         meta = dict(meta or {})
-        if meta.get('kind') == 'context_update':
-            raise PermissionError('Context-update events are server-controlled.')
-        seed_reply = False
-        if parent_thread:
-            root = c.execute('SELECT meta,board_id FROM messages WHERE id=?', (parent_thread,)).fetchone()
-            seed_reply = bool(root and root['board_id'] == board['id'] and
-                              json.loads(root['meta']).get('kind') == 'context_seed')
-        if meta.get('kind') == 'context_seed' and not seed_reply:
-            raise PermissionError('Start context seeding through the group seed API, not message metadata.')
-        if seed_reply:
-            meta['kind'] = 'context_seed'
+        if meta.get('kind') in ('context_update', 'seed'):
+            raise PermissionError(f"{meta['kind']} events are posted by the board itself")
         meta.pop("thread_reopened", None)
         if parent_thread and meta.get("kind") != "thread_released" and not meta.get("done"):
             reopened = c.execute(
@@ -664,12 +745,14 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
         raise PermissionError("only bots can be thread workers")
     if root["kind"] == "conversation" and not is_member(root["board_id"], agent["id"]):
         raise PermissionError("only conversation participants can claim its threads")
+    if not in_scope(get_board_by_id(root["board_id"]), scope(agent)):
+        raise PermissionError("this thread is outside your workspace")
     mentions = c.execute("SELECT agent_id FROM mentions WHERE message_id=?", (tid,)).fetchall()
     if mentions and agent["id"] not in {m["agent_id"] for m in mentions}:
         raise PermissionError("this request is addressed to someone else")
-    from . import projects
-    if projects.is_archived(root["board_id"]):
-        raise PermissionError("this project or group is archived")
+    from . import workspaces
+    if workspaces.is_archived(root["board_id"]):
+        raise PermissionError("this workspace or channel is archived")
     c.execute(
         "INSERT INTO thread_workers (thread_id,agent_id,claimed_at) VALUES (?,?,?)"
         " ON CONFLICT(thread_id) DO NOTHING", (tid, agent["id"], now()),
@@ -683,27 +766,12 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
 
 
 def claim_thread(tid: int, agent: dict) -> dict:
-    from . import projects
-    root = get_message(tid)
-    if root and root["meta"].get("kind") == "context_seed":
-        route = projects.seed_route(tid)
-        if not route["group"]:
-            raise ValueError("not an authoritative initial-context thread")
-        projects.claim_seed(route["project"]["slug"], route["group"]["slug"], tid, agent)
-        return thread_worker(tid)
     with _write_lock, conn() as c:
         return _claim_thread(c, tid, agent)
 
 
 def release_thread(tid: int, agent: dict) -> dict:
-    from . import projects
-    root = get_message(tid)
-    if root and root["meta"].get("kind") == "context_seed":
-        route = projects.seed_route(tid)
-        if not route["group"]:
-            raise ValueError("not an authoritative initial-context thread")
-        projects.release_seed(route["project"]["slug"], route["group"]["slug"], agent)
-        return thread_worker(tid)
+    from . import workspaces
     with _write_lock, conn() as c:
         root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
         if root is None:
@@ -711,10 +779,10 @@ def release_thread(tid: int, agent: dict) -> dict:
         claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
         if claim is None:
             return {"thread_id": tid, "worker": None}
-        if agent["id"] not in (claim["agent_id"], root["agent_id"]) and not projects.is_admin(agent):
+        if agent["id"] not in (claim["agent_id"], root["agent_id"]) and not workspaces.is_admin(agent):
             raise PermissionError("only the worker, thread author or an administrator can release it")
-        if projects.is_archived(root["board_id"]):
-            raise PermissionError("this project or group is archived")
+        if workspaces.is_archived(root["board_id"]):
+            raise PermissionError("this workspace or channel is archived")
         c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
         if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
             return {"thread_id": tid, "worker": None}
@@ -750,21 +818,13 @@ def open_threads(handles: list[str] | None = None) -> dict[str, list[dict]]:
 def hand_off_threads(handle: str, by: dict) -> int:
     """Release every open thread a stopped bot holds, each with a pickup notice saying who
     released it and why, so the next watching bot claims it. Returns how many."""
-    from . import projects
+    from . import workspaces
     bot = get_agent_by_handle(handle)
     n = 0
     for t in open_threads([handle]).get(handle.lower(), []):
-        root = get_message(t["thread_id"])
-        if root and root["meta"].get("kind") == "context_seed":
-            try:     # a seeding claim lives with its group; release it the way its worker would
-                release_thread(t["thread_id"], bot)
-                n += 1
-            except (KeyError, ValueError, PermissionError):
-                pass
-            continue
         with _write_lock, conn() as c:
             root = c.execute("SELECT * FROM messages WHERE id=?", (t["thread_id"],)).fetchone()
-            if projects.is_archived(root["board_id"]):
+            if workspaces.is_archived(root["board_id"]):
                 continue
             if not c.execute("DELETE FROM thread_workers WHERE thread_id=? AND agent_id=?",
                              (root["id"], bot["id"])).rowcount:
@@ -782,17 +842,17 @@ def hand_off_threads(handle: str, by: dict) -> int:
 
 def complete_thread(tid: int, through: int, agent: dict) -> dict:
     """Record no remaining work through a reviewed cursor, never a pickup notice."""
-    from . import projects
+    from . import workspaces
     with _write_lock, conn() as c:
         c.execute("BEGIN IMMEDIATE")
         root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
         if root is None:
             raise KeyError("no such thread root")
         worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
-        if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not projects.is_admin(agent):
+        if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not workspaces.is_admin(agent):
             raise PermissionError("only the worker, thread author or an administrator can complete it")
-        if projects.is_archived(root["board_id"]):
-            raise PermissionError("this project or group is archived")
+        if workspaces.is_archived(root["board_id"]):
+            raise PermissionError("this workspace or channel is archived")
         reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
         if not reviewed:
             raise ValueError("through must identify a reviewed message in this thread")
@@ -817,6 +877,7 @@ def list_messages(
     roots: bool = False,
     kind: str | None = None,
     hide_events: bool = False,
+    workspace_id: int | None = None,
 ) -> list[dict]:
     where = ["m.id > ?"]
     params: list = [since]
@@ -825,6 +886,10 @@ def list_messages(
     if board:
         where.append("b.slug = ?")
         params.append(board)
+    sc, sp = _scope_clause(workspace_id)
+    if sc:
+        where.append(sc)
+        params += sp
     if kind:
         where.append("b.kind = ?")
         params.append(kind)
@@ -849,15 +914,16 @@ def list_messages(
     return _hydrate(rows, hide_events=hide_events)
 
 
-def list_inbox(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
+def list_inbox(agent_id: int, since: int = 0, limit: int = 50, workspace_id: int | None = None) -> list[dict]:
     """Mentions and messages in threads this agent works on, excluding its own."""
+    sc, sp = _scope_clause(workspace_id)
     rows = conn().execute(
         _MSG_SELECT
-        + """ WHERE m.id > ? AND m.agent_id != ? AND (
+        + f""" WHERE m.id > ? AND m.agent_id != ? AND (
               m.id IN (SELECT message_id FROM mentions WHERE agent_id = ?)
               OR m.thread_id IN (SELECT thread_id FROM thread_workers WHERE agent_id = ?)
-          ) ORDER BY m.id ASC LIMIT ?""",
-        (since, agent_id, agent_id, agent_id, max(1, min(limit, 501))),
+          ){(" AND " + sc) if sc else ""} ORDER BY m.id ASC LIMIT ?""",
+        (since, agent_id, agent_id, agent_id, *sp, max(1, min(limit, 501))),
     ).fetchall()
     return _hydrate(rows)
 
@@ -874,7 +940,7 @@ def list_mentions(agent_id: int, since: int = 0, limit: int = 50) -> list[dict]:
 
 def search(
     q: str, board: str | None = None, limit: int = 50, before: int | None = None,
-    hide_events: bool = False
+    hide_events: bool = False, workspace_id: int | None = None,
 ) -> list[dict]:
     where = ["m.body LIKE ?"]
     params: list = [f"%{q}%"]
@@ -883,6 +949,10 @@ def search(
     if board:
         where.append("b.slug = ?")
         params.append(board)
+    sc, sp = _scope_clause(workspace_id)
+    if sc:
+        where.append(sc)
+        params += sp
     if before is not None:
         where.append("m.id < ?")
         params.append(before)
@@ -902,6 +972,8 @@ def stats() -> dict:
     c = conn()
     return {
         "agents": c.execute("SELECT COUNT(*) n FROM agents").fetchone()["n"],
+        "workspaces": c.execute("SELECT COUNT(*) n FROM workspaces WHERE archived=0").fetchone()["n"]
+                      if c.execute("SELECT 1 FROM sqlite_master WHERE name='workspaces'").fetchone() else 0,
         "boards": c.execute("SELECT COUNT(*) n FROM boards").fetchone()["n"],
         "channels": c.execute("SELECT COUNT(*) n FROM boards WHERE kind='channel'").fetchone()["n"],
         "conversations": c.execute("SELECT COUNT(*) n FROM boards WHERE kind='conversation'").fetchone()["n"],

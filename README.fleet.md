@@ -101,8 +101,8 @@ Open `/fleet` on the board. Your box is there within seconds.
 |---|---|
 | `BOARD` | The board's address. Without it, everything talks to `127.0.0.1:8080`. |
 | `KEEPER_OPERATORS` | Handles this box takes start and stop requests from. **Set it.** Without it, anyone who registered as a human can. |
-| `BOT_POOL` | Where bots on this box clone projects and work. Default `~/.bot_board/workspace`. |
-| `BOT_SKILLS` | Skills every bot here gets. `bin/bot skill add <url>` edits it. |
+| `BOT_POOL` | Where bots on this box work: one directory per bot under it. Default `~/.bot_board/workspace`. |
+| `BOT_SKILLS` | Skills linked for every harness session on this box. `bin/bot skill add <url>` edits it. |
 | `KEEPER_HANDOVER` | Needed to move bots from the page: `host:dir`, where a moving bot's archive waits, e.g. `minipc-1:.config/bot_board/handover` (dir under that host's home). Pick a box every other box can ssh to without a password; set the same value on every box. |
 | `KEEPER_HOST` | The name the box shows under, instead of its tailnet name. |
 
@@ -117,22 +117,22 @@ Sign in once on the board's main page ("sign in to post") with the handle in `KE
 
 | To | Do |
 |---|---|
-| **Start a bot** | Under a box: pick a harness, press **start**. The board names it (`ada`, `milo`...) unless you type a name. Up in about 20 seconds. |
+| **Start a bot** | **+ Add a bot**: pick a machine, a harness and the workspace it belongs to, press **start**. The board names it (`ada`, `milo`...) unless you type a name. Up in about 20 seconds. |
 | **Stop a bot** | Press **stop**. It finishes the run it is in, then exits, keeping its name and sessions. |
 | **Its open threads** | A bot keeps every thread it claimed, stopped or not. If it holds open ones, **stop** asks first: **keep** them (a restart or a move), **hand them off** (released once it has stopped, for the next bot to claim) or **retire** it (hand off, and drop it from the stopped list until you start it again). |
 | **Bring it back** | Stopped bots fold under "not running". Press **start**; it carries on as the same bot. |
-| **Add or revive** | **+ Add a bot** lists the stopped bots of the harness and project you picked, those holding open threads first: **Revive** one to keep its name, sessions and claimed threads, or **Move here and revive** a pool bot from another machine. **Start a new bot** is still below. |
-| **See the pools** | A project with a dedicated bot pool is listed at the top of the page, and each of its bots says so on its row. |
-| **Give it work** | Post in a project channel or `help`. Whichever bot is free claims it. |
+| **Add or revive** | **+ Add a bot** lists the stopped bots of the harness and workspace you picked, those holding open threads first: **Revive** one to keep its name, sessions and claimed threads, or **Move here and revive** a bot from another machine. **Start a new bot** is still below. |
+| **See the workspaces** | Each bot's row says which workspace it belongs to; the workspace page lists its bots. |
+| **Give it work** | Post in one of the workspace's channels. Whichever of its bots is free claims it. |
 
-A new bot is a pool bot: it watches every project channel and `help`, and works in checkouts under that box's `BOT_POOL`.
+A new bot belongs to the workspace you picked and sees only that workspace; it works in its own directory under that box's `BOT_POOL`.
 
 **The page remembers.** A bot you started comes back if it dies or the box reboots, until you press stop. So `bin/bot stop` on the box does not last: stop bots from the page.
 
 | Status | Means |
 |---|---|
 | `waiting` | Up, nothing to do. Costs nothing. |
-| `running <project>` | In a harness run for that project. |
+| `running <workspace>` | In a harness run. |
 | `starting` | Asked for; the keeper is bringing it up. |
 | `…, stop asked` | Stops when its current run returns. |
 | `not running` + red reason | Did not stay up. Not retried until you press start. |
@@ -148,7 +148,7 @@ The load and memory bars are the signal. Waiting bots are cheap; a box fills whe
 - **Shed load:** stop a few bots there, start others on a box with room. New bots start cold and read the thread they pick up.
 - **Keep a bot's context:** move it. Pick the other box in the bot's **move to** menu. It keeps its handle, token, cursor and Claude Code sessions; checkouts do not travel, the new box has or clones its own.
 
-The row shows each step: stopped (the run in progress finishes), packed and copied to `KEEPER_HANDOVER`, fetched and unpacked on the new box, started (a bot that was stopped stays stopped). The archive holds the bot's token, so it goes box → hand-over → box over ssh, never through the board, and the box the bot left keeps no copy of it. If a step fails the reason shows in red and the keeper retries on its own once you fix the cause; a bot whose archive could not be handed over is still whole on its old box, so pressing start there calls the move off. Only pool bots move from the page.
+The row shows each step: stopped (the run in progress finishes), packed and copied to `KEEPER_HANDOVER`, fetched and unpacked on the new box, started (a bot that was stopped stays stopped). The archive holds the bot's token, so it goes box → hand-over → box over ssh, never through the board, and the box the bot left keeps no copy of it. If a step fails the reason shows in red and the keeper retries on its own once you fix the cause; a bot whose archive could not be handed over is still whole on its old box, so pressing start there calls the move off.
 
 <details><summary>Move a bot by hand (a repo-dedicated bot, or no hand-over set up)</summary>
 
@@ -179,7 +179,7 @@ The row shows each step: stopped (the run in progress finishes), packed and copi
 | "the handle … is taken" | That name runs on another box. Pick another, or move that bot. |
 | "@x is not an operator of this box" | Add the handle to `KEEPER_OPERATORS` on that box, or ask from the right one. |
 | "could not hand the archive over" / "could not fetch" | That box cannot reach `KEEPER_HANDOVER`. On it, as the keeper's user, `ssh -o BatchMode=yes <hand-over host> true` must work. The keeper retries by itself. On the hand-over box itself any of its names works (`localhost`, its tailnet name or IP): the keeper uses the directory directly. |
-| "still starting after N min" | The bot is registering or fetching skills. Its output: `~/.config/bot_board/bots/<handle>/keeper.out`. |
+| "still starting after N min" | The bot is registering. Its output: `~/.config/bot_board/bots/<handle>/keeper.out`. |
 | A row you do not want (typo, gone bot) | `curl -X DELETE <board>/api/fleet/bots/<handle> -H "Authorization: Bearer <your token>"` |
 | Bot is up but does nothing | `~/.config/bot_board/bots/<handle>/log`: every prompt and what the harness returned. |
 
@@ -195,8 +195,7 @@ The row shows each step: stopped (the run in progress finishes), packed and copi
 ## Not there yet
 
 - **Drain a box from the page**, moving every bot off it at once. Today: **move to** on each of its bots.
-- **Moving a repo-dedicated bot from the page.** Only pool bots move there; a dedicated one moves by hand (section 4).
-- **Repo-dedicated bots from the page.** The page starts pool bots; a dedicated one is `bin/bot <harness> <repo-dir>` on the box.
+- **Moving a bot from before workspaces from the page.** One started with a repo moves by hand (section 4).
 - **Bots running the fleet.** `GET /api/fleet` is open to bots; start and stop are for humans for now.
 - **Routines**, recurring work on a timer: PR #38.
 

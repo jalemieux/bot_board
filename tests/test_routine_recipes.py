@@ -1,4 +1,4 @@
-"""Recipe routines: GitHub issues routed to a project's groups, announced once, chased.
+"""Recipe routines: GitHub issues routed to a workspace's channels, announced once, chased.
 
 End to end like test_routines_test.py: the real board under uvicorn, bin/routines
 as a subprocess, and a fake `gh` on PATH that answers from files in $HOME.
@@ -33,7 +33,7 @@ def issue(n, labels=(), assignees=()):
 class Definitions(unittest.TestCase):
     def test_check_and_prompt_must_be_what_the_recipe_writes(self):
         cli = load_cli()
-        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game"})
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
         r = {"name": "x", "channel": "game", "check": cli.recipe_check(rc), "prompt": cli.recipe_prompt(rc),
              "recipe": rc, "recipe_version": cli.RECIPE_VERSION, **cli.DEFAULTS}
         self.assertEqual(cli.problem_with(r), "")
@@ -44,7 +44,7 @@ class Definitions(unittest.TestCase):
 
     def test_a_release_that_changes_the_writer_leaves_older_routines_running(self):
         cli = load_cli()
-        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game"})
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
         old = {"name": "x", "channel": "game", "check": cli.recipe_check(rc).replace("1000", "500"),
                "prompt": cli.recipe_prompt(rc), "recipe": rc, "recipe_version": 1, **cli.DEFAULTS}
         cli.RECIPE_VERSION = 2   # as after a release whose recipe_check writes something else
@@ -52,7 +52,7 @@ class Definitions(unittest.TestCase):
 
     def test_after_is_kept_in_utc(self):
         cli = load_cli()
-        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "project": "game",
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game",
                             "after": "2026-10-14T23:00:00+02:00"})
         self.assertEqual(rc["after"], "2026-10-14T21:00:00Z")
         self.assertEqual(cli.recipe_problem(rc), "")
@@ -88,10 +88,10 @@ class Recipes(unittest.TestCase):
         cls.path = bindir + os.pathsep + os.environ["PATH"]
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
         cls.bot = cls.api("POST", "/api/agents", {"handle": "ada", "kind": "claude-code"})["token"]
-        cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
-        cls.api("POST", "/api/projects", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
+        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
+        cls.api("POST", "/api/workspaces", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
         for g in ("art", "econ"):
-            cls.api("POST", "/api/projects/game/groups", {"slug": g, "name": g, "purpose": g, "scope": g}, cls.human)
+            cls.api("POST", "/api/workspaces/game/channels", {"slug": g, "name": g, "description": g, "focus": g}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -135,8 +135,8 @@ class Recipes(unittest.TestCase):
         return out
 
     def test_route_announce_once_and_chase(self):
-        rc = {"type": "github-issues", "repo": "o/game", "project": "game", "batch": 2, "remind_after": 60,
-              "reminds": 1, "escalate": "jac", "rules": [{"label": "doc", "group": "art"}]}
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 2, "remind_after": 60,
+              "reminds": 1, "escalate": "jac", "rules": [{"label": "doc", "channel": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "issues", "recipe": rc, "every": 1}, self.human)
         thread = got["id"]
         routine = self.api("GET", f"/api/routines/{thread}")
@@ -149,7 +149,7 @@ class Recipes(unittest.TestCase):
         job = self.state(thread)["job"]
         self.assertEqual([i["number"] for i in job["items"]], [1, 2])
         self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
-                                           "meta": {"done": True, "routes": [{"number": 2, "group": "econ", "why": "trade"}]}},
+                                           "meta": {"done": True, "routes": [{"number": 2, "channel": "econ", "why": "trade"}]}},
                  self.bot)
         self.once()
         announced = self.announced(thread)
@@ -186,21 +186,21 @@ class Recipes(unittest.TestCase):
         listed = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual(sorted(i["number"] for i in listed["items"]), [1, 2, 5])
 
-    def test_a_project_that_goes_away_stops_the_routine_with_the_reason(self):
-        self.api("POST", "/api/projects", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
-        rc = {"type": "github-issues", "repo": "o/game", "project": "gone", "rules": [{"label": "doc", "group": "art"}]}
+    def test_a_workspace_that_goes_away_stops_the_routine_with_the_reason(self):
+        self.api("POST", "/api/workspaces", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "gone", "rules": [{"label": "doc", "channel": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "gone", "recipe": rc, "every": 1}, self.human)
         self.api("POST", f"/api/routines/{got['id']}/enable", {}, self.human)
-        self.api("PATCH", "/api/projects/gone", {"archived": True, "archive_confirm": True}, self.human)
+        self.api("PATCH", "/api/workspaces/gone", {"archived": True, "archive_confirm": True}, self.human)
         self.issues(issue(40, ["doc"]))
         self.once()
         routine = self.api("GET", f"/api/routines/{got['id']}")
         self.assertEqual(routine["state"], "failed")
         self.assertIn("archived", routine["failure"])
 
-    def test_unknown_project_is_refused(self):
+    def test_unknown_workspace_is_refused(self):
         req = urllib.request.Request(self.board + "/api/routines", method="POST", data=json.dumps(
-            {"name": "x", "recipe": {"type": "github-issues", "repo": "o/game", "project": "nope"}}).encode())
+            {"name": "x", "recipe": {"type": "github-issues", "repo": "o/game", "workspace": "nope"}}).encode())
         req.add_header("content-type", "application/json")
         req.add_header("Authorization", "Bearer " + self.human)
         with self.assertRaises(urllib.error.HTTPError) as e:

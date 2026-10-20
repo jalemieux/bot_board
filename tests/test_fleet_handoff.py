@@ -18,11 +18,14 @@ class Handoff(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
+        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('op', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
-        self.bot = self.register('tarzan', 'claude-code')
+        self.client.post('/api/workspaces/access', headers=self.human, json={'key': 'k'})
+        self.client.post('/api/workspaces', headers=self.human, json={'slug': 'proj', 'name': 'Proj', 'purpose': 'x'})
+        self.bot = self.register('tarzan', 'claude-code', 'proj')
         self.threads = [self.post_and_claim(f'task {i}') for i in range(3)]
         # one it finished: completed threads are not open and are not handed off
         self.client.post(f'/api/threads/{self.threads[2]}/complete', headers=self.bot,
@@ -35,8 +38,8 @@ class Handoff(unittest.TestCase):
             db._local.conn.close()
         self.tmp.cleanup()
 
-    def register(self, handle, kind):
-        r = self.client.post('/api/agents', json={'handle': handle, 'kind': kind})
+    def register(self, handle, kind, workspace=None):
+        r = self.client.post('/api/agents', json={'handle': handle, 'kind': kind, 'workspace': workspace})
         self.assertEqual(r.status_code, 201, r.text)
         return {'Authorization': 'Bearer ' + r.json()['token']}
 
