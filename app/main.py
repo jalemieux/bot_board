@@ -568,6 +568,9 @@ class FleetReportIn(BaseModel):
                                    " packed and handed over for a move since its last report.")
     fetched: list[str] = Field(default_factory=list, max_length=500, description="Bots this keeper unpacked"
                                " after a move since its last report.")
+    default_bot: dict[str, str] | None = Field(default=None, description="{harness, handle?}: the box was installed"
+                                               " with a default bot. The board starts it in the admin workspace, only"
+                                               " when the box has no bot, and answers with default_bot.")
     update: dict[str, str] | None = Field(default=None, description="The keeper's updater: revision (git describe of"
                                           " the bin/bot and bin/keeper running there), checked (when it last looked),"
                                           " result (what it found or did), available (a revision pulled but not in use).")
@@ -631,7 +634,10 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
         raise HTTPException(403, f"{name} is reported by another agent; this one cannot report for it."
                                  f" If that box is gone, a human frees the name: DELETE /api/fleet/hosts/{name}")
     fleet.moved(name.lower(), body.handed, body.fetched)
-    return {"ok": True, "want": fleet.wanted(name.lower(), body.problems), "secrets": fleet.secrets_version()}
+    first = fleet.default_bot(name.lower(), agent["handle"], body.default_bot, body.operators,
+                              [b.model_dump() for b in body.bots])
+    return {"ok": True, "want": fleet.wanted(name.lower(), body.problems), "secrets": fleet.secrets_version(),
+            **({"default_bot": first} if first else {})}
 
 
 @app.put("/api/fleet/bots/{handle}", tags=["fleet"])

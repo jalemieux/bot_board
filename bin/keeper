@@ -103,6 +103,50 @@ def setting(name, default=""):
     return default
 
 
+def default_bot_note(got):
+    """The board answered a default-bot ask (#180). Started, or the box has a bot already:
+    the ask is done, and its config lines become a note of it. Waiting (nobody has signed
+    in yet): the ask stays, and the note says why. `bot install` prints the note."""
+    path = os.environ.get("BOT_CONFIG") or os.path.join(CFG, "config")
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    if got.get("waiting"):
+        note = f"# default bot: waiting: {got['waiting']}"
+    elif got.get("created"):
+        note = f"# default bot: @{got['handle']} ({got['harness']}) in workspace {got.get('workspace') or 'admin'}, started"
+    else:
+        note = f"# default bot: @{got['handle']} already on this box"
+    if note in lines:
+        return
+    done = not got.get("waiting")
+    keep = [l for l in lines if not l.startswith("# default bot: ")
+            and not (done and re.match(r"\s*(?:export\s+)?KEEPER_DEFAULT_(?:BOT|HANDLE)=", l))]
+    with open(path + ".new", "w", encoding="utf-8") as f:
+        f.write("\n".join(keep + [note]) + "\n")
+    os.replace(path + ".new", path)
+    print(f"keeper: {note[2:]}", flush=True)
+
+
+def harness_logins():
+    """[(harness, state, detail)] for each harness `bot install` can start: state is ok,
+    missing (installed, not logged in), unknown (installed, the check did not say) or absent.
+    claude and codex are checked as the keeper checks them; copilot and opencode, installed
+    is enough for now."""
+    creds, out = Credentials(host_name()), []
+    for h in ("claude", "codex", "copilot", "opencode"):
+        cred = next((c for c in CREDENTIALS if c[0] == h), None)
+        if not shutil.which(h):
+            out.append((h, "absent", ""))
+        elif cred:
+            out.append((h, *creds.check(cred, creds.env())))
+        else:
+            out.append((h, "ok", ""))
+    return out
+
+
 def rotate_log(path, max_bytes=10 * 1024 * 1024, backups=3):
     try:
         source = os.fdopen(os.open(path, os.O_RDWR | os.O_NOFOLLOW), "r+b")
@@ -900,6 +944,7 @@ def main():
     sub.add_parser("show")
     sub.add_parser("update")
     sub.add_parser("install")
+    sub.add_parser("harnesses", help="which harnesses are here and logged in, for bot install")
     sub.add_parser("uninstall")
     rotate = sub.add_parser("rotate-logs", help="rotate local logs between launcher runs")
     rotate.add_argument("paths", nargs="+")
@@ -907,6 +952,10 @@ def main():
     if a.cmd == "rotate-logs":
         for path in a.paths:
             rotate_log(path)
+        return
+    if a.cmd == "harnesses":
+        for row in harness_logins():
+            _print("\t".join(row))
         return
     if a.cmd in ("install", "uninstall"):
         return service(a.cmd == "install")
@@ -946,8 +995,10 @@ def main():
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
+            ask = setting("KEEPER_DEFAULT_BOT")     # set by a fresh `bot install`; dropped once the board starts it
+            ask = {"harness": ask, "handle": setting("KEEPER_DEFAULT_HANDLE")} if ask else None
             code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
-                                                                  **moves}, token)
+                                                                  **moves, "default_bot": ask}, token)
             if code == 200:     # the board has them now
                 for h in moves["handed"]:
                     hands.handed.pop(h, None)
@@ -964,6 +1015,8 @@ def main():
                 print(f"keeper: report refused ({code}): {got}", file=sys.stderr, flush=True)
             else:
                 creds.sync(got.get("secrets"), token)
+                if ask and got.get("default_bot"):
+                    default_bot_note(got["default_bot"])
                 want = got.get("want", [])
                 problems = hands.reconcile(want, snap["bots"])
         except ConnectionError as e:

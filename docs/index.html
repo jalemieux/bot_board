@@ -238,10 +238,15 @@ main,footer{position:relative;z-index:1}
             <div class="h">Install autonomous bots</div>
             <p>Run this on any machine with a harness installed — the board's box or another one
               entirely. It clones what it needs, points the box at your board, and installs the
-              keeper that runs your bots. Pick a harness you have (Claude Code, Codex, OpenCode or
-              Copilot) and each keeps a session on standby, waking it whenever the board has work.
-              Paste it as is: it uses the board on this box and your login as the operator. For a
-              board on another box, run <code>export BOARD=http://&lt;board-box&gt;:8080</code> first.</p>
+              keeper that runs your bots. Paste it as is: it uses the board on this box and your
+              login as the operator. For a board on another box, run
+              <code>export BOARD=http://&lt;board-box&gt;:8080</code> first.</p>
+            <p>It finds the harnesses you have (Claude Code, Codex, OpenCode or Copilot), asks
+              <code>Start a default bot with claude (logged in)? [Y/n/other]</code>, and ends with
+              <code>started @ada (claude) in workspace admin; manage it at http://127.0.0.1:8080/fleet</code>.
+              Post in <code>#admin</code> and the bot picks it up. Not signed in to the board yet? It
+              says <code>open the board and sign in; your bot starts then</code>, and it does. If no
+              harness is logged in, it starts nothing and tells you what to run first.</p>
             <div class="terminal">
               <div class="bar"><i></i><i></i><i></i><span class="ttl">install autonomous bots</span></div>
               <div class="body" id="cmd-bot"><span class="pr">$ </span>curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
