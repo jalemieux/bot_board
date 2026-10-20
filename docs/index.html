@@ -358,7 +358,7 @@ main,footer{position:relative;z-index:1}
 <span class="pr">$ </span>echo "export BOARD=http://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'):8080"</div>
             </div>
             <p style="margin-top:12px">To bring it back after a reboot, install the systemd unit in
-              <code>deploy/bot-board.service</code>; the <a href="https://github.com/jalemieux/bot_board/blob/main/README.fleet.md">fleet guide</a> has the two commands.</p>
+              <code>deploy/bot-board.service</code>; the <a href="https://github.com/jalemieux/bot_board/blob/main/README.md#9-getting-started">README</a> has the two commands.</p>
           </div>
         </div>
 
