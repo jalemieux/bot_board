@@ -8,6 +8,8 @@
 #   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
 #   bot stop <handle>               let the bot finish what it is doing, then exit
 #   bot kill <handle>               stop it now, ending the harness run it is in (a stuck or runaway bot)
+#   bot restart <handle>            have the bot start itself again on the bin/bot now on disk, once idle
+#   bot update                      pull this checkout from its origin if it moved, check it, restart the bots on it
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root>]    the other end of pack
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
@@ -492,6 +494,23 @@ case ${1:-} in
     # The box agent (reporting, supervising) installs and runs through the same bot
     # binary as every bot, so a box needs only this one command on its PATH.
     shift; exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" "$@" ;;
+  update)
+    # one check of this checkout against its origin, by the keeper's updater; a running
+    # keeper notices the new code on its next round and starts again on it by itself
+    shift; exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" update "$@" ;;
+  restart)
+    # The launcher starts itself again, as the same bot (same pid, token, cursor and
+    # session), on the bin/bot now on disk: when idle, so a run in progress finishes first.
+    # The keeper asks this of every running bot after an update; by hand it is how one
+    # bot picks up new code without a stop and a start.
+    H=${2:-}; [ -n "$H" ] || usage
+    S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
+    alive "$S" || { echo "bot: $H is not running"; exit 0; }
+    touch "$S/restart"
+    [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true   # end an idle long-poll now
+    if [ -s "$S/busy" ]; then echo "bot: $H will restart when its run in $(cat "$S/busy") returns"
+    else echo "bot: $H is restarting"; fi
+    exit 0 ;;
   ps|ls)
     ALL=""; TSV=""; shift
     for arg in "$@"; do case $arg in -a) ALL=1 ;; --tsv) TSV=1 ;; *) usage ;; esac; done
@@ -702,7 +721,7 @@ PICKED=""   # set when the name is ours to change: the board may say it is taken
 if [ -z "$NAME" ]; then NAME=$(pick_name); PICKED=1; fi
 identify "$NAME"
 [ -e "$STATE/moved" ] && die "$HANDLE left this box ($(cat "$STATE/moved")). Started here too, two boxes would answer as $HANDLE. If the move was called off, remove $STATE/moved"
-alive "$STATE" && die "$HANDLE is already running on this box (pid $(cat "$STATE/pid")); bot stop $HANDLE first"
+if alive "$STATE" && [ "$(cat "$STATE/pid")" != "$$" ]; then die "$HANDLE is already running on this box (pid $(cat "$STATE/pid")); bot stop $HANDLE first"; fi
 mkdir -p "$STATE" && chmod 700 "$CFG"
 echo "$HARNESS" > "$STATE/harness"
 # which bin/bot this bot runs: the question a box could not answer before
@@ -1221,6 +1240,14 @@ trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   rotate_logs
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  if [ -e "$STATE/restart" ]; then
+    # bot restart: the same bot again, on the bin/bot now on disk. exec keeps the pid, so
+    # bot ps and the keeper see one bot throughout; the state on disk carries everything else.
+    rm -f "$STATE/restart" "$STATE/stop" "$STATE/busy" "$STATE/poll"
+    log "restarting on $(git -C "$(dirname "${BASH_SOURCE[0]}")" describe --tags --always --dirty 2>/dev/null || echo dev) (was $LAUNCHER_VERSION): same bot, same session (seen=$SEEN)"
+    trap - EXIT INT TERM
+    exec "${BASH_SOURCE[0]}" "$HARNESS" --name "$HANDLE"
+  fi
   NOW=$(date +%s)
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays

@@ -2552,8 +2552,12 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
                  if h["reporting"] and drainable and others_of(h) else "")
         seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
                 f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
+        u = h.get("update") or {}
+        code = (f'<div class="by">bin/bot {e(u.get("revision") or "?")}'
+                + (f' · {e(u["result"])}' if u.get("result") else "")
+                + (f' · checked {e(ago(u["checked"]))}' if u.get("checked") else "") + "</div>") if u else ""
         machines.append(
-            f'<tr id="box-{e(name)}"><td class="who">{e(name)}<div class="by">{e(h.get("os") or "")}</div></td>'
+            f'<tr id="box-{e(name)}"><td class="who">{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
             f'<td data-label="status" class="nw">{seen}</td>'
             f'<td data-label="bots" class="nw">{len(up)} up · {len(bots) - len(up)} stopped</td>'
             f'<td data-label="load">{gauges[0]}</td><td data-label="memory">{gauges[1]}</td>'

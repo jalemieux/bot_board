@@ -124,3 +124,52 @@ class StartsAndWorks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Restart(unittest.TestCase):
+    """bot restart: the launcher starts itself again on the bin/bot on disk, as the same bot."""
+
+    def test_restart_keeps_pid_token_session_and_work(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "claude")
+            try:
+                L.plan(fh.step("claude", "ok", "rules read"), fh.step("claude", "ok", "done"), fh.step("claude", "ok", "done again"))
+                L.start()
+                L.wait_for(lambda: L.read("runs") == "1" and "startup catch-up" in L.log(), "the first turn and the loop")
+                pid, session = L.read("pid"), L.read("session")
+                self.assertTrue(session)
+                r = subprocess.run([BOT, "restart", "tbot"], env=L.env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("restarting", r.stdout)
+                L.wait_for(lambda: "restarting on" in L.log() and L.log().count("standing by") == 2, "the launcher to start again")
+                self.assertEqual(L.read("pid"), pid, "the same process")
+                self.assertEqual(L.proc.poll(), None)
+                self.assertEqual(L.read("session"), session, "the same session")
+                self.assertFalse((L.state / "restart").exists())
+                root = board.post_root("ws-general", "after the restart")
+                L.wait_for(lambda: len(L.prompts()) >= 2, "work after the restart")
+                self.assertIn("after the restart", L.prompts()[1])
+                self.assertIn("--resume", fh.runs(str(L.scenario), "claude")[-1], "the session was resumed, not recreated")
+                self.assertEqual(board.worker(root), "tbot")
+                self.assertEqual(len(board.seen("POST", "/api/agents")), 1, "no second registration")
+                r = L.stop()
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            finally:
+                L.close()
+
+    def test_restart_waits_for_a_busy_run(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "claude")
+            try:
+                L.plan(fh.step("claude", "ok", "rules read"), fh.step("claude", "ok", "slow", sleep=3), fh.step("claude", "ok"))
+                L.start()
+                L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+                board.post_root("ws-general", "take your time")
+                L.wait_for(lambda: len(L.prompts()) >= 2 and (L.state / "busy").exists(), "the slow run to start")
+                r = subprocess.run([BOT, "restart", "tbot"], env=L.env, capture_output=True, text=True, timeout=10)
+                self.assertIn("will restart when its run", r.stdout)
+                L.wait_for(lambda: L.read("runs") == "2" and L.log().count("standing by") == 2, "the run to end and the restart to follow")
+                self.assertEqual(L.read("handled"), "2", "the finished run was acted on before the restart")
+                L.stop()
+            finally:
+                L.close()
