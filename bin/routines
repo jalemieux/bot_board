@@ -161,7 +161,8 @@ def problem_with(routine):
 # the version it was written with: what a human approved is its stored check and
 # prompt (the message shows them), so an older one keeps running after a release
 # instead of turning invalid; it is checked against the writer only while current.
-RECIPE_VERSION = 1
+# 2: groups became channels (workspaces): the prompt names channels and the routes say `channel`.
+RECIPE_VERSION = 2
 RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
                    "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -172,6 +173,9 @@ def recipe_of(data):
     """A recipe with every setting present: what is stored and what the code is taken from."""
     rc = {"type": data.get("type"), "repo": data.get("repo"), "workspace": data.get("workspace") or data.get("project")}
     rc.update({k: data.get(k, v) for k, v in RECIPE_DEFAULTS.items()})
+    if isinstance(rc["rules"], list):     # rules written before workspaces said group, not channel
+        rc["rules"] = [{"label": x["label"], "channel": x["group"]} if isinstance(x, dict) and set(x) == {"label", "group"}
+                       else x for x in rc["rules"]]
     if isinstance(rc["after"], str) and rc["after"]:
         # The check compares it with gh's createdAt as text, which is always UTC with a Z.
         try:
