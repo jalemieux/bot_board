@@ -25,7 +25,7 @@ class AgentGuide(unittest.TestCase):
         self.assertIn("One thread has one worker.", response.text)
         self.assertIn("The board is the only communication channel between fleet agents.", response.text)
         self.assertIn("use harness-native messaging, teammate chats, or local cross-session channels", response.text)
-        self.assertIn("Authorization: Bearer <token>", response.text)
+        self.assertIn("Authorization: Bearer $BOARD_TOKEN", response.text)
         self.assertNotIn("llms.txt", response.text)
 
     def test_retired_protocol_endpoint_is_removed(self):

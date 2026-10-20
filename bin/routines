@@ -19,8 +19,8 @@ routine does it under its own name); without it, as the runner.
 A routine is stored on the board (GET /api/routines; app/routines.py): a check
 (a script), a prompt, and a few settings. The check costs no tokens: the runner
 runs it every `every` seconds, and only when it finds work does a message go to
-the routine's project channel, the prompt plus what the check found, for a
-standby bot to claim like any other work.
+the routine's channel, the prompt plus what the check found, for a standby bot
+of that workspace to claim like any other work.
 
 A human asks the admin bot for a routine in a channel; the bot works it out with
 them there and stores it through the API, paused. The board decides who may
@@ -43,12 +43,12 @@ however fast the check runs, a routine costs at most one bot run at a time.
 
 A routine can also be written as a recipe (`recipe`) instead of a check of its
 own. The one recipe now, `github-issues`, watches a repository's open issues that
-nobody has taken and routes each to a group of a project: its check and its
+nobody has taken and routes each to a channel of a workspace: its check and its
 prompt are written from the recipe (recipe_check, recipe_prompt), and stored, so
 what a human approves is what runs. Issues a label rule places are announced by
 the runner without a bot; the rest go out as one job, a few at a time, for a bot
-to pick the group, and the bot answers with meta {"done": true, "routes":
-[{"number", "group", "why"}]}. The runner announces each issue in its group's
+to pick the channel, and the bot answers with meta {"done": true, "routes":
+[{"number", "channel", "why"}]}. The runner announces each issue in that
 channel once, then chases it: no bot reply in that thread, no assignee and no
 linked pull request after `remind_after`, it is posted again, `reminds` times,
 then `escalate` is told.
@@ -56,9 +56,8 @@ then `escalate` is told.
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
 (default routines: the board takes reports only from that agent), ROUTINES_CONFIG_DIR
 (where the token and state live, default ~/.config/bot_board; the board sets it
-when it runs the runner itself), ROUTINES_PROJECT
-(default admin: the project whose bot pool are the admin bots and whose managers
-switch routines; read by the board). The runner's token is
+when it runs the runner itself). The admin workspace's managers and bots switch
+routines; a routine that fails is reported in the admin workspace's channel. The runner's token is
 ~/.config/bot_board/<handle>.token and what it remembers between passes is
 ~/.config/bot_board/routines/state.json; without that file each routine with
 work fires once more.
@@ -91,6 +90,7 @@ def setting(name, default=""):
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 ME = setting("ROUTINES_HANDLE", "routines")
+ADMIN = "admin"      # the admin workspace: its General channel is where a failed routine is reported
 
 
 def call(method, path, body=None, token=None):
@@ -170,7 +170,7 @@ NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}")
 
 def recipe_of(data):
     """A recipe with every setting present: what is stored and what the code is taken from."""
-    rc = {"type": data.get("type"), "repo": data.get("repo"), "project": data.get("project")}
+    rc = {"type": data.get("type"), "repo": data.get("repo"), "workspace": data.get("workspace") or data.get("project")}
     rc.update({k: data.get(k, v) for k, v in RECIPE_DEFAULTS.items()})
     if isinstance(rc["after"], str) and rc["after"]:
         # The check compares it with gh's createdAt as text, which is always UTC with a Z.
@@ -189,8 +189,8 @@ def recipe_problem(rc):
         return "the recipe `type` must be github-issues"
     if not isinstance(rc.get("repo"), str) or not REPO_RE.fullmatch(rc["repo"]):
         return "the recipe `repo` must be owner/name"
-    if not isinstance(rc.get("project"), str) or not NAME_RE.fullmatch(rc["project"]):
-        return "the recipe `project` must be a project slug"
+    if not isinstance(rc.get("workspace"), str) or not NAME_RE.fullmatch(rc["workspace"]):
+        return "the recipe `workspace` must be a workspace slug"
     for key in ("unassigned", "no_linked_pr"):
         if type(rc.get(key)) is not bool:
             return f"the recipe `{key}` must be true or false"
@@ -204,11 +204,11 @@ def recipe_problem(rc):
     if not isinstance(rc.get("escalate"), str) or (rc["escalate"] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", rc["escalate"])):
         return "the recipe `escalate` must be empty or a handle"
     rules = rc.get("rules")
-    if not isinstance(rules, list) or not all(isinstance(x, dict) and set(x) == {"label", "group"}
+    if not isinstance(rules, list) or not all(isinstance(x, dict) and set(x) == {"label", "channel"}
                                               and isinstance(x["label"], str) and x["label"].strip()
-                                              and isinstance(x["group"], str) and NAME_RE.fullmatch(x["group"])
+                                              and isinstance(x["channel"], str) and NAME_RE.fullmatch(x["channel"])
                                               for x in rules):
-        return "the recipe `rules` must be a list of {label, group}"
+        return "the recipe `rules` must be a list of {label, channel}"
     return ""
 
 
@@ -227,7 +227,7 @@ import json, os
 cfg = json.loads({json.dumps(json.dumps(cfg, sort_keys=True))})
 sent = set(json.loads(os.environ.get("ROUTINE_WATERMARK") or "[]"))
 skip = set(cfg["skip_labels"])
-rules = {{r["label"]: r["group"] for r in cfg["rules"]}}
+rules = {{r["label"]: r["channel"] for r in cfg["rules"]}}
 new = []
 for i in sorted(json.load(open("issues.json")), key=lambda i: i["number"]):
     labels = [l["name"] for l in i["labels"]]
@@ -235,11 +235,11 @@ for i in sorted(json.load(open("issues.json")), key=lambda i: i["number"]):
         continue
     if (cfg["unassigned"] and i["assignees"]) or (cfg["no_linked_pr"] and i["closedByPullRequestsReferences"]):
         continue
-    group = next((rules[l] for l in labels if l in rules), "")
-    new.append({{"number": i["number"], "title": i["title"], "url": i["url"], "labels": labels, "group": group}})
+    channel = next((rules[l] for l in labels if l in rules), "")
+    new.append({{"number": i["number"], "title": i["title"], "url": i["url"], "labels": labels, "channel": channel}})
 batch = new[:cfg["batch"]]
 print(json.dumps({{"work": bool(batch),
-                  "found": [f"#{{i['number']}} {{i['title']}} {{i['url']}}" + (f" (rule: {{i['group']}})" if i["group"] else "")
+                  "found": [f"#{{i['number']}} {{i['title']}} {{i['url']}}" + (f" (rule: {{i['channel']}})" if i["channel"] else "")
                             for i in batch] + ([f"and {{len(new) - len(batch)}} more after these"] if len(new) > len(batch) else []),
                   "items": batch,
                   "watermark": sorted(sent | {{i["number"] for i in batch}})}}))
@@ -248,14 +248,15 @@ PY
 
 
 def recipe_prompt(rc):
-    return (f"Route each GitHub issue below, from {rc['repo']}, to the group of project `{rc['project']}` "
-            f"it belongs to. The groups and what each is for are at GET /api/projects/{rc['project']} "
-            f"(`groups`: slug, purpose, scope); read the issue (`gh issue view <n> -R {rc['repo']}`) when the "
-            "title is not enough. Issues marked with a rule already have their group: keep it.\n\n"
+    return (f"Route each GitHub issue below, from {rc['repo']}, to the channel of this workspace "
+            f"it belongs to. The channels and what each is for are at GET /api/channels, and "
+            f"GET /api/channels/<slug> gives one's focus; read the issue (`gh issue view <n> -R {rc['repo']}`) when the "
+            "title is not enough. Issues marked with a rule already have their channel: keep it.\n\n"
             "Do not announce the issues yourself and do not assign anyone: the runner posts each one in its "
-            "group's channel and follows it up. Reply in this thread with `meta` "
-            '`{"done": true, "routes": [{"number": 34, "group": "economy", "why": "one line on why"}]}`, '
-            "one route per issue. An issue that fits no group gets `\"group\": \"\"` and goes to the project channel.")
+            "channel and follows it up. Reply in this thread with `meta` "
+            '`{"done": true, "routes": [{"number": 34, "channel": "economy", "why": "one line on why"}]}`, '
+            "one route per issue; name the channel by the part after the workspace's dot (economy for "
+            f"{rc['workspace']}.economy). An issue that fits no channel gets `\"channel\": \"\"` and goes to General.")
 
 
 def recipe_summary(rc):
@@ -265,9 +266,9 @@ def recipe_summary(rc):
              + (f" opened after {rc['after']}" if rc["after"] else "")
              + (f", skipping any where {' or '.join(taken)}" if taken else "")
              + f"; each is announced once, {rc['batch']} at a time.",
-             f"- Routes each to a group of project `{rc['project']}`"
-             + ("; label rules: " + ", ".join(f"`{x['label']}` → {x['group']}" for x in rc["rules"]) if rc["rules"] else "")
-             + ". A bot picks the group for the rest."]
+             f"- Routes each to a channel of workspace `{rc['workspace']}`"
+             + ("; label rules: " + ", ".join(f"`{x['label']}` → {x['channel']}" for x in rc["rules"]) if rc["rules"] else "")
+             + ". A bot picks the channel for the rest."]
     if rc["reminds"]:
         lines.append(f"- An announced issue no bot has taken is posted again after {mins(rc['remind_after'])}, "
                      f"{rc['reminds']} times" + (f", then @{rc['escalate']} is told." if rc["escalate"] else "."))
@@ -390,7 +391,7 @@ class Runner:
     def fail(self, r, st, why):
         """Report it, which stops the routine until it is enabled again, and tell the humans once."""
         self.board.report(r, failed=why, version=r["version"])
-        self.board.post("heads-up", f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled "
+        self.board.post(ADMIN, f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled "
                         f"again: {BOARD}/routines#r={r['id']}", meta={"routine": r["id"]})
         st.pop("job", None)
         self.log(r, f"failed: {why}")
@@ -453,7 +454,7 @@ class Runner:
         if not out["work"]:
             return
         items = out.get("items") if r.get("recipe") and isinstance(out.get("items"), list) else None
-        if items and all(i.get("group") for i in items):   # every one placed by a label rule: no bot needed
+        if items and all(i.get("channel") for i in items):   # every one placed by a label rule: no bot needed
             try:
                 self.announce(r, st, items, {})
             except ProjectGone as e:
@@ -517,31 +518,35 @@ class Runner:
 
     # ---- recipes: announce each item once, then chase it until a bot takes it
 
-    def project(self, slug):
+    def workspace(self, slug):
+        """The workspace's General channel and its other channels by short name."""
         try:
-            p = call("GET", f"/api/projects/{slug}", token=self.board.token)["project"]
+            w = call("GET", f"/api/workspaces/{slug}", token=self.board.token)["workspace"]
         except ConnectionError as e:
             if ": 404 " in str(e):
-                raise ProjectGone(f"the project `{slug}` this routine routes to does not exist") from None
+                raise ProjectGone(f"the workspace `{slug}` this routine routes to does not exist") from None
             raise
-        if p.get("archived"):
-            raise ProjectGone(f"the project `{slug}` this routine routes to is archived")
-        return p["channel"], {g["slug"]: g["channel"] for g in p.get("groups", []) if not g.get("archived")}
+        if w.get("archived"):
+            raise ProjectGone(f"the workspace `{slug}` this routine routes to is archived")
+        return w["channel"], {c["slug"].split(".", 1)[-1]: c["slug"] for c in w.get("channels", [])
+                              if not c.get("archived") and not c.get("home")}
+
+    project = workspace
 
     def announce(self, r, st, items, routes):
         rc = r["recipe"]
-        home, groups = self.project(rc["project"])
+        home, groups = self.workspace(rc["workspace"])
         items_st = st.setdefault("items", {})
         for i in items:
             if str(i["number"]) in items_st:
                 continue
             route = routes.get(i["number"]) or {}
-            group = i.get("group") or str(route.get("group") or "")
-            why = "label rule" if i.get("group") else str(route.get("why") or "").strip()[:300]
+            group = i.get("channel") or str(route.get("channel") or route.get("group") or "")
+            why = "label rule" if i.get("channel") else str(route.get("why") or "").strip()[:300]
             channel = groups.get(group, home)
             body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
                     + (f"Routed to {group}: {why}.\n" if channel != home and why else
-                       f"Routed to {group}.\n" if channel != home else "No group fits it, so it is here.\n")
+                       f"Routed to {group}.\n" if channel != home else "No channel fits it, so it is here.\n")
                     + f"The thread worker should assign the issue to itself: "
                     f"`gh issue edit {i['number']} -R {rc['repo']} --add-assignee @me`.")
             m = self.board.post(channel, body, meta={"routine": r["id"], "name": r["name"],
@@ -589,7 +594,7 @@ class Runner:
             else:
                 item["over"] = "no taker"
                 if rc["escalate"]:
-                    home, _ = self.project(rc["project"])
+                    home, _ = self.workspace(rc["workspace"])
                     self.board.post(home, f"@{rc['escalate']} #{number} has had no taker after {rc['reminds']} "
                                     f"reminders: message {item['msg']} in #{item['channel']}.",
                                     meta={"routine": r["id"], "name": r["name"]})

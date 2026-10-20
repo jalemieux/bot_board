@@ -35,7 +35,7 @@ def reg(handle, kind, desc=""):
 
 
 op, op_tok = reg("jac", "human", "operator")
-ok(c.post("/api/projects/access", headers=op, json={"key": "k"}))
+ok(c.post("/api/workspaces/access", headers=op, json={"key": "k"}))
 bots = {}
 for h, d in [("arlo", "standby pool on alpha"), ("cora", "standby pool on alpha"), ("dex", "standby pool on beta"),
              ("esme", "standby pool on beta"), ("ezra", "standby pool on beta"), ("kai", "standby pool on alpha"),
@@ -44,13 +44,14 @@ for h, d in [("arlo", "standby pool on alpha"), ("cora", "standby pool on alpha"
 for h in ("arlo", "dex", "esme"):
     ok(c.post("/api/messages", headers=bots[h], json={"channel": "help", "body": f"{h} was here"}))
 
-for slug, name in [("admin", "Admin"), ("wordsnap", "WordSnap"), ("space_game", "A space game")]:
-    ok(c.post("/api/projects", headers=op, json={"slug": slug, "name": name, "purpose": f"{name}: what it is for.",
-               "repositories": [{"name": slug.replace("_", "-"), "url": f"https://github.com/example/{slug}"}]}))
+for slug, name in [("wordsnap", "WordSnap"), ("space_game", "A space game")]:
+    ok(c.post("/api/workspaces", headers=op, json={"slug": slug, "name": name, "purpose": f"{name}: what it is for.",
+               "seed": {"description": f"{name}: the design notes.", "links": [f"https://github.com/example/{slug}"]}}))
 for g in ("economy", "ship-design", "lore"):
-    ok(c.post("/api/projects/space_game/groups", headers=op, json={"slug": g, "name": g.title(), "purpose": f"{g} of the game"}))
-ok(c.post("/api/projects/space_game/context", headers=op, json={"base_revision": 0, "body": "The game is about trade.",
-          "reason": "seed", "mode": "publish", "sources": ["README.md"]}))
+    ok(c.post("/api/workspaces/space_game/channels", headers=op, json={"slug": g, "name": g.title(), "description": f"{g} of the game",
+              "focus": f"Keep {g} consistent with the knowledge base.", "references": [{"path": f"{g}/INDEX.md"}]}))
+ok(c.put("/api/workspaces/space_game/knowledge/INDEX.md", headers=op, json={"base_revision": 0, "body": "# Space game\n\nThe game is about trade.",
+         "reason": "seed", "sources": ["README.md"]}))
 
 now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
 hour = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - 3600))
@@ -83,17 +84,13 @@ keepers = {}
 for name, rep in boxes.items():
     keepers[name] = reg(f"keeper-{name}", "keeper")[0]
     ok(c.put(f"/api/fleet/hosts/{name}", headers=keepers[name], json=rep))
-pool = ok(c.get("/api/projects/wordsnap/bots", headers=op))
-ok(c.put("/api/projects/wordsnap/bots", headers=op, json={"configured": True, "bots": ["cora"],
-                                                          "base_revision": pool.get("revision", 0)}))
-pool = ok(c.get("/api/projects/admin/bots", headers=op))
-ok(c.put("/api/projects/admin/bots", headers=op, json={"configured": True, "bots": ["kai"],
-                                                       "base_revision": pool.get("revision", 0)}))
+ok(c.put("/api/workspaces/wordsnap/bots", headers=op, json={"bots": ["cora"]}))
+ok(c.put("/api/workspaces/admin/bots", headers=op, json={"bots": ["kai"]}))
 # requests from the human: a stop, a kill, a start that has not happened, one that failed, a move
 ok(c.put("/api/fleet/bots/cora", headers=op, json={"host": "alpha", "run": False}))
 ok(c.put("/api/fleet/bots/ivo", headers=op, json={"host": "alpha", "run": False, "kill": True}))
-ok(c.put("/api/fleet/bots/nell", headers=op, json={"host": "alpha", "run": True, "harness": "claude"}))
-ok(c.put("/api/fleet/bots/tess", headers=op, json={"host": "beta", "run": True}))
+ok(c.put("/api/fleet/bots/nell", headers=op, json={"host": "alpha", "run": True, "harness": "claude", "workspace": "wordsnap"}))
+ok(c.put("/api/fleet/bots/tess", headers=op, json={"host": "beta", "run": True, "workspace": "space_game"}))
 ok(c.post("/api/fleet/bots/ezra/move", headers=op, json={"to": "alpha"}))
 ok(c.put("/api/fleet/hosts/beta", headers=keepers["beta"], json={**boxes["beta"],
          "problems": {"tess": "codex is not installed (or not on the keeper's PATH)"}}))
@@ -104,7 +101,7 @@ db.execute("UPDATE fleet_hosts SET reported_at=? WHERE name='gamma'", (day,)); d
 
 # routines: one paused, one enabled, one failed
 r1 = ok(c.post("/api/routines", headers=op, json={"name": "wordsnap-issues", "recipe": {"type": "github-issues",
-            "repo": "example/wordsnap", "project": "wordsnap"}, "every": 300}))
+            "repo": "example/wordsnap", "workspace": "wordsnap"}, "every": 300}))
 r2 = ok(c.post("/api/routines", headers=op, json={"name": "nightly-audit", "channel": "space_game",
             "check": "echo '{\"items\": []}'", "prompt": "Audit the repo.", "every": 86400, "about": "a nightly audit"}))
 r3 = ok(c.post("/api/routines", headers=op, json={"name": "stale-prs", "channel": "wordsnap",
@@ -114,7 +111,7 @@ ok(c.post(f"/api/routines/{rid(r2)}/enable", headers=op))
 ok(c.post(f"/api/routines/{rid(r3)}/enable", headers=op))
 ok(c.post(f"/api/routines/{rid(r3)}/report", headers=bots["routines"], json={"failed": "check exited 1: gh: not logged in"}))
 
-PAGES = ["/fleet", "/projects", "/projects/space_game", "/projects/wordsnap", "/routines", "/agents"]
+PAGES = ["/fleet", "/workspaces", "/workspaces/space_game", "/workspaces/wordsnap", "/routines", "/agents"]
 with sync_playwright() as p:
     b = p.chromium.launch()
     for signed in (False, True):

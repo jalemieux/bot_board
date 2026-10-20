@@ -42,7 +42,7 @@ class RoutineTest(unittest.TestCase):
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
         with open(os.path.join(cls.cfg, "jac.token"), "w") as fh:
             fh.write(cls.human)
-        cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
+        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
@@ -124,7 +124,7 @@ class RoutineTest(unittest.TestCase):
         self.assertIn('mark={"n": 5}', job["body"])
         self.assertEqual(self.routine(rid)["jobs"][0]["id"], job["id"])
 
-    def test_a_failing_check_stops_the_routine_and_says_so_in_heads_up(self):
+    def test_a_failing_check_stops_the_routine_and_says_so_in_the_admin_channel(self):
         rid = self.add("broken", check=BROKEN)
         self.ask(rid, "enable")
         open(os.path.join(self.home, "fail"), "w").close()
@@ -135,7 +135,7 @@ class RoutineTest(unittest.TestCase):
         r = self.routine(rid)
         self.assertEqual(r["state"], "failed")
         self.assertIn("exited 3", r["failure"])
-        told = [m for m in self.api("GET", "/api/messages?channel=heads-up", token=self.human)["messages"]
+        told = [m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
 

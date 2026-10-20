@@ -245,7 +245,7 @@ class Page(unittest.TestCase):
             return {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': handle, 'kind': kind}).json()['token']}
         admin, human, bot, keeper, idle = (agent('op', 'human'), agent('other', 'human'), agent('ada', 'claude-code'),
                                             agent('keeper-box', 'keeper'), agent('keeper-x', 'keeper'))
-        self.client.post('/api/projects/access', headers=admin, json={'key': 'k'})
+        self.client.post('/api/workspaces/access', headers=admin, json={'key': 'k'})
         report = lambda: self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': []}).json()['secrets']
         v0 = report()
         self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=human, json={'value': 'x'}).status_code, 403)

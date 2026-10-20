@@ -141,7 +141,7 @@ function draw(failed) {
   add(root, h('div', {'class': 'bar'},
     ME ? h('span', {text: 'Signed in as @' + ME.handle + '.'})
        : h('span', null, 'Read only. To delete a routine, sign in on the ', h('a', {href: '/', text: 'board page'}), ' first, then come back.'),
-    h('a', {href: '/projects/' + encodeURIComponent(ADMIN_PROJECT), text: 'project ' + ADMIN_PROJECT})));
+    h('a', {href: '/workspaces/' + encodeURIComponent(ADMIN_PROJECT), text: 'workspace ' + ADMIN_PROJECT})));
   if (failed) { add(root, h('p', {'class': 'msg-err', text: 'Could not load routines: ' + why(failed)})); return; }
   if (!data) { add(root, h('p', {'class': 'sub', text: 'Loading routines…'})); return; }
   var r = open != null ? (data.routines || []).find(function (x) { return +x.id === open; }) : null;
@@ -155,9 +155,9 @@ function draw(failed) {
 // ---- the list --------------------------------------------------------------------
 function list() {
   add(root, h('h1', {text: 'Routines'}),
-    h('p', {'class': 'sub'}, 'Recurring work. A check script runs on a timer at no cost; only when it finds work does a message go to the project channel for a bot to claim. ',
+    h('p', {'class': 'sub'}, 'Recurring work. A check script runs on a timer at no cost; only when it finds work does a message go to the workspace channel for a bot to claim. ',
       'To get a new routine, or to change one, say what you want in the channel of the ',
-      h('a', {href: '/projects/' + encodeURIComponent(ADMIN_PROJECT), text: ADMIN_PROJECT + ' project'}),
+      h('a', {href: '/workspaces/' + encodeURIComponent(ADMIN_PROJECT), text: ADMIN_PROJECT + ' workspace'}),
       ': the admin bot works it out with you there, tests it once you agree, and switches it on.'));
   var rs = data.routines || [];
   if (!rs.length) add(root, h('div', {'class': 'empty', text: 'No routine yet.'}));
@@ -249,8 +249,8 @@ function recipeView(r) {
         rc.after ? ', opened after ' + when(rc.after) : ', including the backlog', ', ' + rc.batch + ' at a time'),
       h('dt', {text: 'skips'}), h('dd', {text: [rc.unassigned ? 'assigned' : '', rc.no_linked_pr ? 'linked to a PR' : '',
         rc.skip_labels.length ? 'labelled ' + rc.skip_labels.join(', ') : ''].filter(Boolean).join(' · ') || 'nothing'}),
-      h('dt', {text: 'routes to'}), h('dd', null, h('a', {href: '/projects/' + encodeURIComponent(rc.project), text: rc.project}),
-        rc.rules.length ? ' · rules: ' + rc.rules.map(function (x) { return x.label + ' → ' + x.group; }).join(', ') : ''),
+      h('dt', {text: 'routes to'}), h('dd', null, h('a', {href: '/workspaces/' + encodeURIComponent(rc.workspace || rc.project), text: rc.workspace || rc.project}),
+        rc.rules.length ? ' · rules: ' + rc.rules.map(function (x) { return x.label + ' → ' + (x.channel || x.group); }).join(', ') : ''),
       h('dt', {text: 'chases'}), h('dd', {text: rc.reminds ? 'again after ' + fmtDur(rc.remind_after) + ', ' + rc.reminds + ' times' +
         (rc.escalate ? ', then tells @' + rc.escalate : '') : 'no reminders'})),
     (r.items || []).length ? [h('h3', {text: 'Announced'}), h('table', null,

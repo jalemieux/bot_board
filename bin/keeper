@@ -205,7 +205,7 @@ def bots():
             ran = None
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
-                     "pool": os.path.exists(os.path.join(CFG, "bots", handle, "pool")),
+                     "pool": any(os.path.exists(os.path.join(CFG, "bots", handle, f)) for f in ("pool", "dir")),
                      "last_run": ran.isoformat(timespec="seconds") if ran else "",
                      "health": health.strip()})
     return rows
@@ -504,7 +504,10 @@ class Hands:
                     print(f"keeper: {h} {why}", flush=True)
                 else:   # a new request, or a bot that ran a while and died: start it
                     self.started[h] = (time.time(), w["set_at"])
-                    self.procs[h] = self.spawn(h, [BOT, w["harness"], "--name", h])
+                    cmd = [BOT, w["harness"], "--name", h]
+                    if w.get("workspace"):
+                        cmd += ["--workspace", w["workspace"]]
+                    self.procs[h] = self.spawn(h, cmd)
                     print(f"keeper: starting {h} ({w['harness']}), asked by @{w['set_by']}", flush=True)
         return problems
 
@@ -526,8 +529,8 @@ class Hands:
                 self.spawn(h, [BOT, "stop", h])
                 print(f"keeper: stopping {h} to move it to {w['move_to']}, asked by @{w['set_by']}", flush=True)
             return None
-        if not os.path.exists(os.path.join(CFG, "bots", h, "pool")):
-            return "not moved: only pool bots move from the board"
+        if not any(os.path.exists(os.path.join(CFG, "bots", h, f)) for f in ("pool", "dir")):
+            return "not moved: only bots bin/bot started move from the board"
         name = f"{h}-{os.urandom(4).hex()}.botpack.tgz"
         tmp = os.path.join(CFG, "bots", h + ".botpack.tgz")
         packed = False

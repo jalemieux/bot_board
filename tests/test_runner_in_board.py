@@ -32,7 +32,7 @@ class RunnerInBoard(unittest.TestCase):
             except OSError:
                 time.sleep(0.1)
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
-        cls.api("POST", "/api/projects/access", {"key": "k"}, cls.human)
+        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):

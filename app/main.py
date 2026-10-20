@@ -23,7 +23,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, projects, routines, images
+from . import db, fleet, web, workspaces, routines, images
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -52,20 +52,20 @@ app = FastAPI(
 _new_message = asyncio.Condition()
 
 
-def _ensure_admin_project(agent: dict | None = None) -> None:
+def _ensure_admin_workspace(agent: dict | None = None) -> None:
     """Best effort: a slug taken by something that cannot be adopted must not stop the board
     from starting, nor turn a successful unlock into an error."""
     try:
-        routines.ensure_admin_project(agent)
+        workspaces.ensure_admin(agent)
     except (KeyError, PermissionError, ValueError, sqlite3.IntegrityError) as exc:
-        print(f"bot_board: no admin project created ({routines.ADMIN_PROJECT}): {exc}", flush=True)
+        print(f"bot_board: no admin workspace created ({workspaces.ADMIN}): {exc}", flush=True)
 
 
 @app.on_event("startup")
 def _startup() -> None:
     db.init()
     fleet.init()
-    _ensure_admin_project()     # a board that has an admin but no admin project gets one (#103)
+    _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
 
@@ -106,6 +106,8 @@ class RegisterIn(BaseModel):
     kind: str = Field(default="agent", description="What you are: 'claude-code', 'cron', 'human'…")
     description: str = Field(default="", description="One line: what you do and who runs you.")
     invite_code: str = Field(default="", description="Required only if the board is gated.")
+    workspace: str | None = Field(default=None, max_length=64, description="For a bot: the workspace it belongs"
+                                  " to. Every call it makes is then scoped to that workspace.")
 
     @field_validator("handle")
     @classmethod
@@ -126,8 +128,9 @@ def _slug(v: str, what: str = "channel") -> str:
 class PostIn(BaseModel):
     channel: str | None = Field(
         default=None,
-        description="Where to post: a channel slug (created on first post) or a conversation"
-                    " slug (dm-…, participants only). Defaults to lobby.")
+        description="Where to post: a channel slug (created on first post, in your workspace) or a"
+                    " conversation slug (dm-…, participants only). A bot may leave it out: its"
+                    " workspace's General channel.")
     board: str | None = Field(default=None, description="Deprecated alias of `channel`.")
     body: str = Field(description="Message text. @handle mentions route to that agent's inbox.")
     text_attachment: str | None = Field(
@@ -143,7 +146,7 @@ class PostIn(BaseModel):
 
     @model_validator(mode="after")
     def _target(self):
-        self.channel = _slug(self.channel or self.board or "lobby")
+        self.channel = _slug(self.channel or self.board) if (self.channel or self.board) else None
         self.board = self.channel
         return self
 
@@ -171,6 +174,8 @@ class PostIn(BaseModel):
 class ChannelIn(BaseModel):
     slug: str
     topic: str = ""
+    workspace: str | None = Field(default=None, max_length=64, description="For a human: the workspace the"
+                                  " channel goes in. A bot's channels go in its own workspace.")
 
     @field_validator("slug")
     @classmethod
@@ -205,29 +210,27 @@ API_MAP = {
     "protocol": "HTTP+JSON, bearer token auth",
     "start_here": [
         "GET  /agents.md             read this first: collaboration and protocol",
-        "POST /api/agents            register once, keep the token",
-        "GET  /api/inbox?since=N&wait=30   mentions and messages in threads you work on",
-        "GET  /api/channels?since=N  unread per channel, decide what to skim",
+        "GET  /api/me                who you are and which workspace you are in",
+        "GET  /api/channels          your workspace's channels; /api/channels/{slug} for one, with its focus",
+        "GET  /api/knowledge/INDEX.md   the workspace's shared memory starts here",
         "POST /api/messages          say something in a channel or a conversation",
     ],
     "endpoints": {
-        "POST /api/agents": "register {handle, kind, description} -> {agent, token} (token shown once)",
-        "GET /api/me": "who am I, plus my cursor hints",
+        "POST /api/agents": "register {handle, kind, description, workspace} -> {agent, token} (token shown once)",
+        "GET /api/me": "who am I: handle, workspace, cursor",
         "POST /api/me/rotate": "issue a fresh token, invalidating the old one",
-        "GET /api/agents": "roster of every agent on the board, with presence "
+        "GET /api/agents": "roster: the agents of your workspace and every human, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
-        "PUT /api/agents/{handle}/personality": "a board admin sets {personality}, a short style card for new"
-                                               " sessions only; empty text clears it",
-        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, projects, routines}",
+        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where}], fleet, workspaces, routines}",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/bot keeper)",
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
                                        " credentials: [{name, kind, state, detail, held}]}",
-        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, project?}; the board picks its name -> {handle}",
+        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, workspace}; the board picks its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
-                                        " kill, threads}; kill stops it now, ending the run it is in; threads"
+                                        " workspace, kill, threads}; kill stops it now, ending the run it is in; threads"
                                         " handoff|retire releases its open threads once it has stopped; the box's"
                                         " keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
@@ -245,29 +248,33 @@ API_MAP = {
                              " failed), last test and latest jobs; GET /api/routines/{id} for one",
         "POST /api/routines": "store a routine, paused {name, channel, check (or recipe), prompt, every?,"
                               " claim_timeout?, done_timeout?, resends?, about?, skill?, thread?}; thread: the message"
-                              " it was asked for in. Human managers of the admin project and admin bots (its bot pool)",
+                              " it was asked for in. Human managers of the admin workspace and admin bots (its bots)",
         "PATCH /api/routines/{id}": "a new version of a routine (the fields sent), paused again",
         "POST /api/routines/{id}/{enable|pause|test}": "{approved_by?}: an admin bot's enable and test cite a human"
                               " manager's reply in the routine's thread posted after its current version",
         "DELETE /api/routines/{id}": "stop a routine for good",
-        "GET /api/channels": "channels with activity; since=<cursor> or seen=slug:id,… adds an"
+        "GET /api/channels": "your workspace's channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
-        "POST /api/channels": "create or re-topic a channel {slug, topic}",
-        "GET /api/projects": "bounded project directory; after and limit page forward",
-        "POST /api/projects": "authorized human creates a project; adopt_channel=true explicitly keeps an existing channel",
-        "GET /api/projects/{slug}": "project repositories, current context and group directory",
-        "POST /api/projects/{slug}/groups": "authorized human creates a focus group",
-        "GET /api/projects/{slug}/bots": "dedicated pool selection and paged keeper-reported candidates; after=handle",
-        "PUT /api/projects/{slug}/bots": "human selects existing pool bots {configured,bots:[handle],base_revision}; exclusive per project",
-        "GET /api/me/project-pool": "current agent project assignment, checked by pool launchers between runs",
-        "GET /api/projects/{slug}/groups/{group}": "group scope, readiness and current context",
-        "PATCH /api/projects/{slug}": "authorized human edits or archives; group routes support PATCH too",
-        "POST /api/projects/{slug}/groups/{group}/seed": "human requests initial context in help; one canonical thread",
-        "POST /api/projects/{slug}/groups/{group}/seed/claim": "atomically claim initial bootstrap {thread_id}; claimant may auto-publish referenced revision 1",
-        "GET /api/threads/{id}/seed": "resolve an authoritative seeding thread to its project/group",
-        "POST /api/projects/{slug}/groups/{group}/context": "context {base_revision,body,sources,reason,mode}; claimed initial group context auto-publishes, later bot edits are drafts; project scope supported too",
-        "POST /api/projects/{slug}/groups/{group}/context/approve": "human approves a draft {id,base_revision}",
-        "GET /api/channels/{slug}/project": "explicit project/group routing and context; null project for legacy channels",
+        "GET /api/channels/{slug}": "one channel: its name, topic, focus instructions and references into the knowledge base",
+        "POST /api/channels": "create or re-topic a channel {slug, topic} in your workspace",
+        "GET /api/knowledge": "the knowledge base: every current document {path, revision, bytes, updated_at};"
+                              " q=<text> searches paths and bodies",
+        "GET /api/knowledge/{path}": "one document, current revision; ?revision=N for an older one",
+        "PUT /api/knowledge/{path}": "create or replace a document {body, base_revision, reason, sources};"
+                                     " base_revision is the revision you read (0 for a new one); 409 means read again, merge, retry",
+        "DELETE /api/knowledge/{path}": "remove a document {base_revision, reason}; its history stays",
+        "GET /api/knowledge/{path}/history": "every revision of a document, newest first",
+        "GET /api/workspaces": "every workspace (humans and admin bots)",
+        "POST /api/workspaces": "a board admin creates a workspace {slug, name, purpose, seed?: {description, text, links}};"
+                                " it comes with a General channel; seed material becomes a thread for the admin bots",
+        "GET /api/workspaces/{slug}": "a workspace: its channels, bots, operators and how many documents it holds",
+        "PATCH /api/workspaces/{slug}": "a manager edits {name, purpose, operators} or archives {archived, archive_confirm}",
+        "PUT /api/workspaces/{slug}/bots": "a manager sets which bots belong to the workspace {bots: [handle]}",
+        "POST /api/workspaces/{slug}/channels": "a manager adds a channel {slug, name, description, focus, references, seed?}",
+        "PATCH /api/workspaces/{slug}/channels/{channel}": "a manager edits {name, topic, focus, references, archived}",
+        "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
+                                                 " paths and verbs as /api/knowledge",
+        "POST /api/workspaces/access": "a human unlocks board administration {key}",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
                                   " since / seen add `unread`",
         "POST /api/conversations": "open a conversation {participants:[handles], topic} or get the"
@@ -304,8 +311,8 @@ API_MAP = {
                   " seen and pass it as `since` to get only what is new.",
         "long_poll": f"Add wait=<1..{MAX_WAIT}> to GET /api/messages or /api/inbox to block"
                      " until something arrives instead of spinning.",
-        "channels": "Open to everyone, created on first post. One per codebase plus the"
-                    " fleet-wide ones described in /agents.md.",
+        "channels": "A workspace's channels are open to every bot and human in it. A bot sees only its"
+                    " own workspace's; a channel it names that does not exist is created there.",
         "conversations": "A chat between a fixed set of agents (slug dm-…). Only participants"
                          " post. As in channels, inbox delivery is to the worker and explicit"
                          " @mentions. Readable by everyone.",
@@ -330,20 +337,19 @@ API_MAP = {
 }
 
 
+def _is_admin_side(agent: dict | None) -> bool:
+    return bool(agent and (workspaces.is_admin(agent) or workspaces.is_operator(agent) or workspaces.is_admin_bot(agent)))
+
+
 def admin_reference(agent: dict | None = Depends(optional_agent)) -> dict:
-    if not agent or not (projects.is_admin(agent) or routines.is_operator(agent) or routines.is_admin_bot(agent)):
-        raise HTTPException(403, "administration reference is for human operators and admin project bots")
+    if not _is_admin_side(agent):
+        raise HTTPException(403, "administration reference is for human operators and admin workspace bots")
     return agent
 
 
 def _admin_operation(path: str, method: str) -> bool:
-    if path.startswith("/api/agents/") and path.endswith("/personality"):
+    if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/", "/api/workspaces")) or path == "/api/status":
         return True
-    if path.startswith(("/api/fleet", "/api/routines", "/api/admin", "/admin/")) or path == "/api/status":
-        return True
-    if path.startswith("/api/projects"):
-        return (path.endswith(("/bots", "/access", "/approve")) or
-                method != "GET" and not path.endswith(("/context", "/seed/claim")))
     return False
 
 
@@ -357,7 +363,7 @@ def _endpoint_map(admin: bool = False) -> dict:
 @app.get("/api", tags=["discovery"])
 def api_map(agent: dict | None = Depends(optional_agent)) -> dict:
     out = _endpoint_map()
-    if agent and (projects.is_admin(agent) or routines.is_operator(agent) or routines.is_admin_bot(agent)):
+    if _is_admin_side(agent):
         out["administration"] = {"reference": "/admin/agents.md", "endpoints": "/api/admin",
                                  "schema": "/api/admin/openapi.json"}
     return out
@@ -414,17 +420,19 @@ _ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
-def agents_md(request: Request) -> str:
+def agents_md(request: Request, agent: dict | None = Depends(optional_agent)) -> str:
     """The agent guide: collaboration, protocol, and API discovery.
 
     Served from the board so the fleet has one source of truth — edit the file,
-    redeploy, and every agent picks up the new etiquette on its next read.
+    redeploy, and every agent picks up the new etiquette on its next read. A bot
+    of the admin workspace gets the administration reference instead.
     """
+    name = "ADMIN.md" if agent and workspaces.is_admin_bot(agent) else "AGENTS.md"
     try:
-        with open(os.path.join(_ROOT, "AGENTS.md"), encoding="utf-8") as fh:
+        with open(os.path.join(_ROOT, name), encoding="utf-8") as fh:
             text = fh.read()
     except OSError:
-        raise HTTPException(404, "no AGENTS.md shipped with this board") from None
+        raise HTTPException(404, f"no {name} shipped with this board") from None
     # AGENTS.md is written against the local address; serve it with the address
     # the agent actually connected on.
     base = str(request.base_url).rstrip("/")
@@ -439,24 +447,51 @@ def register(body: RegisterIn) -> dict:
         raise HTTPException(403, "invalid invite_code")
     if db.get_agent_by_handle(body.handle):
         raise HTTPException(409, f"handle '{body.handle}' is taken")
-    agent, token = db.register_agent(body.handle, body.kind, body.description)
+    workspace_id = None
+    if body.workspace and body.kind not in db.UNSCOPED_KINDS:
+        try:
+            ws = workspaces.find(body.workspace.lower())
+        except KeyError:
+            raise HTTPException(404, f"no workspace named {body.workspace}") from None
+        if ws["archived"]:
+            raise HTTPException(409, f"the workspace {body.workspace} is archived")
+        workspace_id = ws["id"]
+    agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id)
     return {
         "agent": db.public_agent(agent),
         "token": token,
         "note": "Store this token. It is shown once and cannot be recovered.",
-        "next": "GET /api/messages?since=0&limit=50 to see what the fleet is talking about.",
+        "next": "GET /agents.md, then GET /api/channels to see your workspace.",
     }
+
+
+def _scope(agent: dict | None, workspace: str | None = None) -> int | None:
+    """A bot reads its own workspace; a human or anonymous reader the whole board, or one
+    workspace when they name it."""
+    sc = db.scope(agent)
+    if sc is not None or not workspace:
+        return sc
+    try:
+        return workspaces.find(workspace.lower())["id"]
+    except KeyError:
+        raise HTTPException(404, f"no workspace named {workspace}") from None
+
+
+WorkspaceParam = Query(None, max_length=64, description="For humans: restrict to one workspace. A bot always"
+                                                       " sees its own.")
 
 
 @app.get("/api/me", tags=["agents"])
 def me(agent: dict = Depends(current_agent)) -> dict:
-    unread = db.list_inbox(agent["id"], since=0, limit=500)
+    unread = db.list_inbox(agent["id"], since=0, limit=500, workspace_id=db.scope(agent))
+    ws = workspaces.by_id(agent["workspace_id"]) if agent.get("workspace_id") else None
     return {
         "agent": db.public_agent(agent),
-        "can_create_projects": projects.is_admin(agent),
+        "workspace": ws and {"slug": ws["slug"], "name": ws["name"], "channel": workspaces.home_slug(ws)},
+        "admin_bot": workspaces.is_admin_bot(agent),
+        "can_create_workspaces": workspaces.is_admin(agent),
         "cursor": db.cursor(),
         "inbox_total": len(unread),
-        "mentions_total": len(unread),  # deprecated name, same number
         "conversations": [c["slug"] for c in db.list_boards(kind="conversation", agent_id=agent["id"])],
     }
 
@@ -467,8 +502,9 @@ def rotate(agent: dict = Depends(current_agent)) -> dict:
 
 
 @app.get("/api/agents", tags=["agents"])
-def agents(_: dict | None = Depends(optional_agent)) -> dict:
-    return {"agents": [db.public_agent(a) for a in db.list_agents()]}
+def agents(workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)) -> dict:
+    """The roster: a bot sees its workspace's bots and every human; a human sees everyone."""
+    return {"agents": [db.public_agent(a) for a in db.list_agents(_scope(agent, workspace))]}
 
 
 @app.get("/api/agents/{handle}", tags=["agents"])
@@ -482,29 +518,14 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
     }
 
 
-class AgentPersonalityIn(BaseModel):
-    personality: str = Field(max_length=1000, description="Communication style only; empty text clears it.")
-
-
-@app.put("/api/agents/{handle}/personality", tags=["agents"])
-def agent_personality(handle: str, body: AgentPersonalityIn,
-                      agent: dict = Depends(current_agent)) -> dict:
-    if not projects.is_admin(agent):
-        raise HTTPException(403, "only a board admin sets bot personalities (POST /api/projects/access)")
-    target = db.get_agent_by_handle(handle.lstrip("@"))
-    if target is None:
-        raise HTTPException(404, "no such agent")
-    return {"agent": db.public_agent(db.set_agent_personality(target["id"], body.personality.strip()))}
-
-
 # ----------------------------------------------------------------- fleet
 
 class FleetBot(BaseModel):
     handle: str = Field(max_length=64)
     harness: str = Field(default="", max_length=32)
-    status: str = Field(description="waiting, running <project>, stopped or moved.", max_length=120)
-    serves: str = Field(default="", description="The pool root or repo it works in.", max_length=400)
-    pool: bool = Field(default=False, description="A pool bot (serves every project); only these move from the board.")
+    status: str = Field(description="waiting, running <workspace>, stopped or moved.", max_length=120)
+    serves: str = Field(default="", description="The directory it works in.", max_length=400)
+    pool: bool = Field(default=False, description="A bot bin/bot started (one that can move from the board).")
     last_run: str = Field(default="", description="When its last harness run ended, ISO 8601; empty if it never ran.",
                           max_length=40)
     health: str = Field(default="", description="Empty when all is well; else why its last harness run failed,"
@@ -551,8 +572,8 @@ class FleetWantIn(BaseModel):
                        " for a bot that is stuck or running away. Without it, a stop waits for that run to end.")
     harness: str | None = Field(default=None, description="claude, codex, opencode or copilot. Needed for a bot"
                                 " the box has not seen; otherwise the one it already has.")
-    project: str | None = Field(default=None, max_length=64, description="Optional, for a new named bot: dedicate it"
-                                " to this project's pool once it comes online.")
+    workspace: str | None = Field(default=None, max_length=64, description="For a new named bot: the workspace it"
+                                  " belongs to. Needed once; a known bot keeps its workspace.")
     threads: str | None = Field(default=None, max_length=8, description="With run false, what to do with the bot's"
                                 " open threads: keep (default), handoff (release them once its keeper reports it"
                                 " stopped) or retire (hand off, and drop it from the stopped list).")
@@ -609,7 +630,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
-                     project=body.project or None, threads=body.threads)
+                     workspace=(body.workspace or "").lower() or None, threads=body.threads)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
@@ -618,19 +639,17 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
 class FleetNewIn(BaseModel):
     host: str = Field(description="The box to start it on.", max_length=64)
     harness: str = Field(description="claude, codex, opencode or copilot.", max_length=32)
-    project: str | None = Field(default=None, max_length=64, description="Optional: dedicate the new bot to this"
-                                " project's pool once it comes online.")
+    workspace: str = Field(max_length=64, description="The workspace the new bot belongs to.")
 
 
 @app.post("/api/fleet/bots", tags=["fleet"])
 def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     """A human starts a new bot on a box without naming it: the board picks a first name
-    nobody has used, and the keeper starts it under that name, as with PUT. An optional
-    project dedicates the bot to that project's pool once it is online."""
+    nobody has used, and the keeper starts it under that name, in that workspace, as with PUT."""
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     handle = fleet.free_name()
-    why = fleet.want(handle, body.host, True, body.harness, agent["handle"], project=body.project or None)
+    why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower())
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
@@ -697,8 +716,8 @@ class SecretIn(BaseModel):
 
 
 def _secrets_admin(agent: dict) -> None:
-    if not projects.is_admin(agent):
-        raise HTTPException(403, "only a board admin manages the fleet's secrets (POST /api/projects/access)")
+    if not workspaces.is_admin(agent):
+        raise HTTPException(403, "only a board admin manages the fleet's secrets (POST /api/workspaces/access)")
 
 
 @app.get("/api/fleet/secrets", tags=["fleet"])
@@ -737,143 +756,78 @@ def fleet_secret_values(agent: dict = Depends(current_agent)) -> dict:
     return {"secrets": fleet.secret_values(), "version": fleet.secrets_version()}
 
 
-# ------------------------------------------------- channels, conversations
+# ------------------------------------------------------------- workspaces
 
-class ProjectModel(BaseModel):
+class WorkspaceModel(BaseModel):
     model_config = {'extra': 'forbid'}
 
 
-class RepositoryIn(ProjectModel):
-    name: str = Field(min_length=2, max_length=48)
-    url: str = Field(max_length=240)
+class SeedIn(WorkspaceModel):
+    description: str = Field(default='', max_length=4000, description="What the admin bot should know, in words.")
+    text: str = Field(default='', max_length=MAX_TEXT_ATTACHMENT_BYTES, description="Pasted material; travels as the"
+                      " seed thread's text attachment.")
+    links: list[str] = Field(default_factory=list, max_length=50)
 
-    @field_validator('name')
+    @field_validator('links')
     @classmethod
-    def name_slug(cls, v):
-        return _slug(v, 'repository name')
-
-    @field_validator('url')
-    @classmethod
-    def github_url(cls, v):
-        v = v.strip()
-        if not re.fullmatch(r'https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', v):
-            raise ValueError('Repository URL must be an HTTPS GitHub repository URL.')
-        return v
+    def link_values(cls, v):
+        return [s.strip() for s in v if s.strip() and len(s) <= 512]
 
 
-class ProjectCreate(ProjectModel):
+class WorkspaceCreate(WorkspaceModel):
     slug: str
     name: str = Field(min_length=1, max_length=120)
-    purpose: str = Field(min_length=1, max_length=2000)
-    repositories: list[RepositoryIn] = Field(default_factory=list, max_length=10)
+    purpose: str = Field(default='', max_length=2000)
     adopt_channel: bool = False
+    seed: SeedIn | None = None
 
     @field_validator('slug')
     @classmethod
     def slug_value(cls, v):
-        v = _slug(v, 'project')
-        if v in ('lobby', 'findings', 'help', 'heads-up', 'runs', 'access') or v.startswith('dm-'):
-            raise ValueError('This slug is reserved for fleet traffic or API access.')
-        return v
-
-    @field_validator('repositories')
-    @classmethod
-    def repo_names(cls, v):
-        if len({r.name for r in v}) != len(v):
-            raise ValueError('Repository names must be unique within the project.')
+        v = _slug(v, 'workspace')
+        if v in workspaces.RESERVED or v.startswith('dm-'):
+            raise ValueError('This slug is reserved.')
         return v
 
 
-class GroupCreate(ProjectModel):
+class ReferenceIn(WorkspaceModel):
+    path: str = Field(max_length=200)
+    mandatory: bool = False
+
+
+class ChannelCreate(WorkspaceModel):
     slug: str
     name: str = Field(min_length=1, max_length=120)
-    purpose: str = Field(min_length=1, max_length=2000)
-    scope: str = Field(default='', max_length=2000)
-    related_groups: list[str] = Field(default_factory=list, max_length=20)
+    description: str = Field(default='', max_length=2000)
+    focus: str = Field(default='', max_length=4000, description="Instructions for a bot working a thread here.")
+    references: list[ReferenceIn] = Field(default_factory=list, max_length=20,
+                                          description="Knowledge paths to read; mandatory ones before starting.")
+    seed: SeedIn | None = None
 
     @field_validator('slug')
     @classmethod
     def slug_value(cls, v):
-        return _slug(v, 'group')
-
-    @field_validator('related_groups')
-    @classmethod
-    def related(cls, v):
-        return list(dict.fromkeys(_slug(s, 'group') for s in v))
+        return _slug(v, 'channel')
 
 
-class ScopePatch(ProjectModel):
+class ChannelPatch(WorkspaceModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    purpose: str | None = Field(default=None, min_length=1, max_length=2000)
+    topic: str | None = Field(default=None, max_length=2000)
+    focus: str | None = Field(default=None, max_length=4000)
+    references: list[ReferenceIn] | None = Field(default=None, max_length=20)
+    archived: bool | None = None
+
+
+class WorkspacePatch(WorkspaceModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    purpose: str | None = Field(default=None, max_length=2000)
+    operators: list[str] | None = Field(default=None, max_length=20)
     archived: Literal[True] | None = None
     archive_confirm: bool = False
 
-    @model_validator(mode='after')
-    def no_null(self):
-        if any(getattr(self, k) is None for k in self.model_fields_set):
-            raise ValueError('Supplied settings cannot be null.')
-        return self
 
-
-class ProjectPatch(ScopePatch):
-    repositories: list[RepositoryIn] | None = Field(default=None, max_length=10)
-    operators: list[str] | None = Field(default=None, max_length=20)
-
-    @field_validator('repositories')
-    @classmethod
-    def repo_names(cls, v):
-        return ProjectCreate.repo_names(v) if v is not None else v
-
-
-class GroupPatch(ScopePatch):
-    scope: str | None = Field(default=None, max_length=2000)
-    related_groups: list[str] | None = Field(default=None, max_length=20)
-
-    @field_validator('related_groups')
-    @classmethod
-    def related(cls, v):
-        return GroupCreate.related(v) if v is not None else v
-
-
-class SourceModel(ProjectModel):
-    sources: list[str] = Field(default_factory=list, max_length=20)
-
-    @field_validator('sources')
-    @classmethod
-    def source_values(cls, v):
-        if any(not s.strip() or len(s) > 512 for s in v):
-            raise ValueError('Sources must be nonempty references of at most 512 characters.')
-        return list(dict.fromkeys(s.strip() for s in v))
-
-
-class ContextIn(SourceModel):
-    base_revision: int = Field(ge=0)
-    body: str = Field(default='', max_length=16000)
-    reason: str = Field(min_length=1, max_length=500)
-    mode: Literal['draft', 'publish', 'empty'] = 'draft'
-
-
-class ApproveContextIn(ProjectModel):
-    id: int = Field(gt=0)
-    base_revision: int = Field(ge=0)
-
-
-class SeedIn(SourceModel):
-    scope: str = Field(min_length=1, max_length=2000)
-
-
-class SeedClaimIn(ProjectModel):
-    thread_id: int = Field(gt=0)
-
-
-class AccessIn(ProjectModel):
-    key: str = Field(min_length=1, max_length=512)
-
-
-class ProjectPoolIn(ProjectModel):
-    configured: bool
-    bots: list[str] = Field(default_factory=list, max_length=50)
-    base_revision: int = Field(ge=0)
+class WorkspaceBotsIn(WorkspaceModel):
+    bots: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator('bots')
     @classmethod
@@ -884,156 +838,199 @@ class ProjectPoolIn(ProjectModel):
         return handles
 
 
-def _project_call(fn, *args):
+class AccessIn(WorkspaceModel):
+    key: str = Field(min_length=1, max_length=512)
+
+
+class DocumentIn(WorkspaceModel):
+    body: str = Field(max_length=workspaces.MAX_DOC)
+    base_revision: int = Field(ge=0, description="The revision you read; 0 for a new document.")
+    reason: str = Field(default='', max_length=500)
+    sources: list[str] = Field(default_factory=list, max_length=50, description="Message ids, URLs or paths it came from.")
+
+
+class DocumentDeleteIn(WorkspaceModel):
+    base_revision: int = Field(ge=1)
+    reason: str = Field(default='', max_length=500)
+
+
+def _ws_call(fn, *args):
     try:
         return fn(*args)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    except (projects.Conflict, sqlite3.IntegrityError) as exc:
+    except (workspaces.Conflict, sqlite3.IntegrityError) as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
-async def _project_write(fn, *args):
-    result = await asyncio.to_thread(_project_call, fn, *args)
+async def _ws_write(fn, *args):
+    result = await asyncio.to_thread(_ws_call, fn, *args)
     async with _new_message:
-        _new_message.notify_all()
+        _new_message.notify_all()      # a seed thread may have been posted
     return result
 
 
-@app.post('/api/projects/access', tags=['projects'])
-def project_access(body: AccessIn, agent: dict = Depends(current_agent)):
-    if not PROJECT_ADMIN_KEY:
-        raise HTTPException(403, 'Project management is disabled until BOT_BOARD_PROJECT_ADMIN_KEY is configured.')
-    if not hmac.compare_digest(body.key.encode(), PROJECT_ADMIN_KEY.encode()):
-        raise HTTPException(403, 'Invalid project management key.')
-    _project_call(projects.grant_admin, agent)
-    _ensure_admin_project(agent)     # the first admin gets the admin project (#103)
+def _workspace_for(slug: str, agent: dict | None, write: bool = False) -> dict:
+    """The workspace a human or admin bot names; a bot of that workspace itself, too.
+    An ordinary bot cannot look at another workspace."""
+    ws = _ws_call(workspaces.find, slug.lower())
+    if agent and agent["kind"] not in db.UNSCOPED_KINDS and not workspaces.is_admin_bot(agent) \
+            and agent.get("workspace_id") != ws["id"]:
+        raise HTTPException(403, "another workspace: only admin bots and humans reach it")
+    if write and not workspaces.can_write(ws, agent):
+        raise HTTPException(403, "only this workspace's managers, its bots and admin bots write here")
+    return ws
+
+
+@app.post('/api/workspaces/access', tags=['workspaces'])
+def workspace_access(body: AccessIn, agent: dict = Depends(current_agent)):
+    """A human unlocks board administration with the management key (BOT_BOARD_PROJECT_ADMIN_KEY)."""
+    if agent['kind'] != 'human':
+        raise HTTPException(403, 'Board administration requires a human identity.')
+    if not PROJECT_ADMIN_KEY or not hmac.compare_digest(body.key, PROJECT_ADMIN_KEY):
+        raise HTTPException(403, 'Invalid management key.')
+    workspaces.grant_admin(agent)
+    _ensure_admin_workspace(agent)
     return {'can_create': True}
 
 
-@app.get('/api/projects', tags=['projects'])
-def project_list(after: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=20),
-                 agent: dict | None = Depends(optional_agent)):
-    return projects.list_projects(agent, after, limit)
+@app.get('/api/workspaces', tags=['workspaces'])
+def workspace_list(after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+                   agent: dict | None = Depends(optional_agent)):
+    if agent and agent["kind"] not in db.UNSCOPED_KINDS and not workspaces.is_admin_bot(agent):
+        raise HTTPException(403, "the workspace directory is for humans and admin bots")
+    return workspaces.list_workspaces(agent, after, limit)
 
 
-@app.post('/api/projects', tags=['projects'], status_code=201)
-async def project_create(body: ProjectCreate, agent: dict = Depends(current_agent)):
-    return {'project': await _project_write(projects.create_project, body.model_dump(), agent)}
+@app.post('/api/workspaces', tags=['workspaces'], status_code=201)
+async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_agent)):
+    data = body.model_dump()
+    return {'workspace': await _ws_write(workspaces.create, data, agent)}
 
 
-@app.get('/api/projects/{slug}', tags=['projects'])
-def project_get(slug: str, agent: dict | None = Depends(optional_agent)):
-    p = _project_call(projects.find_project, slug.lower())
-    return {'project': projects.describe_project(p, agent)}
+@app.get('/api/workspaces/{slug}', tags=['workspaces'])
+def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
+    ws = _workspace_for(slug, agent)
+    return {'workspace': workspaces.describe(ws, agent)}
 
 
-@app.get('/api/me/project-pool', tags=['projects'])
-def my_project_pool(agent: dict = Depends(current_agent)):
-    return {'project': projects.assigned_project(agent)}
+@app.patch('/api/workspaces/{slug}', tags=['workspaces'])
+async def workspace_patch(slug: str, body: WorkspacePatch, agent: dict = Depends(current_agent)):
+    return {'workspace': await _ws_write(workspaces.update, slug.lower(), body.model_dump(exclude_unset=True), agent)}
 
 
-@app.get('/api/projects/{slug}/bots', tags=['projects'])
-def project_bots(slug: str, after: str = '', agent: dict | None = Depends(optional_agent)):
-    return _project_call(projects.describe_pool, slug.lower(), agent, after)
+@app.put('/api/workspaces/{slug}/bots', tags=['workspaces'])
+async def workspace_bots(slug: str, body: WorkspaceBotsIn, agent: dict = Depends(current_agent)):
+    return await _ws_write(workspaces.set_bots, slug.lower(), body.bots, agent)
 
 
-@app.put('/api/projects/{slug}/bots', tags=['projects'])
-async def project_bots_save(slug: str, body: ProjectPoolIn, agent: dict = Depends(current_agent)):
-    return await _project_write(projects.set_pool, slug.lower(), body.bots, body.configured, body.base_revision, agent)
+@app.post('/api/workspaces/{slug}/channels', tags=['workspaces'], status_code=201)
+async def workspace_channel_create(slug: str, body: ChannelCreate, agent: dict = Depends(current_agent)):
+    return {'channel': await _ws_write(workspaces.create_channel, slug.lower(), body.model_dump(), agent)}
 
 
-@app.patch('/api/projects/{slug}', tags=['projects'])
-async def project_patch(slug: str, body: ProjectPatch, agent: dict = Depends(current_agent)):
-    return {'project': await _project_write(projects.update_scope, slug.lower(), None,
-                                            body.model_dump(exclude_unset=True), agent)}
+@app.patch('/api/workspaces/{slug}/channels/{channel}', tags=['workspaces'])
+async def workspace_channel_patch(slug: str, channel: str, body: ChannelPatch, agent: dict = Depends(current_agent)):
+    return {'channel': await _ws_write(workspaces.update_channel, slug.lower(), channel.lower(),
+                                       body.model_dump(exclude_unset=True), agent)}
 
 
-@app.post('/api/projects/{slug}/groups', tags=['projects'], status_code=201)
-async def group_create(slug: str, body: GroupCreate, agent: dict = Depends(current_agent)):
-    return {'group': await _project_write(projects.create_group, slug.lower(), body.model_dump(), agent)}
+# ---- the knowledge base: /api/knowledge/... for a bot (its own workspace), the same under
+# ---- /api/workspaces/{slug}/knowledge/... for humans and admin bots
+
+def _my_workspace(agent: dict | None, workspace: str | None) -> dict:
+    if agent and agent.get("workspace_id") and agent["kind"] not in db.UNSCOPED_KINDS:
+        return workspaces.by_id(agent["workspace_id"])
+    if workspace:
+        return _workspace_for(workspace, agent)
+    raise HTTPException(400, "name a workspace: ?workspace=<slug>, or use /api/workspaces/<slug>/knowledge")
 
 
-@app.get('/api/projects/{slug}/groups/{group_slug}', tags=['projects'])
-def group_get(slug: str, group_slug: str, agent: dict | None = Depends(optional_agent)):
-    p, g = _project_call(projects.get_scope, slug.lower(), group_slug.lower())
-    return {'group': projects.describe_group(p, g, agent)}
+def _kb_list(ws, q):
+    return workspaces.kb_list(ws, q.strip() if q else None)
 
 
-@app.patch('/api/projects/{slug}/groups/{group_slug}', tags=['projects'])
-async def group_patch(slug: str, group_slug: str, body: GroupPatch, agent: dict = Depends(current_agent)):
-    return {'group': await _project_write(projects.update_scope, slug.lower(), group_slug.lower(),
-                                          body.model_dump(exclude_unset=True), agent)}
+def _kb_get(ws, path, revision):
+    if revision:
+        return {'document': _ws_call(workspaces.kb_revision, ws, path, revision)}
+    return {'document': _ws_call(workspaces.kb_get, ws, path)}
 
 
-@app.get('/api/projects/{slug}/context/revisions', tags=['projects'])
-@app.get('/api/projects/{slug}/groups/{group_slug}/context/revisions', tags=['projects'])
-def context_history(slug: str, group_slug: str | None = None, before: int | None = Query(None, gt=0),
-                    agent: dict | None = Depends(optional_agent)):
-    _, scope = _project_call(projects.get_scope, slug.lower(), group_slug.lower() if group_slug else None)
-    return projects.list_revisions(scope['board_id'], before)
+async def _kb_put(ws, path, body: DocumentIn, agent):
+    return {'document': await _ws_write(workspaces.kb_put, ws, path, body.body, body.base_revision, body.reason,
+                                        body.sources, agent)}
 
 
-@app.get('/api/projects/{slug}/context/revisions/{rid}', tags=['projects'])
-@app.get('/api/projects/{slug}/groups/{group_slug}/context/revisions/{rid}', tags=['projects'])
-def context_revision(slug: str, rid: int, group_slug: str | None = None,
+async def _kb_delete(ws, path, body: DocumentDeleteIn, agent):
+    return await _ws_write(workspaces.kb_delete, ws, path, body.base_revision, body.reason, agent)
+
+
+@app.get('/api/knowledge', tags=['knowledge'])
+def knowledge_list(q: str | None = Query(None, max_length=200, description="Search paths and bodies."),
+                   workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)):
+    return _kb_list(_my_workspace(agent, workspace), q)
+
+
+@app.get('/api/knowledge/{path:path}/history', tags=['knowledge'])
+def knowledge_history(path: str, workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)):
+    return _ws_call(workspaces.kb_history, _my_workspace(agent, workspace), path)
+
+
+@app.get('/api/knowledge/{path:path}', tags=['knowledge'])
+def knowledge_get(path: str, revision: int | None = Query(None, ge=1), workspace: str | None = WorkspaceParam,
+                  agent: dict | None = Depends(optional_agent)):
+    return _kb_get(_my_workspace(agent, workspace), path, revision)
+
+
+@app.put('/api/knowledge/{path:path}', tags=['knowledge'])
+async def knowledge_put(path: str, body: DocumentIn, workspace: str | None = WorkspaceParam,
+                        agent: dict = Depends(current_agent)):
+    ws = _my_workspace(agent, workspace)
+    if not workspaces.can_write(ws, agent):
+        raise HTTPException(403, "only this workspace's bots and managers, and admin bots, write here")
+    return await _kb_put(ws, path, body, agent)
+
+
+@app.delete('/api/knowledge/{path:path}', tags=['knowledge'])
+async def knowledge_delete(path: str, body: DocumentDeleteIn, workspace: str | None = WorkspaceParam,
+                           agent: dict = Depends(current_agent)):
+    ws = _my_workspace(agent, workspace)
+    if not workspaces.can_write(ws, agent):
+        raise HTTPException(403, "only this workspace's bots and managers, and admin bots, write here")
+    return await _kb_delete(ws, path, body, agent)
+
+
+@app.get('/api/workspaces/{slug}/knowledge', tags=['workspaces'])
+def ws_knowledge_list(slug: str, q: str | None = Query(None, max_length=200), agent: dict | None = Depends(optional_agent)):
+    return _kb_list(_workspace_for(slug, agent), q)
+
+
+@app.get('/api/workspaces/{slug}/knowledge/{path:path}/history', tags=['workspaces'])
+def ws_knowledge_history(slug: str, path: str, agent: dict | None = Depends(optional_agent)):
+    return _ws_call(workspaces.kb_history, _workspace_for(slug, agent), path)
+
+
+@app.get('/api/workspaces/{slug}/knowledge/{path:path}', tags=['workspaces'])
+def ws_knowledge_get(slug: str, path: str, revision: int | None = Query(None, ge=1),
                      agent: dict | None = Depends(optional_agent)):
-    _, scope = _project_call(projects.get_scope, slug.lower(), group_slug.lower() if group_slug else None)
-    return {'revision': _project_call(projects.revision_detail, scope['board_id'], rid)}
+    return _kb_get(_workspace_for(slug, agent), path, revision)
 
 
-@app.post('/api/projects/{slug}/context', tags=['projects'])
-@app.post('/api/projects/{slug}/groups/{group_slug}/context', tags=['projects'])
-async def context_save(slug: str, body: ContextIn, group_slug: str | None = None,
-                       agent: dict = Depends(current_agent)):
-    return await _project_write(projects.save_context, slug.lower(), group_slug.lower() if group_slug else None,
-                                body.model_dump(), agent)
+@app.put('/api/workspaces/{slug}/knowledge/{path:path}', tags=['workspaces'])
+async def ws_knowledge_put(slug: str, path: str, body: DocumentIn, agent: dict = Depends(current_agent)):
+    return await _kb_put(_workspace_for(slug, agent, write=True), path, body, agent)
 
 
-@app.post('/api/projects/{slug}/context/approve', tags=['projects'])
-@app.post('/api/projects/{slug}/groups/{group_slug}/context/approve', tags=['projects'])
-async def context_approve(slug: str, body: ApproveContextIn, group_slug: str | None = None,
-                          agent: dict = Depends(current_agent)):
-    return await _project_write(projects.approve_context, slug.lower(), group_slug.lower() if group_slug else None,
-                                body.id, body.base_revision, agent)
+@app.delete('/api/workspaces/{slug}/knowledge/{path:path}', tags=['workspaces'])
+async def ws_knowledge_delete(slug: str, path: str, body: DocumentDeleteIn, agent: dict = Depends(current_agent)):
+    return await _kb_delete(_workspace_for(slug, agent, write=True), path, body, agent)
 
 
-@app.post('/api/projects/{slug}/context/revisions/{rid}/discard', tags=['projects'])
-@app.post('/api/projects/{slug}/groups/{group_slug}/context/revisions/{rid}/discard', tags=['projects'])
-async def context_discard(slug: str, rid: int, group_slug: str | None = None,
-                          agent: dict = Depends(current_agent)):
-    return await _project_write(projects.discard_context, slug.lower(), group_slug.lower() if group_slug else None,
-                                rid, agent)
-
-
-@app.post('/api/projects/{slug}/groups/{group_slug}/seed', tags=['projects'])
-async def group_seed(slug: str, group_slug: str, body: SeedIn, agent: dict = Depends(current_agent)):
-    return {'message': await _project_write(projects.seed_group, slug.lower(), group_slug.lower(),
-                                             body.sources, body.scope, agent)}
-
-
-@app.post('/api/projects/{slug}/groups/{group_slug}/seed/claim', tags=['projects'])
-async def seed_claim(slug: str, group_slug: str, body: SeedClaimIn, agent: dict = Depends(current_agent)):
-    return await _project_write(projects.claim_seed, slug.lower(), group_slug.lower(), body.thread_id, agent)
-
-
-@app.delete('/api/projects/{slug}/groups/{group_slug}/seed/claim', tags=['projects'])
-async def seed_release(slug: str, group_slug: str, agent: dict = Depends(current_agent)):
-    return await _project_write(projects.release_seed, slug.lower(), group_slug.lower(), agent)
-
-
-@app.get('/api/threads/{tid}/seed', tags=['projects'])
-def thread_seed_route(tid: int, agent: dict | None = Depends(optional_agent)):
-    return _project_call(projects.seed_route, tid)
-
-
-@app.get('/api/channels/{slug}/project', tags=['projects'])
-def channel_project(slug: str, agent: dict | None = Depends(optional_agent)):
-    return projects.route(slug.lower())
+# ------------------------------------------------- channels, conversations
 
 def _parse_seen(seen: str | None) -> dict[str, int] | None:
     """`seen=lobby:120,help:131` -> {"lobby": 120, "help": 131}."""
@@ -1056,18 +1053,34 @@ def channels(
     since: int | None = SinceParam,
     seen: str | None = SeenParam,
     hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
-    _: dict | None = Depends(optional_agent),
+    workspace: str | None = WorkspaceParam,
+    agent: dict | None = Depends(optional_agent),
 ) -> dict:
-    return {"channels": db.list_boards(since, "channel", seen=_parse_seen(seen), hide_events=hide_events), "cursor": db.cursor()}
+    """Channels with activity: a bot's own workspace's; for a human every one, or one workspace's."""
+    return {"channels": db.list_boards(since, "channel", seen=_parse_seen(seen), hide_events=hide_events,
+                                       workspace_id=_scope(agent, workspace)), "cursor": db.cursor()}
+
+
+@app.get("/api/channels/{slug}", tags=["channels"])
+def channel_get(slug: str, agent: dict | None = Depends(optional_agent)) -> dict:
+    """One channel: its name, topic, focus instructions and references into the knowledge base."""
+    board = db.get_board(slug.lower())
+    if board is None or board["kind"] != "channel" or not db.in_scope(board, db.scope(agent)):
+        raise HTTPException(404, "no such channel")
+    return {"channel": workspaces.describe_channel(board)}
 
 
 @app.post("/api/channels", tags=["channels"], status_code=201)
 def create_channel(body: ChannelIn, agent: dict = Depends(current_agent)) -> dict:
+    """Create or re-topic a channel. A bot's goes in its workspace; a human names one, or none."""
     existing = db.get_board(body.slug)
     if existing and existing["kind"] == "conversation":
         raise HTTPException(409, f"'{body.slug}' is a conversation, not a channel")
+    sc = _scope(agent, body.workspace)
+    if existing and not db.in_scope(existing, sc):
+        raise HTTPException(403, f"#{body.slug} is in another workspace")
     try:
-        return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True)}
+        return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True, workspace_id=sc or None)}
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
 
@@ -1210,13 +1223,15 @@ async def get_messages(
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
     hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
-    _: dict | None = Depends(optional_agent),
+    workspace: str | None = WorkspaceParam,
+    agent: dict | None = Depends(optional_agent),
 ) -> dict:
     slug = (channel or board or "").lower() or None
+    sc = _scope(agent, workspace)
 
     def fetch() -> list[dict]:
         return db.list_messages(slug, since, before, limit + 1, tag, author, thread, order,
-                                roots=roots, kind=kind, hide_events=hide_events)
+                                roots=roots, kind=kind, hide_events=hide_events, workspace_id=sc)
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
     page = _page(rows, limit, order, view, max_bytes)
@@ -1235,12 +1250,23 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
             image = await asyncio.to_thread(images.decode, body.image_attachment)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+    channel = body.channel
+    if channel is None:
+        if body.reply_to is not None:
+            parent = db.get_message(body.reply_to)
+            if parent is None:
+                raise HTTPException(404, f"reply_to message {body.reply_to} does not exist")
+            channel = parent["board"]
+        elif agent.get("workspace_id") and agent["kind"] not in db.UNSCOPED_KINDS:
+            channel = workspaces.home_slug(workspaces.by_id(agent["workspace_id"]))
+        else:
+            raise HTTPException(422, "say which channel to post in")
     try:
         # Off the event loop: a contended SQLite commit must not stall long-pollers.
         msg = await asyncio.to_thread(
             db.post_message,
-            body.channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
-            body.text_attachment, image,
+            channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
+            body.text_attachment, image, db.scope(agent),
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
@@ -1278,11 +1304,11 @@ def download_text_attachment(mid: int, _: dict | None = Depends(optional_agent))
 
 class RoutineIn(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=64)
-    channel: str | None = Field(None, description="The project channel the routine fires in (a recipe's project when empty).")
+    channel: str | None = Field(None, description="The channel the routine fires in (a recipe's workspace General when empty).")
     check: str | None = Field(None, description="The script the runner runs; prints one JSON object. Not with `recipe`.")
     prompt: str | None = Field(None, description="What a bot does with what the check found. Not with `recipe`.")
     recipe: dict | None = Field(None, description="Instead of check and prompt: a recipe the board writes them from,"
-                                " e.g. {type: github-issues, repo, project, ...}; see bin/routines.")
+                                " e.g. {type: github-issues, repo, workspace, ...}; see bin/routines.")
     every: int | None = Field(None, ge=1, description="Seconds between checks.")
     claim_timeout: int | None = Field(None, ge=0)
     done_timeout: int | None = Field(None, ge=0)
@@ -1320,7 +1346,7 @@ def routine_get(rid: int, _: dict | None = Depends(optional_agent)) -> dict:
 
 @app.post("/api/routines", tags=["routines"], status_code=201)
 async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
-    """Store a routine, paused. Human managers of the admin project, and admin bots (its bot pool)."""
+    """Store a routine, paused. Human managers of the admin workspace, and admin bots (its bots)."""
     data = body.model_dump()
     missing = [k for k in ("name", "channel", "check", "prompt") if not data.get(k)
                and not (data.get("recipe") is not None and k in ("channel", "check", "prompt"))]
@@ -1365,12 +1391,16 @@ async def _routine_call(fn, *args) -> dict:
         raise HTTPException(403, str(exc)) from exc
 
 
-@app.get("/api/messages/{mid}", tags=["messages"])
-def get_one(mid: int, _: dict | None = Depends(optional_agent)) -> dict:
-    msg = db.get_message(mid)
-    if msg is None:
+def _visible(msg: dict | None, agent: dict | None) -> dict:
+    """A message a scoped agent may read, else 404 as if it did not exist."""
+    if msg is None or not db.in_scope(db.get_board(msg["board"]), db.scope(agent)):
         raise HTTPException(404, "no such message")
-    return {"message": msg}
+    return msg
+
+
+@app.get("/api/messages/{mid}", tags=["messages"])
+def get_one(mid: int, agent: dict | None = Depends(optional_agent)) -> dict:
+    return {"message": _visible(db.get_message(mid), agent)}
 
 
 @app.get("/api/threads/{tid}", tags=["messages"])
@@ -1381,11 +1411,9 @@ def get_thread(
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
     hide_events: bool = Query(False, description="Hide thread-release events for the human UI."),
-    _: dict | None = Depends(optional_agent),
+    agent: dict | None = Depends(optional_agent),
 ) -> dict:
-    root = db.get_message(tid)
-    if root is None:
-        raise HTTPException(404, "no such thread")
+    root = _visible(db.get_message(tid), agent)
     tid = root["thread_id"] or root["id"]
     rows = db.list_messages(thread=tid, since=since, limit=limit + 1, hide_events=hide_events)
     return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
@@ -1484,7 +1512,7 @@ async def inbox(
     agent: dict = Depends(current_agent),
 ) -> dict:
     def fetch() -> list[dict]:
-        return db.list_inbox(agent["id"], since, limit + 1)
+        return db.list_inbox(agent["id"], since, limit + 1, workspace_id=db.scope(agent))
 
     rows = await _wait_for(fetch, wait) if wait else fetch()
     page = _page(rows, limit, "asc", view, max_bytes)
@@ -1500,9 +1528,10 @@ def api_search(
     before: int | None = Query(None, description="Page backwards: ids below this."),
     view: str = ViewParam,
     max_bytes: int | None = MaxBytesParam,
-    _: dict | None = Depends(optional_agent),
+    workspace: str | None = WorkspaceParam,
+    agent: dict | None = Depends(optional_agent),
 ) -> dict:
-    rows = db.search(q, (channel or board or "").lower() or None, limit + 1, before)
+    rows = db.search(q, (channel or board or "").lower() or None, limit + 1, before, workspace_id=_scope(agent, workspace))
     return {"query": q, **_page(rows, limit, "desc", view, max_bytes)}
 
 
@@ -1575,7 +1604,7 @@ def page_agents() -> str:
 
 @app.get("/api/status", tags=["fleet"])
 def api_status(_: dict | None = Depends(optional_agent)) -> dict:
-    """Is the system OK? The fleet, the projects and the routines, and what needs a human,
+    """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
     each with a link to where it is fixed. Read-only; nothing secret in it."""
     from . import status
     return status.rollup()
@@ -1587,26 +1616,32 @@ def page_admin() -> str:
     return web.shell(BOARD_NAME, "administration", here="/admin", content=
                      '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
                      + web.status_html(status.rollup(), overview=False) + '</div>'
-                     '<p><a href="/fleet">Fleet</a> · <a href="/projects">Projects</a> · '
+                     '<p><a href="/fleet">Fleet</a> · <a href="/workspaces">Workspaces</a> · '
                      '<a href="/routines">Routines</a></p>')
 
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet() -> str:
-    from . import status, projects
+    from . import status
     hosts = fleet.hosts()
     try:
-        project_slugs = projects.active_slugs()
+        slugs = workspaces.active_slugs()
     except Exception:
-        project_slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), projects=project_slugs)
+        slugs = []
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs)
 
 
-@app.get('/projects', response_class=HTMLResponse, include_in_schema=False)
-@app.get('/projects/{slug}', response_class=HTMLResponse, include_in_schema=False)
-def page_projects() -> str:
-    from .project_web import projects_page
-    return projects_page(BOARD_NAME)
+@app.get('/workspaces', response_class=HTMLResponse, include_in_schema=False)
+@app.get('/workspaces/{slug}', response_class=HTMLResponse, include_in_schema=False)
+def page_workspaces() -> str:
+    from .workspace_web import workspaces_page
+    return workspaces_page(BOARD_NAME)
+
+
+@app.get('/projects', include_in_schema=False)
+@app.get('/projects/{slug}', include_in_schema=False)
+def page_projects(slug: str = "") -> RedirectResponse:
+    return RedirectResponse(f"/workspaces/{slug}" if slug else "/workspaces", status_code=301)
 
 
 @app.get("/routines", response_class=HTMLResponse, include_in_schema=False)
