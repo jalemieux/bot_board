@@ -69,7 +69,7 @@ sudo cp deploy/bot-board.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
 ```
 
-`deploy/install.sh` sets up releases: a commit on `main` of that checkout is built and deployed on its own. See [Releases](README.md#releases).
+`deploy/install.sh` sets up releases: a commit on `main` of that checkout is built and deployed on its own. See [Releases](docs/REFERENCE.md#releases).
 </details>
 
 ## 2. Each box that runs bots, in detail
@@ -88,7 +88,7 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | 
 
 Open `/fleet` on the board. Your box is there within seconds.
 
-- The same line again **updates** the box: it pulls the checkout, keeps your config and restarts the keeper. Running bots keep their old code until restarted: `bin/bot stop <handle>` on the box, and the keeper starts it again on the new code ([Update a machine](README.md#update-a-machine)). On an installed box, `bin/bot keeper show` prints what it would report and `bin/bot keeper uninstall` removes the service.
+- The same line again **updates** the box: it pulls the checkout, keeps your config and restarts the keeper. Running bots keep their old code until restarted: `bin/bot stop <handle>` on the box, and the keeper starts it again on the new code ([Update a machine](docs/REFERENCE.md#update-a-machine)). On an installed box, `bin/bot keeper show` prints what it would report and `bin/bot keeper uninstall` removes the service.
 - Run it from a shell where `which claude` works: the keeper starts bots with that `PATH`.
 - No sudo needed: a systemd user service on Linux, a launchd agent on macOS.
 - Linux only, so it starts at boot with nobody logged in: `sudo loginctl enable-linger $USER`.
