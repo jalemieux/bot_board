@@ -72,8 +72,22 @@
 #     BOT_SKILLS="https://github.com/owner/repo/tree/main/skills/some-skill"
 # A variable set in the environment wins over the file; a flag wins over both.
 #
+# Every harness run ends in one outcome (ok, retry, limited, capacity, logged_out,
+# session_lost, bad_invocation, exhausted, unknown), read off the exit status, the
+# harness's structured result (claude's --output-format json result object, codex's and
+# opencode's error events) and its error stream, never off the model's reply. Each
+# outcome has one policy: ok is done; limited, capacity, logged_out and bad_invocation
+# hold the batch and wait (BOT_LIMIT_WAIT, BOT_BAD_WAIT, or until the login is back);
+# retry holds and tries again after each of BOT_RETRY_WAITS; session_lost starts a new
+# session and runs the batch once more; unknown gets one more try after BOT_UNKNOWN_WAIT;
+# exhausted, and anything given up, releases the threads the batch claimed so another bot
+# or a human can take them. $STATE/health says what is wrong in the words /fleet shows;
+# $STATE/last.json and runs.jsonl record each run; `bot ps` shows the last outcome.
+#
 # Env: BOARD (default below), BOT_CLAUDE_FLAGS, BOT_CODEX_FLAGS, BOT_OPENCODE_FLAGS,
 #      BOT_COPILOT_FLAGS, BOT_WAIT (secs), BOT_INVITE (invite code if the board requires one),
+#      BOT_LIMIT_WAIT, BOT_BAD_WAIT, BOT_UNKNOWN_WAIT (secs), BOT_RETRY_WAITS (secs, one per try),
+#      BOT_AUTH_WAIT (secs between login checks while logged out),
 #      BOT_POOL (where bots work: one directory per bot under it),
 #      BOT_CATCH_UP (how far back a starting bot looks for unclaimed threads, seconds; default a day),
 #      BOT_SKILLS (skill sources for `bot skill`, space-separated),
@@ -491,7 +505,16 @@ case ${1:-} in
       elif [ -e "$d/moved" ]; then st=moved
       else st=stopped; fi
       [ -n "$ALL" ] || alive "$d" || continue
-      ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/workspace" 2>/dev/null || cat "$d/dir" 2>/dev/null || cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"
+      # LAST: how the last harness run ended and how long ago, from last.json
+      last=$(python3 -c '
+import json,sys,time,datetime
+try: d=json.load(open(sys.argv[1]))
+except Exception: print("-"); sys.exit()
+try: age=int(time.time()-datetime.datetime.fromisoformat(d["ended"].replace("Z","+00:00")).timestamp())
+except Exception: age=None
+ago=lambda s: "%ds"%s if s<60 else "%dm"%(s//60) if s<3600 else "%dh"%(s//3600) if s<86400 else "%dd"%(s//86400)
+print(d.get("outcome","-")+("" if age is None else " "+ago(age)))' "$d/last.json" 2>/dev/null || echo -)
+      ROWS+="${d##*/}"$'\t'"$(cat "$d/harness" 2>/dev/null || echo '?')"$'\t'"$st"$'\t'"$(alive "$d" && cat "$d/pid" || echo -)"$'\t'"$(cat "$d/seen" 2>/dev/null || echo -)"$'\t'"$(cat "$d/workspace" 2>/dev/null || cat "$d/dir" 2>/dev/null || cat "$d/pool" 2>/dev/null || cat "$d/repo" 2>/dev/null || echo '?')"$'\t'"$last"
       # Keep the last failure visible even after the launcher stops.
       if [ -n "$TSV" ] && [ -s "$d/health" ]; then ROWS+=$'\t'"$(tr '\t\n' '  ' <"$d/health" | cut -c1-300)"; fi
       ROWS+=$'\n'
@@ -501,7 +524,7 @@ case ${1:-} in
       exit 0
     fi
     if [ -n "$TSV" ]; then printf '%s' "$ROWS"; exit 0; fi   # for bin/keeper: tab-separated, no header
-    printf 'HANDLE\tHARNESS\tSTATUS\tPID\tSEEN\tWORKSPACE\n%s' "$ROWS" | column -t -s $'\t'
+    printf 'HANDLE\tHARNESS\tSTATUS\tPID\tSEEN\tWORKSPACE\tLAST\n%s' "$ROWS" | column -t -s $'\t'
     exit 0 ;;
   stop)
     H=${2:-}; [ -n "$H" ] || usage
@@ -682,6 +705,9 @@ identify "$NAME"
 alive "$STATE" && die "$HANDLE is already running on this box (pid $(cat "$STATE/pid")); bot stop $HANDLE first"
 mkdir -p "$STATE" && chmod 700 "$CFG"
 echo "$HARNESS" > "$STATE/harness"
+# which bin/bot this bot runs: the question a box could not answer before
+LAUNCHER_VERSION=$(git -C "$(dirname "${BASH_SOURCE[0]}")" describe --tags --always --dirty 2>/dev/null || echo dev)
+echo "$LAUNCHER_VERSION" > "$STATE/version"
 # The directory the harness runs in: one per bot, under the box's pool root. A bot
 # from before (a repo bot, or a pool bot with a session at the pool root) keeps the
 # directory its session was started in, since a harness session belongs to a directory.
@@ -747,71 +773,197 @@ gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "
 log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPACE}, seen=$SEEN"
 
 # ---- run the harness once, resuming the session kept for the bot ----------------------
-# run_harness <dir> <session-file> <prompt> -> exit code of the harness.
-# The session file holds the harness's id once a first run has succeeded; until then
-# the run is a first run, which creates the session. The harness finds who it is in
-# its environment: BOARD, BOT_HANDLE and BOARD_TOKEN (read from disk on every run, so
-# a rotated token is used from the next run).
+# run_harness <dir> <session-file> <prompt> -> 0 when the run completed, else 1.
+# Sets OUTCOME and DETAIL (what classify_run read off the run), writes $STATE/health for
+# every outcome but ok, retry and session_lost, records the run in $STATE/last.json and
+# $STATE/runs.jsonl, and keeps the session id once a first run has succeeded. The session
+# file holds the harness's id once a first run has succeeded; until then the run is a
+# first run, which creates the session. The harness finds who it is in its environment:
+# BOARD, BOT_HANDLE and BOARD_TOKEN (read from disk on every run, so a rotated token is
+# used from the next run). Claude Code runs with --output-format json: its one result
+# object goes to $STATE/run.out and only the reply text to the log. Every harness's
+# error stream goes to $STATE/run.err for this run, then to the log, so the log stays a
+# transcript and the classifier reads errors from where the harness put them.
+# How long the launcher waits before trying a held batch again, in seconds:
+BOT_LIMIT_WAIT=${BOT_LIMIT_WAIT:-600}        # out of usage or capacity, or logged out by the run's own account
+BOT_BAD_WAIT=${BOT_BAD_WAIT:-1800}           # the harness cannot be run at all (a flag it rejects, a missing binary)
+BOT_RETRY_WAITS=${BOT_RETRY_WAITS:-60 300 900}   # transient failures, one wait per try; after the last, the batch is given up
+BOT_UNKNOWN_WAIT=${BOT_UNKNOWN_WAIT:-300}    # a failure the launcher cannot name: one more try, then the batch is given up
+RUN_MESSAGES=""     # the message ids a run is for, for last.json; the caller sets it
 run_harness() {
-  local dir=$1 sfile=$2 prompt=$3 rc=0 sid="" off limit reason
-  off=$(wc -c <"$LOG" 2>/dev/null || echo 0)
+  local dir=$1 sfile=$2 prompt=$3 rc=0 sid="" off started now
+  off=$(wc -c <"$LOG" 2>/dev/null || echo 0); started=$(date -u +%FT%TZ)
   [ -s "$sfile" ] && sid=$(cat "$sfile")
   load_fleet_env
   export BOARD BOT_HANDLE="${HANDLE:-}" BOARD_TOKEN="$(cat "${TOKFILE:-/dev/null}" 2>/dev/null || true)"
-  cd "$dir"
   echo "${WORKSPACE:-${dir##*/}}" > "$STATE/busy"
-  case $HARNESS in
+  : >"$STATE/run.out"; : >"$STATE/run.err"
+  # claude and copilot take the id we pick; codex and opencode pick their own, read off
+  # their first event so later runs can resume it
+  case $HARNESS in claude|copilot) [ -n "$sid" ] || sid=$(python3 -c 'import uuid;print(uuid.uuid4())') ;; esac
+  # In a subshell: the harness runs in its directory, the launcher stays where it was.
+  # Stdin is /dev/null: the caller's loop feeds stdin, and a harness that read it would
+  # eat the loop's input.
+  (cd "$dir" && case $HARNESS in
     claude)
-      if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
-           claude -p --session-id "$sid" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?
-      else claude -p --resume     "$sid" $BOT_CLAUDE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      if [ ! -s "$sfile" ]; then claude -p --output-format json --session-id "$sid" $BOT_CLAUDE_FLAGS "$prompt"
+      else                       claude -p --output-format json --resume     "$sid" $BOT_CLAUDE_FLAGS "$prompt"; fi \
+        >"$STATE/run.out" 2>"$STATE/run.err" ;;
     codex)
-      if [ -z "$sid" ]; then
-        # codex picks its own id; read it off the first event so later runs can resume it.
+      if [ ! -s "$sfile" ]; then
         # Keep reading to EOF: closing the pipe early kills the harness with SIGPIPE.
-        codex exec --json -C "$dir" $BOT_CODEX_FLAGS "$prompt" 2>>"$LOG" \
+        codex exec --json -C "$dir" $BOT_CODEX_FLAGS "$prompt" 2>"$STATE/run.err" \
           | tee -a "$LOG" | python3 -c '
 import sys,json
 seen=False
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("type")=="thread.started" and not seen: print(d["thread_id"]); seen=True' > "$sfile.new" || rc=$?
-        [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
+    if d.get("type")=="thread.started" and not seen: print(d["thread_id"]); seen=True' > "$sfile.new"
       # the flags go before "resume": the subcommand takes neither -C nor -s
-      else codex exec --json -C "$dir" $BOT_CODEX_FLAGS resume "$sid" "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+      else codex exec --json -C "$dir" $BOT_CODEX_FLAGS resume "$sid" "$prompt" >>"$LOG" 2>"$STATE/run.err"; fi ;;
     opencode)
-      if [ -z "$sid" ]; then
-        # opencode picks its own id too; every json event carries it
-        opencode run --format json --title "bot $HANDLE" $BOT_OPENCODE_FLAGS "$prompt" 2>>"$LOG" \
+      if [ ! -s "$sfile" ]; then
+        opencode run --format json --title "bot $HANDLE" $BOT_OPENCODE_FLAGS "$prompt" 2>"$STATE/run.err" \
           | tee -a "$LOG" | python3 -c '
 import sys,json
 seen=False
 for line in sys.stdin:
     try: d=json.loads(line)
     except ValueError: continue
-    if d.get("sessionID") and not seen: print(d["sessionID"]); seen=True' > "$sfile.new" || rc=$?
-        [ -s "$sfile.new" ] && sid=$(cat "$sfile.new"); rm -f "$sfile.new"
-      else opencode run --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
+    if d.get("sessionID") and not seen: print(d["sessionID"]); seen=True' > "$sfile.new"
+      else opencode run --format json --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>"$STATE/run.err"; fi ;;
     copilot)
-      # copilot takes the uuid we picked, like claude; -s keeps its stats out of the log
-      if [ -z "$sid" ]; then sid=$(python3 -c 'import uuid;print(uuid.uuid4())')
-           copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?
-      else copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt" >>"$LOG" 2>&1 || rc=$?; fi ;;
-  esac </dev/null   # the caller's loop feeds stdin; a harness that reads it would eat the loop's input
-  limit=$(said_limited "$off")
-  if [ -n "$limit" ]; then
-    reason=usage
-    if printf '%s' "$limit" | grep -qiE 'at capacity|overloaded'; then reason=capacity; fi
-    echo "out of $HARNESS $reason since $(date -u +%FT%TZ): $limit; messages are kept, retried every 10 min" >"$STATE/health"
-    rc=1
-  elif [ "$rc" -eq 0 ]; then
-    rm -f "$STATE/health"
-  fi
-  if [ "$rc" -eq 0 ] && [ -n "$sid" ] && [ ! -s "$sfile" ]; then echo "$sid" > "$sfile"; fi
+      # -s keeps copilot's stats out of the log
+      if [ ! -s "$sfile" ]; then copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt"
+      else                       copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt"; fi >>"$LOG" 2>"$STATE/run.err" ;;
+  esac </dev/null) || rc=$?
+  if [ -s "$sfile.new" ]; then sid=$(cat "$sfile.new"); fi; rm -f "$sfile.new"
+  classify_run "$rc" "$off" "$sid" "$started"
+  now=$(date -u +%FT%TZ)
+  case $OUTCOME in
+    ok)             rm -f "$STATE/health"; if [ -n "$RUN_SID" ] && [ ! -s "$sfile" ]; then echo "$RUN_SID" > "$sfile"; fi ;;
+    limited)        echo "out of $HARNESS usage since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;
+    capacity)       echo "out of $HARNESS capacity since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;
+    logged_out)     echo "logged out of $HARNESS since $now: $(login_hint); messages are kept until then" >"$STATE/health" ;;
+    bad_invocation) echo "cannot run $HARNESS since $now: $DETAIL; messages are kept, retried every $((BOT_BAD_WAIT / 60)) min" >"$STATE/health" ;;
+    exhausted)      echo "last run exhausted its turn or budget limit at $now: $DETAIL" >"$STATE/health" ;;
+    unknown)        echo "last run failed (exit $rc) at $now: $DETAIL" >"$STATE/health" ;;
+    retry|session_lost) ;;   # the caller tries again; the health line stays what it was
+  esac
+  [ "$OUTCOME" = ok ] || [ "$rc" -ne 0 ] || rc=1
   rm -f "$STATE/busy"
   RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
+}
+# classify_run <exit> <log offset> <session id> <started>: what the run that just ended
+# was, as one word in OUTCOME and a line of DETAIL that never comes from the model's
+# reply. It reads, in this order of trust, the exit status, the structured result (claude's
+# result object; codex's and opencode's error events) and the error stream. Also sets
+# RUN_SID (the session id the harness reported, else the one given), appends the reply and
+# the error stream to the log, and records the run in $STATE/last.json and runs.jsonl.
+#   ok              the run completed
+#   retry           a transient failure: network, 5xx, a dropped stream
+#   limited         a usage or rate limit
+#   capacity        the model is overloaded or at capacity
+#   logged_out      the harness has no valid login
+#   session_lost    the session to resume no longer exists
+#   bad_invocation  the harness rejected the command line, is missing, or died before a turn
+#   exhausted       the run hit its turn or budget limit before finishing
+#   unknown         a failure none of the above describes
+classify_run() {
+  local line
+  line=$(LIMIT_RE="${LIMIT_RE:-}" RUN_MESSAGES="${RUN_MESSAGES:-}" LAUNCHER_VERSION="${LAUNCHER_VERSION:-}" \
+         python3 - "$HARNESS" "$1" "$2" "$3" "$4" "$STATE" "$LOG" <<'PY'
+import json, os, re, sys, time
+harness, rc, off, sid, started, state, logp = sys.argv[1:8]; rc = int(rc); off = int(off)
+read = lambda p: open(p, encoding="utf-8", errors="replace").read() if os.path.exists(p) else ""
+out, err = read(os.path.join(state, "run.out")), read(os.path.join(state, "run.err"))
+with open(logp, "rb") as f:
+    f.seek(off); tail = f.read().decode("utf-8", "replace")
+
+def error_text(v):
+    if isinstance(v, str): return v
+    if isinstance(v, dict): return " ".join(error_text(v[k]) for k in ("message", "code", "error", "name") if k in v)
+    return ""
+
+result = None; reply = ""
+if harness == "claude":
+    for l in reversed(out.splitlines()):
+        try: d = json.loads(l)
+        except ValueError: continue
+        if isinstance(d, dict) and d.get("type") == "result": result = d; break
+    reply = str(result.get("result") or "") if result else out   # no result object: an older claude, or it died first
+with open(logp, "a", encoding="utf-8") as lg:     # the log stays a transcript: the reply, then the errors
+    if reply.strip(): lg.write(reply.rstrip("\n") + "\n")
+    if err.strip(): lg.write(err.rstrip("\n") + "\n")
+
+# What may describe an error: the error stream, the harnesses' error events, and the
+# reply only when the harness itself says the run failed. The model's own words are not
+# evidence (luca's notice 7383: a reply quoting a limit is not a limit), with one
+# exception: a short reply from a run that printed no result object, the way an older
+# claude printed a limit refusal with exit 0 (#81).
+errors = [err]; short = ""
+if harness in ("codex", "opencode"):
+    for l in tail.splitlines():
+        try: d = json.loads(l)
+        except ValueError:
+            if re.match(r"^(error\b|fatal:)", l.strip(), re.I): errors.append(l)
+            continue
+        if isinstance(d, dict) and (d.get("type") in ("error", "turn.failed") or (harness == "opencode" and d.get("error"))):
+            errors.append(error_text(d))
+elif harness == "copilot":
+    # text only: its reply and its errors share the stream. A refusal is the whole output,
+    # a line or two; in a longer output only lines that read as errors count
+    ls = tail.splitlines()
+    errors.append(tail if len([l for l in ls if l.strip()]) <= 3 else
+                  "\n".join(l for l in ls if re.match(r"^\s*(API Error|Error:|error:|[Ee]rror [0-9]|fatal:)", l)))
+elif harness == "claude":
+    if result is None:
+        if rc != 0: errors.append(out)
+        elif len(out.strip().splitlines()) <= 3: short = out
+    elif result.get("is_error") or rc != 0: errors.append(reply)
+    # a result object that says the run completed is trusted: the reply is the model's
+text = "\n".join(e for e in errors if e)
+status = result.get("api_error_status") if result else None
+subtype = (result or {}).get("subtype") or ""
+LIMIT = os.environ.get("LIMIT_RE") or r"usage limit|rate.?limit|limit reached|too many requests|exceeded.*(quota|limit)"; CAP = r"at capacity|overloaded"
+def m(rx, s=None): return re.search(rx, text if s is None else s, re.I)
+def last(rx=None, s=None):
+    ls = [l.strip() for l in (text if s is None else s).splitlines() if l.strip() and (rx is None or re.search(rx, l, re.I))]
+    return re.sub(r"\x1b\[[0-9;]*m", "", ls[-1])[:200] if ls else ""
+if m(r"No conversation found with session|no rollout found for thread|Session not found|session \S+ (was )?not found"):
+    o, d = "session_lost", last()
+elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
+    o, d = "bad_invocation", last()
+elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth token (has )?expired|no login"):
+    o, d = "logged_out", last() or "HTTP %s" % status
+elif subtype in ("error_max_turns", "error_max_budget_usd", "error_max_budget") or m(r"max(imum)? turns|turn limit|budget (was )?(exceeded|reached)|exceeded .*budget"):
+    o, d = "exhausted", (subtype.replace("error_", "").replace("_", " ") if subtype.startswith("error_max") else last())
+elif status == 429 or (m(LIMIT) and not m(CAP)) or (short and re.search(LIMIT, short, re.I) and not re.search(CAP, short, re.I)):
+    o, d = "limited", last(LIMIT) or last(LIMIT, short) or "HTTP 429"
+elif status == 529 or m(CAP) or (short and re.search(CAP, short, re.I)):
+    o, d = "capacity", last(CAP) or last(CAP, short) or "HTTP 529"
+elif (isinstance(status, int) and 500 <= status < 600) or m(r"ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|getaddrinfo|fetch failed|socket hang up|connection (refused|reset|timed out)|stream disconnected|service unavailable|internal server error|bad gateway|gateway time-?out"):
+    o, d = "retry", last() or "HTTP %s" % status
+elif rc != 0 or (result and result.get("is_error")):
+    o, d = "unknown", last() or "exit %d" % rc
+else:
+    o, d = "ok", ""
+d = d.replace("\t", " ")
+rsid = str((result or {}).get("session_id") or sid)
+rec = {"started": started, "ended": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rc": rc, "outcome": o,
+       "detail": d, "session": rsid, "messages": [int(x) for x in os.environ.get("RUN_MESSAGES", "").split()],
+       "turns": (result or {}).get("num_turns"), "cost_usd": (result or {}).get("total_cost_usd"),
+       "denials": len((result or {}).get("permission_denials") or []) if result else None,
+       "launcher": os.environ.get("LAUNCHER_VERSION", "")}
+json.dump(rec, open(os.path.join(state, "last.json"), "w"))
+with open(os.path.join(state, "runs.jsonl"), "a") as f: f.write(json.dumps(rec) + "\n")
+print("\t".join([o, rsid or "-", d]))   # no empty field but the last: tabs collapse on read
+PY
+  ) || { OUTCOME=unknown; DETAIL="the launcher could not classify the run"; RUN_SID=$3; return 0; }
+  IFS=$'\t' read -r OUTCOME RUN_SID DETAIL <<<"$line"; [ "$RUN_SID" != - ] || RUN_SID=""
+  [ -n "$OUTCOME" ] || { OUTCOME=unknown; DETAIL="the launcher could not classify the run"; RUN_SID=$3; }
 }
 
 # ---- where a message's work happens: claiming ----------------------------------------
@@ -1001,40 +1153,23 @@ if command:
 sys.exit(0 if logged_out else 1)
 PYAUTH
 }
-# this run's output says it hit a usage or rate limit (from alma's #81): retrying at once
-# only fails again; this is what kept the 5438 loop going after the first failures
+# this run's errors say it hit a usage or rate limit (from alma's #81): retrying at once
+# only fails again; this is what kept the 5438 loop going after the first failures.
+# classify_run applies it to the harness's errors, never to the model's reply.
 LIMIT_RE='session limit|usage limit|rate.?limit|limit reached|too many requests|overloaded|at capacity|hit your .*limit|exceeded.*(quota|limit)|insufficient_quota|usage_limit_reached|out of (extra )?usage'
-harness_errors() {
-  if [ "$HARNESS" != codex ]; then
-    tail -c "+$(( $1 + 1 ))" "$LOG" 2>/dev/null
-    return
-  fi
-  python3 - "$LOG" "$1" <<'PY'
-import json, re, sys
-
-def error_text(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        return " ".join(error_text(value[key]) for key in ("message", "code", "error") if key in value)
-    return ""
-
-with open(sys.argv[1], "rb") as source:
-    source.seek(int(sys.argv[2]))
-    for line in source.read().decode("utf-8", errors="replace").splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            if re.match(r"^(?:\d{4}-\d\d-\d\dT\S+\s+)?(?:error\b|fatal:)", line, re.I):
-                print(line)
-            continue
-        if isinstance(event, dict) and event.get("type") in ("error", "turn.failed"):
-            print(error_text(event))
-PY
+# hold_batch: keep the batch as fetched (RAW) for a later round, one line per message
+hold_batch() {
+  printf '%s\n' "$RAW" >>"$STATE/held"
+  awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"
 }
-said_limited() { harness_errors "$1" | grep -iE "$LIMIT_RE" | tail -n1 | cut -c1-200 || true; }
-said_logged_out() {  # this run's output (log from byte $1 on) says the harness has no login
-  harness_errors "$1" | grep -qiE 'not logged in|please run /login|run .?(claude|codex) login'
+# release_claims: the threads this batch claimed go back to the board, so another bot or a
+# human can take them; threads this bot already owned (replies, mentions) stay its own
+release_claims() {
+  local tid
+  for tid in $(awk -F'\t' '$5 == "new thread" {print $3}' <<<"$NEW" | sort -u); do
+    if api -X DELETE "$BOARD/api/threads/$tid/worker" >/dev/null 2>&1; then log "released thread $tid"
+    else log "could not release thread $tid"; fi
+  done
 }
 # notice <board> <reply_to> <body>: post a launcher notice, at most one an hour. It names
 # nobody: an @mention wakes the bot it names, which is how two failing bots kept each
@@ -1052,35 +1187,51 @@ login_hint() {
 # workspace by its token. The first prompt says so and nothing else; no introduction
 # is posted: a standby bot is found through its registration and its workspace.
 FIRST_PROMPT="Read $BOARD/agents.md and return. Your environment holds BOARD, BOT_HANDLE and BOARD_TOKEN."
-if [ ! -s "$STATE/session" ] && ! { [ -s "$STATE/health" ] && grep -qE '^(out of|logged out)' "$STATE/health"; }; then
+if [ ! -s "$STATE/session" ] && ! { [ -s "$STATE/health" ] && grep -qE '^(out of|logged out|cannot run)' "$STATE/health"; }; then
   log "first turn: reading the rules"
   if run_harness "$DIR" "$STATE/session" "$FIRST_PROMPT"
-  then log "rules read"; else log "first turn exited $?"; fi
+  then log "rules read"; else log "first turn: $OUTCOME${DETAIL:+: $DETAIL}"; fi
 fi
 
 # ---- the loop ----------------------------------------------------------------------
-
+# While the harness cannot work (OUTAGE: logged out, out of usage, cannot be run) nothing
+# is fetched: the board keeps the messages and the cursor stays. An outage the harness's
+# auth status confirms ends when that says so; one read off a run's own output ends when
+# OUTAGE_UNTIL has passed and a run says otherwise. A batch held for a transient or an
+# unexplained failure is offered again when RETRY_UNTIL has passed.
 OUTAGE_BY_OUTPUT=""   # the outage was read off a run's output, not from the harness's auth status
-OUTAGE=""        # set while the harness is logged out: the time it was found so
+OUTAGE=""        # set while the harness cannot work: the time it was found so
+OUTAGE_UNTIL=0   # epoch seconds: when an outage read off a run's output is tried again
+RETRY_UNTIL=0    # epoch seconds: when a held batch is offered to the harness again
+mtime() { python3 -c 'import os,sys;print(int(os.stat(sys.argv[1]).st_mtime))' "$1" 2>/dev/null || date +%s; }
 BACKLOG_BEFORE=$((SEEN + 1))
 BACKLOG_CUTOFF=$(python3 -c 'import sys,time;print(time.time()-float(sys.argv[1]))' "$CATCH_UP_SECS")
 : > "$STATE/backlog.threads"
 log "startup catch-up: checking the last $((CATCH_UP_SECS / 3600)) hours without rewinding seen=$SEEN"
 if [ -s "$STATE/health" ]; then
-  if grep -qE '^(logged out|out of)' "$STATE/health"; then OUTAGE=$(date -u +%FT%TZ); OUTAGE_BY_OUTPUT=1; fi
+  # a stopped bot's outage carries over, with the wait it had left
+  if grep -qE '^(logged out|out of|cannot run)' "$STATE/health"; then
+    OUTAGE=$(date -u +%FT%TZ); OUTAGE_BY_OUTPUT=1
+    if grep -q '^cannot run' "$STATE/health"; then OUTAGE_UNTIL=$(( $(mtime "$STATE/health") + BOT_BAD_WAIT ))
+    else OUTAGE_UNTIL=$(( $(mtime "$STATE/health") + BOT_LIMIT_WAIT )); fi
+  fi
 fi
 
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   rotate_logs
   if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  NOW=$(date +%s)
   if [ -n "$OUTAGE" ]; then
     # nothing is fetched while logged out: the board keeps the messages, the cursor stays
-    if logged_out; then wait_or_stop 60; continue; fi
-    # found from a run's output, which `auth status` may not agree with: try again every 10 min
-    if [ -n "$OUTAGE_BY_OUTPUT" ] && [ -n "$(find "$STATE/health" -mmin -10 2>/dev/null)" ]; then wait_or_stop 60; continue; fi
+    if logged_out; then wait_or_stop "${BOT_AUTH_WAIT:-60}"; continue; fi   # until a person logs in
+    # found from a run's output, which `auth status` may not agree with: wait the outage out
+    if [ -n "$OUTAGE_BY_OUTPUT" ] && [ "$NOW" -lt "${OUTAGE_UNTIL:-0}" ]; then
+      wait_or_stop $(( OUTAGE_UNTIL - NOW < 60 ? OUTAGE_UNTIL - NOW : 60 )); continue
+    fi
     log "retrying $HARNESS; keeping its last failure visible until a run succeeds"; OUTAGE=""; OUTAGE_BY_OUTPUT=""
   fi
+  if [ "$NOW" -lt "${RETRY_UNTIL:-0}" ]; then wait_or_stop $(( RETRY_UNTIL - NOW < 5 ? RETRY_UNTIL - NOW : 5 )); continue; fi
   if [ "$BACKLOG_BEFORE" -gt 1 ]; then
     if NEW=$(fetch_backlog 2>>"$LOG"); then
       BACKLOG_BEFORE=$(cat "$STATE/backlog.next")
@@ -1112,7 +1263,6 @@ while :; do
     PROMPT+="${body//\\n/$'\n'}"$'\n'
   done <<<"$NEW"
   rotate_logs
-  OFF=$(wc -c <"$LOG" 2>/dev/null || echo 0)
   # Report only this batch. Expiring heartbeats avoid a permanent "looking" badge
   # after a killed launcher or lost network.
   RECEIPTS=$(cut -f1 <<<"$NEW" | python3 -c 'import sys,json;print(json.dumps({"messages":[int(x) for x in sys.stdin.read().split()],"active":True}))')
@@ -1120,43 +1270,81 @@ while :; do
   receipt "$RECEIPTS"
   (while sleep 30; do kill -0 $$ 2>/dev/null || exit; receipt "$RECEIPTS"; done) &
   RECEIPT_PID=$!
-  RUN_RC=0
-  run_harness "$DIR" "$STATE/session" "$PROMPT" || RUN_RC=$?
+  RUN_MESSAGES=$(cut -f1 <<<"$NEW" | tr '\n' ' ')
+  ATTEMPT=1
+  while :; do
+    # a session that does not exist yet (the first turn failed, or the session was lost)
+    # reads the rules before the batch
+    if [ -s "$STATE/session" ]; then P=$PROMPT; else P="$FIRST_PROMPT"$'\n\n'"$PROMPT"; fi
+    RUN_RC=0; run_harness "$DIR" "$STATE/session" "$P" || RUN_RC=$?
+    if [ "$OUTCOME" = session_lost ] && [ "$ATTEMPT" -eq 1 ]; then
+      # the harness no longer has the session: start a new one and run the same batch once more
+      log "$HARNESS has lost the session $(cat "$STATE/session" 2>/dev/null || echo '?'): starting a new one and running the batch again"
+      rm -f "$STATE/session"; ATTEMPT=2; continue
+    fi
+    break
+  done
   kill "$RECEIPT_PID" 2>/dev/null || true
   wait "$RECEIPT_PID" 2>/dev/null || true
   receipt "${RECEIPTS/true/false}"
-  if [ "$RUN_RC" -eq 0 ]; then log "harness returned ok"; rm -f "$STATE/health"
-  else
-    rc=$RUN_RC; log "harness exited $rc"
-    if [ -e "$STATE/stop" ]; then log "stopping: bot stop or kill (seen=$SEEN)"; exit 0; fi
-    # the notice answers the last message addressed to this bot; a run on new threads
-    # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
-    last=$(awk -F'\t' '$5 == "reply" || $5 == "mention"' <<<"$NEW" | tail -n1)
-    LIMIT=$(said_limited "$OFF")
-    # A retry that fails differently has not established that usage is available.
-    if [ -z "$LIMIT" ] && [ -s "$STATE/health" ] && grep -q '^out of ' "$STATE/health"; then
-      LIMIT=$(cat "$STATE/health")
-    fi
-    if [ -n "$LIMIT" ] || logged_out || { said_logged_out "$OFF" && OUTAGE_BY_OUTPUT=1; }; then
-      [ -z "$LIMIT" ] || OUTAGE_BY_OUTPUT=1
-      # keep this batch for when the login is back
-      printf '%s\n' "$RAW" >>"$STATE/held"
-      awk -F'\t' 'NF && !seen[$1]++' "$STATE/held" >"$STATE/held.tmp" && mv "$STATE/held.tmp" "$STATE/held"
-      if [ -n "$LIMIT" ]; then
-        log "$HARNESS hit a limit; holding $(wc -l <<<"$NEW") message(s), next try in 10 min"
+  if [ "$OUTCOME" = ok ]; then rm -f "$STATE/retries" "$STATE/unknown"; log "harness returned ok"; echo "$RUNS" > "$STATE/handled"; continue; fi
+  rc=$RUN_RC; log "harness exited $rc: $OUTCOME${DETAIL:+: $DETAIL}"
+  if [ -e "$STATE/stop" ]; then log "stopping: bot stop or kill (seen=$SEEN)"; exit 0; fi
+  # the notice answers the last message addressed to this bot; a run on new threads
+  # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
+  last=$(awk -F'\t' '$5 == "reply" || $5 == "mention"' <<<"$NEW" | tail -n1)
+  tell() { [ -z "$last" ] || notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" "$1"; }
+  # give_up <why>: this batch is over. Its threads go back to the board, the health line
+  # says what happened, and the last person waiting on us hears why.
+  give_up() {
+    release_claims
+    echo "last run failed (exit $rc) at $(date -u +%FT%TZ): $1" >"$STATE/health"
+    tell "My harness ($HARNESS) on $(hostname) failed on this and I have released the thread for someone else: $1. Log: $LOG"
+  }
+  N=$(wc -l <<<"$NEW")
+  case $OUTCOME in
+    limited|capacity|logged_out|bad_invocation)
+      # the harness cannot work for now: keep the batch, fetch nothing, wait it out
+      hold_batch
+      case $OUTCOME in
+        logged_out)
+          if logged_out; then OUTAGE_BY_OUTPUT=""; else OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + BOT_LIMIT_WAIT )); fi
+          log "$HARNESS is logged out; holding $N message(s) and waiting for a login"
+          [ -n "$OUTAGE" ] || tell "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then." ;;
+        bad_invocation)
+          OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + BOT_BAD_WAIT ))
+          log "$HARNESS cannot be run ($DETAIL); holding $N message(s), next try in $((BOT_BAD_WAIT / 60)) min"
+          [ -n "$OUTAGE" ] || tell "My harness ($HARNESS) on $(hostname) cannot be run: $DETAIL. I am keeping the message(s) and will try again every $((BOT_BAD_WAIT / 60)) minutes." ;;
+        *)
+          OUTAGE_BY_OUTPUT=1; OUTAGE_UNTIL=$(( $(date +%s) + BOT_LIMIT_WAIT ))
+          log "$HARNESS hit a limit ($DETAIL); holding $N message(s), next try in $((BOT_LIMIT_WAIT / 60)) min"
+          [ -n "$OUTAGE" ] || tell "My harness ($HARNESS) on $(hostname) is temporarily unavailable: $DETAIL. I am keeping the message(s) and will try again every $((BOT_LIMIT_WAIT / 60)) minutes." ;;
+      esac
+      OUTAGE=$(date -u +%FT%TZ) ;;
+    retry)
+      # transient: the same batch again after a wait that grows; after the last wait, over
+      WAITS=($BOT_RETRY_WAITS); TRIES=$(( $(cat "$STATE/retries" 2>/dev/null || echo 0) + 1 ))
+      if [ "$TRIES" -le "${#WAITS[@]}" ]; then
+        hold_batch; echo "$TRIES" > "$STATE/retries"; RETRY_UNTIL=$(( $(date +%s) + WAITS[TRIES-1] ))
+        log "$HARNESS failed in a way that may pass ($DETAIL); holding $N message(s), try $TRIES of ${#WAITS[@]} in ${WAITS[TRIES-1]}s"
       else
-        echo "logged out of $HARNESS since $(date -u +%FT%TZ): $(login_hint); messages are kept until then" >"$STATE/health"
-        log "$HARNESS is logged out; holding $(wc -l <<<"$NEW") message(s) and waiting for a login"
-      fi
-      if [ -z "$OUTAGE" ] && [ -n "$last" ]; then
-        notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-            "$(if [ -n "$LIMIT" ]; then echo "My harness ($HARNESS) on $(hostname) is temporarily unavailable: $LIMIT. I am keeping the message(s) and will try again every 10 minutes."; else echo "My harness ($HARNESS) is logged out on $(hostname), so I cannot work until someone does: $(login_hint). I am keeping the message(s) and will pick them up then."; fi)"
-      fi
-      OUTAGE=$(date -u +%FT%TZ)
-      continue
-    fi
-    echo "last run failed (exit $rc) at $(date -u +%FT%TZ): $(grep -v '^[0-9]\{4\}-..-..T' "$LOG" | tail -n1 | cut -c1-200)" >"$STATE/health"
-    [ -z "$last" ] || notice "$(cut -f2 <<<"$last")" "$(cut -f1 <<<"$last")" \
-        "My harness ($HARNESS) exited with code $rc before replying to this. Log on $(hostname): $LOG"
-  fi
+        rm -f "$STATE/retries"; log "$HARNESS failed $TRIES times in a row ($DETAIL); giving the batch up"
+        give_up "$DETAIL, after $TRIES tries"
+      fi ;;
+    exhausted)
+      # the harness stopped at its turn or budget limit: the run is over and the work is
+      # not done, so say so and let the thread go; the health line is run_harness's
+      release_claims
+      tell "My harness ($HARNESS) stopped at its turn or budget limit before finishing this ($DETAIL). I have released the thread; the work is unfinished. Log on $(hostname): $LOG" ;;
+    *)
+      # unknown, or a session lost twice over: one more try after a wait, then over
+      if [ ! -e "$STATE/unknown" ] || [ "$(cat "$STATE/unknown")" != "$RUN_MESSAGES" ]; then
+        hold_batch; echo "$RUN_MESSAGES" > "$STATE/unknown"; RETRY_UNTIL=$(( $(date +%s) + BOT_UNKNOWN_WAIT ))
+        log "$HARNESS failed ($DETAIL); holding $N message(s) for one more try in ${BOT_UNKNOWN_WAIT}s"
+      else
+        rm -f "$STATE/unknown"; log "$HARNESS failed twice on the same batch ($DETAIL); giving it up"
+        give_up "$DETAIL, twice"
+      fi ;;
+  esac
+  echo "$RUNS" > "$STATE/handled"   # the batch is dealt with: what bot ps and the tests wait for
 done

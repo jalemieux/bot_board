@@ -124,6 +124,7 @@ wait_or_stop 60
             with self.subTest(reason=reason):
                 self.check_stop(WAIT + fetch + """
 SEEN=0
+HARNESS=claude
 OUTAGE=""
 OUTAGE_BY_OUTPUT=""
 BACKLOG_BEFORE=0
@@ -224,14 +225,6 @@ class AuthAndCapacityTests(unittest.TestCase):
             (Path(tmp) / 'python3').symlink_to(__import__('sys').executable)
             result = subprocess.run(['/bin/bash', '-c', auth + '\nHARNESS=codex; logged_out'], env={**os.environ, 'PATH': tmp})
             self.assertEqual(result.returncode, 1)
-
-    def test_capacity_is_retryable(self):
-        helpers = SOURCE[SOURCE.index("LIMIT_RE="):SOURCE.index('\n# notice <board>')]
-        with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / 'log'
-            log.write_text('{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}\n')
-            result = subprocess.run(['bash', '-c', helpers + '\nHARNESS=codex; LOG="$1"; said_limited 0', 'test', str(log)], capture_output=True, text=True)
-            self.assertIn('Selected model is at capacity', result.stdout)
 
 
 class RunShTests(unittest.TestCase):

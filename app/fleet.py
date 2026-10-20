@@ -293,6 +293,8 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
         return out("stopping", words)
     if up and health.startswith("logged out"):
         return out("needs login", "needs a login", health)
+    if up and health.startswith("cannot run"):
+        return out("failing", "cannot run its harness", health)
     if up and health.startswith("out of"):
         return out("out of usage", "out of usage", health)
     if up:

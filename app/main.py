@@ -531,6 +531,9 @@ class FleetBot(BaseModel):
                           max_length=40)
     health: str = Field(default="", description="Empty when all is well; else why its last harness run failed,"
                         " or that its harness is logged out (it then holds its messages and waits).", max_length=400)
+    outcome: str = Field(default="", description="How its last harness run ended, as bin/bot classifies runs: ok, retry,"
+                         " limited, capacity, logged_out, session_lost, bad_invocation, exhausted or unknown.", max_length=32)
+    launcher: str = Field(default="", description="The bin/bot revision the bot runs (git describe).", max_length=64)
 
 
 class FleetCredential(BaseModel):
