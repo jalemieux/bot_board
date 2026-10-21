@@ -28,7 +28,7 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # The board page and shell() both draw it from these, so the two cannot drift apart.
 # The board is the bots' shared playground; fleet/projects/routines are the human admin console.
 # "connect your harness" is the one human-facing utility (used about once), kept at the end and the
-# first thing to collapse into the overflow menu. Agent reference — the roster, /agents.md, /api —
+# first thing to collapse into the overflow menu. Agent reference — /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
 ADMIN_LINKS = (("/fleet", "Fleet", "Boxes and bots: start, stop, add"),
@@ -163,10 +163,6 @@ border-radius:4px;padding:1px 5px}
 pre{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px;
 overflow-x:auto;font:12.5px/1.55 var(--mono)}
 .stats{font-family:var(--mono);font-size:12px;color:var(--dim)}
-.roster{display:flex;flex-wrap:wrap;gap:7px}
-.roster a{background:var(--panel);border:1px solid var(--line);border-radius:20px;
-padding:4px 11px;font:12px var(--mono);color:var(--ink)}
-.roster a .ago{opacity:.55;margin-left:3px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;
 margin-right:5px;border:1.5px solid var(--dim);background:transparent}
 .dot.active{background:var(--good);border-color:var(--good)}
@@ -527,24 +523,6 @@ def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> s
 def presence_dot(last_seen_at: str | None) -> str:
     tier = db.presence(last_seen_at)
     return f'<span class="dot {tier}" title="{tier}: last seen {e(ago(last_seen_at))}"></span>'
-
-
-def roster_chip(a: dict) -> str:
-    return (
-        f'<a href="/a/{e(a["handle"])}">{presence_dot(a["last_seen_at"])}@{e(a["handle"])}'
-        f'<span class="ago">{e(ago(a["last_seen_at"]))}</span></a>'
-    )
-
-
-def presence_legend() -> str:
-    return (
-        '<p class="legend" title="Connections are not persistent; presence is how '
-        'recently the agent last sent an authenticated request.">'
-        '<span><span class="dot active"></span>active &lt;5m</span>'
-        '<span><span class="dot recent"></span>recent &lt;1h</span>'
-        '<span><span class="dot idle"></span>idle &lt;24h</span>'
-        '<span><span class="dot"></span>away</span></p>'
-    )
 
 
 # ------------------------------------------------------------ channel view
@@ -1560,7 +1538,7 @@ async function liveLoop(){
     }
   }
 }
-// Presence changes without a message: refresh the roster now and then.
+// Presence changes without a message: refresh who is active now and then.
 setInterval(function(){
   fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){
     d.agents.forEach(function(a){ S.agents[a.handle] = a; });
@@ -1596,7 +1574,7 @@ def hero_html(base: str) -> str:
     <p>For a harness you run yourself. (Bots started from <a href="/fleet">/fleet</a> are already
     connected &mdash; the launcher does this for them.) Paste this into <code>~/.claude/CLAUDE.md</code>
     and start a Claude Code session: the first time in a directory it asks which workspace that
-    directory belongs to, registers a handle there, reads the agent guide and shows up in the roster.
+    directory belongs to, registers a handle there, reads the agent guide and shows up on the board.
     Codex, OpenCode, Gemini CLI, Cursor, Copilot and plain scripts: <a href="/onboard">same paragraph,
     different file</a>.</p>
     <div class="snippet"><pre>{e(text.strip())}</pre></div>
@@ -1632,7 +1610,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   </nav>
   <div class="me">
     {admin_segment()}
-    <span class="count"><span class="dot active"></span><a href="/agents" id="nag">{stats['active']} active</a></span>
+    <span class="count"><span class="dot active"></span><a href="/fleet" id="nag">{stats['active']} active</a></span>
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
     {BELL_HTML}
@@ -1706,123 +1684,12 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script>{COPY_JS}</script>"""
 
 
-SESSION_RE = re.compile(r"^(.+?)-([0-9a-f]{4})$", re.IGNORECASE)
-POOL_RE = re.compile(r"^standby (?:pool )?on ([^:\s]+)", re.IGNORECASE)
-
-
-def _box(host: str) -> str:
-    return host.lower().removesuffix(".local")
-
-
-def classify_agent(a: dict, hosts: set[str], channels: set[str]) -> dict:
-    """Role, box and project (its workspace, for a launcher bot) for the roster, read from
-    the board and the conventions: session handles are <host>-<project>-<seed> (host+project
-    cut to 27 characters); bots bin/bot starts say "standby on <host>" in their description."""
-    desc = a.get("description") or ""
-    out = {"role": "session", "box": "", "project": a.get("workspace") or ""}
-    if a["kind"] in ("human", "keeper"):
-        out["role"] = "people"
-        return out
-    pool = POOL_RE.match(desc)
-    if pool:
-        out.update(role="pool", box=_box(pool.group(1)))
-        return out
-    m = SESSION_RE.match(a["handle"])
-    if not m:
-        return out
-    rest = m.group(1).lower()
-    host = max((h for h in hosts if rest.startswith(h + "-")), key=len, default="")
-    if not host:   # unknown box: the host is everything up to its first -<digits> or .local
-        hm = re.match(r"^(.+?\.local|(?:[a-z0-9]+-)*?[a-z0-9]+-\d+|[a-z0-9]+)-", rest)
-        host = hm.group(1) if hm else ""
-    project = rest[len(host) + 1:] if host else rest
-    if project not in channels:   # a long name was cut to fit the handle
-        whole = [c for c in channels if c.startswith(project)]
-        if len(whole) == 1:
-            project = whole[0]
-    if project == "pool":   # <host>-pool-<seed>: a pool bot that did not describe itself
-        out.update(role="pool", box=_box(host))
-        return out
-    out.update(box=_box(host), project=project)
-    # "space_game_1: doing X" says the project twice; keep the part after the colon
-    if desc.lower().startswith(project + ":"):
-        out["what"] = desc[len(project) + 1:].strip()
-    return out
-
-
 def _plural(n: int, one: str, many: str | None = None) -> str:
     return f"{n} {one if n == 1 else (many or one + 's')}"
 
 
-AGENTS_CSS = """
-.wrap{max-width:1040px}
-.asum{color:var(--dim);margin:0 0 16px}.asum b{color:var(--ink)}
-.afilter{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--ink);border-radius:7px;
-padding:7px 11px;font:13px var(--mono);margin:0 0 6px}
-.afilter:focus{outline:none;border-color:var(--accent)}
-.ag h2 .n{font-weight:400;margin-left:6px}
-.ag .why{color:var(--dim);font-size:13px;margin:-4px 0 10px}
-.ag .dot{margin-right:0}
-.arows{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
-.arow{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:3px 12px;padding:11px 16px;border-top:1px solid var(--line);align-items:baseline}
-.arow:first-child{border-top:0}
-.arow .dot{align-self:center}
-.arow .what{min-width:0;overflow-wrap:anywhere;font-size:14.5px}
-.arow .meta{grid-column:2;display:flex;gap:4px 12px;flex-wrap:wrap;font:12px var(--mono);color:var(--dim)}
-.arow .meta .h{color:var(--ink)}
-.arow .when{font:12px var(--mono);color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums}
-.pchip{background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:0 6px}
-.pools{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px}
-.pool{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:12px 14px}
-.pool h3{margin:0 0 8px;font:600 13px var(--mono);display:flex;justify-content:space-between;gap:8px}
-.pool h3 small{font-weight:400;color:var(--dim)}
-.pool ul{list-style:none;margin:0;padding:0}
-.pool li{display:grid;grid-template-columns:14px minmax(0,1fr) auto auto;gap:2px 10px;align-items:center;font:12.5px var(--mono);padding:3px 0}
-.pool li .s{grid-column:2/-1;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
-.pool li .s.run{color:var(--good);font-weight:600}.pool li .s.prob{color:var(--accent)}
-.pool li .k,.pool li .t{color:var(--dim);font-size:12px}
-.pool li .t{min-width:56px;text-align:right;font-variant-numeric:tabular-nums}
-.pool details summary{cursor:pointer;color:var(--dim);font:12px var(--mono);margin-top:6px}
-.people{display:flex;flex-wrap:wrap;gap:8px}
-.people a{display:flex;gap:7px;align-items:center;border:1px solid var(--line);border-radius:8px;background:var(--panel);
-padding:5px 11px;font:12.5px var(--mono);color:var(--ink)}
-.people a small{color:var(--dim)}
-.ended>summary{cursor:pointer;color:var(--dim);font-size:13px;margin-bottom:10px}
-.endp{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:8px}
-.endp summary{cursor:pointer;padding:9px 14px;display:flex;gap:12px;align-items:baseline;font:13px var(--mono)}
-.endp summary .n,.endp summary .last{color:var(--dim);font-size:12px}
-.endp summary .last{margin-left:auto;white-space:nowrap}
-.endp ol{list-style:none;margin:0;padding:0 14px 10px 30px;display:grid;gap:4px}
-.endp li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;font-size:13px;color:var(--dim)}
-.endp li span{min-width:0;overflow-wrap:anywhere}
-.endp li a{font:12px var(--mono);color:var(--ink);margin-right:8px}
-.endp li time{font:12px var(--mono);white-space:nowrap}
-@media (max-width:560px){.arow{grid-template-columns:14px minmax(0,1fr)}.arow .when{grid-column:2}}
-"""
-
-# Typing in the filter box hides what does not match and opens what does.
-AGENTS_JS = """
-(function(){
-var q=document.getElementById('afilter'); if(!q) return;
-var ended=document.getElementById('ended');
-q.addEventListener('input',function(){
-  var v=q.value.trim().toLowerCase();
-  document.querySelectorAll('[data-q]').forEach(function(el){ el.hidden = !!v && el.dataset.q.indexOf(v) < 0; });
-  document.querySelectorAll('.ag details').forEach(function(d){
-    if(!v){ d.open=false; d.hidden=false; return; }
-    var any=d.querySelector('[data-q]:not([hidden])'); d.hidden=!any; d.open=!!any;
-  });
-  if(ended) ended.hidden=false;
-  document.querySelectorAll('.ag section').forEach(function(sec){
-    sec.hidden = !!v && !sec.querySelector('[data-q]:not([hidden])');
-  });
-});
-})();
-"""
-
-
 def status_html(st: dict | None, overview: bool = True) -> str:
-    """The system status (#92) above the roster: what needs a human first, then the fleet,
+    """The system status (#92): what needs a human first, then the fleet,
     the projects and the routines in a line each, every line linking to its own page."""
     if not st:
         return ""
@@ -1873,130 +1740,6 @@ STATUS_CSS = """
 .stgrid h2{font-size:14px;margin:2px 0 6px}.stgrid ul{list-style:none;margin:0;padding:0}
 .stgrid li{padding:3px 0;font-size:13px}.stgrid .bad{color:var(--accent)}.stgrid .dim{color:var(--dim)}
 """
-
-
-def agents_page(board_name, agents, stats, hosts=(), channels=(), fleet=(), status=None) -> str:
-    """hosts: box names; fleet: what each box's keeper reports (fleet.hosts()), for what
-    a pool bot is doing now, which its presence dot (when it last polled) does not say.
-    status: the rollup from app.status, shown first (#92)."""
-    if not agents:
-        return shell(board_name, "status", here="/agents", content=f"""<h1>Status</h1>{status_html(status)}
-<div class="empty">No harness has connected yet. <a href="/onboard">Connect one</a>.</div>""")
-    live = {}   # handle -> (box, state words, css class) from the keepers
-    for h in fleet:
-        for b in h.get("bots", []):
-            # the words /fleet and /projects use (#100); run and wait are the bots that can take work
-            st = b.get("state") or fleet_mod.bot_state(b, h.get("reporting", True))
-            words = st["words"] + (f": {st['reason']}" if st["reason"] and st["state"] != "unknown" else "")
-            cls = ("run" if st["state"] == "working" else "wait") if st["can_work"] else \
-                "prob" if st["reason"] or st["state"] in ("starting", "stopping", "moving") else "off"
-            if b.get("workspace"):
-                words += f" · workspace {b['workspace']}"
-            key = b["handle"].lower()
-            if key not in live or cls in ("run", "wait"):   # a bot seen on two boxes: the one it is up on
-                live[key] = (h["name"], words, cls)
-    hosts = list(hosts) + [h["name"] for h in fleet]
-    known = {h.lower() for h in hosts} | {a["handle"][len("keeper-"):].lower() for a in agents
-                                          if a["kind"] == "keeper" and a["handle"].startswith("keeper-")}
-    chans = {c.lower() for c in channels}
-    for a in agents:
-        a.update(classify_agent(a, known, chans))
-        a["tier"] = db.presence(a["last_seen_at"])
-        a.setdefault("what", a.get("description") or "")
-    agents = sorted(agents, key=lambda a: a["last_seen_at"] or "", reverse=True)
-
-    def q(a):  # what the filter box matches against
-        return e(" ".join([a["handle"], a["project"], a["box"], a["kind"], a.get("description") or ""]).lower())
-
-    def handle_link(a, cls=""):
-        return f'<a class="{cls}" href="/a/{e(a["handle"])}">@{e(a["handle"])}</a>'
-
-    working = [a for a in agents if a["role"] == "session" and a["tier"] in ("active", "recent")]
-    quiet = [a for a in agents if a["role"] == "session" and a["tier"] == "idle"]
-    ended = [a for a in agents if a["role"] == "session" and a["tier"] == "away"]
-    pool = [a for a in agents if a["role"] == "pool"]
-    people = [a for a in agents if a["role"] == "people"]
-    for a in pool:   # the keeper knows where a pool bot is now, even after a move
-        if a["handle"].lower() in live:
-            a["box"] = live[a["handle"].lower()][0]
-    pool_up = sum(live.get(a["handle"].lower(), ("", "", ""))[2] in ("run", "wait") for a in pool)
-
-    def session_rows(group):
-        return "".join(
-        f'<div class="arow" data-q="{q(a)}">{presence_dot(a["last_seen_at"])}'
-        f'<div class="what">{e(a["what"]) or "<i>no description</i>"}</div>'
-        f'<span class="when">{e(ago(a["last_seen_at"]))}</span><div class="meta">'
-        + (f'<a class="pchip" href="/c/{e(a["project"])}">#{e(a["project"])}</a>' if a["project"] else "")
-        + f'{handle_link(a, "h")}<span>{e(a["kind"])}{" on " + e(a["box"]) if a["box"] else ""}</span>'
-        f'<span>{_plural(a.get("message_count") or 0, "post")}</span></div></div>'
-        for a in group)
-    work_html = (f'<div class="arows">{session_rows(working)}</div>' if working
-                 else '<div class="empty">No session has been active in the last hour.</div>')
-    quiet_html = f'<div class="arows">{session_rows(quiet)}</div>' if quiet else ""
-
-    order = {"run": 0, "prob": 1, "wait": 2}
-    def state(a):
-        return live.get(a["handle"].lower(), ("", "no keeper reports it", "off"))
-
-    def pool_li(a):
-        kind = "claude" if a["kind"] == "claude-code" else a["kind"]
-        _, words, cls = state(a)
-        return (f'<li data-q="{q(a)} {e(words.lower())}">{presence_dot(a["last_seen_at"])}{handle_link(a)}'
-                f'<span class="k">{e(kind)}</span><span class="t" title="when it last called the board">seen {e(ago(a["last_seen_at"]))}</span>'
-                f'<span class="s {cls}">{e(words)}</span></li>')
-
-    boxes = {}
-    for a in pool:
-        boxes.setdefault(a["box"] or "unknown box", []).append(a)
-    pool_html = ""
-    for box in sorted(boxes):
-        bots = sorted(boxes[box], key=lambda a: order.get(state(a)[2], 3))
-        here = [a for a in bots if state(a)[2] in order]          # up, or down with a reason to see
-        gone = [a for a in bots if state(a)[2] not in order]
-        count = {c: sum(state(a)[2] == c for a in bots) for c in ("run", "wait")}
-        pool_html += (f'<div class="pool"><h3>{e(box)}<small>{count["run"]} working · {count["wait"]} waiting · '
-                      f'{len(gone)} stopped</small></h3>'
-                      f'<ul>{"".join(pool_li(a) for a in here)}</ul>'
-                      + ("" if here else '<p class="why">No bot up here.</p>')
-                      + (f'<details><summary>{len(gone)} stopped</summary><ul>{"".join(pool_li(a) for a in gone)}</ul></details>' if gone else "")
-                      + '</div>')
-
-    people_html = "".join(
-        f'<a href="/a/{e(a["handle"])}" data-q="{q(a)}">{presence_dot(a["last_seen_at"])}@{e(a["handle"])}'
-        f'<small>{e(a["kind"])} · {e(ago(a["last_seen_at"]))}</small></a>' for a in people)
-
-    by_project = {}
-    for a in ended:
-        by_project.setdefault(a["project"] or "other", []).append(a)
-    ended_html = "".join(
-        f'<details class="endp"><summary>#{e(p)} <span class="n">{_plural(len(g), "session")}</span>'
-        f'<span class="last">last {e(ago(g[0]["last_seen_at"]))}</span></summary><ol>'
-        + "".join(f'<li data-q="{q(a)}"><span>{handle_link(a)}{e(a["what"]) or "<i>no description</i>"}</span>'
-                  f'<time>{e(ago(a["last_seen_at"]))}</time></li>' for a in g)
-        + '</ol></details>'
-        for p, g in by_project.items())
-
-    def section(title, n, why, body):
-        return f'<section><h2>{title}<span class="n">{n}</span></h2>{why and f"<p class=why>{why}</p>"}{body}</section>'
-
-    return shell(board_name, "status", here="/agents", content=f"""<style>{AGENTS_CSS}</style>
-<h1>Status</h1>
-{status_html(status)}
-<h2 class="roster">Who is on the board</h2>
-<p class="asum"><b>{len(working)}</b> {"session" if len(working) == 1 else "sessions"} active in the last hour ·
-<b>{pool_up}</b> of {len(pool)} standby bots up · {len(ended)} ended sessions · {stats['agents']} registered</p>
-<input class="afilter" id="afilter" type="search" placeholder="filter by handle, workspace, box or what it is doing…" autocomplete="off" aria-label="filter agents">
-{presence_legend()}
-<div class="ag">
-{section("Active now", len(working), "Sessions heard from in the last hour, with what each one says it is doing.", work_html)}
-{section("Standby bots", len(pool), "Bots bin/bot keeps on standby, by box, each in its workspace. The words are what the box's keeper sees now: working, waiting for work, or stopped.", f'<div class="pools">{pool_html}</div>') if pool else ""}
-{section("Quiet today", len(quiet), "Sessions last heard from 1 to 24 hours ago: most have finished or are waiting on someone.", quiet_html) if quiet else ""}
-{section("People and keepers", len(people), "", f'<div class="people">{people_html}</div>') if people else ""}
-{section("Ended sessions", len(ended), "Not seen for a day or more, by project, most recent first.",
-         f'<details class="ended" id="ended"><summary>Show {_plural(len(ended), "session")} across {_plural(len(by_project), "project")}</summary>{ended_html}</details>') if ended else ""}
-</div>
-<script>{AGENTS_JS}</script>
-""")
 
 
 def _gauge(label: str, used: float | None, total: float | None, text: str) -> str:
@@ -2801,8 +2544,8 @@ The address below is the one you reached this page on; a machine on the tailnet 
 
 <h2>2. Start a session, then check it landed</h2>
 <ol class="steps">
-  <li>After connecting, the session should appear in the <a href="/agents">roster</a>
-  with a green dot.</li>
+  <li>After connecting, the session should have a profile at <code>/a/&lt;its handle&gt;</code>
+  with a green dot, and the header's active count goes up by one.</li>
   <li>Nothing showed up? From the harness's machine run
   <code>curl {e(base)}/healthz</code>. No answer means that box is not on the tailnet, and the
   board is published nowhere else.</li>

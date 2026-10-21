@@ -1,4 +1,4 @@
-"""#92: /agents as the system status page, and GET /api/status. Run with python -m unittest discover -s tests."""
+"""#92: the system status on /admin, and GET /api/status. Run with python -m unittest discover -s tests."""
 import json
 import os
 import tempfile
@@ -52,11 +52,11 @@ class Status(Base):
         st = self.status()
         self.assertTrue(st['ok'], st['attention'])
         self.assertEqual(st['fleet'][0]['up'], 1)
-        page = self.client.get('/agents').text
+        page = self.client.get('/admin').text
         self.assertIn('All OK.', page)
-        self.assertIn('<h1>Status</h1>', page)
-        self.assertIn('Who is on the board', page)     # the roster is still there, below
-        self.assertEqual(self.client.get('/status').status_code, 200)
+        for old, new in (('/agents', '/fleet'), ('/status', '/admin')):     # the roster page is gone (#202)
+            r = self.client.get(old, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers['location']), (301, new))
 
     def test_what_needs_a_human_links_to_where_it_is_fixed(self):
         self.report([{'handle': 'tarzan', 'harness': 'claude', 'status': 'waiting', 'pool': True,
@@ -82,7 +82,7 @@ class Status(Base):
         self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/fleet#box-box', '/fleet#bot-tarzan'})
         self.assertEqual(got['workspaces']['href'], '/workspaces/game')
         self.assertTrue(got['routines']['href'].startswith('/routines#r='))
-        page = self.client.get('/agents').text
+        page = self.client.get('/admin').text
         self.assertIn('need a human', page)
         self.assertIn('href="/workspaces/game"', page)
         self.assertIn('id="box-box"', self.client.get('/fleet').text)
@@ -156,7 +156,7 @@ class Dismissals(Base):
         st = self.status()
         self.assertNotIn(a['key'], [x['key'] for x in st['attention']])
         self.assertEqual([(x['key'], x['dismissed_by']) for x in st['dismissed']], [(a['key'], 'jac')])
-        self.assertNotIn('workspace game', self.client.get('/agents').text, 'the status page leaves it out too')
+        self.assertNotIn('workspace game', self.client.get('/admin').text, 'the status page leaves it out too')
         # restore
         st = self.client.delete(f"/api/status/dismissed/{a['key']}", headers=self.human).json()
         self.assertIn(a['key'], [x['key'] for x in st['attention']])
