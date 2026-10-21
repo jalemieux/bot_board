@@ -187,6 +187,16 @@ def recipe_of(data):
     return rc
 
 
+def upgraded(routine):
+    """The definition with a recipe an earlier release stored put in the current shape: renamed
+    keys under their new names, settings added since at their defaults. Its check and prompt,
+    what a human approved, stay as they are; a key no release wrote is left for problem_with."""
+    rc = routine.get("recipe")
+    if not isinstance(rc, dict) or not set(rc) <= set(recipe_of({})) | {"project"}:   # project: before workspaces
+        return routine
+    return {**routine, "recipe": recipe_of(rc)}
+
+
 def recipe_problem(rc):
     """Why a recipe cannot run, or ''."""
     if rc.get("type") != "github-issues":
@@ -406,11 +416,12 @@ class Runner:
             try:
                 if r["test_pending"] and r["test_asked"] > st.get("tested", 0):
                     self.test(r, st)
-                if r["state"] != "enabled" or r["problem"]:
+                if r["state"] == "enabled" and r["problem"]:
+                    # Stopped and said, not skipped: it would show enabled and never run.
+                    self.fail(r, st, f"this definition cannot run: {r['problem']}.")
+                    continue
+                if r["state"] != "enabled":
                     st.pop("job", None)     # paused or replaced mid-job: the next enable starts clean
-                    if r["state"] == "enabled" and st.get("refused") != r["version"]:
-                        st["refused"] = r["version"]
-                        self.log(r, f"cannot run: {r['problem']}")
                     continue
                 if st.get("version") != r["version"]:
                     st.update(version=r["version"], checked_at=0)
@@ -547,7 +558,7 @@ class Runner:
             route = routes.get(i["number"]) or {}
             group = i.get("channel") or str(route.get("channel") or route.get("group") or "")
             why = "label rule" if i.get("channel") else str(route.get("why") or "").strip()[:300]
-            channel = groups.get(group, home)
+            channel = groups.get(group.removeprefix(rc["workspace"] + "."), home)    # economy or game.economy
             body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
                     + (f"Routed to {group}: {why}.\n" if channel != home and why else
                        f"Routed to {group}.\n" if channel != home else "No channel fits it, so it is here.\n")

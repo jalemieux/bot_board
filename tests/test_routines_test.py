@@ -4,7 +4,7 @@ The real board under uvicorn on a free port, and bin/routines as a subprocess, a
 a box would run it. Needs the board's requirements (uvicorn).
 Run with python -m unittest discover -s tests.
 """
-import json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.request
+import json, os, socket, sqlite3, subprocess, sys, tempfile, time, unittest, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,6 +136,24 @@ class RoutineTest(unittest.TestCase):
         told = [m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
+
+    def test_an_enabled_routine_that_cannot_run_is_stopped_and_said_so_not_skipped(self):
+        rid = self.add("unrunnable")
+        self.ask(rid, "enable")
+        db = sqlite3.connect(os.path.join(self.tmp.name, "b.db"))   # as a release that no longer reads it would
+        db.execute("UPDATE routines SET definition=json_set(definition,'$.every',0) WHERE id=?", (rid,))
+        db.commit(); db.close()
+        self.routines("once")
+        r = self.routine(rid)
+        self.assertEqual(r["state"], "failed")
+        self.assertIn("`every`", r["failure"])
+        told = [m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+                if m["meta"].get("routine") == rid]
+        self.assertEqual(len(told), 1)
+        self.assertIn("cannot run", told[0]["body"])
+        self.routines("once")                            # said once
+        self.assertEqual(len([m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+                              if m["meta"].get("routine") == rid]), 1)
 
     def test_database_pickup_counts_as_claim_without_a_public_reply(self):
         rid = self.add("quiet-pickup")

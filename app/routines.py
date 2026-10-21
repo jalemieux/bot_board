@@ -171,8 +171,13 @@ def _items(r: dict) -> list[dict]:
     return [dict(x) for x in rows]
 
 
+def _stored(row: dict) -> dict:
+    """The definition as this release reads it, whichever release stored it."""
+    return cli.upgraded(json.loads(row["definition"]))
+
+
 def describe(row: dict, full: bool = True) -> dict:
-    d = json.loads(row["definition"])
+    d = _stored(row)
     test = json.loads(row["last_test"]) if row["last_test"] else None
     out = {**d, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
            "approved_by": row["approved_by"], "failure": row["failure"] if row["state"] == "failed" else None,
@@ -258,7 +263,7 @@ def update(rid: int, data: dict, agent: dict) -> dict:
     """
     _require_switch(agent)
     row = _row(rid)
-    r = _definition(data, json.loads(row["definition"]))
+    r = _definition(data, _stored(row))
     thread = _thread(data.get("thread")) or row["thread_id"]
     with db._write_lock, db.conn() as c:
         c.execute("UPDATE routines SET definition=?, version=version+1, defined_at=?, thread_id=?, state='paused',"
@@ -288,7 +293,7 @@ def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> d
     row = _row(rid)
     sets, args = [], []
     if action == "enable":
-        problem = cli.problem_with(json.loads(row["definition"]))
+        problem = cli.problem_with(_stored(row))
         if problem:
             raise ValueError(f"this definition cannot run: {problem}")
         sets, args = ["state='enabled'", "failure=NULL", "approved_by=?"], [_approval(row, agent, approved_by, action)]
