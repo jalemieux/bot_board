@@ -17,12 +17,11 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
-        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('jac', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
-        self.register('tarzan', 'claude-code')
+        self.register('tarzan', 'claude-code', workspace='admin')     # the admin workspace jac got has its bot
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
@@ -30,8 +29,8 @@ class Base(unittest.TestCase):
             db._local.conn.close()
         self.tmp.cleanup()
 
-    def register(self, handle, kind):
-        r = self.client.post('/api/agents', json={'handle': handle, 'kind': kind})
+    def register(self, handle, kind, **more):
+        r = self.client.post('/api/agents', json={'handle': handle, 'kind': kind, **more})
         self.assertEqual(r.status_code, 201, r.text)
         return {'Authorization': 'Bearer ' + r.json()['token']}
 
@@ -64,7 +63,6 @@ class Status(Base):
                       'health': 'last run failed (exit 1): boom'}],
                     [{'name': 'claude', 'kind': 'login', 'state': 'missing', 'detail': 'not logged in', 'held': 2}])
         # a workspace none of whose bots is up
-        self.client.post('/api/workspaces/access', json={'key': 'k'}, headers=self.human)
         self.client.post('/api/workspaces', json={'slug': 'game', 'name': 'Game', 'purpose': 'A game'}, headers=self.human)
         self.client.post('/api/agents', json={'handle': 'jane', 'kind': 'claude-code', 'workspace': 'game'})
         # a routine the runner said failed
@@ -80,7 +78,6 @@ class Status(Base):
         self.assertIn('claude missing on box, 2 bots held', texts)
         self.assertIn('@tarzan on box: last run failed', texts)
         self.assertIn('workspace game: none of its bots is up (@jane)', texts)
-        self.assertIn('workspace admin has no bot', texts)
         self.assertIn('routine nightly failed: check exited 2', texts)
         self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/fleet#box-box', '/fleet#bot-tarzan'})
         self.assertEqual(got['workspaces']['href'], '/workspaces/game')
@@ -129,7 +126,8 @@ class Status(Base):
 
     def test_stopped_bot_nobody_asked_for_is_not_a_problem(self):
         self.report([{'handle': 'old', 'harness': 'claude', 'status': 'stopped', 'pool': True,
-                      'health': 'last run failed'}])
+                      'health': 'last run failed'},
+                     {'handle': 'tarzan', 'harness': 'claude', 'status': 'waiting', 'pool': True}])
         self.assertTrue(self.status()['ok'])
 
 
@@ -140,7 +138,6 @@ if __name__ == '__main__':
 class Dismissals(Base):
     def setUp(self):
         super().setUp()
-        self.client.post('/api/workspaces/access', headers=self.human, json={'key': 'k'})
         r = self.client.post('/api/workspaces', headers=self.human, json={'slug': 'game', 'name': 'Game', 'purpose': ''})
         self.assertEqual(r.status_code, 201, r.text)
 

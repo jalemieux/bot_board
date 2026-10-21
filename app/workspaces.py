@@ -38,9 +38,6 @@ class Conflict(ValueError):
 
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS board_admins (
-    agent_id INTEGER PRIMARY KEY REFERENCES agents(id), granted_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS workspaces (
     id INTEGER PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -77,8 +74,7 @@ CREATE TABLE IF NOT EXISTS workspace_audit (
 ADMIN_INDEX = """# The admin workspace
 
 This workspace runs the board itself. Its bots are the admin bots: the only bots
-that may read and write other workspaces. Its human managers are the board's
-operators.
+that may read and write other workspaces. Every human on the board runs it.
 
 What arrives in its channel:
 
@@ -104,8 +100,6 @@ def init():
     with db._write_lock:
         c = db.conn()
         have = _tables(c)
-        if "project_admins" in have and "board_admins" not in have:
-            c.execute("ALTER TABLE project_admins RENAME TO board_admins")
         if "projects" in have and "workspaces" not in have:
             c.execute("ALTER TABLE projects RENAME TO workspaces")
             if "seed_thread_id" not in {r["name"] for r in c.execute("PRAGMA table_info(workspaces)")}:
@@ -162,78 +156,9 @@ def _migrate(c) -> None:
 # ---------------------------------------------------------------- who may
 
 def is_admin(agent):
-    """A human with board administration: the board's first human, one an admin granted,
-    or one who unlocked it with the management key (POST /api/workspaces/access)."""
-    return bool(agent and agent['kind'] == 'human' and db.conn().execute(
-        'SELECT 1 FROM board_admins WHERE agent_id=?', (agent['id'],)).fetchone())
-
-
-def grant_admin(agent):
-    if agent['kind'] != 'human':
-        raise PermissionError('Board administration requires a human identity.')
-    with db._write_lock, db.conn() as c:
-        c.execute('INSERT OR IGNORE INTO board_admins VALUES (?,?)', (agent['id'], db.now()))
-
-
-def admins():
-    """The board admins: [{handle, granted_at}], first first."""
-    return [dict(r) for r in db.conn().execute(
-        'SELECT a.handle, b.granted_at FROM board_admins b JOIN agents a ON a.id=b.agent_id'
-        ' ORDER BY b.granted_at, b.rowid')]
-
-
-def _box_operators(c):
-    """Every handle a reporting keeper names in KEEPER_OPERATORS: the people who run the fleet's boxes."""
-    ops = set()
-    try:
-        for r in c.execute('SELECT report FROM fleet_hosts'):
-            ops |= {o.lower() for o in json.loads(r['report']).get('operators') or []}
-    except db.sqlite3.OperationalError:
-        pass
-    return ops
-
-
-def can_claim_first(agent):
-    """A board with no admin and no key (#181): its first human takes administration.
-    Once a box's keeper names its operators, only one of them can, so a stranger who
-    reaches the board first does not."""
-    if not agent or agent['kind'] != 'human':
-        return False
-    c = db.conn()
-    if c.execute('SELECT 1 FROM board_admins').fetchone():
-        return False
-    ops = _box_operators(c)
-    return not ops or agent['handle'].lower() in ops
-
-
-def claim_first(agent):
-    """Grant the first admin, atomically: two humans racing both see no admin, one wins."""
-    with db._write_lock, db.conn() as c:
-        c.execute('BEGIN IMMEDIATE')
-        if not can_claim_first(agent):
-            return False
-        c.execute('INSERT OR IGNORE INTO board_admins VALUES (?,?)', (agent['id'], db.now()))
-    return True
-
-
-def set_admin(handle, grant, by):
-    """An admin grants or revokes board administration for another human. The last admin
-    cannot be revoked, so a board is never left with nobody to grant it again."""
-    if not is_admin(by):
-        raise PermissionError('Only a board admin grants or revokes administration.')
-    target = db.get_agent_by_handle(handle)
-    if not target:
-        raise KeyError(f'no agent @{handle}')
-    if grant:
-        grant_admin(target)
-        return admins()
-    with db._write_lock, db.conn() as c:
-        c.execute('BEGIN IMMEDIATE')
-        held = c.execute('SELECT 1 FROM board_admins WHERE agent_id=?', (target['id'],)).fetchone()
-        if held and c.execute('SELECT COUNT(*) FROM board_admins').fetchone()[0] == 1:
-            raise Conflict('That is the last admin: grant someone else first.')
-        c.execute('DELETE FROM board_admins WHERE agent_id=?', (target['id'],))
-    return admins()
+    """A human: the board has one person, under whatever handle they signed in with on
+    whichever laptop, and that person runs it. Nothing to grant, claim or unlock."""
+    return bool(agent and agent['kind'] == 'human')
 
 
 def is_admin_bot(agent) -> bool:
@@ -244,9 +169,8 @@ def is_admin_bot(agent) -> bool:
 
 
 def can_manage(ws, agent):
-    """A human who may change the workspace: a board admin, its owner or one of its operators."""
-    return bool(agent and agent['kind'] == 'human' and (
-        is_admin(agent) or ws['owner_id'] == agent['id'] or agent['id'] in json.loads(ws['operators'])))
+    """A human who may change the workspace: any human (is_admin)."""
+    return is_admin(agent)
 
 
 def can_write(ws, agent):
@@ -266,13 +190,8 @@ def require_write(ws, agent):
 
 
 def is_operator(agent) -> bool:
-    """A human who manages the admin workspace, or the board when there is none."""
-    if not agent or agent["kind"] != "human":
-        return False
-    try:
-        return can_manage(find(ADMIN), agent)
-    except KeyError:
-        return is_admin(agent)
+    """A human who manages the admin workspace: any human (is_admin)."""
+    return is_admin(agent)
 
 
 # ---------------------------------------------------------------- reading
@@ -325,8 +244,7 @@ def describe(ws, agent=None, full=True) -> dict:
     out.update(channel=home_slug(ws), archived=bool(ws['archived']), can_manage=can_manage(ws, agent),
                bots=bots_of(ws))
     if full:
-        out.update(operators=[db.get_agent_by_id(a)['handle'] for a in json.loads(ws['operators'])],
-                   channels=channels_of(ws),
+        out.update(channels=channels_of(ws),
                    documents=db.conn().execute(
                        "SELECT COUNT(DISTINCT path) n FROM knowledge_docs k WHERE workspace_id=? AND deleted=0"
                        " AND revision=(SELECT MAX(revision) FROM knowledge_docs x WHERE x.workspace_id=k.workspace_id"
@@ -387,7 +305,7 @@ def _references(value) -> list[dict]:
 def create(data, agent) -> dict:
     """A workspace with its General channel; `seed` material becomes a thread for the admin bots."""
     if not is_admin(agent):
-        raise PermissionError('Creating a workspace needs board administration: ask a board admin, or unlock it (POST /api/workspaces/access).')
+        raise PermissionError('Only a human creates a workspace.')
     slug = data['slug']
     with db._write_lock, db.conn() as c:
         if c.execute('SELECT 1 FROM workspaces WHERE slug=?', (slug,)).fetchone():
@@ -462,15 +380,7 @@ def update(slug, data, agent) -> dict:
             if not data.pop('archive_confirm', False):
                 raise ValueError('Confirm active work has finished or been released before archiving.')
         data.pop('archive_confirm', None)
-        if 'operators' in data and data['operators'] is not None:
-            ids = []
-            for h in data['operators']:
-                a = db.get_agent_by_handle(h)
-                if not a or a['kind'] != 'human':
-                    raise ValueError('Workspace operators must be existing human identities.')
-                ids.append(a['id'])
-            data['operators'] = json.dumps(ids)
-        for key in ('name', 'purpose', 'operators', 'archived'):
+        for key in ('name', 'purpose', 'archived'):
             if key in data and data[key] is not None:
                 c.execute(f'UPDATE workspaces SET {key}=?, updated_at=? WHERE id=?', (data[key], db.now(), ws['id']))
         _audit(c, ws['id'], agent, 'archive' if data.get('archived') else 'update', data)
@@ -561,14 +471,15 @@ def seed_request(slug: str, channel: str | None, seed: dict, agent: dict) -> int
 
 def ensure_admin(agent: dict | None = None) -> bool:
     """Create the admin workspace, with its INDEX.md, when it is missing. Its owner is
-    `agent`, else the first board admin; with no admin yet, it waits for one. True when created."""
+    `agent` when a human, else the board's first human; with no human yet, it waits for one.
+    True when created."""
     try:
         find(ADMIN)
         return False
     except KeyError:
         pass
     if not (agent and is_admin(agent)):
-        row = db.conn().execute("SELECT agent_id FROM board_admins ORDER BY granted_at LIMIT 1").fetchone()
+        row = db.conn().execute("SELECT id agent_id FROM agents WHERE kind='human' ORDER BY id LIMIT 1").fetchone()
         agent = row and db.get_agent_by_id(row["agent_id"])
         if not agent:
             return False

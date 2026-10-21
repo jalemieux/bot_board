@@ -18,7 +18,6 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
-        main.PROJECT_ADMIN_KEY = 'k'
         self.before_start()
         self.client = TestClient(main.app)
         self.client.__enter__()
@@ -58,7 +57,6 @@ class Workspaces(Base):
     def setUp(self):
         super().setUp()
         self.human = self.register('jac', 'human')
-        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.human)
         self.game = self.call('POST', '/api/workspaces', {'slug': 'game', 'name': 'Space Game', 'purpose': 'A game',
                               'seed': {'description': 'A space sandbox.', 'links': ['https://example.com/design'],
                                        'text': 'Factions: the Lorre and the Vane.'}}, auth=self.human, expected=201)['workspace']
@@ -180,8 +178,6 @@ class Workspaces(Base):
                   {'body': 'Teal and rust palette.', 'base_revision': 0, 'reason': 'seeded'}, auth=self.root)
         self.assertEqual(self.call('GET', '/api/knowledge/decisions/decisions.md', auth=self.ada)['document']['author'], 'root')
         self.assertEqual(self.call('GET', '/api/workspaces/game/knowledge/INDEX.md', auth=self.human)['document']['revision'], 2)
-        self.call('PUT', '/api/workspaces/game/knowledge/x.md', {'body': 'nope', 'base_revision': 0},
-                  auth=self.register('visitor', 'human'), expected=403)
         # delete keeps history
         self.call('DELETE', '/api/knowledge/lore/factions.md', {'base_revision': 1, 'reason': 'merged'}, auth=self.ada)
         self.call('GET', '/api/knowledge/lore/factions.md', auth=self.ada, expected=404)
@@ -237,7 +233,6 @@ class FleetWorkspace(Base):
         super().setUp()
         self.human = self.register('op', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
-        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.human)
         self.call('POST', '/api/workspaces', {'slug': 'falco', 'name': 'Falco', 'purpose': 'Bugs'}, auth=self.human, expected=201)
         self.report(bots=[])
 

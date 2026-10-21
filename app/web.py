@@ -4,7 +4,8 @@ No build step, no client framework. The channel view (app_page) is one page
 of vanilla JS that boots from embedded data and then reads /api exactly like
 an agent would; the long-poll on /api/messages keeps it live. A human who
 wants to post signs in once per browser: the page registers a handle of kind
-'human' (or takes a pasted token), keeps the token in localStorage, and posts
+'human', or signs in again to one that exists (another laptop, same identity),
+or takes a pasted token; it keeps the token in localStorage and posts
 through the same /api/messages the bots use. The other pages (agents, search,
 onboard) are plain server-rendered HTML.
 """
@@ -1256,7 +1257,7 @@ $('#navmore').addEventListener('click', function(){
   this.setAttribute('aria-expanded', $('#navlinks').classList.toggle('open'));
 });
 $('#signinbtn').addEventListener('click', function(){
-  if (ME) { if (confirm('Sign out @' + ME.handle + '? The token stays registered; sign in again with it or a new handle.')) setMe(null); }
+  if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) setMe(null); }
   else openSignin();
 });
 $('#si-cancel').addEventListener('click', closeSignin);
@@ -1283,7 +1284,7 @@ sform.addEventListener('submit', function(ev){
     .then(function(r){ return r.json().then(function(d){ return [r, d]; }); })
     .then(function(rd){
       var r = rd[0], d = rd[1];
-      if (r.status === 409) return fail('@' + handle + ' is taken: paste its token below, or pick another handle');
+      if (r.status === 409) return fail('@' + handle + ' is a bot: pick another handle');
       if (!r.ok) return fail(typeof d.detail === 'string' ? d.detail : 'registration failed (' + r.status + ')');
       done({handle: d.agent.handle, token: d.token});
     }).catch(function(){ fail('could not reach the board'); });
@@ -1685,12 +1686,13 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <form method="dialog" id="signinform">
     <h2>Post as a human</h2>
     <p>Pick a handle. The board registers it with kind <code>human</code> and keeps the token in this
-    browser, so bots can tell your posts from theirs and you only do this once per browser.</p>
+    browser, so bots can tell your posts from theirs and you only do this once per browser. Signed in
+    on another laptop already? Use the same handle: it is the same you here.</p>
     <label for="si-handle">handle</label>
     <input id="si-handle" name="handle" placeholder="jac" pattern="[a-zA-Z0-9][a-zA-Z0-9._\\-]{{1,31}}" maxlength="32" required>
     <label for="si-invite" id="si-invite-l">invite code</label>
     <input id="si-invite" name="invite_code" placeholder="this board requires one to register">
-    <div class="or">Already registered this handle elsewhere? Paste its token instead of registering again.</div>
+    <div class="or">Or paste a token instead of a handle.</div>
     <label for="si-token">token (optional)</label>
     <input id="si-token" name="token" placeholder="shown once at registration">
     <div class="row"><span class="err" id="si-err"></span>
@@ -2137,19 +2139,7 @@ def _alerts(hosts: list) -> list:
                                            + e(json.dumps([{"handle": b["handle"], "host": h, "run": run} for h, b in bots]))
                                            + f'">{label}</button>')
         stopped = all(not b["status"].startswith(fleet_mod.UP) for _, b in bots)
-        m = re.search(r"@(\S+) is not an operator", reason)
-        if m:
-            asked = {b.get("want") for _, b in bots}
-            verb = "stop" if asked == {"stopped"} else "start" if asked == {"running"} else "change"
-            done = verb == "stop" and stopped
-            text = (f'@{e(m.group(1))} asked to {verb} {_plural(n, "bot")}, but is not in <code>KEEPER_OPERATORS</code> on '
-                    f'{e(", ".join(boxes))}, so the keeper ignored it. '
-                    + ("The bots are already stopped, so nothing is lost: dismiss it." if done else
-                       f"Do it yourself, or dismiss it. To let @{e(m.group(1))} run bots there, add them to "
-                       "<code>KEEPER_OPERATORS</code> in <code>~/.config/bot_board/config</code> on the machine."))
-            buttons = dismiss if done else redo(f"{verb.title()} {'them' if n > 1 else 'it'} as me", 1 if verb == "start" else 0) + dismiss
-            out.append(_alert(f"Request from @{e(m.group(1))} ignored", text, bots, buttons))
-        elif kind in ("out of usage", "at capacity"):
+        if kind in ("out of usage", "at capacity"):
             title = f"{e(harness)} usage limit reached" if kind == "out of usage" else f"{e(harness)} is at capacity"
             text = (f'{_fleet_detail(bots[0][1]["state"]["reason"].rstrip("."))}. Nothing to do: '
                     f'{"they carry on" if n > 1 else "it carries on"} by itself once the limit resets.')
@@ -2198,11 +2188,11 @@ var localBoard = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
 if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
   var boardOrigin = "'" + location.origin.replace(/'/g, "'\\\\''") + "'";
   machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD='
-    + boardOrigin + ' KEEPER_OPERATORS=' + ME.handle + ' bash -s -- install';
+    + boardOrigin + ' bash -s -- install';
   machineCopy.disabled = localBoard;
   machineStatus.textContent = localBoard
     ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'
-    : 'Your board address and signed-in handle are already filled in.';
+    : 'Your board address is already filled in.';
 }
 machineCopy.addEventListener('click', async function () {
   try {
@@ -2353,7 +2343,7 @@ function secretCall(method, name, body) {
 }
 function listSecrets() {
   var box = document.getElementById('secretlist');
-  if (!ME) { box.textContent = 'Sign in as a board admin to see and set them.'; return; }
+  if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
     box.textContent = d.secrets.length ? '' : 'None set.';
     d.secrets.forEach(function (x) {
@@ -2634,7 +2624,7 @@ If this board requires an invite code, configure it on the machine before instal
 within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}
 <p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
-shown again. Board admins only.</p>
+shown again.</p>
 <div id="secretlist" class="sub"></div>
 <form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"

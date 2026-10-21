@@ -239,16 +239,14 @@ class Page(unittest.TestCase):
         self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
 
 
-    def test_secrets_are_set_by_admins_and_read_by_keepers_only(self):
-        main.PROJECT_ADMIN_KEY = 'k'
+    def test_secrets_are_set_by_humans_and_read_by_keepers_only(self):
         def agent(handle, kind):
             return {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': handle, 'kind': kind}).json()['token']}
         admin, human, bot, keeper, idle = (agent('op', 'human'), agent('other', 'human'), agent('ada', 'claude-code'),
                                             agent('keeper-box', 'keeper'), agent('keeper-x', 'keeper'))
-        self.client.post('/api/workspaces/access', headers=admin, json={'key': 'k'})
         report = lambda: self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': []}).json()['secrets']
         v0 = report()
-        self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=human, json={'value': 'x'}).status_code, 403)
+        self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=bot, json={'value': 'x'}).status_code, 403)
         self.assertEqual(self.client.put('/api/fleet/secrets/PATH', headers=admin, json={'value': 'x'}).status_code, 422)
         self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'a\nb'}).status_code, 422)
         r = self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'ghp_secret1234'})

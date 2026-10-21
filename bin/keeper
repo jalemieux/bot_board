@@ -69,8 +69,7 @@ BOT_UPDATE_REF=<tag or commit> pins the checkout to that revision instead of the
 update, and on the machine's card on /fleet.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST,
-KEEPER_OPERATORS (handles, space or comma separated: only what they asked is carried
-out; unset, anyone the board accepted as a human), KEEPER_HANDOVER (where archives of
+KEEPER_HANDOVER (where archives of
 moving bots wait: host:dir, e.g. minipc-1:.config/bot_board/handover).
 """
 import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
@@ -333,7 +332,6 @@ class Updater:
 
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
-OPERATORS = setting("KEEPER_OPERATORS").replace(",", " ").split()
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 HANDLE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}", re.I)
 QUICK = 120     # a bot that dies this soon after we start it has a problem; later, it is restarted
@@ -652,8 +650,6 @@ class Hands:
             h = w["handle"]
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
-            elif OPERATORS and w["set_by"] not in OPERATORS:
-                problems[h] = f"not carried out: @{w['set_by']} is not an operator of this box (KEEPER_OPERATORS)"
             elif w.get("move_to"):
                 why = self.leave(w, up, seen)
                 if why:
@@ -997,7 +993,7 @@ def main():
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             ask = setting("KEEPER_DEFAULT_BOT")     # set by a fresh `bot install`; dropped once the board starts it
             ask = {"harness": ask, "handle": setting("KEEPER_DEFAULT_HANDLE")} if ask else None
-            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems, "operators": OPERATORS,
+            code, got = call("PUT", f"/api/fleet/hosts/{host}", {**snap, "problems": problems,
                                                                   **moves, "default_bot": ask}, token)
             if code == 200:     # the board has them now
                 for h in moves["handed"]:

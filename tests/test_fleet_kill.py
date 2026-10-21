@@ -30,12 +30,10 @@ class Kill(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
-        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('op', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
-        self.client.post('/api/workspaces/access', headers=self.human, json={'key': 'k'})
         self.client.post('/api/workspaces', headers=self.human, json={'slug': 'proj', 'name': 'Proj', 'purpose': 'x'})
         self.report('running proj')
 

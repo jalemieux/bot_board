@@ -32,7 +32,7 @@ class InstallTests(unittest.TestCase):
             env = {
                 **os.environ, "HOME": tmp, "BOT_CONFIG": str(config),
                 "BOT_BOARD_DIR": str(home / "checkout"),
-                "BOARD": "http://board.invalid:8080", "KEEPER_OPERATORS": "jac",
+                "BOARD": "http://board.invalid:8080",
                 "KEEPER_HOST": "box-1", "BOT_INVITE": "invite",
                 "PATH": str(commands) + os.pathsep + os.environ["PATH"],
             }
@@ -52,7 +52,6 @@ class InstallTests(unittest.TestCase):
                 self.assertEqual(result.stdout.splitlines(), ["keeper", "install", "--example"])
                 self.assertEqual(producer.returncode, 0, error.decode())
             self.assertIn('BOARD="http://board.invalid:8080"', config.read_text())
-            self.assertIn('KEEPER_OPERATORS="jac"', config.read_text())
             self.assertIn('KEEPER_HOST="box-1"', config.read_text())
             self.assertIn('BOT_INVITE="invite"', config.read_text())
 

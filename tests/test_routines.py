@@ -19,14 +19,12 @@ class Routines(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
-        main.PROJECT_ADMIN_KEY = 'k'
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.human = self.register('jac', 'human')
         self.stranger = self.register('visitor', 'human')
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
-        self.call('POST', '/api/workspaces/access', {'key': 'k'})
         self.assertEqual(self.call('GET', '/api/workspaces/admin')['workspace']['slug'], 'admin')   # comes with the first admin (#103)
 
     def tearDown(self):
@@ -61,7 +59,7 @@ class Routines(unittest.TestCase):
         c.commit()
 
     def test_admin_discovery_is_only_given_to_authorized_agents(self):
-        for headers in ({}, self.bot, self.stranger):
+        for headers in ({}, self.bot):
             public = self.client.get('/api', headers=headers).json()
             self.assertNotIn('administration', public)
             self.assertFalse(any('/api/routines' in key or '/api/fleet' in key for key in public['endpoints']))
@@ -94,7 +92,6 @@ class Routines(unittest.TestCase):
         self.assertTrue(any('workspace admin has no bot' in a['text'] for a in self.call('GET', '/api/status')['attention']))
         self.assertFalse(routines.ensure_admin_project())     # an existing one is left as it is
         self.call('PATCH', '/api/workspaces/admin', {'name': 'Ops'})
-        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)
         self.assertEqual(self.call('GET', '/api/workspaces/admin')['workspace']['name'], 'Ops')
 
     def drop_admin(self, c):
@@ -106,7 +103,6 @@ class Routines(unittest.TestCase):
     def test_a_board_with_an_admin_but_no_admin_workspace_gets_one_at_startup(self):
         c = db.conn()
         self.drop_admin(c)
-        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)   # a later admin
         self.drop_admin(c)
         main._startup()
         p = self.call('GET', '/api/workspaces/admin')['workspace']
@@ -120,7 +116,6 @@ class Routines(unittest.TestCase):
         self.drop_admin(c)
         c.execute("UPDATE boards SET kind='conversation' WHERE slug='admin'"); c.commit()
         main._startup()
-        self.call('POST', '/api/workspaces/access', {'key': 'k'}, auth=self.stranger)
         self.call('GET', '/api/workspaces/admin', expected=404)
 
     def test_a_stored_routine_is_paused_and_posts_nothing(self):
@@ -132,11 +127,10 @@ class Routines(unittest.TestCase):
         self.assertEqual([x['id'] for x in self.call('GET', '/api/routines')['routines']], [r['id']])
         self.assertEqual(db.cursor(), before, 'storing a routine posts no message')
 
-    def test_only_admin_managers_and_admin_bots_change_routines(self):
+    def test_only_humans_and_admin_bots_change_routines(self):
         self.add(auth=self.bot, expected=403)
-        self.add(auth=self.stranger, expected=403)     # kind human is not authority
         r = self.add()
-        self.call('POST', f"/api/routines/{r['id']}/pause", auth=self.stranger, expected=403)
+        self.call('POST', f"/api/routines/{r['id']}/pause", auth=self.stranger)     # every human runs the board
         self.call('DELETE', f"/api/routines/{r['id']}", auth=self.bot, expected=403)
         self.make_admin()
         self.call('POST', f"/api/routines/{r['id']}/pause", auth=self.bot)
@@ -152,9 +146,8 @@ class Routines(unittest.TestCase):
         enable = f"/api/routines/{r['id']}/enable"
         self.call('POST', enable, {}, auth=self.bot, expected=422)
         self.call('POST', enable, {'approved_by': early['id']}, auth=self.bot, expected=422)
-        for who in (self.bot, self.stranger):                    # a yes must come from a manager
-            other = self.post('yes', ask['id'], auth=who)
-            self.call('POST', enable, {'approved_by': other['id']}, auth=self.bot, expected=422)
+        other = self.post('yes', ask['id'], auth=self.bot)    # a yes must come from a human
+        self.call('POST', enable, {'approved_by': other['id']}, auth=self.bot, expected=422)
         elsewhere = self.post('yes', channel='lobby')
         self.call('POST', enable, {'approved_by': elsewhere['id']}, auth=self.bot, expected=422)
         yes = self.post('yes, go', ask['id'])

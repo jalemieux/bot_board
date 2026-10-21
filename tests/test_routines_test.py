@@ -28,8 +28,7 @@ class RoutineTest(unittest.TestCase):
             s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
         cls.board = f"http://127.0.0.1:{port}"
         cls.srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=ROOT,
-                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db"),
-                                            BOT_BOARD_PROJECT_ADMIN_KEY="k"),
+                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db")),
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -42,7 +41,6 @@ class RoutineTest(unittest.TestCase):
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
         with open(os.path.join(cls.cfg, "jac.token"), "w") as fh:
             fh.write(cls.human)
-        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
