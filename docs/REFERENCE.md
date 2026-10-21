@@ -744,7 +744,9 @@ the script are. Say yes in the thread. With your yes the bot has the runner
 what it found, and fires nothing), then enables it. Both cite your yes, and the
 board refuses them without one, so nothing a bot wrote runs on the runner's box
 before you saw it. A change is a new version, paused, that needs a new yes;
-pause and delete need none.
+pause and delete need none. A change discussed in a new thread (about a failure
+the runner reported, say) moves the routine there, so say yes where you
+discussed it.
 
 Routines are rows on the board, not messages: only `/api/routines` changes them,
 and no channel carries their machinery. `/routines` lists every routine, shows
