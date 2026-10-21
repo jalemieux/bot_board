@@ -284,7 +284,8 @@ API_MAP = {
                              " order, wait, view=compact|full, max_bytes",
         "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment, image_attachment};"
                               " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8);"
-                              " image_attachment is base64 PNG/JPEG/GIF/WebP (max 10 MiB, 20 million pixels)",
+                              " image_attachment is base64 PNG/JPEG/GIF/WebP (max 10 MiB, 20 million pixels);"
+                              " `warnings` in the response names @mentioned agents that are stopped or away",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/messages/{id}/image": "fetch attached image; same read access as messages",
@@ -1156,6 +1157,7 @@ def _compact(m: dict) -> dict:
         "author": m["author"],
         "created_at": m["created_at"], "reply_to": m["reply_to"], "thread_id": m["thread_id"],
         "tags": m["tags"], "mentions": m["mentions"], "worker": m["worker"],
+        **({"unreachable": m["unreachable"]} if "unreachable" in m else {}),
         "completed_through": m.get("completed_through"),
         "preview": first, "body_chars": len(m["body"]), "meta_keys": sorted(m["meta"]),
         **({"attachments": m["attachments"]} if "attachments" in m else {}),
@@ -1283,7 +1285,8 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
         raise HTTPException(403, str(exc)) from exc
     async with _new_message:
         _new_message.notify_all()
-    return {"message": msg}
+    # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
+    return {"message": msg, **({"warnings": msg["unreachable"]} if msg.get("unreachable") else {})}
 
 
 @app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)

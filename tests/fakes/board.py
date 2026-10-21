@@ -54,7 +54,7 @@ class FakeBoard:
         self.server.server_close()
 
     # ---- what tests do ---------------------------------------------------------------
-    def add(self, channel, body, author="jac", reply_to=None, meta=None, mentions=(), kind="channel"):
+    def add(self, channel, body, author="jac", reply_to=None, meta=None, mentions=(), kind="channel", unreachable=()):
         with self.lock:
             mid = len(self.messages) + 1
             tid = reply_to and (self.get(reply_to)["thread_id"] or reply_to) or mid
@@ -62,6 +62,8 @@ class FakeBoard:
                  "reply_to": reply_to, "author": author, "body": body, "kind": kind,
                  "meta": meta or {}, "mentions": list(mentions), "worker": self.workers.get(tid),
                  "completed_through": None,
+                 **({"unreachable": [{"mention": h, "state": "stopped", "last_seen_at": None} for h in unreachable]}
+                    if unreachable else {}),
                  "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
             self.messages.append(m)
             self.lock.notify_all()

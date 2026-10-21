@@ -637,11 +637,33 @@ LEFT JOIN thread_completions completion ON completion.thread_id = m.thread_id
 """
 
 
+def mention_state(kind: str, last_seen_at: str | None, run: int | None) -> str | None:
+    """Why a mention reaches nobody (#216): "stopped" when a human stopped the bot on /fleet,
+    else "away" by presence. The fleet's word wins: presence only says a request used the
+    token lately. Humans are never unreachable here. None: it will be read."""
+    if kind == "human":
+        return None
+    if run is not None:
+        return None if run else "stopped"
+    return "away" if presence(last_seen_at) == "away" else None
+
+
+def _mention_rows(ids, marks):
+    q = ("SELECT mn.message_id, a.handle, a.kind, a.last_seen_at, {run} AS run FROM mentions mn"
+         " JOIN agents a ON a.id=mn.agent_id {join} WHERE mn.message_id IN ({marks})")
+    try:
+        return conn().execute(q.format(run="fb.run", join="LEFT JOIN fleet_bots fb ON fb.handle=a.handle",
+                                       marks=marks), ids).fetchall()
+    except sqlite3.OperationalError:     # a board without the fleet table yet
+        return conn().execute(q.format(run="NULL", join="", marks=marks), ids).fetchall()
+
+
 def _hydrate(rows, hide_events: bool = False) -> list[dict]:
     out = []
     ids = [r["id"] for r in rows]
     tags: dict[int, list[str]] = {}
     mentions: dict[int, list[str]] = {}
+    unreachable: dict[int, list[dict]] = {}
     attachments: dict[int, list[dict]] = {}
     if ids:
         marks = ",".join("?" * len(ids))
@@ -664,12 +686,12 @@ def _hydrate(rows, hide_events: bool = False) -> list[dict]:
             f"SELECT message_id, tag FROM tags WHERE message_id IN ({marks})", ids
         ):
             tags.setdefault(r["message_id"], []).append(r["tag"])
-        for r in conn().execute(
-            f"SELECT mn.message_id, a.handle FROM mentions mn JOIN agents a ON a.id=mn.agent_id"
-            f" WHERE mn.message_id IN ({marks})",
-            ids,
-        ):
+        for r in _mention_rows(ids, marks):
             mentions.setdefault(r["message_id"], []).append(r["handle"])
+            state = mention_state(r["kind"], r["last_seen_at"], r["run"])
+            if state:
+                unreachable.setdefault(r["message_id"], []).append(
+                    {"mention": r["handle"], "state": state, "last_seen_at": r["last_seen_at"]})
     # Reply summary for thread roots, so a list of roots can show "3 replies"
     # without a query per message.
     root_ids = [r["id"] for r in rows if r["reply_to"] is None]
@@ -697,6 +719,8 @@ def _hydrate(rows, hide_events: bool = False) -> list[dict]:
         d["meta"] = json.loads(d["meta"] or "{}")
         d["tags"] = sorted(tags.get(d["id"], []))
         d["mentions"] = sorted(mentions.get(d["id"], []))
+        if d["id"] in unreachable:
+            d["unreachable"] = sorted(unreachable[d["id"]], key=lambda u: u["mention"])
         d["channel"] = d["board"]
         if d["id"] in attachments:
             d["attachments"] = attachments[d["id"]]

@@ -1201,7 +1201,9 @@ for m in msgs:
     elif m.get("kind")=="channel" and (
             m.get("reply_to") is None or meta.get("kind")=="thread_released"
             or meta.get("worker_released") is True or meta.get("thread_reopened") is True):
-        if m.get("mentions") or meta.get("done") is True or m.get("worker"): continue
+        # a mention is for that agent, unless every one mentioned is stopped or away (#216)
+        reachable=set(m.get("mentions",[]))-{u["mention"] for u in m.get("unreachable",[])}
+        if reachable or meta.get("done") is True or m.get("worker"): continue
         why="new thread"
     else: continue
     print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,m["body"].replace("\n","\\n")]))
