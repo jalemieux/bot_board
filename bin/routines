@@ -431,8 +431,14 @@ class Runner:
                         self.chase(r, st)
                     except Exception as e:      # reminders wait; the routine's own work goes on
                         self.log(r, f"chasing skipped this pass: {type(e).__name__}: {e}")
+                run = r.get("run_asked", 0) > st.get("ran", 0)     # Run now on /routines (#209)
                 if "job" in st:
+                    msg = st["job"]["msg"]
                     self.follow(r, st)
+                    if run:
+                        self.ran(r, st, f"a job is still open: message {msg}")
+                elif run:
+                    self.ran(r, st, self.check(r, st))
                 elif time.time() - st.get("checked_at", 0) >= r["every"]:
                     self.check(r, st)
             except ConnectionError as e:
@@ -460,22 +466,31 @@ class Runner:
         st["tested"] = asked
         self.log(r, f"tested ({asked}): " + (res["error"] or ("work" if res["work"] else "no work")))
 
+    def ran(self, r, st, result):
+        """Report what a Run now came to, once."""
+        self.board.report(r, run={"for": r["run_asked"], "version": r["version"], "result": result})
+        st["ran"] = r["run_asked"]
+        self.log(r, f"run now ({r['run_asked']}): {result}")
+
     def check(self, r, st):
+        """Check, and fire a job when there is work. Returns what came of it, in a few words."""
         st["checked_at"] = time.time()
         try:
             out = run_check(r["check"], r["name"], st.get("watermark"))
         except CheckError as e:
-            return self.fail(r, st, str(e))
+            self.fail(r, st, str(e))
+            return f"check failed: {e}"
         if not out["work"]:
-            return
+            return "no work"
         items = out.get("items") if r.get("recipe") and isinstance(out.get("items"), list) else None
         if items and all(i.get("channel") for i in items):   # every one placed by a label rule: no bot needed
             try:
                 self.announce(r, st, items, {})
             except ProjectGone as e:
-                return self.fail(r, st, f"{e}; nothing was announced.")
+                self.fail(r, st, f"{e}; nothing was announced.")
+                return f"failed: {e}"
             st["watermark"] = out.get("watermark")
-            return
+            return f"announced {len(items)} item(s) by label rule"
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
                 f"Routine `{r['name']}` ({BOARD}/routines#r={r['id']}). One thread worker takes this. "
                 "When it is finished, reply in this thread with the result and `meta` `{\"done\": true}`; "
@@ -489,6 +504,7 @@ class Runner:
         if items:
             st["job"]["items"] = items
         self.log(r, f"work found, fired as message {m['id']} in #{r['channel']}")
+        return f"fired as message {m['id']} in #{r['channel']}"
 
     def follow(self, r, st):
         job = st["job"]

@@ -122,6 +122,33 @@ class RoutineTest(unittest.TestCase):
         self.assertIn('mark={"n": 5}', job["body"])
         self.assertEqual(self.routine(rid)["jobs"][0]["id"], job["id"])
 
+    def test_run_now_fires_before_every_has_passed_and_says_what_came_of_it(self):
+        # #209: checked a moment ago, `every` far off; Run now fires on the next pass anyway
+        rid = self.add("run-now")
+        self.ask(rid, "enable")
+        self.routines("once")                            # the first check fires a job
+        (job,) = self.project_posts(rid)
+        self.ask(rid, "run")
+        self.routines("once")
+        r = self.routine(rid)
+        self.assertFalse(r["run_pending"])
+        self.assertEqual(r["last_run"]["result"], f"a job is still open: message {job['id']}")
+        self.assertEqual(len(self.project_posts(rid)), 1, "an open job is not fired twice")
+        self.api("POST", "/api/messages", {"channel": "proj", "reply_to": job["id"], "body": "done", "meta": {"done": True}},
+                 self.bot_token())
+        self.routines("once")                            # the job is done; the next check is `every` away
+        self.ask(rid, "run")
+        self.routines("once")
+        self.assertEqual(len(self.project_posts(rid)), 2)
+        self.assertTrue(self.routine(rid)["last_run"]["result"].startswith("fired as message "))
+        self.routines("once")                            # answered once per ask
+        self.assertEqual(len(self.project_posts(rid)), 2)
+
+    def bot_token(self):
+        if not getattr(self, "_bot", None):
+            self._bot = self.api("POST", "/api/agents", {"handle": "runbot", "kind": "claude-code"})["token"]
+        return self._bot
+
     def test_a_failing_check_stops_the_routine_and_says_so_in_the_admin_channel(self):
         rid = self.add("broken", check=BROKEN)
         self.ask(rid, "enable")

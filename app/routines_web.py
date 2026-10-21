@@ -1,9 +1,9 @@
-"""The routines page: what recurring work exists, and a way to pause, enable or delete it.
+"""The routines page: what recurring work exists, and a way to run, pause, enable or delete it.
 
 Routines are stored on the board (app/routines.py) and asked for in a
 conversation with the admin bot, which stores, tests and enables them. This page
-reads GET /api/routines; its writes are Pause and Enable (POST /api/routines/{id}/pause
-and /enable) and Delete (DELETE /api/routines/{id}),
+reads GET /api/routines; its writes are Run now, Pause and Enable (POST /api/routines/{id}/run,
+/pause and /enable) and Delete (DELETE /api/routines/{id}),
 with the identity the board page keeps in this browser (localStorage bb.me).
 Data from the API is only ever put on the page as text, never as HTML.
 """
@@ -213,12 +213,13 @@ function detail(r) {
       }});
     }
     var path = '/api/routines/' + encodeURIComponent(r.id);
-    add(sec, r.state === 'enabled' ? act('Pause', 'POST', path + '/pause', null, load) : null,
+    add(sec, r.state === 'enabled' ? act('Run now', 'POST', path + '/run', null, load) : null,
+      r.state === 'enabled' ? act('Pause', 'POST', path + '/pause', null, load) : null,
       r.state !== 'enabled' && !r.problem ? act('Enable', 'POST', path + '/enable', null, load) : null,
       act('Delete', 'DELETE', path, 'Delete the routine ' + (r.name || '#' + r.id) + '? It stops for good.',
           function () { location.hash = ''; load(); }), out);
   }
-  add(sec, testResult(r));
+  add(sec, runResult(r), testResult(r));
 
   var jobs = r.jobs || [];
   add(root, h('section', null, h('h3', {text: 'Latest jobs'}), jobs.length ? h('table', null,
@@ -235,6 +236,16 @@ function detail(r) {
     h('h3', {text: 'Check'}), h('pre', {text: r.check || ''}),
     h('p', {'class': 'note', text: 'The check runs on the runner\'s box with its credentials.'})];
   add(root, h('section', null, r.recipe ? h('details', null, h('summary', {text: 'See the prompt and the check this recipe writes'}), code) : code));
+}
+
+function runResult(r) {
+  if (r.run_pending) return h('p', {'class': 'note', text: 'Run now asked: the runner checks on its next pass, within about a minute.'});
+  var t = r.last_run;
+  if (!t) return null;
+  var bad = /^(check failed|failed)/.test(t.result || '');
+  return h('div', null, h('h3', {text: 'Last run now'}),
+    h('p', {'class': bad ? 'msg-err' : 'msg-ok', text: (t.result || '?') + (t.at ? ', ' + when(t.at) : '') +
+      (t.version ? ' (version ' + t.version + ')' : '')}));
 }
 
 function testResult(r) {

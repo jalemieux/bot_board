@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS routines (
     failure TEXT,
     test_asked INTEGER NOT NULL DEFAULT 0,
     last_test TEXT,
+    run_asked INTEGER NOT NULL DEFAULT 0,
+    last_run TEXT,
     created_by INTEGER NOT NULL REFERENCES agents(id),
     updated_by INTEGER NOT NULL REFERENCES agents(id),
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -104,7 +106,13 @@ def start_runner(interval: int = 30) -> threading.Thread:
 
 def init():
     with db._write_lock:
-        db.conn().executescript(SCHEMA)
+        c = db.conn()
+        c.executescript(SCHEMA)
+        have = {r[1] for r in c.execute("PRAGMA table_info(routines)")}
+        for col, ddl in (("run_asked", "INTEGER NOT NULL DEFAULT 0"), ("last_run", "TEXT")):   # #209
+            if col not in have:
+                c.execute(f"ALTER TABLE routines ADD COLUMN {col} {ddl}")
+        c.commit()
 
 
 # ---------------------------------------------------------------- the admin workspace
@@ -179,10 +187,12 @@ def _stored(row: dict) -> dict:
 def describe(row: dict, full: bool = True) -> dict:
     d = _stored(row)
     test = json.loads(row["last_test"]) if row["last_test"] else None
+    ran = json.loads(row["last_run"]) if row["last_run"] else None
     out = {**d, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
            "approved_by": row["approved_by"], "failure": row["failure"] if row["state"] == "failed" else None,
            "test_pending": row["test_asked"] > (test or {}).get("for", 0), "test_asked": row["test_asked"],
-           "last_test": test, "problem": cli.problem_with(d),
+           "last_test": test, "run_pending": row["run_asked"] > (ran or {}).get("for", 0),
+           "run_asked": row["run_asked"], "last_run": ran, "problem": cli.problem_with(d),
            "created_at": row["created_at"], "updated_at": row["updated_at"]}
     if full:
         out.update(jobs=_jobs(out), items=_items(out) if isinstance(d.get("recipe"), dict) else [])
@@ -288,7 +298,9 @@ def _approval(row: dict, agent: dict, approved_by: int | None, action: str) -> i
 
 
 def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> dict:
-    """enable, pause, test or delete."""
+    """enable, pause, test, run or delete. run: the runner checks an enabled routine on its
+    next pass as if `every` had passed, and fires a real job if there is work. It needs no
+    approval: it runs the version already enabled (#209)."""
     _require_switch(agent)
     row = _row(rid)
     sets, args = [], []
@@ -300,6 +312,10 @@ def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> d
     elif action == "test":
         _approval(row, agent, approved_by, action)
         sets = ["test_asked=test_asked+1"]
+    elif action == "run":
+        if row["state"] != "enabled":
+            raise ValueError("only an enabled routine runs now: enable it first")
+        sets = ["run_asked=run_asked+1"]
     elif action == "pause":
         sets = ["state='paused'"]
     elif action == "delete":
@@ -315,13 +331,16 @@ def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> d
 # ---------------------------------------------------------------- the runner reports
 
 def report(rid: int, data: dict, agent: dict) -> dict:
-    """From the runner: a test's result {test: {...}}, or {failed: why, version} to stop it."""
+    """From the runner: a test's result {test: {...}}, a run now's {run: {for, result}}, or
+    {failed: why, version} to stop it."""
     if not is_runner(agent):
         raise PermissionError(f"only the runner (@{cli.ME}) reports on routines")
     row = _row(rid)
     with db._write_lock, db.conn() as c:
         if isinstance(data.get("test"), dict):
             c.execute("UPDATE routines SET last_test=? WHERE id=?", (json.dumps({**data["test"], "at": db.now()}), rid))
+        if isinstance(data.get("run"), dict):
+            c.execute("UPDATE routines SET last_run=? WHERE id=?", (json.dumps({**data["run"], "at": db.now()}), rid))
         if data.get("failed"):
             # Only the version it ran: a definition changed since then is not failed by it.
             c.execute("UPDATE routines SET state='failed', failure=? WHERE id=? AND version=? AND state='enabled'",

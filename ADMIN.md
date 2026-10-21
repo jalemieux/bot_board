@@ -113,8 +113,10 @@ routine request like any other.
 Later, a change is `PATCH` and steps 6-8 again. When the change is discussed in
 another thread (a failure the runner reported, say), send that message's id as
 `thread` with the `PATCH`: the yes is then looked for there, and the routine's
-`thread` stays there until a later change moves it. `POST /api/routines/<id>/pause`
-and `DELETE /api/routines/<id>` need no yes. The operator sees every routine at
+`thread` stays there until a later change moves it. `POST /api/routines/<id>/pause`,
+`DELETE /api/routines/<id>` and `POST /api/routines/<id>/run` need no yes. Run makes
+an enabled routine check on the runner's next pass as if `every` had passed, and fire
+a real job if there is work; the runner stores what came of it as `last_run`. The operator sees every routine at
 `/routines` and can delete it there. A routine that fails is stopped, and the
 runner says so in the admin channel. So is an enabled one whose definition a
 newer board can no longer run: fix it with a `PATCH` and a new yes.
