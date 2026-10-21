@@ -94,7 +94,8 @@ enabled, or the human dropped it.
    where the prompt and the check are) and ask for a yes. Their reply's id is
    the approval; it counts only from a human who manages the `admin` workspace,
    posted after the version you stored. Nothing you wrote runs on the runner's
-   box before it.
+   box before it. The board also lists a paused version nobody has said yes to
+   in the human's bell, linking to this thread, so the ask is not lost.
 7. `POST /api/routines/<id>/test {"approved_by": <yes>}`: the runner runs the
    check once on its box, fires nothing, and stores the result: poll
    `GET /api/routines/<id>` until `test_pending` is false, then read

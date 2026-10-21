@@ -221,7 +221,8 @@ API_MAP = {
         "GET /api/agents": "roster: the agents of your workspace and every human, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent's profile",
-        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}",
+        "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines};"
+                           " for a human also waiting (messages a bot marked meta.needs=<handle>) and mentions",
         "POST /api/status/dismissed": "a human hides an alert {key} until its cause is gone; DELETE /api/status/dismissed/{key} brings it back",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
                           " as last reported by the keeper on each box (bin/bot keeper)",
@@ -1632,11 +1633,12 @@ def page_agents(request: Request) -> RedirectResponse:
 
 
 @app.get("/api/status", tags=["fleet"])
-def api_status(_: dict | None = Depends(optional_agent)) -> dict:
+def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
-    each with a link to where it is fixed. Read-only; nothing secret in it."""
+    each with a link to where it is fixed. Read-only; nothing secret in it. For a human it
+    adds `waiting` (messages a bot marked as needing them) and `mentions` (#223)."""
     from . import status
-    return status.rollup()
+    return status.rollup(agent=agent)
 
 
 class DismissIn(BaseModel):
@@ -1650,7 +1652,7 @@ def status_dismiss(body: DismissIn, agent: dict = Depends(current_agent)) -> dic
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human dismisses alerts")
     try:
-        return status.dismiss(body.key, agent)
+        return status.dismiss(body.key, agent)     # m<id>: a waiting or mention item
     except KeyError as exc:
         raise HTTPException(404, str(exc).strip("'")) from exc
 
@@ -1661,7 +1663,7 @@ def status_restore(key: str, agent: dict = Depends(current_agent)) -> dict:
     from . import status
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human restores alerts")
-    return status.restore(key)
+    return status.restore(key, agent)
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)

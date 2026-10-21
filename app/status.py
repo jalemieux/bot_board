@@ -11,7 +11,9 @@ forgotten, so the same trouble coming back later shows again.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+from datetime import datetime, timedelta, timezone
 
 from . import db, fleet, workspaces
 from .web import ago
@@ -46,21 +48,25 @@ def _ensure_table(c) -> None:
 
 def dismiss(key: str, agent: dict) -> dict:
     """Hide the item with this key until its cause is gone. KeyError when no current item has it."""
-    item = next((a for a in rollup()["attention"] if a["key"] == key), None)
+    if key.startswith("m") and key[1:].isdigit():     # a waiting or mention item: its message
+        msg = db.get_message(int(key[1:]))
+        item = msg and {"text": msg["body"][:200]}
+    else:
+        item = next((a for a in rollup()["attention"] if a["key"] == key), None)
     if item is None:
         raise KeyError("no current alert has that key")
     with db._write_lock, db.conn() as c:
         _ensure_table(c)
         c.execute("INSERT OR REPLACE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)",
                   (key, item["text"], agent["id"], db.now()))
-    return rollup()
+    return rollup(agent=agent)
 
 
-def restore(key: str) -> dict:
+def restore(key: str, agent: dict | None = None) -> dict:
     with db._write_lock, db.conn() as c:
         _ensure_table(c)
         c.execute("DELETE FROM status_dismissals WHERE key=?", (key,))
-    return rollup()
+    return rollup(agent=agent)
 
 
 def _split(attention: list) -> tuple[list, list]:
@@ -71,7 +77,7 @@ def _split(attention: list) -> tuple[list, list]:
     rows = {r["key"]: dict(r) for r in c.execute(
         "SELECT d.key, d.at, a.handle FROM status_dismissals d LEFT JOIN agents a ON a.id=d.by_agent")}
     current = {a["key"] for a in attention}
-    gone = [k for k in rows if k not in current]
+    gone = [k for k in rows if k not in current and not k.startswith("m")]   # m<id>: a message, see asks()
     if gone:
         with db._write_lock, c:
             c.executemany("DELETE FROM status_dismissals WHERE key=?", [(k,) for k in gone])
@@ -177,6 +183,11 @@ def _routines(attention: list) -> list:
             attention.append(_item(f"routine {r['name']} failed: {r.get('failure') or 'see its page'}", href, "routines"))
         elif r["state"] == "enabled" and row["problem"]:
             attention.append(_item(f"routine {r['name']}: {row['problem']}", href, "routines"))
+        elif r["state"] == "paused" and not r.get("approved_by") and not row["problem"]:
+            # a version nobody has said yes to: the board asks, so it does not rest on a bot's mention (#223)
+            attention.append(_item(f"routine {r['name']} (version {r['version']}) waits for your yes"
+                                   + (" in its thread" if r.get("thread") else ""),
+                                   f"/t/{r['thread']}" if r.get("thread") else href, "routines"))
         out.append(row)
     stalled = [r["name"] for r in out if r["state"] == "enabled"]
     if stalled and (seen is None or seen > RUNNER_STALE):    # one item: it is the runner that is down
@@ -187,7 +198,65 @@ def _routines(attention: list) -> list:
     return out
 
 
-def rollup(hosts: list | None = None) -> dict:
+MENTION_DAYS = 7     # how far back the Mentions list looks
+
+
+def _needs(meta: dict, handle: str) -> bool:
+    n = meta.get("needs")
+    names = n if isinstance(n, list) else [n] if isinstance(n, str) else []
+    return handle.lower() in {str(x).lower().lstrip("@") for x in names}
+
+
+def asks(agent: dict) -> dict:
+    """What bots wait on this human for (#223). waiting: messages marked meta.needs=<handle>
+    (or tagged needs-human with an @mention of them); each stays until the human posts in that
+    thread after it, its author posts meta.resolved there, or it is dismissed. mentions: the
+    other @mentions of the last MENTION_DAYS days the human has not posted after; they do not
+    count on the bell."""
+    c = db.conn()
+    me, handle = agent["id"], agent["handle"]
+    since = (datetime.now(timezone.utc) - timedelta(days=MENTION_DAYS)).isoformat(timespec="seconds")
+    gone = {r["key"] for r in c.execute("SELECT key FROM status_dismissals WHERE key LIKE 'm%'")} \
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='status_dismissals'").fetchone() else set()
+    # the last time this human posted in each thread, and where an asker said it is resolved
+    mine = {r["t"]: r["last"] for r in c.execute(
+        "SELECT thread_id t, MAX(id) last FROM messages WHERE agent_id=? GROUP BY thread_id", (me,))}
+    def answered(m):
+        return mine.get(m["thread_id"] or m["id"], 0) > m["id"]
+    def resolved(m):
+        return c.execute("SELECT 1 FROM messages WHERE thread_id=? AND id>? AND agent_id=? AND meta LIKE '%\"resolved\"%'"
+                         " AND json_extract(meta,'$.resolved')=1", (m["thread_id"] or m["id"], m["id"], m["agent_id"])).fetchone()
+    q = ("SELECT m.id, m.thread_id, m.agent_id, m.body, m.meta, m.created_at, a.handle author, b.slug channel"
+         " FROM messages m JOIN agents a ON a.id=m.agent_id JOIN boards b ON b.id=m.board_id")
+    waiting, seen = [], set()
+    marked = c.execute(q + " WHERE m.agent_id<>? AND (m.meta LIKE '%\"needs\"%' OR m.id IN"
+                       " (SELECT message_id FROM tags WHERE tag='needs-human')) ORDER BY m.id DESC LIMIT 500", (me,))
+    for m in marked:
+        meta = json.loads(m["meta"] or "{}")
+        tagged = c.execute("SELECT 1 FROM tags WHERE message_id=? AND tag='needs-human'", (m["id"],)).fetchone() and \
+            c.execute("SELECT 1 FROM mentions WHERE message_id=? AND agent_id=?", (m["id"], me)).fetchone()
+        if not (_needs(meta, handle) or tagged) or answered(m) or resolved(m):
+            continue
+        seen.add(m["id"])
+        if f"m{m['id']}" in gone:
+            continue
+        ask = str(meta.get("ask") or "").strip() or m["body"].split("\n", 1)[0]
+        waiting.append({"key": f"m{m['id']}", "where": "@" + m["author"], "text": ask[:200],
+                        "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]})
+    mentions = []
+    rows = c.execute(q + " JOIN mentions x ON x.message_id=m.id WHERE x.agent_id=? AND m.agent_id<>?"
+                     " AND m.created_at>=? ORDER BY m.id DESC LIMIT 200", (me, me, since))
+    for m in rows:
+        if m["id"] in seen or f"m{m['id']}" in gone or answered(m):
+            continue
+        mentions.append({"key": f"m{m['id']}", "where": "@" + m["author"], "text": m["body"].split("\n", 1)[0][:200],
+                         "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]})
+        if len(mentions) >= 30:
+            break
+    return {"waiting": waiting, "mentions": mentions}
+
+
+def rollup(hosts: list | None = None, agent: dict | None = None) -> dict:
     """{ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}.
     hosts: fleet.hosts(), when the caller has it already (each call scans the messages for last posts).
     `ok` and `attention` leave out what a human dismissed; `dismissed` lists those."""
@@ -196,4 +265,5 @@ def rollup(hosts: list | None = None) -> dict:
     out = {"fleet": _fleet(hosts, attention), "workspaces": _workspaces(hosts, attention),
            "routines": _routines(attention)}
     shown, hidden = _split(attention)
-    return {"ok": not shown, "attention": shown, "dismissed": hidden, **out}
+    mine = asks(agent) if agent and agent["kind"] == "human" else {}
+    return {"ok": not shown, "attention": shown, "dismissed": hidden, **mine, **out}
