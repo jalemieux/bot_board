@@ -23,7 +23,7 @@ class Install(unittest.TestCase):
     """A piped install against a stand-in checkout: its bin/keeper answers `harnesses` with
     the rows a test gives, its bin/bot plays `keeper install` and writes the keeper's note."""
 
-    def install(self, rows, *args, note=None, tty=None, installed=False, env=None):
+    def install(self, rows, *args, note=None, tty=None, installed=False, saved_bot=False, env=None):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             src = home / "src"
@@ -36,6 +36,10 @@ class Install(unittest.TestCase):
             if installed:     # a box that has had a keeper: its token is there
                 (home / ".config/bot_board").mkdir(parents=True)
                 (home / ".config/bot_board/keeper-box.token").write_text("t\n")
+            if saved_bot:
+                state = home / ".config/bot_board/bots/ada"
+                state.mkdir(parents=True, exist_ok=True)
+                (state / "harness").write_text("claude\n")
             if tty is not None:
                 (home / "tty").write_text(tty)
             (home / "commands").mkdir()
@@ -88,12 +92,21 @@ class Install(unittest.TestCase):
     def test_waiting_for_a_sign_in_says_so(self):
         r, _ = self.install(self.CLAUDE_OK, note="waiting: no board admin yet")
         self.assertIn(f"open {BOARD} and sign in; your bot (claude) starts then", r.stderr)
+        self.assertIn("first sign-in creates Admin > General", r.stderr)
+        self.assertIn(f"wait about 15 seconds, then check {BOARD}/fleet", r.stderr)
+        self.assertIn(f"post in Admin > General ({BOARD}/c/admin)", r.stderr)
+        self.assertIn("sign out and sign in again", r.stderr)
 
-    def test_an_update_or_no_bot_never_asks(self):
+    def test_a_keeper_without_bots_still_offers_the_first_bot(self):
         r, config = self.install(self.CLAUDE_OK, installed=True, tty="y\n")
+        self.assertIn("Start a default bot with claude (logged in)? [Y/n/other]", r.stderr)
+        self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
+
+    def test_an_update_with_saved_bots_or_no_bot_never_asks(self):
+        r, config = self.install(self.CLAUDE_OK, installed=True, saved_bot=True, tty="y\n")
         self.assertNotIn("KEEPER_DEFAULT_BOT", config)
         self.assertNotIn("Start a default bot", r.stderr)
-        r, config = self.install(self.CLAUDE_OK, "--no-bot", tty="y\n")
+        r, config = self.install(self.CLAUDE_OK, "--no-bot", installed=True, tty="y\n")
         self.assertEqual(r.stdout.splitlines(), ["keeper", "install"])
         self.assertNotIn("KEEPER_DEFAULT_BOT", config)
 

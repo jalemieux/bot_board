@@ -1,6 +1,8 @@
 """A single-user board: one person, many laptops, any handle, and every human runs the board.
 Run with python -m unittest discover -s tests."""
 import os
+import shutil
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -9,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, main
+from app import db, main, web
 
 
 class SingleUser(unittest.TestCase):
@@ -47,6 +49,64 @@ class SingleUser(unittest.TestCase):
             self.assertEqual(self.me(token).json()['agent']['handle'], 'jac')
         r = self.client.post('/api/messages', headers=self.auth(again['token']), json={'channel': 'lobby', 'body': 'hi'})
         self.assertEqual(r.json()['message']['author'], 'jac')
+
+    def test_first_sign_in_creates_admin_and_general(self):
+        self.assertEqual(self.client.get('/api/workspaces').json()['workspaces'], [])
+        human = self.register('jac')
+        r = self.client.get('/api/workspaces/admin', headers=self.auth(human['token']))
+        self.assertEqual(r.status_code, 200, r.text)
+        workspace = r.json()['workspace']
+        self.assertEqual(workspace['name'], 'Admin')
+        self.assertEqual([(c['slug'], c['name']) for c in workspace['channels']], [('admin', 'General')])
+
+    @unittest.skipUnless(shutil.which('node'), 'Node required for sign-in UI checks')
+    def test_sign_in_shows_new_channels_without_reloading(self):
+        done = web.APP_JS[web.APP_JS.index('  var done = function(me){'):
+                          web.APP_JS.index('  var fail = function(msg){')]
+        script = r"""
+const assert = require('node:assert/strict');
+var S = {cur: null, agents: {}}, afterSignin = null, routed = 0, refreshed = 0, failed = false;
+var saved = {}, input = {}, errors = [];
+function save(key, value){ saved[key] = value; }
+function setMe(me){ saved.me = me; }
+function closeSignin(){}
+function $(selector){ return input; }
+function fetch(){ return Promise.resolve({json: () => Promise.resolve({agents: []})}); }
+function refreshLists(){
+  refreshed++;
+  return failed ? Promise.reject(new Error('offline')) : Promise.resolve();
+}
+function route(){ routed++; S.cur = {slug: 'admin', name: 'General'}; }
+function setLive(on){ saved.live = on; }
+console.error = (...args) => errors.push(args);
+""" + done + r"""
+(async () => {
+  const me = {handle: 'jac', token: 'test-token'};
+  let resumed = false;
+  afterSignin = () => { resumed = true; };
+  done(me);
+  await new Promise(setImmediate);
+  assert.equal(refreshed, 1);
+  assert.equal(routed, 1);
+  assert.equal(S.cur.slug, 'admin');
+  assert.equal(saved.me, me);
+  assert.equal(resumed, true);
+  assert.equal(afterSignin, null);
+  S.cur = {slug: 'another'};
+  done(me);
+  await new Promise(setImmediate);
+  assert.equal(refreshed, 2);
+  assert.equal(routed, 1);
+  assert.equal(S.cur.slug, 'another');
+  failed = true;
+  done(me);
+  await new Promise(setImmediate);
+  assert.equal(errors.length, 1);
+  assert.equal(saved.live, false);
+  assert.equal(routed, 1);
+})().catch(error => { process.stderr.write(String(error)); process.exitCode = 1; });
+"""
+        subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)
 
     def test_bot_handles_are_never_signed_in_to(self):
         self.register('ada', 'claude-code')
