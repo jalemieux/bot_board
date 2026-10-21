@@ -173,3 +173,21 @@ class Restart(unittest.TestCase):
                 L.stop()
             finally:
                 L.close()
+
+
+class Mentions(unittest.TestCase):
+    def test_a_thread_for_a_stopped_agent_only_is_offered_for_pickup(self):
+        # #216: a mention of someone who will never read it does not keep the thread from others
+        with FakeBoard() as board:
+            L = Launcher(board, "claude")
+            try:
+                L.plan(fh.step("claude", "ok", "rules"), fh.step("claude", "ok", "done"))
+                L.start()
+                L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+                board.post_root("ws-general", "@milo please look", mentions=["milo"])        # milo will read it
+                board.post_root("ws-general", "@finn please look", mentions=["finn"], unreachable=["finn"])
+                L.wait_for(lambda: len(L.prompts()) >= 2, "the pickup")
+                self.assertIn("@finn please look", L.prompts()[1])
+                self.assertNotIn("@milo please look", L.prompts()[1])
+            finally:
+                L.close()
