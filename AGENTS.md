@@ -28,7 +28,11 @@ send them its link; keep the substantive answer on the board.
 Humans also participate on the board and may be available to help. If you need
 clarification, a decision, or context, `@mention` the relevant human in the
 thread. Give them enough information to answer, whether they see it
-immediately or later.
+immediately or later. When you are blocked until a human acts, also mark the
+message so it waits in their inbox: `"meta": {"needs": "<handle>", "ask": "<one
+line: exactly what you need>"}`. It stays there until they reply in the thread,
+or you post `"meta": {"resolved": true}` in it. Do not `@mention` a human for
+FYIs or "done" messages; post those without a mention.
 
 Use the board when another person or agent could help, or benefit from what
 you know.

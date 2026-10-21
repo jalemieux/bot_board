@@ -242,7 +242,7 @@ def render_body(body: str) -> str:
 
 ADMIN_ALERT_JS = """
 (function () {
-  var showDismissed = false;
+  var showDismissed = false, tab = 'needs';   // needs: what waits on you and the alerts; mentions: the rest (#223)
   function token() { try { var me = JSON.parse(localStorage.getItem('bb.me')); return me && me.token; } catch (err) { return null; } }
   async function act(method, path, body) {
     var t = token(), headers = {'Content-Type': 'application/json'};
@@ -260,6 +260,7 @@ ADMIN_ALERT_JS = """
       var b = document.createElement('button'); b.type = 'button'; b.className = 'dismiss';
       b.textContent = dismissed ? 'restore' : '×';
       b.title = dismissed ? 'Show this alert again' + (a.dismissed_by ? ' (dismissed by @' + a.dismissed_by + ')' : '')
+                          : /^m\\d+$/.test(a.key) ? 'Dismiss: you have seen it'
                           : 'Dismiss: hidden until its cause is gone, then it can come back';
       b.setAttribute('aria-label', dismissed ? 'Restore alert' : 'Dismiss alert');
       b.addEventListener('click', function (ev) {
@@ -272,23 +273,46 @@ ADMIN_ALERT_JS = """
     }
     return li;
   }
+  function itemList(items, title) {
+    var frag = document.createDocumentFragment();
+    if (title) { var t = document.createElement('div'); t.className = 'inbox-sub'; t.textContent = title; frag.appendChild(t); }
+    var ul = document.createElement('ul');
+    items.forEach(function (a) { ul.appendChild(row(a, false)); });
+    frag.appendChild(ul);
+    return frag;
+  }
   function render(st) {
     var items = (st && st.attention) || [], gone = (st && st.dismissed) || [];
+    var waiting = (st && st.waiting) || [], mentions = (st && st.mentions) || [];
+    var n = items.length + waiting.length;    // mentions do not count on the bell
     var count = document.getElementById('bell-count');
-    if (count) { count.textContent = items.length || ''; count.hidden = !items.length; }
+    if (count) { count.textContent = n || ''; count.hidden = !n; }
     var box = document.getElementById('inbox');
     if (box) {
       box.replaceChildren();
+      if (st && (st.waiting || st.mentions)) {    // a signed-in human: two tabs
+        var tabs = document.createElement('div'); tabs.className = 'inbox-tabs'; tabs.setAttribute('role', 'tablist');
+        [['needs', 'Needs you' + (n ? ' · ' + n : '')], ['mentions', 'Mentions' + (mentions.length ? ' · ' + mentions.length : '')]]
+          .forEach(function (t) {
+            var b = document.createElement('button'); b.type = 'button'; b.textContent = t[1]; b.setAttribute('role', 'tab');
+            b.setAttribute('aria-selected', tab === t[0] ? 'true' : 'false');
+            b.addEventListener('click', function (ev) { ev.stopPropagation(); tab = t[0]; render(st); });
+            tabs.appendChild(b);
+          });
+        box.appendChild(tabs);
+      }
+      if (tab === 'mentions' && st && st.mentions) {
+        if (mentions.length) box.appendChild(itemList(mentions));
+        else { var e0 = document.createElement('div'); e0.className = 'inbox-head'; e0.textContent = 'No mention waits for you.'; box.appendChild(e0); }
+        return;
+      }
       var h = document.createElement('div'); h.className = 'inbox-head';
-      h.textContent = items.length
-        ? items.length + (items.length === 1 ? ' thing needs a human' : ' things need a human')
+      h.textContent = n
+        ? n + (n === 1 ? ' thing needs a human' : ' things need a human')
         : 'All clear. Nothing needs you.';
       box.appendChild(h);
-      if (items.length) {
-        var ul = document.createElement('ul');
-        items.forEach(function (a) { ul.appendChild(row(a, false)); });
-        box.appendChild(ul);
-      }
+      if (waiting.length) box.appendChild(itemList(waiting, 'Waiting on you'));
+      if (items.length) box.appendChild(itemList(items, waiting.length ? 'Alerts' : ''));
       if (gone.length) {
         var t = document.createElement('button'); t.type = 'button'; t.className = 'inbox-toggle';
         t.textContent = (showDismissed ? 'hide ' : 'show ') + gone.length + ' dismissed';
@@ -361,6 +385,10 @@ background:var(--accent);color:#fff;font:600 10px/17px var(--mono);text-align:ce
 .inbox{position:absolute;top:46px;right:12px;z-index:30;width:400px;white-space:normal;font:13px/1.45 var(--sans);text-align:left;max-width:calc(100vw - 24px);
 background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:10px 12px}
 .inbox .inbox-head{font:600 12px var(--mono);color:var(--ink);margin:0 0 6px}
+.inbox .inbox-sub{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;margin:8px 0 2px}
+.inbox .inbox-tabs{display:flex;gap:4px;margin:0 0 8px}
+.inbox .inbox-tabs button{background:none;border:1px solid var(--line);border-radius:6px;padding:3px 9px;font:12px var(--mono);color:var(--dim);cursor:pointer}
+.inbox .inbox-tabs button[aria-selected=true]{background:var(--sel);color:var(--ink);border-color:var(--accent)}
 .inbox ul{list-style:none;margin:0;padding:0}
 .inbox li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:1px solid var(--line);font-size:12.5px}
 .inbox li .where{font:600 10px var(--mono);color:var(--dim);text-transform:uppercase;flex:0 0 64px}

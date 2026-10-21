@@ -1,0 +1,126 @@
+"""#223: what waits on a human, in the bell: messages a bot marked as needing them, paused
+routines nobody has said yes to, and (not counted) their other mentions.
+Run with python -m unittest discover -s tests."""
+import json
+import os
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fastapi.testclient import TestClient
+from app import db, main
+
+
+class Waiting(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
+        db._local = threading.local()
+        self.client = TestClient(main.app)
+        self.client.__enter__()
+        self.jac = self.register('jac', 'human')
+        self.bot = self.register('tarzan', 'claude-code', workspace='admin')
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        if hasattr(db._local, 'conn'):
+            db._local.conn.close()
+        self.tmp.cleanup()
+
+    def register(self, handle, kind, **more):
+        r = self.client.post('/api/agents', json={'handle': handle, 'kind': kind, **more})
+        self.assertEqual(r.status_code, 201, r.text)
+        return {'Authorization': 'Bearer ' + r.json()['token']}
+
+    def post(self, who, body, **more):
+        r = self.client.post('/api/messages', headers=who, json={'channel': 'admin', 'body': body, **more})
+        self.assertEqual(r.status_code, 201 if r.status_code == 201 else 200, r.text)
+        return r.json()['message']['id']
+
+    def status(self, who=None):
+        r = self.client.get('/api/status', headers=self.jac if who is None else who)
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def test_a_marked_ask_waits_until_the_human_replies(self):
+        ask = self.post(self.bot, '@jac which repo should this go to?',
+                        meta={'needs': 'jac', 'ask': 'pick the repo for the importer'})
+        st = self.status()
+        self.assertEqual([(w['key'], w['text'], w['where']) for w in st['waiting']],
+                         [(f'm{ask}', 'pick the repo for the importer', '@tarzan')])
+        self.assertEqual(st['mentions'], [], 'a waiting item is not listed twice')
+        self.assertNotIn('waiting', self.status({})), 'only a signed-in human gets the lists'
+        self.post(self.jac, 'bot_board', reply_to=ask)
+        self.assertEqual(self.status()['waiting'], [])
+
+    def test_the_bot_can_resolve_it_and_the_human_can_dismiss_it(self):
+        a = self.post(self.bot, 'need a yes', meta={'needs': ['@jac'], 'ask': 'say yes'})
+        self.post(self.bot, 'never mind, found it', reply_to=a, meta={'resolved': True})
+        self.assertEqual(self.status()['waiting'], [])
+        b = self.post(self.bot, 'need another yes', meta={'needs': 'jac'})
+        r = self.client.post('/api/status/dismissed', headers=self.jac, json={'key': f'm{b}'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()['waiting'], [])
+        self.assertEqual(self.status()['waiting'], [], 'a dismissal of a message is not forgotten as a stale alert')
+
+    def test_a_needs_human_tag_with_a_mention_waits_too(self):
+        m = self.post(self.bot, '@jac please review PR 12', tags=['needs-human'])
+        self.assertEqual([w['key'] for w in self.status()['waiting']], [f'm{m}'])
+
+    def test_plain_mentions_are_listed_apart_until_answered(self):
+        m = self.post(self.bot, '@jac done, merged')
+        st = self.status()
+        self.assertEqual(st['waiting'], [])
+        self.assertEqual([x['key'] for x in st['mentions']], [f'm{m}'])
+        self.post(self.jac, 'thanks', reply_to=m)
+        self.assertEqual(self.status()['mentions'], [])
+
+    def test_a_paused_routine_nobody_said_yes_to_is_an_alert(self):
+        root = self.post(self.bot, 'a routine for triage')
+        r = self.client.post('/api/routines', headers=self.jac, json={
+            'name': 'triage', 'channel': 'admin', 'every': 600, 'check': '#!/bin/sh\necho {}\n', 'prompt': 'go',
+            'thread': root})
+        self.assertEqual(r.status_code, 201, r.text)
+        item = next(a for a in self.status()['attention'] if a['where'] == 'routines')
+        self.assertIn('triage (version 1) waits for your yes', item['text'])
+        self.assertEqual(item['href'], f'/t/{root}')
+        db.conn().execute("UPDATE routines SET approved_by=1"); db.conn().commit()   # a human said yes, then paused it
+        self.assertFalse([a for a in self.status()['attention'] if 'waits for your yes' in a['text']])
+
+    def test_the_bell_shows_both_tabs(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Install Playwright and Chromium for bell UI checks")
+        self.post(self.bot, '@jac review PR 9?', meta={'needs': 'jac', 'ask': 'review PR 9'})
+        self.post(self.bot, '@jac merged, fyi')
+        token = self.jac['Authorization'].split()[1]
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            try:
+                page = browser.new_page()
+                def serve(route):
+                    path = route.request.url.replace('http://board.test', '')
+                    if 'wait=' in path:
+                        return route.abort()
+                    r = self.client.request(route.request.method, path, content=route.request.post_data,
+                                            headers=route.request.headers)
+                    route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get('content-type', 'text/plain'))
+                page.route('**/*', serve)
+                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))" % token)
+                page.goto('http://board.test/c/admin')
+                page.wait_for_function("document.getElementById('bell-count').textContent !== ''")
+                page.click('#bell')
+                self.assertIn('review PR 9', page.inner_text('#inbox'))
+                self.assertNotIn('merged, fyi', page.inner_text('#inbox'))
+                page.click('#inbox .inbox-tabs button:nth-child(2)')
+                self.assertIn('merged, fyi', page.inner_text('#inbox'))
+            finally:
+                browser.close()
+
+
+if __name__ == '__main__':
+    unittest.main()
