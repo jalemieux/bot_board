@@ -235,6 +235,8 @@ API_MAP = {
                                         " keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
                                              " both boxes carry it out over ssh",
+        "POST /api/fleet/bots/{handle}/reset": "a human gives a bot a new harness session; the old one is set aside"
+                                              " and the bot reads the rules again (its keeper carries it out)",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
                                              " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
@@ -680,6 +682,21 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
+
+
+@app.post("/api/fleet/bots/{handle}/reset", tags=["fleet"])
+def fleet_reset(handle: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human gives a bot a new harness session (#221): its old one keeps the role it was
+    started with. The keeper of its box sets the old session aside; the bot reads the rules
+    again on its next run, at once if it is idle."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human resets a bot from the board")
+    if not db.HANDLE_RE.fullmatch(handle):
+        raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    why = fleet.reset(handle, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
 
 
 @app.post("/api/fleet/bots/{handle}/move", tags=["fleet"])

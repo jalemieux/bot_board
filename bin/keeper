@@ -638,6 +638,7 @@ class Hands:
         self.gave_up = {}       # handle -> (the set_at of the request that failed, why)
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
         self.killed = {}        # handle -> the kill request (its time) already carried out
+        self.reset = {}         # handle -> the new-session request (its time) already passed to bin/bot
         self.quick = {}         # handle -> how many times in a row it died soon after a start
         self.blocked = {}       # harness -> why its bots are not started now (Credentials.blocked)
         self.held = {}          # harness -> how many bots that held in the last round
@@ -651,6 +652,11 @@ class Hands:
         self.retry_drops()
         for w in want:
             h = w["handle"]
+            # a new session (#221): bin/bot reset does it once per request, whatever else is asked
+            if w.get("reset") and self.reset.get(h) != w["reset"] and HANDLE_RE.fullmatch(h) and h.lower() in here:
+                self.reset[h] = w["reset"]
+                self.spawn(h, [BOT, "reset", h, "--asked", w["reset"]])
+                print(f"keeper: new session for {h}, asked by a human at {w['reset']}", flush=True)
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
             elif w.get("move_to"):
