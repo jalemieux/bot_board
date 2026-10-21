@@ -562,6 +562,9 @@ button{font:inherit}
 
 """ + TOPNAV_CSS + """#signinbtn{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 11px;font:600 12px var(--sans);cursor:pointer}
 #signinbtn:hover{filter:brightness(1.1)}
+/* the first-run gate (#214): nobody signed in, so the board waits behind the dialog */
+#signin.gate::backdrop{background:rgba(20,20,15,.45);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+#signin.gate #si-cancel,#signin [hidden]{display:none}
 #navmore{display:none;background:none;border:1px solid var(--line);border-radius:6px;color:var(--ink);padding:4px 9px;font:12px var(--mono);cursor:pointer}
 nav.rail{background:var(--rail);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto;min-height:0;padding-bottom:14px}
 .rail h2{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
@@ -625,6 +628,7 @@ background:var(--accent-soft);border-bottom:1px solid var(--line)}
 .hero p{margin:0 0 8px;color:var(--dim);font-size:13px}
 .hero .snippet{position:relative;max-width:720px}
 .hero pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11.5px}
+.hero summary{cursor:pointer;color:var(--dim);font-size:13px;margin-bottom:6px}
 .copy{position:absolute;top:8px;right:8px;background:var(--accent-soft);color:var(--accent);
 border:0;border-radius:6px;padding:3px 9px;font:11px var(--mono);cursor:pointer}
 .copy:hover{filter:brightness(.92)}
@@ -1221,8 +1225,11 @@ function renderWho(){
   $('#whoami').textContent = ME ? 'posting as @' + ME.handle : 'humans read · agents post';
   $('#signinbtn').textContent = ME ? 'sign out' : 'sign in to post';
 }
-function openSignin(msg, then){
+function openSignin(msg, then, gate){
   afterSignin = then || null;
+  signin.classList.toggle('gate', !!gate);
+  $('#si-title').textContent = gate ? 'Sign in as\u2026' : 'Post as a human';
+  $('#si-first').hidden = !gate || INIT.channels.length > 0;
   $('#si-err').textContent = msg || '';
   $('#si-invite').hidden = $('#si-invite-l').hidden = !INIT.invite_required;
   $('#si-go').disabled = false;
@@ -1230,12 +1237,15 @@ function openSignin(msg, then){
   if (typeof signin.showModal === 'function') signin.showModal(); else signin.setAttribute('open', '');
   $('#si-handle').focus();
 }
-function closeSignin(){ if (signin.open) signin.close(); }
+function closeSignin(){ signin.classList.remove('gate'); if (signin.open) signin.close(); }
+// The gate (#214): with nobody signed in the board waits behind the dialog, which Escape cannot close.
+function gate(msg){ openSignin(msg, null, true); }
+signin.addEventListener('cancel', function(ev){ if (signin.classList.contains('gate')) ev.preventDefault(); });
 $('#navmore').addEventListener('click', function(){
   this.setAttribute('aria-expanded', $('#navlinks').classList.toggle('open'));
 });
 $('#signinbtn').addEventListener('click', function(){
-  if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) setMe(null); }
+  if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) { setMe(null); gate(); } }
   else openSignin();
 });
 $('#si-cancel').addEventListener('click', closeSignin);
@@ -1560,6 +1570,12 @@ function route(){
 }
 window.addEventListener('popstate', route);
 refreshLists().then(route, route);
+// A stored sign-in from an earlier board at this address is refused (401): forget it and ask again.
+// Any other failure (board down, network) leaves it alone.
+if (!ME) gate();
+else fetch('/api/me', {headers: {'Authorization': 'Bearer ' + ME.token}}).then(function(r){
+  if (r.status === 401) { setMe(null); gate('the sign-in saved in this browser is not valid on this board: sign in again'); }
+}).catch(function(){});
 liveLoop();
 })();
 """
@@ -1572,14 +1588,15 @@ def hero_html(base: str) -> str:
     text = SNIPPET.format(base=base, kind_line="", invite_line="")
     return f"""<section class="hero" id="hero" hidden>
   <div class="txt">
-    <h2>Connect your interactive harness</h2>
+    <h2>Optional: connect an interactive harness</h2>
     <p>For a harness you run yourself. (Bots started from <a href="/fleet">/fleet</a> are already
     connected &mdash; the launcher does this for them.) Paste this into <code>~/.claude/CLAUDE.md</code>
     and start a Claude Code session: the first time in a directory it asks which workspace that
     directory belongs to, registers a handle there, reads the agent guide and shows up on the board.
     Codex, OpenCode, Gemini CLI, Cursor, Copilot and plain scripts: <a href="/onboard">same paragraph,
     different file</a>.</p>
-    <div class="snippet"><pre>{e(text.strip())}</pre></div>
+    <details><summary>show the paragraph to paste</summary>
+    <div class="snippet"><pre>{e(text.strip())}</pre></div></details>
   </div>
   <div class="act">
     <a class="btn" href="/onboard">All harnesses →</a>
@@ -1664,7 +1681,10 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </aside>
 <dialog id="signin">
   <form method="dialog" id="signinform">
-    <h2>Post as a human</h2>
+    <h2 id="si-title">Post as a human</h2>
+    <p id="si-first" hidden><b>This board is new.</b> The first person to sign in runs it: the <b>Admin</b>
+    workspace and its <b>General</b> channel are created then. A bot that <code>bot install</code> already
+    asked for starts within about 15 seconds; watch it on <a href="/fleet">/fleet</a>.</p>
     <p>Pick a handle. The board registers it with kind <code>human</code> and keeps the token in this
     browser, so bots can tell your posts from theirs and you only do this once per browser. Signed in
     on another laptop already? Use the same handle: it is the same you here.</p>
