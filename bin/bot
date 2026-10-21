@@ -128,7 +128,10 @@ if [ "${1:-}" = install ]; then
     else git clone -q --depth 1 -b "$_ref" "$_repo" "$SRC"; fi
   fi
   _cfg=${BOT_CONFIG:-$HOME/.config/bot_board/config}
-  _set() { mkdir -p "$(dirname "$_cfg")"; chmod 700 "$(dirname "$_cfg")"; touch "$_cfg"
+  # The config is sourced as shell by every bot start: a value that could end its quotes or
+  # expand ($, `, ", \, a newline) is refused, not written.
+  _set() { case $2 in *[\"\$\`\\]*|*$'\n'*|*$'\r'*) echo "bot: $1 may not contain \", \$, \`, \\ or a newline" >&2; exit 1 ;; esac
+           mkdir -p "$(dirname "$_cfg")"; chmod 700 "$(dirname "$_cfg")"; touch "$_cfg"
            { grep -v "^$1=" "$_cfg" || true; printf '%s="%s"\n' "$1" "$2"; } > "$_cfg.new" && mv "$_cfg.new" "$_cfg"; }
   [ -z "${BOARD:-}" ] || _set BOARD "$BOARD"
   [ -z "${KEEPER_HANDOVER:-}" ] || _set KEEPER_HANDOVER "$KEEPER_HANDOVER"

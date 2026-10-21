@@ -112,6 +112,9 @@ def default_bot_note(got):
             lines = f.read().splitlines()
     except OSError:
         return
+    # bin/bot sources the config as shell: the board's words go in as one comment line, and a
+    # newline in them would start a command. Keep printable characters only.
+    got = {k: re.sub(r"[^\x20-\x7e]", "", v)[:200] if isinstance(v, str) else v for k, v in got.items()}
     if got.get("waiting"):
         note = f"# default bot: waiting: {got['waiting']}"
     elif got.get("created"):

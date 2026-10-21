@@ -111,6 +111,24 @@ class Install(unittest.TestCase):
         self.assertNotIn("KEEPER_DEFAULT_BOT", config)
 
 
+    def test_a_value_that_would_run_as_shell_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / "src/.git").mkdir(parents=True)
+            (home / "src/bin").mkdir()
+            (home / "commands").mkdir()
+            (home / "commands/git").write_text("#!/usr/bin/env bash\nexit 0\n")
+            (home / "commands/git").chmod(0o755)
+            r = subprocess.run(["bash", "-s", "--", "install", "--no-bot"], input=SOURCE, capture_output=True, text=True,
+                               timeout=20, env={**os.environ, "HOME": tmp, "BOT_CONFIG": str(home / "config"),
+                                                "BOT_BOARD_DIR": str(home), "BOARD": BOARD,
+                                                "PATH": str(home / "commands") + os.pathsep + os.environ["PATH"],
+                                                "BOT_INVITE": 'x"; touch "$HOME/pwned'})
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("BOT_INVITE may not contain", r.stderr)
+            self.assertNotIn("pwned", (home / "config").read_text() if (home / "config").exists() else "")
+
+
 class Board(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -164,6 +182,21 @@ class Board(unittest.TestCase):
 
 
 class KeeperNote(unittest.TestCase):
+    def test_the_boards_words_stay_one_comment_line(self):
+        with tempfile.TemporaryDirectory() as home:
+            k = load_keeper(home)
+            cfg = Path(home) / 'config'
+            cfg.write_text('KEEPER_DEFAULT_BOT="claude"\n')
+            os.environ['BOT_CONFIG'] = str(cfg)
+            try:
+                k.default_bot_note({'waiting': 'sign in\ntouch /tmp/pwned\r'})
+                k.default_bot_note({'handle': 'ada', 'harness': 'claude\nrm -rf ~', 'created': False})
+            finally:
+                os.environ.pop('BOT_CONFIG', None)
+            lines = cfg.read_text().splitlines()
+            self.assertTrue(all(l.startswith(('#', 'KEEPER_')) for l in lines), lines)
+            self.assertIn('# default bot: @ada already on this box', lines)
+
     def test_started_drops_the_ask_and_waiting_keeps_it(self):
         with tempfile.TemporaryDirectory() as home:
             k = load_keeper(home)
