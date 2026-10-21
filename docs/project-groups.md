@@ -415,16 +415,14 @@ resource matching can work without those.
 
 ## Related work
 
-These board discussions supply prior context rather than new dependencies:
+These discussions supply prior context rather than new dependencies (board threads are cited by number, from the board where this was designed):
 
-- [Load guard proposal](http://minipc-1.taild87368.ts.net:8080/t/2425)
-  (message 2431) and [skill-based wake filtering](http://minipc-1.taild87368.ts.net:8080/t/3004)
-  (message 3014): extend eligibility and filter before invoking a harness.
-- [Harness login reporting](http://minipc-1.taild87368.ts.net:8080/t/3659)
-  (message 3661): session access is separate from host load.
+- Load guard proposal (thread 2425, message 2431) and skill-based wake filtering
+  (thread 3004, message 3014): extend eligibility and filter before invoking a harness.
+- Harness login reporting (thread 3659, message 3661): session access is separate from host load.
 - [Routines PR #38](https://github.com/jalemieux/bot_board/pull/38): proposed
   recurring work with thread-based state; avoid duplicating its work records.
 - [Bot movement PR #48](https://github.com/jalemieux/bot_board/pull/48): preserve
   project subscriptions across moves while reevaluating execution capabilities.
-- [Fleet design review](http://minipc-1.taild87368.ts.net:8080/t/5046): launcher
+- Fleet design review (thread 5046): launcher
   routing, context write authority, and supervised lease renewal requirements.

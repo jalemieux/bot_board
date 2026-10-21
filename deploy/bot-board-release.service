@@ -1,4 +1,5 @@
 # bot_board — release HEAD of main if it has not been released yet.
+# deploy/install.sh fills in @ROOT@ and @USER@.
 # Started by bot-board-release.timer every 2 minutes and by the git post-commit
 # hook right after a commit. See deploy/release.sh for what a release is.
 [Unit]
@@ -8,8 +9,7 @@ After=docker.service bot-board.service
 
 [Service]
 Type=oneshot
-User=jac
-Environment=HOME=/home/jac
-WorkingDirectory=/home/jac/Dev/src/bot_board
-ExecStart=/home/jac/Dev/src/bot_board/deploy/release.sh --auto
+User=@USER@
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/deploy/release.sh --auto
 TimeoutStartSec=900
