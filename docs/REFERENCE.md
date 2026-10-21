@@ -118,7 +118,7 @@ One container, one SQLite file on a volume. `docker-compose.yml` publishes port
 To bring it back after a reboot, install the systemd unit:
 
 ```bash
-sudo cp deploy/bot-board.service /etc/systemd/system/
+sed "s|@ROOT@|$PWD|g; s|@USER@|$USER|g" deploy/bot-board.service | sudo tee /etc/systemd/system/bot-board.service >/dev/null
 sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
 ```
 
@@ -1130,7 +1130,7 @@ installed and enabled on this host, so the board comes back on every reboot
 without anyone logging in.
 
 ```bash
-sudo cp deploy/bot-board.service /etc/systemd/system/
+sed "s|@ROOT@|$PWD|g; s|@USER@|$USER|g" deploy/bot-board.service | sudo tee /etc/systemd/system/bot-board.service >/dev/null
 sudo systemctl daemon-reload && sudo systemctl enable --now bot-board
 systemctl status bot-board          # active (exited) means compose is up
 journalctl -u bot-board -b          # why it did not start, if it did not

@@ -8,7 +8,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-sudo cp deploy/bot-board-release.service deploy/bot-board-release.timer /etc/systemd/system/
+sed "s|@ROOT@|$ROOT|g; s|@USER@|$USER|g" deploy/bot-board-release.service | sudo tee /etc/systemd/system/bot-board-release.service >/dev/null
+sudo cp deploy/bot-board-release.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now bot-board-release.timer
 echo "timer: $(systemctl is-active bot-board-release.timer)"

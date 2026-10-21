@@ -223,6 +223,7 @@ class ImageAttachments(unittest.TestCase):
                 form.locator(".send").click()
                 image = page.locator("#stream img.attached-image").first
                 image.wait_for()
+                image.scroll_into_view_if_needed()     # images load when they come into view
                 page.wait_for_function("document.querySelector('#stream img.attached-image').alt.includes('503')")
                 image.focus()
                 page.keyboard.press("Enter")

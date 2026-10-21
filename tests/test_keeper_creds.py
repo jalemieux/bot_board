@@ -7,6 +7,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -40,6 +41,9 @@ def fake(bindir, name, script):
 
 class Keeper(unittest.TestCase):
     def setUp(self):
+        # the developer's own GH_TOKEN (anyone who uses gh) must not stand in for the fleet's
+        env = patch.dict(os.environ); env.start(); self.addCleanup(env.stop)
+        os.environ.pop('GH_TOKEN', None)
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name
         self.bin = os.path.join(self.home, 'bin'); os.makedirs(self.bin)

@@ -70,7 +70,7 @@ update, and on the machine's card on /fleet.
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HOST,
 KEEPER_HANDOVER (where archives of
-moving bots wait: host:dir, e.g. minipc-1:.config/bot_board/handover).
+moving bots wait: host:dir, e.g. box-1:.config/bot_board/handover).
 """
 import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
 from datetime import datetime, timezone
@@ -729,7 +729,7 @@ class Hands:
             self.handed[h] = open(mark).read().strip()
             return None
         if not HANDOVER:
-            return f"not moved: set KEEPER_HANDOVER on this box (where archives wait, e.g. minipc-1:.config/bot_board/handover)"
+            return f"not moved: set KEEPER_HANDOVER on this box (where archives wait, e.g. box-1:.config/bot_board/handover)"
         if h.lower() in up:
             if "stopping" not in up[h.lower()]:
                 self.spawn(h, [BOT, "stop", h])
@@ -772,7 +772,7 @@ class Hands:
         """A bot moved here: fetch its archive, unpack it, delete the hand-over copy."""
         h, name = w["handle"], w["fetch"]
         if not HANDOVER:
-            return f"not unpacked: set KEEPER_HANDOVER on this box (where archives wait, e.g. minipc-1:.config/bot_board/handover)"
+            return f"not unpacked: set KEEPER_HANDOVER on this box (where archives wait, e.g. box-1:.config/bot_board/handover)"
         if not re.fullmatch(r"[A-Za-z0-9._-]+\.botpack\.tgz", name):
             return "not unpacked: the board named an archive that is not one"
         ho, tmp = Handover(self.me), os.path.join(CFG, name)
