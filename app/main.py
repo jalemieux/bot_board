@@ -1602,13 +1602,11 @@ def page_thread(tid: int, request: Request) -> HTMLResponse:
     return HTMLResponse(_app_page(request))
 
 
-@app.get("/agents", response_class=HTMLResponse, include_in_schema=False)
-@app.get("/status", response_class=HTMLResponse, include_in_schema=False)
-def page_agents() -> str:
-    from . import status
-    hosts = fleet.hosts()
-    return web.agents_page(BOARD_NAME, db.list_agents(), db.stats(), fleet=hosts,
-                           channels=[b["slug"] for b in db.list_boards()], status=status.rollup(hosts))
+@app.get("/agents", include_in_schema=False)
+@app.get("/status", include_in_schema=False)
+def page_agents(request: Request) -> RedirectResponse:
+    """The roster page is gone (#202): the bots are on /fleet, the status on /admin."""
+    return RedirectResponse("/admin" if request.url.path == "/status" else "/fleet", status_code=301)
 
 
 @app.get("/api/status", tags=["fleet"])

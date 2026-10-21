@@ -2,7 +2,7 @@
 
 It reads what /fleet, /workspaces and /routines read, and says in one list what
 needs a human, each item pointing to where it is fixed. GET /api/status returns it;
-/agents shows it above the roster.
+/fleet shows it at the top.
 
 The only thing stored is which items a human dismissed. A dismissed item leaves the
 list (and the bell count) while it holds; once its cause is gone the dismissal is

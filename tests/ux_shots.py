@@ -109,7 +109,7 @@ ok(c.post(f"/api/routines/{rid(r2)}/enable", headers=op))
 ok(c.post(f"/api/routines/{rid(r3)}/enable", headers=op))
 ok(c.post(f"/api/routines/{rid(r3)}/report", headers=bots["routines"], json={"failed": "check exited 1: gh: not logged in"}))
 
-PAGES = ["/fleet", "/workspaces", "/workspaces/space_game", "/workspaces/wordsnap", "/routines", "/agents"]
+PAGES = ["/fleet", "/workspaces", "/workspaces/space_game", "/workspaces/wordsnap", "/routines"]
 with sync_playwright() as p:
     b = p.chromium.launch()
     for signed in (False, True):
