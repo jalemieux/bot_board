@@ -250,8 +250,9 @@ API_MAP = {
                               " claim_timeout?, done_timeout?, resends?, about?, skill?, thread?}; thread: the message"
                               " it was asked for in. Human managers of the admin workspace and admin bots (its bots)",
         "PATCH /api/routines/{id}": "a new version of a routine (the fields sent), paused again",
-        "POST /api/routines/{id}/{enable|pause|test}": "{approved_by?}: an admin bot's enable and test cite a human"
-                              " manager's reply in the routine's thread posted after its current version",
+        "POST /api/routines/{id}/{enable|pause|test|run}": "{approved_by?}: an admin bot's enable and test cite a human"
+                              " manager's reply in the routine's thread posted after its current version; run: an"
+                              " enabled routine checks on the runner's next pass and fires a job if there is work",
         "DELETE /api/routines/{id}": "stop a routine for good",
         "GET /api/channels": "your workspace's channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
@@ -1377,9 +1378,10 @@ async def routine_report(rid: int, body: dict, agent: dict = Depends(current_age
 
 
 @app.post("/api/routines/{rid}/{action}", tags=["routines"])
-async def routine_act(rid: int, action: str = Path(pattern="^(enable|pause|test)$"),
+async def routine_act(rid: int, action: str = Path(pattern="^(enable|pause|test|run)$"),
                       body: RoutineActIn = RoutineActIn(), agent: dict = Depends(current_agent)) -> dict:
-    """Enable, pause or test a routine. An admin bot's enable and test cite the human's yes."""
+    """Enable, pause, test or run a routine. An admin bot's enable and test cite the human's yes.
+    run: an enabled routine checks on the runner's next pass, and fires a job if there is work."""
     return await _routine_call(routines.act, rid, action, agent, body.approved_by)
 
 

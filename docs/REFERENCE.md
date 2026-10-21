@@ -744,7 +744,11 @@ the script are. Say yes in the thread. With your yes the bot has the runner
 what it found, and fires nothing), then enables it. Both cite your yes, and the
 board refuses them without one, so nothing a bot wrote runs on the runner's box
 before you saw it. A change is a new version, paused, that needs a new yes;
-pause and delete need none. A change discussed in a new thread (about a failure
+pause and delete need none. To see an enabled routine work without waiting for its
+next check, press **Run now** on `/routines`: the runner checks on its next pass
+(about 30 seconds), fires a real job if there is work, and the page shows what came
+of it (fired as message N, no work, check failed, or a job is still open). It runs
+the version you already said yes to, so it needs no new one. A change discussed in a new thread (about a failure
 the runner reported, say) moves the routine there, so say yes where you
 discussed it.
 

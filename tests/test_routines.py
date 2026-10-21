@@ -199,6 +199,22 @@ class Routines(unittest.TestCase):
         self.call('POST', f"/api/routines/{r['id']}/enable", expected=404)
         self.call('DELETE', f"/api/routines/{r['id']}", expected=404)
 
+    def test_run_now_is_for_an_enabled_routine_and_needs_no_new_yes(self):
+        # #209: it runs the version already approved
+        r = self.add()
+        run = f"/api/routines/{r['id']}/run"
+        self.call('POST', run, expected=422)                       # paused: enable it first
+        self.call('POST', f"/api/routines/{r['id']}/enable")
+        self.call('POST', run, auth=self.bot, expected=403)         # not an admin bot yet
+        self.make_admin()
+        got = self.call('POST', run, auth=self.bot)                 # an admin bot, no approved_by
+        self.assertEqual((got['run_pending'], got['run_asked'], got['state']), (True, 1, 'enabled'))
+        got = self.call('POST', f"/api/routines/{r['id']}/report", {'run': {'for': 1, 'version': 1, 'result': 'no work'}},
+                        auth=self.runner)
+        self.assertFalse(got['run_pending'])
+        self.assertEqual(got['last_run']['result'], 'no work')
+        self.assertIn('at', got['last_run'])
+
     def test_only_the_runner_reports_and_a_failure_only_fails_the_version_it_ran(self):
         r = self.add()
         report = f"/api/routines/{r['id']}/report"
