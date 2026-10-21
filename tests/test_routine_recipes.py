@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ROUTINES = str(ROOT / "bin" / "routines")
 FAKE_GH = """#!/bin/sh
 # gh issue list ... -> $HOME/issues.json ; gh issue view N ... -> $HOME/view-N.json or open and untaken
+if [ "$1" = api ]; then echo bots; exit 0; fi     # gh api user: the account every bot shares
 if [ "$2" = list ]; then cat "$HOME/issues.json"; exit 0; fi
 if [ -f "$HOME/view-$3.json" ]; then cat "$HOME/view-$3.json"; exit 0; fi
 echo '{"state": "OPEN", "assignees": [], "closedByPullRequestsReferences": []}'
@@ -161,9 +162,10 @@ class Recipes(unittest.TestCase):
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
 
         # #3 is ada's (bot:ada, and ada is running) and #4 labelled claimed: never announced.
-        # An assignee alone says nothing (#225): every bot shares one GitHub account. #1 and #2 make the first batch.
+        # The bots' shared account assigned says nothing (#225); a person assigned (#6) has it. #1 and #2 make the first batch.
         self.api("GET", "/api/me", token=self.bot)     # ada is around
-        self.issues(issue(1, ["doc"], assignees=["bob"]), issue(2), issue(3, ["bot:ada"]), issue(4, ["claimed"]))
+        self.issues(issue(1, ["doc"], assignees=["bots"]), issue(2), issue(3, ["bot:ada"]), issue(4, ["claimed"]),
+                    issue(6, assignees=["jac"]))
         self.once()
         job = self.state(thread)["job"]
         self.assertEqual([i["number"] for i in job["items"]], [1, 2])
@@ -222,6 +224,35 @@ class Recipes(unittest.TestCase):
                     if m["body"].startswith("New issue to take: #41"))
         self.assertIn("--add-label bot:<your handle>", body)
         self.assertIn("removes `bot:ghost`", body)
+        self.assertIn("hold the work so far", body)
+
+    def test_an_issue_announced_before_goes_out_again_when_its_owner_stops(self):
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 5,
+              "rules": [{"label": "doc", "channel": "art"}]}
+        thread = self.api("POST", "/api/routines", {"name": "orphans", "recipe": rc, "every": 1}, self.human)["id"]
+        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
+        self.issues(issue(51, ["doc"]))
+        self.once()
+        self.assertEqual(len(self.announced(thread)[51]), 1)
+        # ghost took it, then stopped: the issue goes out again, once for ghost, though it was sent and is old
+        self.issues(issue(51, ["doc", "bot:ghost"]))
+        for _ in range(2):
+            self.state(thread, lambda st: st.update(checked_at=0)); self.once()
+        self.assertEqual(len(self.announced(thread)[51]), 2)
+        self.assertEqual(self.state(thread)["watermark"]["orphaned"], {"51": "ghost"})
+
+    def test_a_version_2_watermark_still_reads(self):
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
+        with open(os.path.join(self.home, "issues.json"), "w") as fh:
+            json.dump([issue(61), issue(62)], fh)
+        env = dict(os.environ, HOME=self.home, PATH=os.path.join(self.tmp.name, "bin") + os.pathsep + os.environ["PATH"],
+                   BOARD=self.board)
+        out = subprocess.run(["sh", "-c", cli.recipe_check(rc)], env={**env, "ROUTINE_WATERMARK": "[61]"},
+                             capture_output=True, text=True, cwd=self.tmp.name)
+        got = json.loads(out.stdout)
+        self.assertEqual([i["number"] for i in got["items"]], [62], out.stderr)
+        self.assertEqual(got["watermark"], {"sent": [61, 62], "orphaned": {}})
 
     def test_a_workspace_that_goes_away_stops_the_routine_with_the_reason(self):
         self.api("POST", "/api/workspaces", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
