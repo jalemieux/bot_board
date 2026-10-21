@@ -1841,8 +1841,8 @@ def _bot_row(b: dict, host: str, others: list) -> str:
 
 
 def _stop_panel(b: dict, host: str) -> str:
-    """Opened by stop or kill on a bot that holds open threads: keep them, hand them off
-    once it has stopped, or retire it (#167)."""
+    """Opened by stop or kill on a bot that holds open threads: hand them off once it has
+    stopped (the default, #217), keep them, or retire it (#167)."""
     h, n = e(b["handle"]), b["open_threads"]
     items = "".join(f'<li><a href="/t/{t["thread_id"]}">#{e(t["channel"])} · {e(t["title"] or "(untitled)")}</a>'
                     f' <span class="dim">{e(ago(t["last_at"]))}</span></li>' for t in b.get("open_thread_list") or [])
@@ -1853,8 +1853,9 @@ def _stop_panel(b: dict, host: str) -> str:
     return (f'<tr class="stop-panel" id="stop-{h}" hidden><td colspan="7">'
             f'<p>@{h} holds {n} open thread{"s" * (n != 1)}. What should happen to {"them" if n != 1 else "it"}?</p>'
             f'<ul>{items}</ul><div class="opts">'
-            + opt("keep", "Keep them", "for a restart or a move; nobody else can pick them up", " checked")
-            + opt("handoff", "Hand them off", "released once it has stopped; the next watching bot claims each")
+            # hand off by default: a stopped bot that keeps its threads holds them from everyone (#217)
+            + opt("handoff", "Hand them off", "released once it has stopped; the next watching bot claims each", " checked")
+            + opt("keep", "Keep them", "for a planned restart or a move; nobody else can pick them up meanwhile")
             + opt("retire", "Retire", "hand them off, and drop it from the stopped list")
             + f'</div><button type="button" class="act stop-go" data-handle="{h}" data-host="{e(host)}" data-run="0">'
               'Stop</button> <button type="button" class="stop-cancel">cancel</button></td></tr>')

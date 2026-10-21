@@ -71,6 +71,8 @@ class Handoff(unittest.TestCase):
         self.assertIn('id="stop-tarzan" hidden', page)
         self.assertIn('task 1', page)
         self.assertNotIn('task 2', page)     # completed
+        self.assertIn('name="threads-tarzan" value="handoff" checked', page)     # hand off is the default (#217)
+        self.assertNotIn('value="keep" checked', page)
 
     def test_handoff_waits_for_the_keeper_to_report_it_stopped(self):
         self.ask(run=False, threads='handoff')
