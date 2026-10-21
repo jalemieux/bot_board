@@ -161,6 +161,25 @@ class Routines(unittest.TestCase):
         yes2 = self.post('ok', ask['id'])
         self.assertEqual(self.call('POST', enable, {'approved_by': yes2['id']}, auth=self.bot)['state'], 'enabled')
 
+    def test_a_new_version_can_move_the_yes_to_the_thread_where_the_fix_is_discussed(self):
+        self.make_admin()
+        ask = self.post('Every new issue on bot_board should be triaged')
+        r = self.add(auth=self.bot, thread=ask['id'])
+        enable = f"/api/routines/{r['id']}/enable"
+        report = self.post(f"routine {r['id']} stopped: gh failed")
+        fix = self.post('can you retry gh?', report['id'])
+        v2 = self.call('PATCH', f"/api/routines/{r['id']}", {'every': 300, 'thread': fix['id']}, auth=self.bot)
+        self.assertEqual((v2['version'], v2['thread']), (2, report['id']))
+        old_yes = self.post('yes', ask['id'])                 # the old thread no longer counts
+        refused = self.client.post(enable, json={'approved_by': old_yes['id']}, headers=self.bot)
+        self.assertEqual(refused.status_code, 422)
+        self.assertIn(f"thread {report['id']}", refused.text)  # and the refusal says which one does
+        yes = self.post('yes', report['id'])
+        self.assertEqual(self.call('POST', enable, {'approved_by': yes['id']}, auth=self.bot)['state'], 'enabled')
+        v3 = self.call('PATCH', f"/api/routines/{r['id']}", {'every': 600}, auth=self.bot)
+        self.assertEqual(v3['thread'], report['id'])           # without `thread`, it stays where it was
+        self.call('PATCH', f"/api/routines/{r['id']}", {'thread': 999999}, auth=self.bot, expected=404)
+
     def test_delete_stops_it_for_good(self):
         r = self.add()
         self.call('DELETE', f"/api/routines/{r['id']}")

@@ -1323,8 +1323,9 @@ class RoutineIn(BaseModel):
     resends: int | None = Field(None, ge=0)
     about: str | None = None
     skill: str | None = None
-    thread: int | None = Field(None, description="On create: the message the routine was asked for in. Its"
-                               " thread is where the human's yes is looked for.")
+    thread: int | None = Field(None, description="The message the routine (or, on a change, this version) is"
+                               " discussed in. Its thread is where the human's yes is looked for; a change"
+                               " without it keeps the thread it had.")
 
     @field_validator("channel")
     @classmethod
@@ -1366,7 +1367,7 @@ async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) 
 @app.patch("/api/routines/{rid}", tags=["routines"])
 async def routine_update(rid: int, body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
     """A new version of the definition (only the fields sent change); paused until enabled again."""
-    return await _routine_call(routines.update, rid, body.model_dump(exclude={"thread"}), agent)
+    return await _routine_call(routines.update, rid, body.model_dump(), agent)
 
 
 @app.post("/api/routines/{rid}/report", tags=["routines"], include_in_schema=False)

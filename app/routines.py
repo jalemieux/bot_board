@@ -9,7 +9,8 @@ channel when one fails.
 Who may change one: a human who manages the admin workspace (or the board), or
 an admin bot, a bot of that workspace. An admin bot's enable and test need
 `approved_by`, the id of such a human's reply in the routine's thread posted
-after the current version was written, so nothing a bot wrote runs on the
+after the current version was written (a new version may move the thread to
+where it is discussed), so nothing a bot wrote runs on the
 runner's box before a human said yes to it. Every change to the definition is a
 new version, paused again. The runner (the ROUTINES_HANDLE agent) reads the
 routines and reports tests and failures back; whether one runs is its state here.
@@ -228,16 +229,21 @@ def _definition(data: dict, old: dict | None = None) -> dict:
     return r
 
 
+def _thread(mid: int | None) -> int | None:
+    """The thread a message is in: where the human's yes is looked for."""
+    if mid is None:
+        return None
+    m = db.get_message(mid)
+    if m is None:
+        raise KeyError(f"no message {mid}")
+    return m["thread_id"] or m["id"]
+
+
 def create(data: dict, agent: dict) -> dict:
     """A new routine, paused. `thread`: the message where it was asked for, whose thread holds the yes."""
     _require_switch(agent)
     r = _definition(data)
-    thread = data.get("thread")
-    if thread is not None:
-        m = db.get_message(thread)
-        if m is None:
-            raise KeyError(f"no message {thread}")
-        thread = m["thread_id"] or m["id"]
+    thread = _thread(data.get("thread"))
     with db._write_lock, db.conn() as c:
         rid = c.execute("INSERT INTO routines(definition,defined_at,thread_id,created_by,updated_by,created_at,updated_at)"
                         " VALUES (?,?,?,?,?,?,?)", (json.dumps(r), db.cursor(), thread, agent["id"], agent["id"],
@@ -246,14 +252,18 @@ def create(data: dict, agent: dict) -> dict:
 
 
 def update(rid: int, data: dict, agent: dict) -> dict:
-    """A new version of the definition, paused until it is enabled again."""
+    """A new version of the definition, paused until it is enabled again.
+
+    `thread`: the message where this version is discussed, whose thread then holds the yes (#205).
+    """
     _require_switch(agent)
     row = _row(rid)
     r = _definition(data, json.loads(row["definition"]))
+    thread = _thread(data.get("thread")) or row["thread_id"]
     with db._write_lock, db.conn() as c:
-        c.execute("UPDATE routines SET definition=?, version=version+1, defined_at=?, state='paused', approved_by=NULL,"
-                  " failure=NULL, updated_by=?, updated_at=? WHERE id=?",
-                  (json.dumps(r), db.cursor(), agent["id"], db.now(), rid))
+        c.execute("UPDATE routines SET definition=?, version=version+1, defined_at=?, thread_id=?, state='paused',"
+                  " approved_by=NULL, failure=NULL, updated_by=?, updated_at=? WHERE id=?",
+                  (json.dumps(r), db.cursor(), thread, agent["id"], db.now(), rid))
     return get(rid)
 
 
@@ -265,8 +275,10 @@ def _approval(row: dict, agent: dict, approved_by: int | None, action: str) -> i
     author = yes and db.get_agent_by_handle(yes["author"])
     if yes is None or row["thread_id"] is None or (yes["thread_id"] or yes["id"]) != row["thread_id"] \
             or not is_operator(author) or yes["id"] <= row["defined_at"]:
+        where = (f"in thread {row['thread_id']}" if row["thread_id"] else
+                 "in this routine's thread, and it has none: PATCH it with the `thread` where it is discussed")
         raise ValueError(f"an admin bot's {action} needs `approved_by`: the id of a reply from a human who manages "
-                         f"the `{ADMIN_PROJECT}` workspace, in this routine's thread, posted after its current version")
+                         f"the `{ADMIN_PROJECT}` workspace, {where}, posted after its current version")
     return approved_by
 
 

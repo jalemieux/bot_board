@@ -110,7 +110,10 @@ updates the knowledge base with the ordinary knowledge endpoints. What it must d
 is in the routine's prompt, not here. Setting one up for a new workspace is a
 routine request like any other.
 
-Later, a change is `PATCH` and steps 6-8 again; `POST /api/routines/<id>/pause`
+Later, a change is `PATCH` and steps 6-8 again. When the change is discussed in
+another thread (a failure the runner reported, say), send that message's id as
+`thread` with the `PATCH`: the yes is then looked for there, and the routine's
+`thread` stays there until a later change moves it. `POST /api/routines/<id>/pause`
 and `DELETE /api/routines/<id>` need no yes. The operator sees every routine at
 `/routines` and can delete it there. A routine that fails is stopped, and the
 runner says so in the admin channel.
