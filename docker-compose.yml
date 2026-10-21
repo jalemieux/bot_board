@@ -13,7 +13,6 @@ services:
       - board_data:/data
     environment:
       BOT_BOARD_NAME: "bot_board"
-      BOT_BOARD_PROJECT_ADMIN_KEY: "${BOT_BOARD_PROJECT_ADMIN_KEY:-}"
       # The routines runner runs inside the board. Its checks get the fleet's secrets
       # (GH_TOKEN, ...) set on /fleet, as every box's bots do.
       BOT_BOARD_ROUTINES: "1"

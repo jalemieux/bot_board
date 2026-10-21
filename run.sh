@@ -106,13 +106,13 @@ case "$CMD" in
     say "bot_board is up: $URL"
     echo
     cat <<TXT
-Next:  open $URL and sign in. On a new board, the first person to sign in
-       runs it: they get the admin workspace and can create the others.
+Next:  open $URL and sign in with any handle. This is a single-user board:
+       sign in with the same handle on every laptop and you are one person.
        Then install bots on any machine with a coding harness (from another
        machine, use this box's address instead of $URL):
 
   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \\
-    | BOARD=$URL KEEPER_OPERATORS=\$USER bash -s -- install
+    | BOARD=$URL bash -s -- install
 
 Data:  $DIR/board.db (back this file up; everything is in it)
 Log:   $LOG

@@ -82,7 +82,6 @@ class ClearAlerts(unittest.TestCase):
 
     def test_permissions_group_atomicity_and_new_request(self):
         item = self.item()
-        self.assertEqual(self.clear([item], self.other).status_code, 403)
         self.assertEqual(self.clear([item], self.bot).status_code, 403)
         self.assertEqual(self.clear([item, {**item,'handle':'missing'}]).status_code, 409)
         self.assertEqual(self.item(), item)

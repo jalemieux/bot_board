@@ -222,9 +222,6 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     boxes = {h["name"].lower(): h for h in hosts()}
     if host.lower() not in boxes:
         return f"no box named {host} has reported"
-    why = not_operator(boxes[host.lower()], by)
-    if why:
-        return why
     find = lambda h: next((b for b in h["bots"] if b["handle"].lower() == handle.lower()), None)
     here = find(boxes[host.lower()])
     harness = harness or (here or {}).get("harness")
@@ -345,8 +342,9 @@ def down(handles) -> dict[str, str]:
 
 def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], seen: list[dict]) -> dict | None:
     """A box installed with a default bot (#180): its keeper asks for one until the board
-    answers. The bot goes in the admin workspace, asked for by the box's first operator, so
-    the keeper takes it like a start from /fleet. Only a box with no bot at all, reported
+    answers. The bot goes in the admin workspace, and the keeper takes it like a start from
+    /fleet. It is set by the first of `operators`, which keepers from before KEEPER_OPERATORS
+    was dropped still check. Only a box with no bot at all, reported
     or asked for, gets one: a reinstall never adds a second. With no admin workspace yet
     (nobody has signed in), the answer says so and the keeper asks again next report.
     Returns {handle, harness, created} or {waiting}, or None when nothing was asked."""
@@ -420,10 +418,6 @@ def move(handle: str, to: str, by: str, start: bool = False) -> str | None:
     harness = seen.get("harness") or (row["harness"] if row else None)
     if harness not in HARNESSES:
         return f"{src} does not say which harness {handle} runs"
-    for box in (boxes[src], boxes[to]):
-        why = not_operator(box, by)
-        if why:
-            return why
     with db._write_lock:
         c.execute(
             "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, move_to) VALUES (?,?,?,?,?,?,?)"
@@ -494,14 +488,6 @@ def moved(host: str, handed: dict, fetched: list) -> None:
         c.commit()
 
 
-def not_operator(box: dict, by: str) -> str | None:
-    """Why this human's requests are not for this box, when its keeper named its operators."""
-    ops = [o.lower() for o in box.get("operators") or []]
-    if ops and by.lower() not in ops:
-        return f"@{by} is not an operator of {box['name']} (its KEEPER_OPERATORS)"
-    return None
-
-
 def unwant(handle: str, by: str) -> str | None:
     """Drop what was asked for a bot: its box's keeper leaves it as it is from then on.
     Returns None, or why not."""
@@ -509,10 +495,6 @@ def unwant(handle: str, by: str) -> str | None:
     row = c.execute("SELECT host FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
     if row is None:
         return ""
-    box = next((h for h in hosts() if h["name"].lower() == row["host"].lower()), None)
-    why = box and not_operator(box, by)
-    if why:
-        return why
     with db._write_lock:
         c.execute("DELETE FROM fleet_bots WHERE handle=?", (handle,))
         c.commit()
@@ -555,9 +537,6 @@ def clear_alerts(items: list[dict], by: str):
             box = boxes.get(host)
             if not box or not box["reporting"]:
                 raise ValueError("box state is unknown; wait for a fresh report")
-            why = not_operator(box, by)
-            if why:
-                raise PermissionError(why)
             bot = next((b for b in box["bots"] if b["handle"].lower() == handle), None)
             if not bot or not bot.get("clear_key") or bot["clear_key"] != item["key"]:
                 raise ValueError("worker state or alert changed; refresh before clearing")

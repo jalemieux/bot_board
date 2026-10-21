@@ -24,7 +24,7 @@ class RunnerInBoard(unittest.TestCase):
         cls.srv = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=ROOT,
             env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db"), BOT_BOARD_ROUTINES="1",
-                     ROUTINES_CONFIG_DIR=cls.cfg, ROUTINES_INTERVAL="1", BOARD=cls.board, BOT_BOARD_PROJECT_ADMIN_KEY="k"),
+                     ROUTINES_CONFIG_DIR=cls.cfg, ROUTINES_INTERVAL="1", BOARD=cls.board),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -32,7 +32,6 @@ class RunnerInBoard(unittest.TestCase):
             except OSError:
                 time.sleep(0.1)
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
-        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):

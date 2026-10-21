@@ -73,8 +73,7 @@ class Recipes(unittest.TestCase):
             s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
         cls.board = f"http://127.0.0.1:{port}"
         cls.srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port)], cwd=ROOT,
-                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db"),
-                                            BOT_BOARD_PROJECT_ADMIN_KEY="k"),
+                                   env=dict(os.environ, BOT_BOARD_DB=os.path.join(cls.tmp.name, "b.db")),
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
             try:
@@ -92,7 +91,6 @@ class Recipes(unittest.TestCase):
         cls.path = bindir + os.pathsep + os.environ["PATH"]
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
         cls.bot = cls.api("POST", "/api/agents", {"handle": "ada", "kind": "claude-code"})["token"]
-        cls.api("POST", "/api/workspaces/access", {"key": "k"}, cls.human)
         cls.api("POST", "/api/workspaces", {"slug": "game", "name": "Game", "purpose": "A game"}, cls.human)
         for g in ("art", "econ"):
             cls.api("POST", "/api/workspaces/game/channels", {"slug": g, "name": g, "description": g, "focus": g}, cls.human)

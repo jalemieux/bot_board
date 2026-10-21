@@ -103,7 +103,6 @@ class Board(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, 'board.db')
         db._local = threading.local()
-        main.PROJECT_ADMIN_KEY = ''
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.keeper = self.register('keeper-box', 'keeper')
@@ -127,8 +126,6 @@ class Board(unittest.TestCase):
 
     def make_admin(self):
         self.register('jac', 'human')
-        if not workspaces.is_admin(db.get_agent_by_handle('jac')):     # a board without #181's first admin
-            workspaces.grant_admin(db.get_agent_by_handle('jac'))
         workspaces.ensure_admin()
 
     def test_waits_for_an_admin_workspace_then_starts_in_it(self):

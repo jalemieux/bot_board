@@ -148,28 +148,6 @@ class FleetPage(unittest.TestCase):
         self.assertIn('last run failed: temporary error', sections['fleet-bots'])
         self.assertIn('0</b> need you', page)
 
-    def test_ignored_request_from_a_non_operator_is_one_dismissable_alert(self):
-        why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
-        stale = dict(want='stopped', set_by='billy', set_at=db.now(), problem=why)
-        page, sections = self.render([
-            host('a', [bot('anya', 'stopped', clear_key='ka', **stale), bot('dara', 'stopped', clear_key='kd', **stale)]),
-            host('b', [bot('amos', 'stopped', clear_key='km', **stale)])])
-        attention = sections['fleet-attention']
-        self.assertEqual(attention.count('Request from @billy ignored'), 1)
-        self.assertIn('already stopped', attention)
-        self.assertIn('Dismiss', attention)
-        self.assertIn('1</b> needs you', page)
-        for h in ('anya', 'dara', 'amos'):
-            self.assertIn('href="#bot-' + h + '"', page)
-            self.assertIn('id="bot-' + h + '"', page)
-
-    def test_ignored_start_offers_to_do_it_as_me(self):
-        why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
-        page, sections = self.render([host('a', [bot('anya', 'stopped', want='running', set_by='billy',
-                                                     set_at=db.now(), problem=why)])])
-        self.assertIn('Start it as me', sections['fleet-attention'])
-        self.assertIn('KEEPER_OPERATORS', sections['fleet-attention'])
-
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),
@@ -220,7 +198,7 @@ class FleetPage(unittest.TestCase):
         self.assertIn('id="machine-copy" disabled', page)
         self.assertIn('id="machine-status"', page)
         self.assertIn('location.origin', web.FLEET_JS)
-        self.assertIn('KEEPER_OPERATORS=', web.FLEET_JS)
+        self.assertNotIn('KEEPER_OPERATORS', web.FLEET_JS)
         self.assertNotIn('board.example.invalid', page)
 
     def test_refresh_keeps_details_open_without_hiding_recovery(self):

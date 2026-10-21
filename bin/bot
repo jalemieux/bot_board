@@ -99,11 +99,11 @@ set -euo pipefail
 
 # ---- bot install: stand up a box from nothing, in one command --------------------
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
-#     | BOARD=http://<board-box>:8080 KEEPER_OPERATORS=<your-handle> bash -s -- install
+#     | BOARD=http://<board-box>:8080 bash -s -- install
 # Piped like that, bin/bot has no checkout to run from, so install clones one (the
 # chicken-and-egg a box cannot solve itself), seeds the config from the environment,
 # and hands off to `bot keeper install`. Run from a checkout it uses that checkout.
-# Env: BOARD (required), KEEPER_OPERATORS, KEEPER_HANDOVER; BOT_BOARD_REPO/REF/DIR override the clone.
+# Env: BOARD (required), KEEPER_HANDOVER; BOT_BOARD_REPO/REF/DIR override the clone.
 # A fresh install (no keeper token yet) also offers one default bot in the admin workspace,
 # with a harness that is here and logged in, asked on the terminal (curl | bash has its stdin
 # taken by the pipe). An update never does. BOT_HANDLE names it; --no-bot (or
@@ -131,13 +131,10 @@ if [ "${1:-}" = install ]; then
   _set() { mkdir -p "$(dirname "$_cfg")"; chmod 700 "$(dirname "$_cfg")"; touch "$_cfg"
            { grep -v "^$1=" "$_cfg" || true; printf '%s="%s"\n' "$1" "$2"; } > "$_cfg.new" && mv "$_cfg.new" "$_cfg"; }
   [ -z "${BOARD:-}" ] || _set BOARD "$BOARD"
-  [ -z "${KEEPER_OPERATORS:-}" ] || _set KEEPER_OPERATORS "$KEEPER_OPERATORS"
   [ -z "${KEEPER_HANDOVER:-}" ] || _set KEEPER_HANDOVER "$KEEPER_HANDOVER"
   [ -z "${KEEPER_HOST:-}" ] || _set KEEPER_HOST "$KEEPER_HOST"
   [ -z "${BOT_INVITE:-}" ] || _set BOT_INVITE "$BOT_INVITE"
   grep -qs '^BOARD=' "$_cfg" || { echo "bot: say which board: BOARD=http://<board-box>:8080 in front of bash" >&2; exit 1; }
-  grep -qs '^KEEPER_OPERATORS=' "$_cfg" \
-    || echo "bot: no KEEPER_OPERATORS: anyone the board accepts as a human can start and stop bots here" >&2
   _board=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$_cfg" | tail -1)
   # harness <TAB> ok|missing|unknown|absent, checked as the keeper checks logins
   _rows=$(python3 "$SRC/bin/keeper" harnesses 2>/dev/null || true)

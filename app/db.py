@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS agents (
     workspace_id INTEGER
 );
 
+-- More tokens for one identity: a human signing in again on another laptop (sign_in).
+CREATE TABLE IF NOT EXISTS agent_tokens (
+    token_hash TEXT PRIMARY KEY,
+    agent_id   INTEGER NOT NULL REFERENCES agents(id),
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS boards (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     slug       TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -227,18 +234,30 @@ def set_agent_workspace(agent_id: int, workspace_id: int | None) -> dict:
     return get_agent_by_id(agent_id)
 
 
+def sign_in(agent_id: int) -> str:
+    """Another token for an existing identity; the ones it already has keep working."""
+    token = "bb_" + secrets.token_urlsafe(32)
+    with _write_lock, conn() as c:
+        c.execute("INSERT INTO agent_tokens (token_hash, agent_id, created_at) VALUES (?,?,?)",
+                  (hash_token(token), agent_id, now()))
+    return token
+
+
 def rotate_token(agent_id: int) -> str:
+    """One fresh token; every other token of this identity stops working."""
     token = "bb_" + secrets.token_urlsafe(32)
     c = conn()
     with _write_lock:
         c.execute("UPDATE agents SET token_hash=? WHERE id=?", (hash_token(token), agent_id))
+        c.execute("DELETE FROM agent_tokens WHERE agent_id=?", (agent_id,))
         c.commit()
     return token
 
 
 def agent_by_token(token: str) -> dict | None:
+    h = hash_token(token)
     row = conn().execute(
-        "SELECT * FROM agents WHERE token_hash=?", (hash_token(token),)
+        "SELECT * FROM agents WHERE token_hash=? OR id=(SELECT agent_id FROM agent_tokens WHERE token_hash=?)", (h, h)
     ).fetchone()
     return dict(row) if row else None
 

@@ -12,8 +12,7 @@ os.makedirs(OUT, exist_ok=True)
 tmp = tempfile.mkdtemp()
 s = socket.socket(); s.bind(("127.0.0.1", 0)); PORT = s.getsockname()[1]; s.close()
 BASE = f"http://127.0.0.1:{PORT}"
-env = {**os.environ, "BOT_BOARD_DB": f"{tmp}/board.db", "BOT_BOARD_PROJECT_ADMIN_KEY": "k",
-       "ROUTINES_HANDLE": "routines", "HOME": tmp, "BOT_CONFIG": f"{tmp}/config"}
+env = {**os.environ, "BOT_BOARD_DB": f"{tmp}/board.db", "ROUTINES_HANDLE": "routines", "HOME": tmp, "BOT_CONFIG": f"{tmp}/config"}
 srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(PORT)], cwd=ROOT, env=env,
                        stdout=open(f"{tmp}/log", "w"), stderr=subprocess.STDOUT)
 c = httpx.Client(base_url=BASE, timeout=10)
@@ -35,7 +34,6 @@ def reg(handle, kind, desc=""):
 
 
 op, op_tok = reg("jac", "human", "operator")
-ok(c.post("/api/workspaces/access", headers=op, json={"key": "k"}))
 bots = {}
 for h, d in [("arlo", "standby pool on alpha"), ("cora", "standby pool on alpha"), ("dex", "standby pool on beta"),
              ("esme", "standby pool on beta"), ("ezra", "standby pool on beta"), ("kai", "standby pool on alpha"),
