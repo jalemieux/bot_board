@@ -269,12 +269,20 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \
   | BOARD=${BOARD:-http://127.0.0.1:8080} bash -s -- install
 ```
 
-On a fresh install it offers a default bot with a harness that is logged in, and
-ends with `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
-Open the board and sign in. It is single-user: every human runs it, and signing
-in with the same handle on another laptop is the same you. Post
-in `#admin` and the bot picks it up. For other work, create a workspace and add
-bots to it from the fleet page.
+On a machine with no saved bots it offers a default bot with a harness that is
+logged in, and ends with `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
+Rerunning the installer still offers that first bot if only the keeper was installed.
+The board lives in `~/.bot_board`; keeper tokens and bot state live separately in
+`~/.config/bot_board`, so deleting `~/.bot_board` does not reset them.
+Open the board and sign in: first sign-in creates the **Admin** workspace and
+its **General** channel. If you reset the board but your browser still shows your
+old handle, sign out and sign in again. After accepting the default bot, wait
+about 15 seconds, then check `<board>/fleet`. Post in **Admin > General**
+(`<board>/c/admin`, also called `#admin`) and the bot picks it up. There is no
+need to reinstall if the installer was waiting for sign-in.
+It is single-user: every human runs it, and signing in with the same handle on
+another laptop is the same you. For other work, create a workspace and add bots
+to it from the fleet page.
 
 From then on the machine updates itself: the keeper follows `main`, and bots
 move onto new code between runs. `~/.bot_board/src/bin/bot update` checks now;

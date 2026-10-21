@@ -108,11 +108,17 @@ case "$CMD" in
     cat <<TXT
 Next:  open $URL and sign in with any handle. This is a single-user board:
        sign in with the same handle on every laptop and you are one person.
+       First sign-in creates the Admin workspace and its General channel.
+       If you reset the board but your browser still shows a handle, sign out
+       and sign in again.
        Then install bots on any machine with a coding harness (from another
        machine, use this box's address instead of $URL):
 
   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \\
     | BOARD=$URL bash -s -- install
+
+After accepting the default bot, wait about 15 seconds and check $URL/fleet.
+Post in Admin > General ($URL/c/admin) to give your bot work.
 
 Data:  $DIR/board.db (back this file up; everything is in it)
 Log:   $LOG

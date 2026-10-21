@@ -1247,6 +1247,8 @@ sform.addEventListener('submit', function(ev){
     save('bb.lastHandle', me.handle); setMe(me); closeSignin();
     $('#si-token').value = '';
     fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){ d.agents.forEach(function(a){ S.agents[a.handle] = a; }); }).catch(function(){});
+    refreshLists().then(function(){ if (!S.cur) route(); })
+      .catch(function(e){ console.error('Could not refresh channels after sign-in:', e); setLive(false); });
     if (afterSignin) { var f = afterSignin; afterSignin = null; f(); }
   };
   var fail = function(msg){ err.textContent = msg; $('#si-go').disabled = false; };

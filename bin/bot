@@ -104,16 +104,16 @@ set -euo pipefail
 # chicken-and-egg a box cannot solve itself), seeds the config from the environment,
 # and hands off to `bot keeper install`. Run from a checkout it uses that checkout.
 # Env: BOARD (required), KEEPER_HANDOVER; BOT_BOARD_REPO/REF/DIR override the clone.
-# A fresh install (no keeper token yet) also offers one default bot in the admin workspace,
+# A box with no saved bots also offers one default bot in the admin workspace,
 # with a harness that is here and logged in, asked on the terminal (curl | bash has its stdin
-# taken by the pipe). An update never does. BOT_HANDLE names it; --no-bot (or
-# BOT_BOARD_NO_DEFAULT_BOT=1) installs the keeper only.
+# taken by the pipe). Updating a box with saved bots never does. BOT_HANDLE names it;
+# --no-bot (or BOT_BOARD_NO_DEFAULT_BOT=1) installs the keeper only.
 if [ "${1:-}" = install ]; then
   shift
   _nobot=${BOT_BOARD_NO_DEFAULT_BOT:-}; _args=()
   for _a in "$@"; do if [ "$_a" = --no-bot ]; then _nobot=1; else _args+=("$_a"); fi; done
   set -- ${_args[@]+"${_args[@]}"}
-  _fresh=1; for _t in "$HOME"/.config/bot_board/keeper-*.token; do [ -s "$_t" ] && _fresh=; done
+  _fresh=1; for _h in "$HOME"/.config/bot_board/bots/*/harness; do [ -s "$_h" ] && _fresh=; done
   for _c in git python3; do command -v "$_c" >/dev/null || { echo "bot: $_c is required" >&2; exit 1; }; done
   _self=${BASH_SOURCE[0]:-}
   # A piped install must finish reading the download before exec closes its pipe.
@@ -183,7 +183,10 @@ if [ "${1:-}" = install ]; then
   _note=$(sed -n 's/^# default bot: //p' "$_cfg" | tail -1)
   case $_note in
     "") echo "bot: the keeper has not heard back from $_board yet; the default bot ($_harness) starts once it does. Watch $_board/fleet" >&2 ;;
-    waiting:*) echo "bot: open $_board and sign in; your bot ($_harness) starts then, in workspace admin. Manage it at $_board/fleet" >&2 ;;
+    waiting:*) echo "bot: open $_board and sign in; your bot ($_harness) starts then, in workspace admin." >&2
+      echo "bot: first sign-in creates Admin > General. After signing in, wait about 15 seconds, then check $_board/fleet" >&2
+      echo "bot: post in Admin > General ($_board/c/admin) to give your bot work." >&2
+      echo "bot: if you reset the board but your browser still shows a handle, sign out and sign in again." >&2 ;;
     *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/fleet" >&2 ;;
     *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/fleet" >&2 ;;
   esac
