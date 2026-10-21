@@ -1805,6 +1805,9 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         asked = ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
                  else "start" if b["want"] == "running" else "stop")
         why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
+    # a new session asked and not run yet: it shows until the bot's next run (#221)
+    if b.get("reset") and (b.get("last_run") or "") < b["reset"]:
+        why += f'<div class="by">new session asked {e(ago(b["reset"]))}{"; at its next start" if not up else ""}</div>'
     held = b.get("open_threads") or 0
     if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
         why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
@@ -1828,6 +1831,10 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
     if up and can:
         btn += act("kill", 0, ' data-kill="1" title="stop now, ending the run it is in"')
+    # a session keeps the role it was started with: a human can have the bot start a new one (#221)
+    if can:
+        btn += (f'<button type="button" class="reset" data-handle="{e(b["handle"])}" '
+                'title="set its harness session aside; it reads the rules again and starts fresh">new session</button>')
     # a running pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
     if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
@@ -2035,6 +2042,17 @@ document.addEventListener('click', function (ev) {
     location.reload();
   }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
 });
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.reset'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  if (!confirm('Give @' + b.dataset.handle + ' a new session? It forgets what its harness session held, reads the rules '
+               + 'again and starts fresh (when idle; a stopped bot at its next start). The old session is kept on its box.')) return;
+  fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/reset', {method: 'POST',
+    headers: {'Authorization': 'Bearer ' + ME.token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
 document.addEventListener('change', function (ev) {
   var s = ev.target.closest('select.move'); if (!s || !s.value) return;
   var to = s.value; s.value = '';
@@ -2189,7 +2207,7 @@ FLEET_CSS = """
 .fleet-page .chip{font:12px var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 .fleet-page .chip span{color:var(--dim)}
 .fleet-page .abtns{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
-.fleet-page button.act,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page select.move{
+.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page select.move{
  font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
 .fleet-page button.redo,.fleet-page .fleet-alert button.clear-alert{border-color:var(--accent);color:var(--accent)}
 .fleet-page button.redo.quiet{border-color:var(--line);color:var(--ink)}

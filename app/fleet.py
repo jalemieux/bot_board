@@ -66,7 +66,9 @@ MOVE_COLUMNS = ("move_to", "fetch")
 # threads: what to do with the bot's open threads once it has stopped (#167): handoff or
 # retire releases them when the keeper reports it stopped; NULL keeps them. retired: when it
 # was retired, so it leaves the stopped list; cleared by the next start.
-EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired")
+# reset: when a human asked for the bot's next run to start a new harness session (#221);
+# the keeper runs `bot reset --asked <reset>`, which does it once per request.
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset")
 THREADS = ("keep", "handoff", "retire")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
@@ -432,6 +434,34 @@ def move(handle: str, to: str, by: str, start: bool = False) -> str | None:
     return None
 
 
+def reset(handle: str, by: str) -> str | None:
+    """Record that a human wants this bot to start a new harness session (#221): its old
+    session keeps whatever role it was started with. The keeper of its box carries it out,
+    at once for a stopped bot, when idle for a running one. Returns None, or why not."""
+    c = db.conn()
+    row = c.execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    boxes = {h["name"].lower(): h for h in hosts()}
+    src = row["host"] if row else next((n for n, h in boxes.items() if h["reporting"] and any(
+        b["handle"].lower() == handle.lower() and b["status"] != "moved" for b in h["bots"])), None)
+    if not src or src not in boxes:
+        return f"no box reports {handle}"
+    if not boxes[src]["reporting"]:
+        return f"{src} is not reporting, so nothing can reset {handle} there"
+    seen = next((b for b in boxes[src]["bots"] if b["handle"].lower() == handle.lower()), None)
+    harness = (seen or {}).get("harness") or (row["harness"] if row else None)
+    if harness not in HARNESSES:
+        return f"{src} does not say which harness {handle} runs"
+    now = db.now()
+    with db._write_lock:
+        if row:
+            c.execute("UPDATE fleet_bots SET reset=? WHERE handle=?", (now, handle))
+        else:   # nothing asked of it yet: ask that it stay as it is, with a new session
+            c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, reset) VALUES (?,?,?,?,?,?,?)",
+                      (handle, src, harness, int(bool(seen and seen["status"].startswith(UP))), by, now, now))
+        c.commit()
+    return None
+
+
 def drain(host: str, by: str, to: str | None = None) -> dict | str:
     """Move every pool bot up on a box to other boxes, one move() each: a full box
     emptied in one request. Each bot goes to `to`, else to the reporting box with
@@ -593,7 +623,7 @@ def hosts() -> list[dict]:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
                          move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"],
-                         threads=w["threads"], retired=w["retired"])
+                         threads=w["threads"], retired=w["retired"], reset=w["reset"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"],

@@ -9,6 +9,7 @@
 #   bot stop <handle>               let the bot finish what it is doing, then exit
 #   bot kill <handle>               stop it now, ending the harness run it is in (a stuck or runaway bot)
 #   bot restart <handle>            have the bot start itself again on the bin/bot now on disk, once idle
+#   bot reset <handle>... | --all   a new harness session: the old one is kept aside, the bot reads the rules again
 #   bot update                      pull this checkout from its origin if it moved, check it, restart the bots on it
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root>]    the other end of pack
@@ -249,6 +250,18 @@ BOT_COPILOT_FLAGS=${BOT_COPILOT_FLAGS:---allow-all}
 
 usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 1; }
 die() { echo "bot: $*" >&2; exit 1; }
+# A harness session keeps the role its first prompt gave it, for good (#221). SESSION_GEN
+# names that first prompt: bump it when the first prompt changes, and every bot retires a
+# session started under another (or before this was recorded) at its next start.
+SESSION_GEN=2
+# retire_session <state dir>: set the session ids aside (old-sessions/<time>/), so the
+# next run starts a new session; the harness's own transcripts are left where they are.
+retire_session() {
+  local old; old="$1/old-sessions/$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$old"
+  for f in "$1"/session "$1"/session.*; do [ -e "$f" ] && mv "$f" "$old/"; done
+  rm -f "$1/session-gen" "$1/reset"
+}
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
 # reboot and its pid goes to another process, so the process must be this script.
@@ -571,6 +584,31 @@ case ${1:-} in
     if [ -s "$S/busy" ]; then echo "bot: $H will restart when its run in $(cat "$S/busy") returns"
     else echo "bot: $H is restarting"; fi
     exit 0 ;;
+  reset)
+    # A new harness session for a bot whose session holds a stale role or has gone wrong
+    # (#221). A running bot does it at its next idle moment, through a restart; a stopped
+    # one now. --asked <time>: the board's request, done once (the keeper passes it).
+    shift; ASKED=""; HS=()
+    while [ $# -gt 0 ]; do case $1 in
+      --asked) ASKED=${2:-}; shift 2 ;;
+      --all) for d in "$CFG"/bots/*/; do [ -d "$d" ] && [ ! -e "${d%/}/moved" ] && HS+=("$(basename "$d")"); done; shift ;;
+      -*) usage ;; *) HS+=("$1"); shift ;;
+    esac; done
+    [ ${#HS[@]} -gt 0 ] || usage
+    for H in "${HS[@]}"; do
+      S=$CFG/bots/$H; [ -d "$S" ] || { echo "bot: no bot $H on this box (bot ps -a lists them)"; continue; }
+      if [ -n "$ASKED" ] && [ "$(cat "$S/reset.done" 2>/dev/null)" = "$ASKED" ]; then continue; fi
+      if alive "$S"; then
+        touch "$S/reset" "$S/restart"
+        [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true   # end an idle long-poll now
+        if [ -s "$S/busy" ]; then echo "bot: $H starts a new session when its run in $(cat "$S/busy") returns"
+        else echo "bot: $H is starting a new session"; fi
+      else
+        retire_session "$S"; echo "bot: $H starts a new session when it next starts"
+      fi
+      [ -z "$ASKED" ] || echo "$ASKED" > "$S/reset.done"
+    done
+    exit 0 ;;
   ps|ls)
     ALL=""; TSV=""; shift
     for arg in "$@"; do case $arg in -a) ALL=1 ;; --tsv) TSV=1 ;; *) usage ;; esac; done
@@ -797,6 +835,13 @@ else DIR=$POOL/$HANDLE; fi
 mkdir -p "$DIR"; DIR=$(cd "$DIR" && pwd); echo "$DIR" > "$STATE/dir"
 # A session file exists once its first run has succeeded, so "file present" means "resume".
 if [ -s "$STATE/session" ] && [ "$(cat "$STATE/runs" 2>/dev/null || echo 0)" -eq 0 ]; then rm -f "$STATE/session"; fi
+# bot reset asked for a new session, or this one was started under another first prompt
+if [ -s "$STATE/session" ] && { [ -e "$STATE/reset" ] || [ "$(cat "$STATE/session-gen" 2>/dev/null)" != "$SESSION_GEN" ]; }; then
+  WHY="asked by bot reset"; [ -e "$STATE/reset" ] || WHY="started under an older first prompt"
+  retire_session "$STATE"
+  printf '%s %s\n' "$(date -u +%FT%TZ)" "new session: the last one was $WHY; it is kept in old-sessions/" >> "$STATE/log"
+fi
+rm -f "$STATE/reset"
 if [ -z "$WORKSPACE" ] && [ -s "$STATE/workspace" ]; then WORKSPACE=$(cat "$STATE/workspace"); fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
 
@@ -921,7 +966,10 @@ for line in sys.stdin:
   classify_run "$rc" "$off" "$sid" "$started"
   now=$(date -u +%FT%TZ)
   case $OUTCOME in
-    ok)             rm -f "$STATE/health"; if [ -n "$RUN_SID" ] && [ ! -s "$sfile" ]; then echo "$RUN_SID" > "$sfile"; fi ;;
+    ok)             rm -f "$STATE/health"
+                    if [ -n "$RUN_SID" ] && [ ! -s "$sfile" ]; then
+                      echo "$RUN_SID" > "$sfile"; [ "$sfile" != "$STATE/session" ] || echo "${SESSION_GEN-}" > "$STATE/session-gen"
+                    fi ;;
     limited)        echo "out of $HARNESS usage since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;
     capacity)       echo "out of $HARNESS capacity since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;
     logged_out)     echo "logged out of $HARNESS since $now: $(login_hint); messages are kept until then" >"$STATE/health" ;;
