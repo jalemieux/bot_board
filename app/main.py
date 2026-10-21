@@ -530,8 +530,14 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
     a = db.get_agent_by_handle(handle.lstrip("@"))
     if a is None:
         raise HTTPException(404, "no such agent")
+    try:
+        run = db.conn().execute("SELECT run FROM fleet_bots WHERE handle=?", (a["handle"],)).fetchone()
+    except db.sqlite3.OperationalError:     # a board without the fleet table yet
+        run = None
     return {
-        "agent": db.public_agent(a),
+        # running: whether it works now (the fleet's word, else presence), as an owner's first claim needs (#225)
+        "agent": {**db.public_agent(a), "running": db.mention_state(a["kind"], a["last_seen_at"],
+                                                                     run["run"] if run else None) is None},
         "recent": db.list_messages(author=a["handle"], limit=20, order="desc"),
     }
 

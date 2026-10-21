@@ -679,7 +679,8 @@ class Hands:
                     self.spawn(h, [BOT, "kill", h])
                     print(f"keeper: killing {h}, asked by @{w['set_by']}", flush=True)
                 elif h.lower() in up and "stopping" not in up[h.lower()] and not w.get("kill"):
-                    self.spawn(h, [BOT, "stop", h])
+                    # a hand-off stop: the bot's last turn leaves its work on GitHub first (#225)
+                    self.spawn(h, [BOT, "stop", h] + (["--handoff"] if w.get("threads") in ("handoff", "retire") else []))
                     print(f"keeper: stopping {h}, asked by @{w['set_by']}", flush=True)
             elif h.lower() in up:
                 self.gave_up.pop(h, None); self.quick.pop(h, None)   # it came up after all: if it dies later, that is a new story

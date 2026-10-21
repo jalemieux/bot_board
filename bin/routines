@@ -162,7 +162,9 @@ def problem_with(routine):
 # prompt (the message shows them), so an older one keeps running after a release
 # instead of turning invalid; it is checked against the writer only while current.
 # 2: groups became channels (workspaces): the prompt names channels and the routes say `channel`.
-RECIPE_VERSION = 2
+# 3: an issue is taken when a running bot's bot:<handle> label is on it, not when it has an
+#    assignee: every bot shares one GitHub account, so an assignee only says "some bot" (#225).
+RECIPE_VERSION = 3
 RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
                    "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -226,19 +228,36 @@ def recipe_problem(rc):
     return ""
 
 
+def owner_label(labels):
+    """The bot a bot:<handle> label names, or ''."""
+    return next((l[4:] for l in labels if l.startswith("bot:") and len(l) > 4), "")
+
+
 def recipe_check(rc):
     """The check a github-issues recipe runs: open issues nobody has taken and the routine
-    has not announced yet (the watermark is the list of numbers it has), `batch` at a time."""
+    has not announced yet (the watermark is the list of numbers it has), `batch` at a time.
+    With `unassigned`, an issue is taken while the bot its bot:<handle> label names is running."""
     cfg = {k: rc[k] for k in ("unassigned", "no_linked_pr", "skip_labels", "batch", "after", "rules")}
     return f"""#!/bin/sh
 # Written from the routine's recipe: edit the recipe, not this.
 # Open issues in {rc['repo']} that nobody has taken and this routine has not announced.
 set -e
 gh issue list -R {rc['repo']} --state open --limit 1000 \\
-  --json number,title,url,labels,assignees,createdAt,closedByPullRequestsReferences > issues.json
+  --json number,title,url,labels,createdAt,closedByPullRequestsReferences > issues.json
 exec python3 - <<'PY'
-import json, os
+import json, os, urllib.error, urllib.parse, urllib.request
 cfg = json.loads({json.dumps(json.dumps(cfg, sort_keys=True))})
+running = {{}}
+def owner_runs(h):     # the board's word on a bot:<handle> owner; unsure counts as running
+    if h not in running:
+        try:
+            with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h), timeout=20) as r:
+                running[h] = json.load(r)["agent"].get("running", True)
+        except urllib.error.HTTPError as e:
+            running[h] = e.code != 404       # a handle the board does not know runs nowhere
+        except Exception:
+            running[h] = True
+    return running[h]
 sent = set(json.loads(os.environ.get("ROUTINE_WATERMARK") or "[]"))
 skip = set(cfg["skip_labels"])
 rules = {{r["label"]: r["channel"] for r in cfg["rules"]}}
@@ -247,7 +266,8 @@ for i in sorted(json.load(open("issues.json")), key=lambda i: i["number"]):
     labels = [l["name"] for l in i["labels"]]
     if i["number"] in sent or skip & set(labels) or (cfg["after"] and i["createdAt"] <= cfg["after"]):
         continue
-    if (cfg["unassigned"] and i["assignees"]) or (cfg["no_linked_pr"] and i["closedByPullRequestsReferences"]):
+    owner = next((l[4:] for l in labels if l.startswith("bot:") and len(l) > 4), "")
+    if (cfg["unassigned"] and owner and owner_runs(owner)) or (cfg["no_linked_pr"] and i["closedByPullRequestsReferences"]):
         continue
     channel = next((rules[l] for l in labels if l in rules), "")
     new.append({{"number": i["number"], "title": i["title"], "url": i["url"], "labels": labels, "channel": channel}})
@@ -274,7 +294,8 @@ def recipe_prompt(rc):
 
 
 def recipe_summary(rc):
-    taken = ["it has an assignee"] * rc["unassigned"] + ["a pull request is linked to it"] * rc["no_linked_pr"]
+    taken = (["a running bot's bot:<handle> label is on it"] * rc["unassigned"]
+             + ["a pull request is linked to it"] * rc["no_linked_pr"])
     taken += [f"it is labelled {', '.join(rc['skip_labels'])}"] * bool(rc["skip_labels"])
     lines = [f"- Watches open issues in {rc['repo']}"
              + (f" opened after {rc['after']}" if rc["after"] else "")
@@ -347,7 +368,7 @@ def run_check(script, name="", watermark=None):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script)
         os.chmod(path, 0o700)
-        env = {**os.environ, **secrets(), "ROUTINE_NAME": name,
+        env = {**os.environ, **secrets(), "BOARD": BOARD, "ROUTINE_NAME": name,
                "ROUTINE_WATERMARK": "" if watermark is None else json.dumps(watermark)}
         try:
             p = subprocess.Popen([path] if script.startswith("#!") else ["bash", path], cwd=tmp, env=env,
@@ -578,8 +599,10 @@ class Runner:
             body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
                     + (f"Routed to {group}: {why}.\n" if channel != home and why else
                        f"Routed to {group}.\n" if channel != home else "No channel fits it, so it is here.\n")
-                    + f"The thread worker should assign the issue to itself: "
-                    f"`gh issue edit {i['number']} -R {rc['repo']} --add-assignee @me`.")
+                    + f"The thread worker labels the issue as its own: `gh issue edit {i['number']} -R {rc['repo']} "
+                    f"--add-label bot:<your handle>` (`gh label create` it first if the repo has none)"
+                    + (f", and removes `bot:{owner_label(i.get('labels') or [])}`: that bot is not running."
+                       if owner_label(i.get("labels") or []) else "."))
             m = self.board.post(channel, body, meta={"routine": r["id"], "name": r["name"],
                                                      "routine_item": {"repo": rc["repo"], "number": i["number"]}})
             items_st[str(i["number"])] = {"msg": m["id"], "channel": channel, "sent_at": time.time(), "reminds": 0}
@@ -594,14 +617,22 @@ class Runner:
         try:
             got = json.loads(subprocess.run(
                 ["gh", "issue", "view", str(item["number"]), "-R", r["recipe"]["repo"],
-                 "--json", "state,assignees,closedByPullRequestsReferences"],
+                 "--json", "state,labels,closedByPullRequestsReferences"],
                 capture_output=True, text=True, timeout=60, check=True).stdout)
         except (OSError, ValueError, subprocess.SubprocessError):
             return ""       # GitHub unreachable: ask again on the next pass
         if got["state"] != "OPEN":
             return "closed"
-        if got["assignees"] or got["closedByPullRequestsReferences"]:
-            return "assigned or linked to a pull request"
+        owner = owner_label([l["name"] for l in got.get("labels") or []])
+        if owner:
+            try:
+                runs = call("GET", f"/api/agents/{owner}", token=self.board.token).get("agent", {}).get("running", True)
+            except (OSError, ValueError) as e:
+                runs = ": 404 " not in str(e)      # unknown handle: nobody; unsure otherwise: leave it to its owner
+            if runs:
+                return f"labelled bot:{owner}"
+        if got["closedByPullRequestsReferences"]:
+            return "linked to a pull request"
         return ""
 
     def chase(self, r, st):
