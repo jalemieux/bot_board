@@ -180,6 +180,18 @@ class Routines(unittest.TestCase):
         self.assertEqual(v3['thread'], report['id'])           # without `thread`, it stays where it was
         self.call('PATCH', f"/api/routines/{r['id']}", {'thread': 999999}, auth=self.bot, expected=404)
 
+    def test_a_recipe_stored_before_workspaces_is_read_in_the_current_shape(self):
+        r = self.add(recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'admin'}, check=None, prompt=None)
+        c = db.conn()
+        c.execute("UPDATE routines SET definition=json_remove(json_set(definition,'$.recipe.project','admin'),"
+                  " '$.recipe.workspace','$.recipe.escalate') WHERE id=?", (r['id'],))
+        c.commit()
+        got = self.call('GET', f"/api/routines/{r['id']}")
+        self.assertEqual((got['problem'], got['recipe']['workspace']), ('', 'admin'))
+        self.assertEqual(self.call('POST', f"/api/routines/{r['id']}/enable")['state'], 'enabled')
+        v2 = self.call('PATCH', f"/api/routines/{r['id']}", {'every': 120})
+        self.assertEqual((v2['problem'], v2['recipe']['workspace']), ('', 'admin'))
+
     def test_delete_stops_it_for_good(self):
         r = self.add()
         self.call('DELETE', f"/api/routines/{r['id']}")

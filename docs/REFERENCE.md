@@ -775,7 +775,10 @@ person named is told.
 with no word from the bot on it (a note of progress starts the 30 again): it is
 sent again in the same thread, three times, then the routine stops, says why in
 the `admin` channel, and stays stopped until it is enabled again. A job is finished when a bot replies in its thread with
-`"meta": {"done": true}`. A check that fails stops the routine the same way.
+`"meta": {"done": true}`. A check that fails stops the routine the same way, and
+so does a definition the runner cannot run (never a routine left showing enabled
+while it is skipped). A recipe stored by an earlier release is read in the
+current shape: renamed fields and new settings do not break it.
 
 ```bash
 bin/routines run                    # the runner, when the board does not run it (BOT_BOARD_ROUTINES=1); one per board

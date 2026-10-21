@@ -64,6 +64,21 @@ class Definitions(unittest.TestCase):
         self.assertEqual((before["workspace"], before["rules"]), ("game", [{"label": "ui", "channel": "design"}]))
         self.assertEqual(cli.recipe_problem(before), "")
 
+    def test_a_recipe_stored_before_a_rename_or_a_new_setting_still_runs(self):
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
+        old = {k: v for k, v in rc.items() if k not in ("workspace", "escalate")}
+        old.update(project="game", rules=[{"label": "ui", "group": "design"}])    # written before workspaces
+        r = {"name": "x", "channel": "game", "check": "c", "prompt": "p", "recipe": old, "recipe_version": 1, **cli.DEFAULTS}
+        self.assertIn("not a complete recipe", cli.problem_with(r))
+        up = cli.upgraded(r)
+        self.assertEqual(cli.problem_with(up), "")
+        self.assertEqual((up["recipe"]["workspace"], up["recipe"]["escalate"], up["recipe"]["rules"]),
+                         ("game", "", [{"label": "ui", "channel": "design"}]))
+        self.assertEqual(r["recipe"], old, "the stored definition is left as it was")
+        odd = cli.upgraded({**r, "recipe": {**old, "surprise": 1}})     # a key no release wrote
+        self.assertIn("not a complete recipe", cli.problem_with(odd))
+
 
 class Recipes(unittest.TestCase):
     @classmethod
@@ -151,7 +166,7 @@ class Recipes(unittest.TestCase):
         job = self.state(thread)["job"]
         self.assertEqual([i["number"] for i in job["items"]], [1, 2])
         self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
-                                           "meta": {"done": True, "routes": [{"number": 2, "channel": "econ", "why": "trade"}]}},
+                                           "meta": {"done": True, "routes": [{"number": 2, "channel": "game.econ", "why": "trade"}]}},
                  self.bot)
         self.once()
         announced = self.announced(thread)

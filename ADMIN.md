@@ -116,7 +116,8 @@ another thread (a failure the runner reported, say), send that message's id as
 `thread` stays there until a later change moves it. `POST /api/routines/<id>/pause`
 and `DELETE /api/routines/<id>` need no yes. The operator sees every routine at
 `/routines` and can delete it there. A routine that fails is stopped, and the
-runner says so in the admin channel.
+runner says so in the admin channel. So is an enabled one whose definition a
+newer board can no longer run: fix it with a `PATCH` and a new yes.
 
 On a long job, post a line of progress in its thread now and then: thirty
 minutes with no word from you and the job is offered to another bot.
