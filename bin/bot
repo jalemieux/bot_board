@@ -6,7 +6,8 @@
 #   bot skill add <dir|github-url>... | remove <source|name>... | list | update
 #       the skills in BOT_SKILLS in the config, linked where every harness on this box loads skills from
 #   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
-#   bot stop <handle>               let the bot finish what it is doing, then exit
+#   bot stop <handle> [--handoff]   let the bot finish what it is doing, then exit
+#                                   (--handoff: first push its work in progress and say on the PR where it stands)
 #   bot kill <handle>               stop it now, ending the harness run it is in (a stuck or runaway bot)
 #   bot restart <handle>            have the bot start itself again on the bin/bot now on disk, once idle
 #   bot reset <handle>... | --all   a new harness session: the old one is kept aside, the bot reads the rules again
@@ -645,9 +646,11 @@ print(d.get("outcome","-")+("" if age is None else " "+ago(age)))' "$d/last.json
     exit 0 ;;
   stop)
     H=${2:-}; [ -n "$H" ] || usage
+    case ${3:-} in ""|--handoff) ;; *) usage ;; esac
     S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
     alive "$S" || { echo "bot: $H is not running"; exit 0; }
-    touch "$S/stop"
+    # --handoff (#225): its threads go to other bots, so its last turn leaves its work on GitHub
+    if [ "${3:-}" = --handoff ]; then echo handoff > "$S/stop"; else touch "$S/stop"; fi
     # Idle in a long-poll? End that curl so it stops now, not at the poll's end.
     # A busy bot has no poll file, so its run is left to finish (graceful stop).
     [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true
@@ -1316,6 +1319,17 @@ login_hint() {
 # workspace by its token. The first prompt says so and nothing else; no introduction
 # is posted: a standby bot is found through its registration and its workspace.
 FIRST_PROMPT="Read $BOARD/agents.md and return. Your environment holds BOARD, BOT_HANDLE and BOARD_TOKEN."
+# A stop with hand-off (bot stop --handoff, asked on /fleet): the bot's threads go to other
+# bots once it has stopped, and they start from GitHub, not from this box (#225). So one
+# last turn pushes its work in progress and says on the PR where it stands. Its outcome
+# never holds the stop up: a harness that cannot run cannot push either.
+HANDOFF_PROMPT="You are being stopped, and your open threads go to other bots. Before you return: for each pull request you were working on, commit and push any work in progress to its branch, and leave a short comment on the PR saying what is done and what is left. Leave the bot:$HANDLE label; whoever takes the work over swaps it. Do not post on the board; then return."
+handoff_turn() {
+  [ "$(cat "$STATE/stop" 2>/dev/null)" = handoff ] && [ -s "$STATE/session" ] || return 0
+  log "hand-off: one last turn to push work in progress"
+  if run_harness "$DIR" "$STATE/session" "$HANDOFF_PROMPT"; then log "hand-off turn done"
+  else log "hand-off turn: $OUTCOME${DETAIL:+: $DETAIL}; stopping anyway"; fi
+}
 if [ ! -s "$STATE/session" ] && ! { [ -s "$STATE/health" ] && grep -qE '^(out of|logged out|cannot run)' "$STATE/health"; }; then
   log "first turn: reading the rules"
   if run_harness "$DIR" "$STATE/session" "$FIRST_PROMPT"
@@ -1349,7 +1363,10 @@ fi
 trap 'log "stopping (seen=$SEEN)"; exit 0' INT TERM
 while :; do
   rotate_logs
-  if [ -e "$STATE/stop" ]; then log "stopping: bot stop (seen=$SEEN)"; exit 0; fi
+  if [ -e "$STATE/stop" ]; then
+    [ "$(cat "$STATE/stop" 2>/dev/null)" != handoff ] || handoff_turn
+    log "stopping: bot stop (seen=$SEEN)" ; exit 0
+  fi
   if [ -e "$STATE/restart" ]; then
     # bot restart: the same bot again, on the bin/bot now on disk. exec keeps the pid, so
     # bot ps and the keeper see one bot throughout; the state on disk carries everything else.
@@ -1426,7 +1443,10 @@ while :; do
   receipt "${RECEIPTS/true/false}"
   if [ "$OUTCOME" = ok ]; then rm -f "$STATE/retries" "$STATE/unknown"; log "harness returned ok"; echo "$RUNS" > "$STATE/handled"; continue; fi
   rc=$RUN_RC; log "harness exited $rc: $OUTCOME${DETAIL:+: $DETAIL}"
-  if [ -e "$STATE/stop" ]; then log "stopping: bot stop or kill (seen=$SEEN)"; exit 0; fi
+  if [ -e "$STATE/stop" ]; then
+    [ "$(cat "$STATE/stop" 2>/dev/null)" != handoff ] || handoff_turn
+    log "stopping: bot stop or kill (seen=$SEEN)" ; exit 0
+  fi
   # the notice answers the last message addressed to this bot; a run on new threads
   # alone fails quietly (the keeper shows it on /fleet): nobody there is waiting on us
   last=$(awk -F'\t' '$5 == "reply" || $5 == "mention"' <<<"$NEW" | tail -n1)

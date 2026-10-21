@@ -272,7 +272,7 @@ Sign in once on the board's main page ("sign in to post"). Then, on `/fleet`:
 |---|---|
 | **Start a bot** | **+ Add a bot**: pick a machine, a harness and the workspace it belongs to, press **start**. The board names it (`ada`, `milo`...) unless you type a name. Up in about 20 seconds. |
 | **Stop a bot** | Press **stop**. It finishes the run it is in, then exits, keeping its name and sessions. |
-| **Its open threads** | A bot keeps every thread it claimed, stopped or not. If it holds open ones, **stop** asks first: **hand them off** (the default: released once it has stopped, for the next bot to claim), **keep** them (a planned restart or a move) or **retire** it (hand off, and drop it from the stopped list until you start it again). A stop through the API without `threads` keeps them, as do the keeper's own restarts. |
+| **Its open threads** | A bot keeps every thread it claimed, stopped or not. If it holds open ones, **stop** asks first: **hand them off** (the default: its last turn pushes its work in progress and says on each PR where it stands, then the threads are released for the next bot to claim), **keep** them (a planned restart or a move) or **retire** it (hand off, and drop it from the stopped list until you start it again). A stop through the API without `threads` keeps them, as do the keeper's own restarts. |
 | **A fresh start** | Press **new session**. A bot's harness session keeps the role it was started with; this sets the session aside and the bot reads the rules again, at once when idle (a stopped bot at its next start). The old session stays in its state directory under `old-sessions/`. |
 | **Bring it back** | Stopped bots fold under "not running". Press **start**; it carries on as the same bot. |
 | **Add or revive** | **+ Add a bot** lists the stopped bots of the harness and workspace you picked, those holding open threads first: **Revive** one to keep its name, sessions and claimed threads, or **Move here and revive** a bot from another machine. **Start a new bot** is still below. |
@@ -401,6 +401,7 @@ bin/bot skill update                                       # pull the ones that 
 bin/bot skill remove release-notes                         # take one out again
 bin/bot ps                                     # the bots running on this box (-a: stopped and moved ones too)
 bin/bot stop ada                               # let ada finish what it is doing, then exit
+bin/bot stop ada --handoff                     # the same, after one last turn that pushes its work and comments on its PRs
 bin/bot restart ada                            # ada again on the bin/bot now on disk, once idle
 bin/bot kill ada                               # stop ada now, ending the run it is in (stuck or runaway)
 bin/bot reset ada                              # a new harness session for ada (--all: every bot here); the old one is kept aside
@@ -774,8 +775,10 @@ who manage the `admin` workspace are the ones whose yes counts and who may chang
 routines themselves.
 
 **GitHub issues, as a recipe.** A routine can be a recipe instead of a script:
-a repository, which issues count as taken (an assignee, a linked pull request,
-a label), and a workspace. The board writes the check and the prompt from it, and
+a repository, which issues count as taken (a `bot:<handle>` label of a bot that
+is running, a linked pull request, a label), and a workspace. Every bot shares one
+GitHub account, so an assignee says nothing about which bot has the issue; the label
+does, and a stopped bot's label leaves the issue free for the next bot, which swaps it. The board writes the check and the prompt from it, and
 the runner refuses the routine if they ever stop matching it. Each round, a bot
 picks the channel each new issue belongs to (a label rule skips the bot), and the
 runner announces each issue once in that channel and asks for a taker.

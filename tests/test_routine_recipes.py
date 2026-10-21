@@ -160,8 +160,10 @@ class Recipes(unittest.TestCase):
         self.assertEqual((routine["state"], routine["channel"]), ("paused", "game"))
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
 
-        # #3 is assigned and #4 labelled claimed: never announced. #1 and #2 make the first batch.
-        self.issues(issue(1, ["doc"]), issue(2), issue(3, assignees=["bob"]), issue(4, ["claimed"]))
+        # #3 is ada's (bot:ada, and ada is running) and #4 labelled claimed: never announced.
+        # An assignee alone says nothing (#225): every bot shares one GitHub account. #1 and #2 make the first batch.
+        self.api("GET", "/api/me", token=self.bot)     # ada is around
+        self.issues(issue(1, ["doc"], assignees=["bob"]), issue(2), issue(3, ["bot:ada"]), issue(4, ["claimed"]))
         self.once()
         job = self.state(thread)["job"]
         self.assertEqual([i["number"] for i in job["items"]], [1, 2])
@@ -193,15 +195,33 @@ class Recipes(unittest.TestCase):
         self.assertEqual(items["2"].get("over"), "a bot took it")
         self.assertEqual((items["1"]["reminds"], items["5"]["reminds"]), (1, 1))
         with open(os.path.join(self.home, "view-5.json"), "w") as fh:
-            json.dump({"state": "OPEN", "assignees": [{"login": "ada"}], "closedByPullRequestsReferences": []}, fh)
+            json.dump({"state": "OPEN", "labels": [{"name": "bot:ada"}], "closedByPullRequestsReferences": []}, fh)
         self.state(thread, age); self.once()
         items = self.state(thread)["items"]
-        self.assertEqual((items["1"].get("over"), items["5"].get("over")), ("no taker", "assigned or linked to a pull request"))
+        self.assertEqual((items["1"].get("over"), items["5"].get("over")), ("no taker", "labelled bot:ada"))
         told = [m for m in self.api("GET", "/api/messages?channel=game", token=self.human)["messages"]
                 if m["body"].startswith("@jac #1 ")]
         self.assertEqual(len(told), 1)
         listed = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual(sorted(i["number"] for i in listed["items"]), [1, 2, 5])
+
+    def test_an_owner_that_is_not_running_frees_the_issue_and_the_label_moves(self):
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 5}
+        thread = self.api("POST", "/api/routines", {"name": "owners", "recipe": rc, "every": 1}, self.human)["id"]
+        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
+        self.api("GET", "/api/me", token=self.bot)     # ada is around; ghost runs nowhere
+        self.issues(issue(41, ["bot:ghost"]), issue(42, ["bot:ada"]))
+        self.once()
+        job = self.state(thread)["job"]
+        self.assertEqual([i["number"] for i in job["items"]], [41])
+        self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
+                                           "meta": {"done": True, "routes": [{"number": 41, "channel": "", "why": "x"}]}},
+                 self.bot)
+        self.once()
+        body = next(m["body"] for m in self.api("GET", "/api/messages?channel=game&limit=50", token=self.human)["messages"]
+                    if m["body"].startswith("New issue to take: #41"))
+        self.assertIn("--add-label bot:<your handle>", body)
+        self.assertIn("removes `bot:ghost`", body)
 
     def test_a_workspace_that_goes_away_stops_the_routine_with_the_reason(self):
         self.api("POST", "/api/workspaces", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)
