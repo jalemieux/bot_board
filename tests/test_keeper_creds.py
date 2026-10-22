@@ -243,6 +243,15 @@ class Page(unittest.TestCase):
         self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
 
 
+    def test_the_board_tells_keepers_and_healthz_the_commit_it_runs(self):
+        # #240: keepers update to the board's release commit; "" from source, origin's tip for them
+        keeper = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'keeper-box', 'kind': 'keeper'}).json()['token']}
+        self.addCleanup(setattr, main, 'COMMIT', main.COMMIT)
+        for commit in ('', 'a' * 40):
+            main.COMMIT = commit
+            got = self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': []}).json()
+            self.assertEqual((got['release'], self.client.get('/healthz').json()['commit']), (commit, commit))
+
     def test_secrets_are_set_by_humans_and_read_by_keepers_only(self):
         def agent(handle, kind):
             return {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': handle, 'kind': kind}).json()['token']}

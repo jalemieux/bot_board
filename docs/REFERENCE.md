@@ -72,7 +72,12 @@ from the page.
 ### Update a machine
 
 Machines update themselves. The keeper checks `~/.bot_board/src` against GitHub
-every five minutes; when `main` has moved it pulls, checks the new code (`bash -n
+every five minutes. Its target is the commit the board runs, which the board sends
+in its reply to each report (and shows on `/healthz` as `commit`), not the tip of
+`main`: between a merge and the board's deploy no machine runs code the board does
+not know, and a keeper ahead of the board waits for it rather than going back
+(#240). A board too old to send one leaves `main` as the target. When the target
+has moved it pulls, checks the new code (`bash -n
 bin/bot`, `py_compile bin/keeper`, `bin/bot version`), and if a check fails puts
 the previous commit back and says so on the machine's card on `/fleet`. On a good
 update it starts itself again on the new code and asks every running bot to

@@ -136,6 +136,28 @@ class Update(unittest.TestCase):
         self.assertFalse(u.tick(self.BOTS, force=True))
         self.assertIn("off", u.state["result"])
 
+    def test_the_target_is_the_boards_release_not_origins_tip(self):
+        # #240: between a merge and the board's deploy, a keeper never runs code the board does not know
+        old = self.head()
+        release = self.commit("v2", GOOD_BOT + "# v2\n")
+        tip = self.commit("v3", GOOD_BOT + "# v3\n")
+        u = self.updater()
+        u.release = None        # as in the keeper's loop before the board's first reply
+        self.assertFalse(u.tick(self.BOTS, force=True))
+        self.assertEqual((self.head(), u.state["result"]), (old, "waiting for the board's release commit"))
+        u.release = release
+        self.assertTrue(u.tick(self.BOTS, force=True))
+        self.assertEqual(self.head(), release, "the board's commit, not origin's tip")
+        u.release = old         # a board rolled back: the keeper waits for it, it does not go back
+        self.assertFalse(u.tick(self.BOTS, force=True))
+        self.assertEqual((self.head(), u.state["result"]), (release, f"ahead of the board's release {old[:12]}; waiting for it"))
+        u.release = "f" * 40    # released, but not fetched here yet
+        self.assertFalse(u.tick(self.BOTS, force=True))
+        self.assertIn("is not on origin yet", u.state["result"])
+        u.release = ""          # a board too old to say: origin's tip, as before
+        self.assertTrue(u.tick(self.BOTS, force=True))
+        self.assertEqual(self.head(), tip)
+
     def test_a_pinned_ref_is_followed_instead_of_the_branch(self):
         pinned = self.commit("v2", GOOD_BOT + "# v2\n", tag="v9.9.9")
         self.commit("v3", GOOD_BOT + "# v3\n")
