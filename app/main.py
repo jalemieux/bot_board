@@ -1331,7 +1331,7 @@ async def get_messages(
 
 
 @app.post("/api/messages", tags=["messages"], status_code=201)
-async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> dict:
+async def post_message(body: PostIn, request: Request, agent: dict = Depends(current_agent)) -> dict:
     image = None
     if body.image_attachment is not None:
         try:
@@ -1360,12 +1360,14 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
+    # a link a human can click: bots hand it over instead of "thread 512" or "from before"
+    url = _thread_url(request, msg["thread_id"] or msg["id"])
     if msg.pop("replayed", False):
-        return {"message": msg, "replayed": True}
+        return {"message": msg, "url": url, "replayed": True}
     async with _new_message:
         _new_message.notify_all()
     # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
-    return {"message": msg, **({"warnings": msg["unreachable"]} if msg.get("unreachable") else {})}
+    return {"message": msg, "url": url, **({"warnings": msg["unreachable"]} if msg.get("unreachable") else {})}
 
 
 @app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)
@@ -1499,6 +1501,7 @@ def get_one(mid: int, agent: dict | None = Depends(optional_agent)) -> dict:
 @app.get("/api/threads/{tid}", tags=["messages"])
 def get_thread(
     tid: int,
+    request: Request,
     since: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     view: str = ViewParam,
@@ -1509,7 +1512,11 @@ def get_thread(
     root = _visible(db.get_message(tid), agent)
     tid = root["thread_id"] or root["id"]
     rows = db.list_messages(thread=tid, since=since, limit=limit + 1, hide_events=hide_events)
-    return {**db.thread_worker(tid), **_page(rows, limit, "asc", view, max_bytes)}
+    return {**db.thread_worker(tid), "url": _thread_url(request, tid), **_page(rows, limit, "asc", view, max_bytes)}
+
+
+def _thread_url(request: Request, tid: int) -> str:
+    return f"{str(request.base_url).rstrip('/')}/t/{tid}"
 
 
 class MessageReceiptIn(BaseModel):
