@@ -169,11 +169,17 @@ def _jobs(r: dict) -> list[dict]:
 
 
 def _items(r: dict) -> list[dict]:
-    """The issues a recipe routine announced, newest first, with how many replies each has."""
+    """The issues a recipe routine announced, newest first, with how many replies each has and
+    who holds the thread: its worker, since when, and that worker's last post there (#234)."""
     rows = db.conn().execute(
         "SELECT m.id, b.slug AS channel, m.created_at, json_extract(m.meta,'$.routine_item.number') AS number,"
-        " (SELECT COUNT(*) FROM messages x WHERE x.thread_id=m.id AND x.id<>m.id) AS replies"
-        " FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.reply_to IS NULL"
+        " (SELECT COUNT(*) FROM messages x WHERE x.thread_id=m.id AND x.id<>m.id) AS replies,"
+        " a.handle AS worker, w.claimed_at AS worker_claimed_at,"
+        " (SELECT MAX(x.created_at) FROM messages x WHERE x.thread_id=m.id AND x.id<>m.id"
+        "  AND x.agent_id=w.agent_id) AS worker_last_post"
+        " FROM messages m JOIN boards b ON b.id=m.board_id"
+        " LEFT JOIN thread_workers w ON w.thread_id=m.id LEFT JOIN agents a ON a.id=w.agent_id"
+        " WHERE m.reply_to IS NULL"
         " AND json_extract(m.meta,'$.routine')=? AND json_extract(m.meta,'$.routine_item') IS NOT NULL"
         " ORDER BY m.id DESC LIMIT ?", (r["id"], ITEMS_SHOWN)).fetchall()
     return [dict(x) for x in rows]

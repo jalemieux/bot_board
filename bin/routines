@@ -49,9 +49,13 @@ what a human approves is what runs. Issues a label rule places are announced by
 the runner without a bot; the rest go out as one job, a few at a time, for a bot
 to pick the channel, and the bot answers with meta {"done": true, "routes":
 [{"number", "channel", "why"}]}. The runner announces each issue in that
-channel once, then chases it: no bot reply in that thread, no assignee and no
-linked pull request after `remind_after`, it is posted again, `reminds` times,
-then `escalate` is told.
+channel once, then follows it until it is closed, looking every `remind_after`;
+a linked pull request holds it while its holder runs. Its holder
+is the thread's worker, else its bot:<handle> owner unless that bot handed the
+thread back (released it, or replied with meta {"handback": true}). With no
+holder, it is posted again, `reminds` times, then `escalate` is told. A holder
+that is not running, or that has shown nothing on the issue for `stale_after`,
+loses it: it is offered again in a new thread, once per holder (#234).
 
 Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_HANDLE
 (default routines: the board takes reports only from that agent), ROUTINES_CONFIG_DIR
@@ -166,7 +170,8 @@ def problem_with(routine):
 #    assignee: every bot shares one GitHub account, so an assignee only says "some bot" (#225).
 RECIPE_VERSION = 3
 RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
-                   "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
+                   "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": "",
+                   "stale_after": 86400}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,63}")
 
@@ -212,7 +217,8 @@ def recipe_problem(rc):
             return f"the recipe `{key}` must be true or false"
     if not isinstance(rc.get("skip_labels"), list) or not all(isinstance(x, str) and x.strip() for x in rc["skip_labels"]):
         return "the recipe `skip_labels` must be a list of labels"
-    for key, low, high in (("batch", 1, 50), ("remind_after", 60, 30 * 86400), ("reminds", 0, 20)):
+    for key, low, high in (("batch", 1, 50), ("remind_after", 60, 30 * 86400), ("reminds", 0, 20),
+                            ("stale_after", 3600, 30 * 86400)):
         if type(rc.get(key)) is not int or not low <= rc[key] <= high:
             return f"the recipe `{key}` must be a whole number from {low} to {high}"
     if not isinstance(rc.get("after"), str) or (rc["after"] and not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rc["after"])):
@@ -337,6 +343,7 @@ def recipe_summary(rc):
     if rc["reminds"]:
         lines.append(f"- An announced issue no bot has taken is posted again after {mins(rc['remind_after'])}, "
                      f"{rc['reminds']} times" + (f", then @{rc['escalate']} is told." if rc["escalate"] else "."))
+    lines.append(f"- One whose holder stops, or shows nothing on it for {rc['stale_after'] // 3600} h, is offered again.")
     return "\n".join(lines) + "\n"
 
 
@@ -641,62 +648,100 @@ class Runner:
                                           **({"orphan_of": i["orphan_of"]} if i.get("orphan_of") else {})}
             self.log(r, f"announced #{i['number']} in #{channel} as message {m['id']}")
 
-    def taken(self, r, item):
-        """A worker claimed the thread, or the issue moved on on GitHub."""
-        if any(m.get("worker") or
-               (m["id"] > item["msg"] and m["author"] != ME and m["author_kind"] != "human")
-               for m in self.board.pages(f"/api/threads/{item['msg']}")):
-            return "a bot took it"
+    def runs(self, handle):
+        """The board's word on whether a bot runs; unsure counts as running, unknown as not."""
         try:
-            got = json.loads(subprocess.run(
-                ["gh", "issue", "view", str(item["number"]), "-R", r["recipe"]["repo"],
-                 "--json", "state,labels,assignees,closedByPullRequestsReferences"],
-                capture_output=True, text=True, timeout=60, check=True).stdout)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            return ""       # GitHub unreachable: ask again on the next pass
-        if got["state"] != "OPEN":
-            return "closed"
-        owner = owner_label([l["name"] for l in got.get("labels") or []])
-        if owner:
-            try:
-                runs = call("GET", f"/api/agents/{owner}", token=self.board.token).get("agent", {}).get("running", True)
-            except (OSError, ValueError) as e:
-                runs = ": 404 " not in str(e)      # unknown handle: nobody; unsure otherwise: leave it to its owner
-            if runs:
-                return f"labelled bot:{owner}"
-        if any(a["login"] != bots_login() for a in got.get("assignees") or []):
-            return "a person is assigned"
-        if got["closedByPullRequestsReferences"] and not item.get("orphan_of"):
-            return "linked to a pull request"
-        return ""
+            return call("GET", f"/api/agents/{handle}", token=self.board.token).get("agent", {}).get("running", True)
+        except (OSError, ValueError) as e:
+            return ": 404 " not in str(e)
+
+    def holder(self, item, issue):
+        """Who has the issue, and when they last showed it: the thread's worker, else its
+        bot:<handle> owner, unless either handed this thread back (#234)."""
+        msgs = list(self.board.pages(f"/api/threads/{item['msg']}"))
+        root = next(m for m in msgs if m["id"] == item["msg"])
+        bots = [m for m in msgs if m["id"] > item["msg"] and m["author"] != ME and m["author_kind"] != "human"]
+        h = root.get("worker") or owner_label([l["name"] for l in issue.get("labels") or []])
+        mine = [m for m in bots if m["author"] == h]
+        if not h or (mine and mine[-1]["meta"].get("handback") is True) or (mine and not root.get("worker")):
+            return "", 0        # a bot that posted here and left, or said so, handed it back
+        seen = [when(m["created_at"]) for m in mine] + ([when(issue["updatedAt"])] if issue.get("updatedAt") else [])
+        if root.get("worker") == h and root.get("worker_claimed_at"):
+            seen.append(when(root["worker_claimed_at"]))
+        return h, max(seen + [item["sent_at"]])
+
+    def offer_again(self, r, item, issue, holder, why):
+        """A new thread for the issue, naming the holder it is taken from without an @ (#216)."""
+        rc, n = r["recipe"], item["number"]
+        labelled = owner_label([l["name"] for l in issue.get("labels") or []]) == holder
+        m = self.board.post(item["channel"], (
+            f"Issue to take again: #{n} {issue.get('title', '')}\n{issue.get('url', '')}\n\n"
+            f"It was {holder}'s, who {why}, so it is free: its branch, pull request and comments on GitHub hold "
+            f"the work so far (the old thread is message {item['msg']}).\n"
+            f"The thread worker labels the issue as its own: `gh issue edit {n} -R {rc['repo']} --add-label "
+            f"bot:<your handle>" + (f" --remove-label bot:{holder}" if labelled else "")
+            + "` (`gh label create` it first if the repo has none)."),
+            meta={"routine": r["id"], "name": r["name"], "routine_item": {"repo": rc["repo"], "number": n}})
+        item.update(msg=m["id"], sent_at=time.time(), looked_at=time.time(), reminds=0, orphan_of=holder)
+        item.pop("escalated", None)
+        self.log(r, f"#{n}: {holder} {why}; offered again as message {m['id']}")
 
     def chase(self, r, st):
+        """Follow each announced issue until it is closed: a holder keeps it while it runs and
+        shows something within stale_after; without one it is reminded, then escalated."""
         rc = r["recipe"]
         for number, item in list(st.get("items", {}).items()):
-            if item.get("over") or time.time() - item["sent_at"] < rc["remind_after"]:
+            if item.get("over") == "closed" or time.time() - item.get("looked_at", item["sent_at"]) < rc["remind_after"]:
                 continue
-            item["number"] = int(number)
-            why = self.taken(r, item)
-            if why:
-                item["over"] = why
-                self.log(r, f"#{number}: {why}")
-            elif item["reminds"] < rc["reminds"]:
-                item["reminds"] += 1
-                item["sent_at"] = time.time()
-                self.board.post(item["channel"], f"Still nobody on #{number} after {mins(rc['remind_after'])} "
-                                f"(reminder {item['reminds']} of {rc['reminds']}). Anyone free: reply here to take it.",
-                                reply_to=item["msg"], meta={"routine": r["id"], "name": r["name"],
-                                                            "routine_item": {"repo": rc["repo"], "number": int(number)}})
-                self.log(r, f"reminded #{number} ({item['reminds']} of {rc['reminds']})")
+            if item.pop("over", None) == "no taker":     # a release before #234 stopped there; it was told
+                item["escalated"] = True
+            item["number"], item["looked_at"] = int(number), time.time()
+            try:
+                issue = json.loads(subprocess.run(
+                    ["gh", "issue", "view", number, "-R", rc["repo"], "--json",
+                     "state,title,url,labels,assignees,updatedAt,closedByPullRequestsReferences"],
+                    capture_output=True, text=True, timeout=60, check=True).stdout)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                continue        # GitHub unreachable: look again on a later pass
+            if issue["state"] != "OPEN":
+                item["over"] = "closed"
+                self.log(r, f"#{number}: closed")
+            elif any(a["login"] != bots_login() for a in issue.get("assignees") or []):
+                item["held"] = "a person is assigned"
             else:
-                item["over"] = "no taker"
-                if rc["escalate"]:
-                    home, _ = self.workspace(rc["workspace"])
-                    self.board.post(home, f"@{rc['escalate']} #{number} has had no taker after {rc['reminds']} "
-                                    f"reminders: message {item['msg']} in #{item['channel']}.",
-                                    meta={"routine": r["id"], "name": r["name"]})
-                self.log(r, f"#{number}: no taker after {rc['reminds']} reminders")
+                holder, seen = self.holder(item, issue)
+                fresh = holder and holder != item.get("orphan_of")     # not the one it was taken from
+                if fresh and not self.runs(holder):
+                    self.offer_again(r, item, issue, holder, "is not running")
+                elif issue.get("closedByPullRequestsReferences") and (fresh or not item.get("orphan_of")):
+                    item["held"] = "a linked pull request"      # waiting on review is not silence
+                elif fresh and time.time() - seen >= rc["stale_after"]:
+                    self.offer_again(r, item, issue, holder, f"has shown nothing on it for {rc['stale_after'] // 3600} h")
+                elif fresh:
+                    item["held"] = holder
+                else:
+                    self.remind(r, item)
             self.save()
+
+    def remind(self, r, item):
+        rc, number = r["recipe"], item["number"]
+        item["held"] = ""
+        if item["reminds"] < rc["reminds"]:
+            item["reminds"] += 1
+            item["sent_at"] = item["looked_at"] = time.time()
+            self.board.post(item["channel"], f"Still nobody on #{number} after {mins(rc['remind_after'])} "
+                            f"(reminder {item['reminds']} of {rc['reminds']}). Anyone free: reply here to take it.",
+                            reply_to=item["msg"], meta={"routine": r["id"], "name": r["name"],
+                                                        "routine_item": {"repo": rc["repo"], "number": number}})
+            self.log(r, f"reminded #{number} ({item['reminds']} of {rc['reminds']})")
+        elif not item.get("escalated"):
+            item["escalated"] = True
+            if rc["escalate"]:
+                home, _ = self.workspace(rc["workspace"])
+                self.board.post(home, f"@{rc['escalate']} #{number} has had no taker after {rc['reminds']} "
+                                f"reminders: message {item['msg']} in #{item['channel']}.",
+                                meta={"routine": r["id"], "name": r["name"]})
+            self.log(r, f"#{number}: no taker after {rc['reminds']} reminders")
 
 
 # ---------------------------------------------------------------- commands
