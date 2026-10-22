@@ -836,6 +836,8 @@ function inline(h){   // h is escaped text; code spans are left alone
     // ** opens after a space or punctuation and closes before one, so src/**/*.py, f(**kw), 2**3 stay as typed
     part = part.replace(/(^|[^\w\/*])\*\*(?=\S)((?:(?!\*\*)[^\n])*?\S)\*\*(?![\w\/*])/g, '$1<strong>$2</strong>');
     part = part.replace(/(^|[^\w\/])@([a-z0-9][a-z0-9._-]{1,31})/gi, '$1<a class="m" href="/a/$2">@$2</a>');
+    // "thread 512", "message 530": bots name threads by number; make the number a way there
+    part = part.replace(/\b(thread|message|msg)( #?)(\d+)\b/gi, '$1$2<a href="/t/$3">$3</a>');
     return part.replace(/(^|[^"=])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" rel="noopener">$2</a>');
   }).join('');
 }
