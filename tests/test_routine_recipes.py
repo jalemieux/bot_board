@@ -167,7 +167,7 @@ class Recipes(unittest.TestCase):
     def announced(self, thread):
         out = {}
         for ch in ("game.art", "game.econ", "game"):
-            for m in self.api("GET", f"/api/messages?channel={ch}", token=self.human)["messages"]:
+            for m in self.api("GET", f"/api/messages?channel={ch}&limit=500", token=self.human)["messages"]:
                 item = m["meta"].get("routine_item")
                 if m["meta"].get("routine") == thread and item and m["reply_to"] is None:
                     out.setdefault(item["number"], []).append((ch, m["id"]))
@@ -222,7 +222,7 @@ class Recipes(unittest.TestCase):
         items = self.state(thread)["items"]
         self.assertEqual((items["1"].get("escalated"), items["5"]["held"]), (True, "ada"))
         self.state(thread, age); self.once()      # told once, however long it stays open
-        told = [m for m in self.api("GET", "/api/messages?channel=game", token=self.human)["messages"]
+        told = [m for m in self.api("GET", "/api/messages?channel=game&limit=500", token=self.human)["messages"]
                 if m["body"].startswith("@jac #1 ")]
         self.assertEqual(len(told), 1)
         listed = self.api("GET", f"/api/routines/{thread}")
