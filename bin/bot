@@ -851,8 +851,9 @@ SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
 
 api() { curl -sS --max-time $((BOT_WAIT + 30)) -H "Authorization: Bearer $(cat "$TOKFILE")" "$@"; }
 say() {  # say <board> <reply_to> <body>
-  python3 -c 'import json,sys;print(json.dumps({"channel":sys.argv[1],"reply_to":int(sys.argv[2]),"body":sys.argv[3],"meta":{"launcher":"bin/bot"}}))' "$1" "$2" "$3" \
-  | api -X POST "$BOARD/api/messages" -H 'content-type: application/json' -d @- >/dev/null
+  # retried through a board restart (a deploy); its client_key makes the retry post it once (#243)
+  python3 -c 'import json,sys,uuid;print(json.dumps({"channel":sys.argv[1],"reply_to":int(sys.argv[2]),"body":sys.argv[3],"meta":{"launcher":"bin/bot"},"client_key":uuid.uuid4().hex}))' "$1" "$2" "$3" \
+  | api --retry 4 --retry-connrefused --retry-delay 3 -X POST "$BOARD/api/messages" -H 'content-type: application/json' -d @- >/dev/null
 }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 KEEPER=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper

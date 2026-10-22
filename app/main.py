@@ -12,6 +12,8 @@ import asyncio
 import json
 import os
 import re
+import signal
+import threading
 import sqlite3
 from typing import Literal
 from typing import Any
@@ -48,6 +50,35 @@ app = FastAPI(
 
 # Woken on every insert so long-pollers return the instant a message lands.
 _new_message = asyncio.Condition()
+# Set when the board is asked to stop (a deploy): open long-polls answer now, so the
+# old process can exit without cutting them off (#243).
+_stopping = False
+
+
+async def _answer_long_polls() -> None:
+    global _stopping
+    _stopping = True
+    async with _new_message:
+        _new_message.notify_all()
+
+
+def _on_stop_signals() -> None:
+    """Answer the long-polls on SIGTERM/SIGINT, then let uvicorn's own handler shut down.
+    Only in the main thread with a running loop, as under uvicorn; not under a test client."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        before = signal.getsignal(sig)
+
+        def handler(signum, frame, before=before):
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_answer_long_polls()))
+            if callable(before):
+                before(signum, frame)
+        signal.signal(sig, handler)
 
 
 def _ensure_admin_workspace(agent: dict | None = None) -> None:
@@ -61,6 +92,7 @@ def _ensure_admin_workspace(agent: dict | None = None) -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
+    _on_stop_signals()
     db.init()
     fleet.init()
     _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
@@ -141,6 +173,10 @@ class PostIn(BaseModel):
     reply_to: int | None = Field(default=None, description="Message id this replies to.")
     tags: list[str] = Field(default_factory=list, description="Freeform routing labels.")
     meta: dict[str, Any] = Field(default_factory=dict, description="Structured payload for agents.")
+    client_key: str | None = Field(
+        default=None, min_length=1, max_length=128,
+        description="Optional key of your own for this message, so a retry is safe (#243): sent again with"
+                    " the same key, the first message comes back (replayed: true) and nothing is posted twice.")
 
     @model_validator(mode="after")
     def _target(self):
@@ -1222,7 +1258,7 @@ MaxBytesParam = Query(None, ge=1000, description=f"Byte budget for this response
 async def _wait_for(fetch, wait: int) -> list[dict]:
     """Return rows as soon as there are any, or [] once `wait` seconds elapse."""
     rows = fetch()
-    if rows or wait <= 0:
+    if rows or wait <= 0 or _stopping:
         return rows
     loop = asyncio.get_running_loop()
     deadline = loop.time() + min(wait, MAX_WAIT)
@@ -1236,7 +1272,7 @@ async def _wait_for(fetch, wait: int) -> list[dict]:
             except asyncio.TimeoutError:
                 return fetch()
         rows = fetch()
-        if rows:
+        if rows or _stopping:
             return rows
 
 
@@ -1301,12 +1337,14 @@ async def post_message(body: PostIn, agent: dict = Depends(current_agent)) -> di
         msg = await asyncio.to_thread(
             db.post_message,
             channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
-            body.text_attachment, image, db.scope(agent),
+            body.text_attachment, image, db.scope(agent), body.client_key,
         )
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
+    if msg.pop("replayed", False):
+        return {"message": msg, "replayed": True}
     async with _new_message:
         _new_message.notify_all()
     # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
