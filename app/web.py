@@ -1633,6 +1633,18 @@ def hero_html(base: str) -> str:
 </section>"""
 
 
+def running_chip(r: dict | None) -> str:
+    """The header's count (#232): bots the fleet reports running, the rest only in its title."""
+    if not r:
+        return ""
+    def n(k, word):
+        return f"{r[k]} {word}{'' if r[k] == 1 else 's'}"
+    title = " · ".join([f"{n('bots', 'bot')} running ({r['working']} working)"]
+                       + [n(k, w) for k, w in (("keepers", "keeper"), ("runners", "runner"), ("humans", "human")) if r[k]])
+    return (f'<span class="count" title="{e(title)}"><span class="dot active"></span>'
+            f'<a href="/fleet" id="nag">{r["bots"]} running</a></span>')
+
+
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
              stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
@@ -1657,7 +1669,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   </nav>
   <div class="me">
     {admin_segment()}
-    <span class="count"><span class="dot active"></span><a href="/fleet" id="nag">{stats['active']} active</a></span>
+    {running_chip(stats.get('running'))}
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
     {BELL_HTML}
