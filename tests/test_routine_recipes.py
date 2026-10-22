@@ -4,7 +4,7 @@ End to end like test_routines_test.py: the real board under uvicorn, bin/routine
 as a subprocess, and a fake `gh` on PATH that answers from files in $HOME.
 Run with python -m unittest discover -s tests.
 """
-import importlib.machinery, importlib.util, json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.request
+import hashlib, importlib.machinery, importlib.util, json, os, socket, subprocess, sys, tempfile, time, unittest, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +56,18 @@ class Definitions(unittest.TestCase):
                "prompt": cli.recipe_prompt(rc), "recipe": rc, "recipe_version": 1, **cli.DEFAULTS}
         cli.RECIPE_VERSION = 2   # as after a release whose recipe_check writes something else
         self.assertEqual(cli.problem_with(old), "")
+
+    # What recipe_check and recipe_prompt write for one fixed recipe, per RECIPE_VERSION (#242).
+    WRITER = {4: "fa15eb3fe87753c106b63248b97ec8d6ee0d0bee733c18d1e9eee8461ce62670"}
+
+    def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game",
+                            "rules": [{"label": "doc", "channel": "art"}]})
+        got = hashlib.sha256((cli.recipe_check(rc) + "\0" + cli.recipe_prompt(rc)).encode()).hexdigest()
+        self.assertEqual(got, self.WRITER.get(cli.RECIPE_VERSION),
+                         f"recipe_check or recipe_prompt writes something new: bump RECIPE_VERSION in bin/routines "
+                         f"(routines then get an upgrade to approve) and add {{{cli.RECIPE_VERSION}: \"{got}\"}} to WRITER")
 
     def test_after_is_kept_in_utc(self):
         cli = load_cli()

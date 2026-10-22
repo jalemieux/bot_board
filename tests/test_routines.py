@@ -192,6 +192,35 @@ class Routines(unittest.TestCase):
         v2 = self.call('PATCH', f"/api/routines/{r['id']}", {'every': 120})
         self.assertEqual((v2['problem'], v2['recipe']['workspace']), ('', 'admin'))
 
+    def test_a_newer_recipe_writer_drafts_upgrades_a_human_approves_in_one_step(self):
+        # #242: routines an older release wrote keep running until one human yes upgrades them all
+        rv = routines.cli.RECIPE_VERSION
+        ids = [self.add(name=f'r{n}', recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'admin'},
+                        check=None, prompt=None)['id'] for n in (1, 2)]
+        c = db.conn()
+        c.execute("UPDATE routines SET definition=json_set(definition,'$.recipe_version',?,"
+                  " '$.check', json_extract(definition,'$.check') || '# older writer' || char(10))", (rv - 1,))
+        c.commit()
+        self.call('POST', f"/api/routines/{ids[0]}/enable")
+        got = self.call('GET', f"/api/routines/{ids[0]}")
+        self.assertEqual((got['state'], got['problem'], got['upgrade']['from'], got['upgrade']['to']), ('enabled', '', rv - 1, rv))
+        self.assertIn('-# older writer', got['upgrade']['diff'])
+        bell = [a['text'] for a in self.call('GET', '/api/status')['attention']]
+        self.assertIn(f'2 routine upgrade(s) to recipe version {rv} wait for your yes', bell)
+
+        shown = {str(i): 1 for i in ids}
+        self.make_admin()
+        self.call('POST', '/api/routines/upgrades/approve', {'recipe_version': rv, 'routines': shown}, auth=self.bot, expected=403)
+        self.call('POST', '/api/routines/upgrades/approve', {'recipe_version': rv - 1, 'routines': shown}, expected=422)
+        self.call('PATCH', f"/api/routines/{ids[1]}", {'every': 120})      # changed since it was shown: left alone
+        out = self.call('POST', '/api/routines/upgrades/approve', {'recipe_version': rv, 'routines': shown})
+        self.assertEqual((out['upgraded'], out['left']), ([ids[0]], [{'id': str(ids[1]), 'why': 'changed since you looked'}]))
+        up = self.call('GET', f"/api/routines/{ids[0]}")
+        self.assertEqual((up['state'], up['version'], up['recipe_version'], up['problem']), ('enabled', 2, rv, ''))
+        self.assertNotIn('upgrade', up)
+        self.assertEqual(up['check'], routines.cli.recipe_check(up['recipe']))
+        self.assertNotIn('upgrade', self.call('GET', f"/api/routines/{ids[1]}"), 'a new version is written by this release')
+
     def test_delete_stops_it_for_good(self):
         r = self.add()
         self.call('DELETE', f"/api/routines/{r['id']}")
