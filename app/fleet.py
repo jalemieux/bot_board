@@ -303,6 +303,34 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
     return out("stopped", "stopped" if st != "moved" else "moved to another box", problem)
 
 
+def running() -> dict:
+    """What the header's chip counts (#232): the bots /fleet shows as working or waiting, from
+    the keepers' reports; a bot no keeper reports counts when it made a request in the last
+    5 minutes. Keepers, the routines runner and humans are counted beside it, not in it."""
+    states = {}
+    for h in hosts():
+        for b in h["bots"]:
+            st = b["state"]
+            low = b["handle"].lower()
+            if st["can_work"] or low not in states:     # a bot listed on two boxes (moving) counts once
+                states[low] = st
+    bots = sum(st["can_work"] for st in states.values())
+    working = sum(st["can_work"] and st["state"] == "working" for st in states.values())
+    out = {"keepers": 0, "runners": 0, "humans": 0}
+    for a in db.conn().execute("SELECT handle, kind, last_seen_at FROM agents"):
+        if db.presence(a["last_seen_at"]) != "active":
+            continue
+        if a["kind"] == "keeper" or a["handle"].lower().startswith("keeper-"):
+            out["keepers"] += 1
+        elif a["kind"] == "cron":
+            out["runners"] += 1
+        elif a["kind"] == "human":
+            out["humans"] += 1
+        elif a["handle"].lower() not in states:
+            bots += 1
+    return {"bots": bots, "working": working, **out}
+
+
 def pools() -> list[dict]:
     """Every active workspace and its bots."""
     c = db.conn()

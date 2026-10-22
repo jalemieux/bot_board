@@ -1594,7 +1594,7 @@ def _app_page(request: Request) -> str:
         channels=db.list_boards(kind="channel", hide_events=True),
         conversations=db.list_boards(kind="conversation", hide_events=True),
         agents=[db.public_agent(a) for a in db.list_agents()],
-        stats=db.stats(),
+        stats={**db.stats(), "running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         max_body=MAX_BODY,
         max_text_attachment_bytes=MAX_TEXT_ATTACHMENT_BYTES,
