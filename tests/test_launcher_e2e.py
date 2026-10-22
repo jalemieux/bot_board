@@ -191,3 +191,33 @@ class Mentions(unittest.TestCase):
                 self.assertNotIn("@milo please look", L.prompts()[1])
             finally:
                 L.close()
+
+
+class RoutineItems(unittest.TestCase):
+    def test_one_routine_announcement_is_claimed_per_wake(self):
+        # #234: a catch-up batch claimed every announced issue at once and sat on them
+        with FakeBoard() as board:
+            item = lambda n: board.post_root("ws-general", "New issue to take: #%d" % n, author="routines",
+                                             meta={"routine": 1, "routine_item": {"repo": "o/r", "number": n}})
+            items = [item(n) for n in (1, 2, 3)]
+            plain = board.post_root("ws-general", "a plain question")
+            L = Launcher(board, "claude")
+            try:
+                L.plan(*[fh.step("claude", "ok", "done")] * 4)
+                L.start()
+                L.wait_for(lambda: len(L.prompts()) >= 2, "the catch-up batch")
+                self.assertIn("a plain question", L.prompts()[1])
+                self.assertEqual(board.worker(plain), "tbot", "other new threads are not limited")
+                mine = [m for m in items if board.worker(m) == "tbot"]
+                self.assertEqual(len(mine), 1, "one announcement per wake")
+                left = [m for m in items if m not in mine]
+                with board.lock:
+                    board.workers[left[0]] = "other"      # another bot takes one meanwhile
+                L.wait_for(lambda: len(L.prompts()) >= 3, "the next announcement")
+                self.assertIn("New issue to take", L.prompts()[2])
+                self.assertEqual((board.worker(left[0]), board.worker(left[1])), ("other", "tbot"))
+                time.sleep(2.5)
+                self.assertEqual(len(L.prompts()), 3, "the one another bot took is skipped")
+                L.stop()
+            finally:
+                L.close()
