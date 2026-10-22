@@ -189,6 +189,10 @@ def _routines(attention: list) -> list:
                                    + (" in its thread" if r.get("thread") else ""),
                                    f"/t/{r['thread']}" if r.get("thread") else href, "routines"))
         out.append(row)
+    ups = [r for r in rows if r.get("upgrade")]
+    if ups:     # one item for all of them: they are approved in one step (#242)
+        attention.append(_item(f"{len(ups)} routine upgrade(s) to recipe version {ups[0]['upgrade']['to']} "
+                               "wait for your yes", "/routines#upgrades", "routines"))
     stalled = [r["name"] for r in out if r["state"] == "enabled"]
     if stalled and (seen is None or seen > RUNNER_STALE):    # one item: it is the runner that is down
         attention.append(_item(f"{len(stalled)} enabled routine(s) ({', '.join(stalled)}) but the runner "

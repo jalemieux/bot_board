@@ -15,11 +15,19 @@ runner's box before a human said yes to it. Every change to the definition is a
 new version, paused again. The runner (the ROUTINES_HANDLE agent) reads the
 routines and reports tests and failures back; whether one runs is its state here.
 
+A release whose recipe writer is newer (RECIPE_VERSION) drafts an upgrade of each
+recipe routine an older one wrote: the same settings, the check and prompt this
+release writes. It is not stored, only shown with its diff (`upgrade`), and the
+routine keeps running what was approved until a human manager approves the
+upgrades they were shown, all in one step (#242). A bot cannot: that yes is the
+trust boundary for code that runs with the fleet's secrets.
+
 The definition's validation is the runner's own code (bin/routines, loaded as a
 module), so both ends agree on what can run.
 """
 from __future__ import annotations
 
+import difflib
 import importlib.machinery
 import importlib.util
 import json
@@ -194,9 +202,29 @@ def describe(row: dict, full: bool = True) -> dict:
            "last_test": test, "run_pending": row["run_asked"] > (ran or {}).get("for", 0),
            "run_asked": row["run_asked"], "last_run": ran, "problem": cli.problem_with(d),
            "created_at": row["created_at"], "updated_at": row["updated_at"]}
+    up = _upgrade(d)
+    if up and row["state"] != "deleted":
+        out["upgrade"] = {"from": d["recipe_version"], "to": up["recipe_version"], "diff": _diff(d, up)}
     if full:
         out.update(jobs=_jobs(out), items=_items(out) if isinstance(d.get("recipe"), dict) else [])
     return out
+
+
+def _upgrade(d: dict) -> dict | None:
+    """The definition this release's recipe writer gives a recipe routine an older one wrote:
+    its settings as stored, its check and prompt written again. None when there is none to draft."""
+    rc, rv = d.get("recipe"), d.get("recipe_version")
+    if not isinstance(rc, dict) or type(rv) is not int or rv >= cli.RECIPE_VERSION or cli.recipe_problem(rc):
+        return None
+    up = {**d, "recipe_version": cli.RECIPE_VERSION, "check": cli.recipe_check(rc), "prompt": cli.recipe_prompt(rc)}
+    return None if cli.problem_with(up) else up
+
+
+def _diff(old: dict, new: dict) -> str:
+    """What an upgrade changes, as a unified diff of the prompt and then the check."""
+    return "".join(line for k in ("prompt", "check") for line in difflib.unified_diff(
+        (old[k] + "\n").splitlines(True), (new[k] + "\n").splitlines(True), f"{k} (recipe v{old['recipe_version']})",
+        f"{k} (recipe v{new['recipe_version']})"))
 
 
 def list_routines(full: bool = True) -> list[dict]:
@@ -326,6 +354,35 @@ def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> d
         c.execute(f"UPDATE routines SET {', '.join(sets)}, updated_by=?, updated_at=? WHERE id=?",
                   (*args, agent["id"], db.now(), rid))
     return {"deleted": True, "id": rid} if action == "delete" else get(rid)
+
+
+def approve_upgrades(data: dict, agent: dict) -> dict:
+    """A human manager's one yes for the drafted upgrades they were shown (#242):
+    {"recipe_version": the version the page showed, "routines": {"<id>": <version shown>}}.
+    Each becomes a new version written by this release, in the state it had; one changed
+    since it was shown, or with nothing to upgrade, is left as it is and said."""
+    _require_switch(agent)
+    if not is_operator(agent):
+        raise PermissionError(f"only a human who manages the `{ADMIN_PROJECT}` workspace approves routine upgrades")
+    if data.get("recipe_version") != cli.RECIPE_VERSION:
+        raise ValueError(f"the board now writes recipe version {cli.RECIPE_VERSION}: load the upgrades again and look")
+    shown = data.get("routines")
+    if not isinstance(shown, dict) or not shown:
+        raise ValueError("`routines` must map each routine id to the version you were shown")
+    done, left = [], []
+    with db._write_lock, db.conn() as c:
+        for rid, version in shown.items():
+            row = c.execute("SELECT * FROM routines WHERE id=? AND state<>'deleted'",
+                            (int(rid) if str(rid).isdigit() else -1,)).fetchone()
+            up = row and row["version"] == version and _upgrade(_stored(dict(row)))
+            if not up:
+                left.append({"id": rid, "why": "no such routine" if not row else "changed since you looked"
+                             if row["version"] != version else "nothing to upgrade"})
+                continue
+            c.execute("UPDATE routines SET definition=?, version=version+1, defined_at=?, updated_by=?, updated_at=?"
+                      " WHERE id=?", (json.dumps(up), db.cursor(), agent["id"], db.now(), row["id"]))
+            done.append(row["id"])
+    return {"upgraded": done, "left": left}
 
 
 # ---------------------------------------------------------------- the runner reports

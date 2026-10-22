@@ -162,6 +162,7 @@ function list() {
       h('a', {href: '/workspaces/' + encodeURIComponent(ADMIN_PROJECT), text: ADMIN_PROJECT + ' workspace'}),
       ': the admin bot works it out with you there, tests it once you agree, and switches it on.'));
   var rs = data.routines || [];
+  upgrades(rs.filter(function (r) { return r.upgrade; }));
   if (!rs.length) add(root, h('div', {'class': 'empty', text: 'No routine yet.'}));
   else add(root, h('table', null,
     h('thead', null, h('tr', null, ['routine', 'state', 'fires in', 'every', 'jobs', 'asked in'].map(function (t) { return h('th', {text: t}); }))),
@@ -178,12 +179,40 @@ function list() {
     }))));
 }
 
+// ---- recipe upgrades: one yes for all of them (#242) ------------------------------
+function upgrades(ups) {
+  if (!ups.length) return;
+  var to = ups[0].upgrade.to, out = h('div', {role: 'status', 'aria-live': 'polite'});
+  add(root, h('section', {id: 'upgrades'}, h('h3', {text: ups.length + ' routine upgrade(s) wait for your yes'}),
+    h('p', {'class': 'note', text: 'This release writes recipe checks and prompts as version ' + to + '. Each routine below ' +
+      'keeps its settings and keeps running what was approved until you approve; then it runs the check and prompt shown here, ' +
+      'in the state it is in now.'}),
+    ups.map(function (r) {
+      return h('details', null, h('summary', null, h('a', {href: '#r=' + r.id, text: r.name || ('#' + r.id)}),
+        ' (version ' + r.version + ', recipe v' + r.upgrade.from + ' → v' + r.upgrade.to + ')'), h('pre', {text: r.upgrade.diff}));
+    }),
+    ME ? h('button', {type: 'button', text: 'Approve all', onclick: function (ev) {
+      var shown = {}; ups.forEach(function (r) { shown[r.id] = r.version; });
+      var btn = ev.currentTarget; btn.disabled = true;
+      api('POST', '/api/routines/upgrades/approve', {recipe_version: to, routines: shown}).then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) { status(out, false, why(res)); return; }
+        var left = res.data.left || [];
+        status(out, !left.length, 'Upgraded ' + (res.data.upgraded || []).length + '.' + (left.length ? ' Left as they were: ' +
+          left.map(function (x) { return '#' + x.id + ' (' + x.why + ')'; }).join(', ') + '.' : ''));
+        load();
+      });
+    }}) : h('p', {'class': 'note', text: 'Sign in as a manager of the ' + ADMIN_PROJECT + ' workspace to approve.'}), out));
+}
+
 // ---- one routine -----------------------------------------------------------------
 function detail(r) {
   add(root, h('p', {'class': 'sub'}, h('a', {href: '#', text: '← all routines'})),
     h('h1', null, r.name || ('#' + r.id), badge(r.state || '?', r.state)),
     r.about ? h('p', {'class': 'sub', text: r.about}) : null);
   if (r.problem) add(root, h('p', {'class': 'prob', text: 'Invalid, so it never runs: ' + r.problem}));
+  if (r.upgrade) add(root, h('p', {'class': 'note'}, 'An upgrade to recipe version ' + r.upgrade.to + ' waits for your yes: ',
+    h('a', {href: '#upgrades', text: 'see it with the others'}), '.'));
   if (r.failure) add(root, h('p', {'class': 'prob', text: 'Failed: ' + r.failure + (r.state === 'failed' ? ' It runs again once enabled again.' : '')}));
 
   var sec = h('section', null,

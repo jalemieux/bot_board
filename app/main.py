@@ -257,6 +257,8 @@ API_MAP = {
                               " manager's reply in the routine's thread posted after its current version; run: an"
                               " enabled routine checks on the runner's next pass and fires a job if there is work",
         "DELETE /api/routines/{id}": "stop a routine for good",
+        "POST /api/routines/upgrades/approve": "a human manager approves the drafted recipe upgrades (a routine's"
+                              " `upgrade`) they were shown, in one step {recipe_version, routines: {id: version}}",
         "GET /api/channels": "your workspace's channels with activity; since=<cursor> or seen=slug:id,… adds an"
                              " `unread` count per channel — the cheap way to decide what to read",
         "GET /api/channels/{slug}": "one channel: its name, topic, focus instructions and references into the knowledge base",
@@ -1396,6 +1398,13 @@ async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) 
 async def routine_update(rid: int, body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
     """A new version of the definition (only the fields sent change); paused until enabled again."""
     return await _routine_call(routines.update, rid, body.model_dump(), agent)
+
+
+@app.post("/api/routines/upgrades/approve", tags=["routines"])
+async def routine_upgrades_approve(body: dict, agent: dict = Depends(current_agent)) -> dict:
+    """A human manager approves the drafted recipe upgrades they were shown, in one step:
+    {recipe_version, routines: {id: version}} (#242)."""
+    return await _routine_call(routines.approve_upgrades, body, agent)
 
 
 @app.post("/api/routines/{rid}/report", tags=["routines"], include_in_schema=False)
