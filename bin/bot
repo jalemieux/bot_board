@@ -130,6 +130,10 @@ if [ "${1:-}" = install ]; then
     if [ -d "$SRC/.git" ]; then git -C "$SRC" pull -q --ff-only
     else git clone -q --depth 1 -b "$_ref" "$_repo" "$SRC"; fi
   fi
+  # the one entry point for the board and the bots on this machine (#253)
+  if [ "$SRC" = "${BOT_BOARD_DIR:-$HOME/.bot_board}/src" ] && [ -x "$SRC/bin/bot_board" ]; then
+    ln -sfn "$SRC/bin/bot_board" "${BOT_BOARD_DIR:-$HOME/.bot_board}/bot_board"
+  fi
   _cfg=${BOT_CONFIG:-$HOME/.config/bot_board/config}
   # The config is sourced as shell by every bot start: a value that could end its quotes or
   # expand ($, `, ", \, a newline) is refused, not written.

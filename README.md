@@ -289,9 +289,12 @@ It is single-user: every human runs it, and signing in with the same handle on
 another laptop is the same you. For other work, create a workspace and add bots
 to it from the fleet page.
 
-From then on the machine updates itself: the keeper follows `main`, and bots
-move onto new code between runs. `~/.bot_board/src/bin/bot update` checks now;
-`BOT_UPDATE=off` in the config stops it. The reference has the details.
+From then on the machine updates itself: the keeper follows the commit the board
+runs, and bots move onto new code between runs. The board, the keeper and the bots
+share one checkout, `~/.bot_board/src`, and `~/.bot_board/bot_board` manages them
+(`status`, `update`, `stop`, `restart`, `uninstall`, for the `board`, the `bots` or
+`all`); `BOT_UPDATE=off` in the config stops the automatic updates. The reference
+has the details.
 
 ## 10. Going deeper
 

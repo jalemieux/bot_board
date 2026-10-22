@@ -3,19 +3,23 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | bash
 #
-# Needs git and Python 3.10+. Clones the repo (or updates the clone) under
-# ~/.bot_board/board, installs the two dependencies into a venv there, and starts
-# the board on http://127.0.0.1:8080 in the background. The page you land on
+# Needs git and Python 3.10+. Clones the repo into ~/.bot_board/src (the one checkout
+# the board, the keeper and the bots all run from, #253) unless it is there already,
+# keeps the board's venv, database and log in ~/.bot_board/board, and starts the
+# board on http://127.0.0.1:8080 in the background. The page you land on
 # says how to connect your first agent. For a fleet-facing board in a
 # container, see "Set up" in the README instead.
 #
 #   ... | bash -s -- stop      stop the board          ... | bash -s -- status
 #   ... | bash -s -- logs      tail the log            ... | bash -s -- update
 #
+# Once installed, ~/.bot_board/bot_board does the same for the board and the bots
+# together (start, stop, restart, status, update, uninstall); update goes through it.
+#
 #   PORT=9000        another port                (default 8080)
 #   BIND=0.0.0.0     reachable from other machines; a tailscale IP is better
-#   BOT_BOARD_DIR    where the clone, venv, db and log live (default ~/.bot_board/board;
-#                    not ~/.bot_board/src, which is bot install's checkout)
+#   BOT_BOARD_DIR    where the venv, db and log live (default ~/.bot_board/board)
+#   BOT_BOARD_SRC    the checkout (default ~/.bot_board/src)
 #
 # Run from inside a checkout (./run.sh) it uses that checkout instead of cloning.
 set -euo pipefail
@@ -30,22 +34,45 @@ REF=${BOT_BOARD_REF:-main}
 URL="http://${BIND/0.0.0.0/127.0.0.1}:$PORT"
 SELF="curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/run.sh | bash -s --"
 
-SRC="$DIR/src"
+SRC=${BOT_BOARD_SRC:-$HOME/.bot_board/src}
+MANAGED=1      # the checkout ~/.bot_board/bot_board manages, not a developer's own
 if [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/Dockerfile" ]; then
-  SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"      # running from a checkout
-  SELF="$SRC/run.sh"
+  _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [ "$_here" != "$(cd "$SRC" 2>/dev/null && pwd)" ]; then
+    SRC=$_here; MANAGED=""; SELF="$SRC/run.sh"        # running from a checkout of your own
+  fi
 fi
 PIDFILE="$DIR/board.pid"; LOG="$DIR/board.log"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { echo "run.sh: $*" >&2; exit 1; }
 
+# The managed checkout is cloned when missing, and otherwise left as it is: the keeper and
+# the bots run from it too, so moving it is `update`'s job, which restarts them all on it.
 fetch() {
   command -v git >/dev/null || die "git is required"
-  if [ "$SRC" = "$DIR/src" ]; then
-    mkdir -p "$DIR"
-    if [ -d "$SRC/.git" ]; then git -C "$SRC" pull -q --ff-only
-    else git clone -q --depth 1 -b "$REF" "$REPO" "$SRC"; fi
+  [ -n "$MANAGED" ] || return 0
+  if [ ! -d "$SRC/.git" ]; then
+    mkdir -p "$(dirname "$SRC")"; git clone -q --depth 1 -b "$REF" "$REPO" "$SRC"
+  fi
+  ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
+}
+
+# Boards from before #253 ran from their own clone, ~/.bot_board/board/src, beside bot
+# install's ~/.bot_board/src. The board moves to the one checkout: that clone becomes it
+# when there is none yet, and is removed when there is. One with work in it (local
+# changes, commits not on its origin) is never moved or removed: say so and stop.
+migrate_src() {
+  local old="$DIR/src"
+  [ -n "$MANAGED" ] && [ -d "$old/.git" ] && [ "$old" != "$SRC" ] || return 0
+  if [ -n "$(git -C "$old" status --porcelain)" ] || [ -n "$(git -C "$old" log --oneline --branches --not --remotes | head -1)" ]; then
+    die "$old has local changes or commits that are not on its origin. The board now runs from $SRC: commit and push that work, or set it aside, then run this again"
+  fi
+  if running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; fi
+  if [ -d "$SRC/.git" ]; then
+    rm -rf "$old"; say "removed $old: the board now runs from $SRC, the checkout the keeper and the bots use"
+  else
+    mkdir -p "$(dirname "$SRC")"; mv "$old" "$SRC"; say "moved the board's checkout to $SRC"
   fi
 }
 
@@ -76,7 +103,10 @@ start() {
     || die "could not create a venv (on Debian/Ubuntu: apt install python3-venv)"
   "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$SRC/requirements.txt"
   stop >/dev/null || true
-  ( cd "$SRC" && exec env BOT_BOARD_DB="$DIR/board.db" "$DIR/venv/bin/uvicorn" app.main:app \
+  # BOT_BOARD_COMMIT: the commit it runs, which keepers update to and not past (#240), so the
+  # keeper beside it never moves the shared checkout ahead of the board
+  ( cd "$SRC" && exec env BOT_BOARD_DB="$DIR/board.db" BOT_BOARD_COMMIT="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" \
+      "$DIR/venv/bin/uvicorn" app.main:app \
       --host "$BIND" --port "$PORT" ) >"$LOG" 2>&1 </dev/null &
   echo $! >"$PIDFILE"; disown
 }
@@ -97,7 +127,12 @@ healthy() {
 
 case "$CMD" in
   up|update)
+    if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ]; then
+      migrate; migrate_src     # the board and the bots move onto the new code together
+      exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DIR" "$SRC/bin/bot_board" update
+    fi
     migrate
+    migrate_src
     fetch
     say "starting bot_board on $URL"
     start
@@ -128,14 +163,14 @@ To start it again at every boot:
 
   (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND BOT_BOARD_DIR=$DIR $SRC/run.sh") | crontab -
 
-Status:  $SELF status
-Stop:    $SELF stop
+Manage:  $(dirname "$SRC")/bot_board status|stop|restart|update   (the board and this machine's bots)
 TXT
     ;;
   stop)   migrate; stop || true ;;
+  migrate) migrate; migrate_src; fetch ;;     # onto the one checkout, without starting anything
   status)
     if curl -fs "$URL/healthz" 2>/dev/null; then echo; else echo "not running on $URL"; exit 1; fi
     ;;
   logs)   tail -n 50 -f "$LOG" ;;
-  *) die "unknown command: $CMD (up, stop, status, logs, update)" ;;
+  *) die "unknown command: $CMD (up, stop, status, logs, update, migrate)" ;;
 esac
