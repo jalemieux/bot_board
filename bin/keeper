@@ -338,6 +338,7 @@ BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 HANDLE_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}", re.I)
 QUICK = 120     # a bot that dies this soon after we start it has a problem; later, it is restarted
+RESTART_GRACE = 180   # an idle bot still holding a restart marker this long never will (#228)
 BACKOFF = (60, 120, 300, 900)   # the waits before a bot that died quickly is started again
 HANDOVER = setting("KEEPER_HANDOVER")
 SSH = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
@@ -639,6 +640,7 @@ class Hands:
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
         self.killed = {}        # handle -> the kill request (its time) already carried out
         self.reset = {}         # handle -> the new-session request (its time) already passed to bin/bot
+        self.restarting = {}    # handle -> its harness: stopped because it ignored a restart, to start again
         self.quick = {}         # handle -> how many times in a row it died soon after a start
         self.blocked = {}       # harness -> why its bots are not started now (Credentials.blocked)
         self.held = {}          # harness -> how many bots that held in the last round
@@ -722,7 +724,39 @@ class Hands:
                         cmd += ["--workspace", w["workspace"]]
                     self.procs[h] = self.spawn(h, cmd)
                     print(f"keeper: starting {h} ({w['harness']}), asked by @{w['set_by']}", flush=True)
+        self.confirm_restarts(want, seen, up, problems)
         return problems
+
+    def confirm_restarts(self, want, seen, up, problems):
+        """A restart asked of a bot (bot restart after an update, bot reset for a new session)
+        that its launcher never carries out: one started before restarts existed (#107) does not
+        look at the marker. Once it has sat idle with the marker for RESTART_GRACE, stop it and
+        start it again on the bin/bot on disk, which honours the marker at startup (#228)."""
+        rows = {w["handle"].lower(): w for w in want}
+        for b in seen:
+            h, key = b["handle"], b["handle"].lower()
+            if h in self.restarting:
+                if key in up:
+                    problems.setdefault(h, "did not restart on its own (its launcher predates bot restart):"
+                                           " stopping it to start it again on the current bin/bot")
+                    continue
+                harness = self.restarting.pop(h)
+                row = rows.get(key)
+                if row or harness not in HARNESSES:
+                    continue    # a request for it decides: running ones are started by the round above
+                self.procs[h] = self.spawn(h, [BOT, harness, "--name", h])
+                print(f"keeper: starting {h} ({harness}) again, after it ignored a restart", flush=True)
+            elif key in up and up[key].startswith("waiting") and HANDLE_RE.fullmatch(h):
+                try:
+                    age = time.time() - os.path.getmtime(os.path.join(CFG, "bots", h, "restart"))
+                except OSError:
+                    continue
+                if age > RESTART_GRACE:
+                    self.restarting[h] = b.get("harness") or ""
+                    self.spawn(h, [BOT, "stop", h])
+                    problems[h] = ("did not restart on its own (its launcher predates bot restart):"
+                                   " stopping it to start it again on the current bin/bot")
+                    print(f"keeper: {h} ignored its restart for {int(age // 60)} min: stopping it to start it again", flush=True)
 
     def leave(self, w, up, seen):
         """A bot asked to move away: stop it, then pack it and hand the archive over.
