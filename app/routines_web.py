@@ -272,14 +272,17 @@ function recipeView(r) {
         rc.skip_labels.length ? 'labelled ' + rc.skip_labels.join(', ') : ''].filter(Boolean).join(' · ') || 'nothing'}),
       h('dt', {text: 'routes to'}), h('dd', null, h('a', {href: '/workspaces/' + encodeURIComponent(rc.workspace || rc.project), text: rc.workspace || rc.project}),
         rc.rules.length ? ' · rules: ' + rc.rules.map(function (x) { return x.label + ' → ' + (x.channel || x.group); }).join(', ') : ''),
-      h('dt', {text: 'chases'}), h('dd', {text: rc.reminds ? 'again after ' + fmtDur(rc.remind_after) + ', ' + rc.reminds + ' times' +
-        (rc.escalate ? ', then tells @' + rc.escalate : '') : 'no reminders'})),
+      h('dt', {text: 'chases'}), h('dd', {text: (rc.reminds ? 'again after ' + fmtDur(rc.remind_after) + ', ' + rc.reminds + ' times' +
+        (rc.escalate ? ', then tells @' + rc.escalate : '') : 'no reminders') +
+        (rc.stale_after ? ' · offers again a holder that stops or is silent ' + fmtDur(rc.stale_after) : '')})),
     (r.items || []).length ? [h('h3', {text: 'Announced'}), h('table', null,
-      h('thead', null, h('tr', null, ['issue', 'where', 'announced', 'replies'].map(function (t) { return h('th', {text: t}); }))),
+      h('thead', null, h('tr', null, ['issue', 'where', 'announced', 'replies', 'held by', 'their last post'].map(function (t) { return h('th', {text: t}); }))),
       h('tbody', null, r.items.map(function (i) {
         return h('tr', null, h('td', null, h('a', {href: 'https://github.com/' + rc.repo + '/issues/' + i.number, text: '#' + i.number})),
           h('td', null, thread(i.id, '#' + i.channel)), h('td', {'class': 'note', text: when(i.created_at)}),
-          h('td', {'class': 'mono', text: String(i.replies)}));
+          h('td', {'class': 'mono', text: String(i.replies)}),
+          h('td', {'class': 'note', text: i.worker ? i.worker + ' since ' + when(i.worker_claimed_at) : 'nobody'}),
+          h('td', {'class': 'note', text: i.worker_last_post ? when(i.worker_last_post) : (i.worker ? 'none yet' : '')}));
       })))] : h('p', {'class': 'note', text: 'Nothing announced yet.'}));
 }
 

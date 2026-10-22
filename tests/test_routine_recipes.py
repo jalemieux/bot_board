@@ -25,6 +25,12 @@ def load_cli():
     return mod
 
 
+def age(st, secs=120):
+    """Every announced item, as if announced and last looked at `secs` earlier."""
+    for i in st["items"].values():
+        i.update(sent_at=i["sent_at"] - secs, looked_at=i.get("looked_at", i["sent_at"]) - secs)
+
+
 def issue(n, labels=(), assignees=()):
     return {"number": n, "title": f"issue {n}", "url": f"https://github.com/o/game/issues/{n}",
             "labels": [{"name": x} for x in labels], "assignees": [{"login": x} for x in assignees],
@@ -131,6 +137,21 @@ class Recipes(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         return p.stdout
 
+    def view(self, n, state="OPEN", labels=(), updated="", prs=()):
+        with open(os.path.join(self.home, f"view-{n}.json"), "w") as fh:
+            json.dump({"state": state, "title": f"issue {n}", "url": f"https://github.com/o/game/issues/{n}",
+                       "labels": [{"name": x} for x in labels], "assignees": [], "updatedAt": updated,
+                       "closedByPullRequestsReferences": [{"number": p} for p in prs]}, fh)
+
+    def chased(self, rc, n, name):
+        """A routine that has announced issue n by label rule, with its state."""
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "rules": [{"label": "doc", "channel": "art"}], **rc}
+        thread = self.api("POST", "/api/routines", {"name": name, "recipe": rc, "every": 1}, self.human)["id"]
+        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
+        self.issues(issue(n, ["doc"]))
+        self.once()
+        return thread, self.state(thread)["items"][str(n)]["msg"]
+
     def issues(self, *items):
         with open(os.path.join(self.home, "issues.json"), "w") as fh:
             json.dump(list(items), fh)
@@ -146,7 +167,7 @@ class Recipes(unittest.TestCase):
     def announced(self, thread):
         out = {}
         for ch in ("game.art", "game.econ", "game"):
-            for m in self.api("GET", f"/api/messages?channel={ch}", token=self.human)["messages"]:
+            for m in self.api("GET", f"/api/messages?channel={ch}&limit=500", token=self.human)["messages"]:
                 item = m["meta"].get("routine_item")
                 if m["meta"].get("routine") == thread and item and m["reply_to"] is None:
                     out.setdefault(item["number"], []).append((ch, m["id"]))
@@ -189,19 +210,19 @@ class Recipes(unittest.TestCase):
         self.assertNotIn("job", self.state(thread))
         self.assertEqual([c for c, _ in self.announced(thread)[5]], ["game.art"])
 
-        # Chasing: a bot takes #2; #1 and #5 get one reminder, then @jac hears about them.
+        # Chasing: a bot takes #2 and holds it; #1 and #5 get one reminder, then @jac hears about #1;
+        # #5 gets a bot:ada label, which holds it too.
         self.api("POST", f"/api/threads/{announced[2][0][1]}/worker", token=self.bot)
-        age = lambda st: [i.update(sent_at=i["sent_at"] - 120) for i in st["items"].values()]
         self.state(thread, age); self.once()
         items = self.state(thread)["items"]
-        self.assertEqual(items["2"].get("over"), "a bot took it")
+        self.assertEqual(items["2"]["held"], "ada")
         self.assertEqual((items["1"]["reminds"], items["5"]["reminds"]), (1, 1))
-        with open(os.path.join(self.home, "view-5.json"), "w") as fh:
-            json.dump({"state": "OPEN", "labels": [{"name": "bot:ada"}], "closedByPullRequestsReferences": []}, fh)
+        self.view(5, labels=["bot:ada"])
         self.state(thread, age); self.once()
         items = self.state(thread)["items"]
-        self.assertEqual((items["1"].get("over"), items["5"].get("over")), ("no taker", "labelled bot:ada"))
-        told = [m for m in self.api("GET", "/api/messages?channel=game", token=self.human)["messages"]
+        self.assertEqual((items["1"].get("escalated"), items["5"]["held"]), (True, "ada"))
+        self.state(thread, age); self.once()      # told once, however long it stays open
+        told = [m for m in self.api("GET", "/api/messages?channel=game&limit=500", token=self.human)["messages"]
                 if m["body"].startswith("@jac #1 ")]
         self.assertEqual(len(told), 1)
         listed = self.api("GET", f"/api/routines/{thread}")
@@ -240,6 +261,64 @@ class Recipes(unittest.TestCase):
             self.state(thread, lambda st: st.update(checked_at=0)); self.once()
         self.assertEqual(len(self.announced(thread)[51]), 2)
         self.assertEqual(self.state(thread)["watermark"]["orphaned"], {"51": "ghost"})
+
+    def test_a_holder_that_stops_loses_the_issue_once(self):
+        thread, first = self.chased({"remind_after": 60}, 71, "stops")
+        self.view(71, labels=["doc", "bot:ghost"])     # ghost took it, and runs nowhere
+        self.state(thread, age); self.once()
+        item = self.state(thread)["items"]["71"]
+        self.assertNotEqual(item["msg"], first)
+        self.assertEqual((item["orphan_of"], item["reminds"]), ("ghost", 0))
+        again = self.api("GET", f"/api/messages/{item['msg']}", token=self.human)["message"]
+        self.assertTrue(again["body"].startswith("Issue to take again: #71 issue 71"), again["body"])
+        self.assertIn("It was ghost's, who is not running", again["body"])
+        self.assertIn("--remove-label bot:ghost", again["body"])
+        self.assertNotIn("@ghost", again["body"])       # named, not pinged (#216)
+        # Nobody takes the new thread: it is reminded like any untaken issue, not offered again.
+        self.state(thread, age); self.once()
+        item = self.state(thread)["items"]["71"]
+        self.assertEqual((item["reminds"], len(self.announced(thread)[71])), (1, 2))
+
+    def test_a_holder_silent_for_stale_after_loses_the_issue(self):
+        thread, first = self.chased({"remind_after": 60, "stale_after": 3600}, 72, "silent")
+        self.view(72, labels=["doc", "bot:ada"], updated="2026-10-01T00:00:00Z")
+        self.api("GET", "/api/me", token=self.bot)      # ada runs, but shows nothing on #72
+        self.state(thread, age); self.once()
+        self.assertEqual(self.state(thread)["items"]["72"]["held"], "ada")
+        self.state(thread, lambda st: age(st, 4000)); self.once()
+        item = self.state(thread)["items"]["72"]
+        self.assertEqual(item["orphan_of"], "ada")
+        body = self.api("GET", f"/api/messages/{item['msg']}", token=self.human)["message"]["body"]
+        self.assertIn("It was ada's, who has shown nothing on it for 1 h", body)
+
+    def test_a_linked_pull_request_waiting_on_review_is_not_silence(self):
+        thread, first = self.chased({"remind_after": 60, "stale_after": 3600}, 75, "review")
+        self.view(75, labels=["doc", "bot:ada"], updated="2026-10-01T00:00:00Z", prs=[9])
+        self.api("GET", "/api/me", token=self.bot)
+        self.state(thread, lambda st: age(st, 4000)); self.once()
+        item = self.state(thread)["items"]["75"]
+        self.assertEqual((item["msg"], item["held"]), (first, "a linked pull request"))
+
+    def test_a_hand_back_is_not_a_take_and_a_closed_issue_is_over(self):
+        thread, msg = self.chased({"remind_after": 60}, 73, "handback")
+        self.api("GET", "/api/me", token=self.bot)
+        self.api("POST", f"/api/threads/{msg}/worker", token=self.bot)
+        self.api("POST", "/api/messages", {"channel": "game.art", "reply_to": msg, "body": "handing this back"}, self.bot)
+        self.api("DELETE", f"/api/threads/{msg}/worker", token=self.bot)
+        self.view(73, labels=["doc", "bot:ada"])        # the label stayed on
+        self.state(thread, age); self.once()
+        self.assertEqual(self.state(thread)["items"]["73"]["reminds"], 1)
+        self.view(73, state="CLOSED")
+        self.state(thread, age); self.once()
+        self.assertEqual(self.state(thread)["items"]["73"]["over"], "closed")
+        self.assertEqual(self.api("GET", f"/api/routines/{thread}")["items"][0]["worker"], None)
+
+    def test_an_item_an_older_runner_stopped_following_is_followed_again(self):
+        thread, msg = self.chased({"remind_after": 60}, 74, "older")
+        self.state(thread, lambda st: (age(st), st["items"]["74"].update(over="a bot took it")))
+        self.view(74, labels=["doc", "bot:ghost"])
+        self.once()
+        self.assertEqual(self.state(thread)["items"]["74"]["orphan_of"], "ghost")
 
     def test_a_version_2_watermark_still_reads(self):
         cli = load_cli()
