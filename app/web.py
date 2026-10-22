@@ -2392,7 +2392,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
         seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
                 f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
         u = h.get("update") or {}
-        k = h.get("keeper") or {}
+        k = h["keeper"] if isinstance(h.get("keeper"), dict) else {}
         code = (f'<div class="by">checkout {e(u.get("revision") or "?")}'
                 + (f' · running {e(k["loaded"][:12])}' if k.get("loaded") else "")
                 + (f' · {e(u["result"])}' if u.get("result") else "")

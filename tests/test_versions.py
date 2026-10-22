@@ -50,7 +50,7 @@ class Rows(unittest.TestCase):
     def test_each_kind_of_stale_is_said_and_only_a_person_fix_rings(self):
         rows = versions.rows([
             host("old", update=None, keeper=None),                          # before #107
-            host("pre238", keeper=None),                                     # self-updates, no loaded yet
+            host("pre238", keeper="keeper-pre238"),                          # self-updates, no loaded yet
             host("ahead", keeper=keeper(loaded="b" * 40)),
             host("box", [bot("ann", restartable=False, launcher=""), bot("bob", behind=True),
                          bot("cal", session_gen="1"), bot("dot", status="stopped", behind=True)]),
