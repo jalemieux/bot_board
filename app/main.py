@@ -593,6 +593,13 @@ class FleetBot(BaseModel):
     outcome: str = Field(default="", description="How its last harness run ended, as bin/bot classifies runs: ok, retry,"
                          " limited, capacity, logged_out, session_lost, bad_invocation, exhausted or unknown.", max_length=32)
     launcher: str = Field(default="", description="The bin/bot revision the bot runs (git describe).", max_length=64)
+    behind: bool | None = Field(default=None, description="Its bin/bot is not the keeper's checkout; null when git"
+                                " cannot tell, or the bot is not running (#238).")
+    restartable: bool | None = Field(default=None, description="Its bin/bot honours bot restart (at or after #107);"
+                                     " false sends it straight to stop and start.")
+    protocol: int | None = Field(default=None, description="Its bin/bot's PROTOCOL; null from one before #238.")
+    session_gen: str = Field(default="", description="The first-prompt generation its session started under"
+                             " (SESSION_GEN, #221); empty before that was recorded.", max_length=16)
 
 
 class FleetCredential(BaseModel):
@@ -601,6 +608,14 @@ class FleetCredential(BaseModel):
     state: str = Field(max_length=16, description="ok, missing, expired, unknown, or stale (fleet.env not copied).")
     detail: str = Field(default="", max_length=300)
     held: int = Field(default=0, ge=0, description="Bots the keeper is not starting until this passes.")
+
+
+class FleetKeeper(BaseModel):
+    loaded: str = Field(default="", description="The commit the running keeper's code came from, not the"
+                        " checkout's.", max_length=64)
+    started: str = Field(default="", description="When this keeper process started on that code, ISO 8601.",
+                         max_length=40)
+    protocol: int | None = Field(default=None, description="bin/keeper's PROTOCOL.")
 
 
 class FleetReportIn(BaseModel):
@@ -623,6 +638,8 @@ class FleetReportIn(BaseModel):
     default_bot: dict[str, str] | None = Field(default=None, description="{harness, handle?}: the box was installed"
                                                " with a default bot. The board starts it in the admin workspace, only"
                                                " when the box has no bot, and answers with default_bot.")
+    keeper: FleetKeeper | None = Field(default=None, description="What this keeper process runs (#238); absent from"
+                                       " a keeper before that.")
     update: dict[str, str] | None = Field(default=None, description="The keeper's updater: revision (git describe of"
                                           " the bin/bot and bin/keeper running there), checked (when it last looked),"
                                           " result (what it found or did), available (a revision pulled but not in use).")

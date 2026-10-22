@@ -221,6 +221,28 @@ def _said(r):
     return " ".join((r.stderr or r.stdout).split())[-200:]
 
 
+# What this keeper runs, for the board to compare (#238): bump PROTOCOL when a change to the
+# report or to what the keeper asks of the board would break an older board or keeper.
+PROTOCOL = 1
+STARTED = datetime.now(timezone.utc).isoformat(timespec="seconds")     # an execv onto new code starts again
+RESTART_FLOOR = "46a6ea26bfb339fd9a40b4ba1fa264d77f65194e"    # #107: from here a launcher honours bot restart
+_launchers = {}
+
+
+def launcher_facts(version, head):
+    """(behind, restartable) for the bin/bot a bot runs, from its git describe; None where git cannot
+    tell. No version at all is a launcher from before it wrote one, which is older than the floor."""
+    if not version:
+        return None, False
+    if (version, head) not in _launchers:
+        r = git("rev-parse", "--verify", "-q", version.removesuffix("-dirty") + "^{commit}", timeout=20)
+        commit = r.stdout.strip() if r.returncode == 0 else ""
+        floor = git("merge-base", "--is-ancestor", RESTART_FLOOR, commit, timeout=20).returncode if commit else None
+        _launchers[(version, head)] = (commit != head if commit and head else None,
+                                       {0: True, 1: False}.get(floor))
+    return _launchers[(version, head)]
+
+
 class Updater:
     """Keeps the checkout current with its origin, and rolls the bots and the keeper onto it (#107).
     state is what each report carries: revision (git describe of what runs here), checked (when),
@@ -384,6 +406,8 @@ def memory_mb():
 
 def bots():
     rows = []
+    r = git("rev-parse", "HEAD", timeout=20)
+    head = r.stdout.strip() if r.returncode == 0 else ""     # the checkout a bot started now would run
     for line in out(BOT, "ps", "-a", "--tsv").splitlines():
         handle, harness, status, _pid, _seen, serves, _last, health = (line.split("\t") + [""] * 8)[:8]
         state = os.path.join(CFG, "bots", handle)
@@ -402,12 +426,29 @@ def bots():
                 launcher = fh.read().strip()[:64]
         except OSError:
             launcher = ""
+        behind, restartable = launcher_facts(launcher, head) if status.startswith(("waiting", "running")) else (None, None)
         rows.append({"handle": handle, "harness": "" if harness == "?" else harness, "status": status,
                      "serves": "" if serves == "?" else serves,
                      "pool": any(os.path.exists(os.path.join(state, f)) for f in ("pool", "dir")),
                      "last_run": ran.isoformat(timespec="seconds") if ran else "",
-                     "health": health.strip(), "outcome": outcome, "launcher": launcher})
+                     "health": health.strip(), "outcome": outcome, "launcher": launcher,
+                     "behind": behind, "restartable": restartable,
+                     "protocol": read_int(os.path.join(state, "protocol")),
+                     "session_gen": read_text(os.path.join(state, "session-gen"))[:16]})
     return rows
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def read_int(path):
+    t = read_text(path)
+    return int(t) if t.isdigit() else None
 
 
 def snapshot():
@@ -751,12 +792,13 @@ class Hands:
                     age = time.time() - os.path.getmtime(os.path.join(CFG, "bots", h, "restart"))
                 except OSError:
                     continue
-                if age > RESTART_GRACE:
+                if age > RESTART_GRACE or b.get("restartable") is False:     # one below the floor never will
                     self.restarting[h] = b.get("harness") or ""
                     self.spawn(h, [BOT, "stop", h])
                     problems[h] = ("did not restart on its own (its launcher predates bot restart):"
                                    " stopping it to start it again on the current bin/bot")
-                    print(f"keeper: {h} ignored its restart for {int(age // 60)} min: stopping it to start it again", flush=True)
+                    print(f"keeper: {h} " + (f"ignored its restart for {int(age // 60)} min" if age > RESTART_GRACE else
+                                              "runs a bin/bot from before bot restart") + ": stopping it to start it again", flush=True)
 
     def leave(self, w, up, seen):
         """A bot asked to move away: stop it, then pack it and hand the archive over.
@@ -1031,6 +1073,7 @@ def main():
             except (OSError, subprocess.SubprocessError) as e:
                 updater.state["result"] = f"update check failed: {e}"[:200]
             snap["update"] = updater.state
+            snap["keeper"] = {"loaded": updater.loaded, "started": STARTED, "protocol": PROTOCOL}
             creds.refresh({b["harness"] for b in snap["bots"] + want if b.get("harness")})
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
