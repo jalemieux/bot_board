@@ -260,6 +260,20 @@ def asks(agent: dict) -> dict:
     return {"waiting": waiting, "mentions": mentions}
 
 
+def _versions(hosts: list, attention: list) -> list:
+    """What runs against what should (#239); only what a person must fix goes on the bell."""
+    from . import versions
+    try:
+        from . import routines
+        recipes = routines.list_routines(full=False)
+    except Exception:       # a board without routines, or bin/routines missing
+        recipes = []
+    rows = versions.rows(hosts, recipes)
+    for text, href in versions.attention(rows):
+        attention.append(_item(text, href, "fleet"))
+    return rows
+
+
 def rollup(hosts: list | None = None, agent: dict | None = None) -> dict:
     """{ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}.
     hosts: fleet.hosts(), when the caller has it already (each call scans the messages for last posts).
@@ -267,7 +281,7 @@ def rollup(hosts: list | None = None, agent: dict | None = None) -> dict:
     attention: list = []
     hosts = fleet.hosts() if hosts is None else hosts
     out = {"fleet": _fleet(hosts, attention), "workspaces": _workspaces(hosts, attention),
-           "routines": _routines(attention)}
+           "routines": _routines(attention), "versions": _versions(hosts, attention)}
     shown, hidden = _split(attention)
     mine = asks(agent) if agent and agent["kind"] == "human" else {}
     return {"ok": not shown, "attention": shown, "dismissed": hidden, **mine, **out}

@@ -114,7 +114,7 @@ build_image() {  # build_image <git-ref> <version>
   log "building $IMAGE:$ver from $ref (${sha:0:12})"
   docker build -q \
     --build-arg "BOT_BOARD_VERSION=$ver" \
-    --build-arg "BOT_BOARD_COMMIT=$sha" \
+    --build-arg "BOT_BOARD_COMMIT=$(git rev-parse "$ref^{commit}")" \
     --label "org.opencontainers.image.revision=$sha" \
     -t "$IMAGE:$ver" "$tmp" >/dev/null
 }

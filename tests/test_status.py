@@ -36,7 +36,8 @@ class Base(unittest.TestCase):
 
     def report(self, bots, credentials=()):
         r = self.client.put('/api/fleet/hosts/box', headers=self.keeper,
-                            json={'bots': bots, 'credentials': list(credentials)})
+                            json={'bots': bots, 'credentials': list(credentials),
+                                  'update': {'revision': 'v1.0.0', 'result': 'up to date'}})     # a keeper since #107
         self.assertEqual(r.status_code, 200, r.text)
 
     def status(self):

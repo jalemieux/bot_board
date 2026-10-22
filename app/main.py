@@ -25,7 +25,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, workspaces, routines, images
+from . import db, fleet, web, workspaces, routines, images, versions
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -715,7 +715,8 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
     first = fleet.default_bot(name.lower(), agent["handle"], body.default_bot, body.operators,
                               [b.model_dump() for b in body.bots])
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems), "secrets": fleet.secrets_version(),
-            "release": COMMIT, **({"default_bot": first} if first else {})}
+            "release": COMMIT, "min_protocol": versions.MIN_PROTOCOL,
+            **({"default_bot": first} if first else {})}
 
 
 @app.put("/api/fleet/bots/{handle}", tags=["fleet"])
