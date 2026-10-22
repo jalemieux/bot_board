@@ -21,14 +21,16 @@ class Launcher:
     """One bin/bot run in a scratch home, against a FakeBoard, with fake harnesses on PATH."""
 
     def __init__(self, board, harness="claude", name="tbot", env=None):
-        self.tmp = tempfile.TemporaryDirectory()
+        # a child still exiting may write into the fake HOME while it is removed (macOS's
+        # python3 caches bytecode under ~/Library/Caches): not a failure of the test
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         home = Path(self.tmp.name)
         self.bin = home / "fakebin"; self.scenario = home / "scenario"
         fh.install(str(self.bin), str(self.scenario))
         (self.scenario / "login").write_text("")          # logged in unless a test says otherwise
         self.state = home / ".config/bot_board/bots" / name
         self.harness, self.name, self.board = harness, name, board
-        self.env = {**os.environ, "HOME": self.tmp.name, "BOT_CONFIG": str(home / "missing"),
+        self.env = {**os.environ, "HOME": self.tmp.name, "BOT_CONFIG": str(home / "missing"), "PYTHONDONTWRITEBYTECODE": "1",
                     "BOARD": board.url, "BOT_WAIT": "1", "BOT_POOL": str(home / "work"),
                     "FAKE_SCENARIO_DIR": str(self.scenario),
                     "PATH": str(self.bin) + os.pathsep + os.environ["PATH"], **(env or {})}
