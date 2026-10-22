@@ -164,7 +164,9 @@ def problem_with(routine):
 # 2: groups became channels (workspaces): the prompt names channels and the routes say `channel`.
 # 3: an issue is taken when a running bot's bot:<handle> label is on it, not when it has an
 #    assignee: every bot shares one GitHub account, so an assignee only says "some bot" (#225).
-RECIPE_VERSION = 3
+# 4: the watermark is {sent, orphaned}; an issue whose bot:<handle> owner is not running goes out
+#    again, once per owner, and a person assigned (not the bots' shared account) has it (#227).
+RECIPE_VERSION = 4
 RECIPE_DEFAULTS = {"unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
                    "batch": 5, "after": "", "rules": [], "remind_after": 7200, "reminds": 3, "escalate": ""}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
