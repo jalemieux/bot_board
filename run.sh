@@ -58,41 +58,6 @@ fetch() {
   ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
 }
 
-# Boards from before #253 ran from their own clone, ~/.bot_board/board/src, beside bot
-# install's ~/.bot_board/src. The board moves to the one checkout: that clone becomes it
-# when there is none yet, and is removed when there is. One with work in it (local
-# changes, commits not on its origin) is never moved or removed: say so and stop.
-migrate_src() {
-  local old="$DIR/src"
-  [ -n "$MANAGED" ] && [ -d "$old/.git" ] && [ "$old" != "$SRC" ] || return 0
-  if [ -n "$(git -C "$old" status --porcelain)" ] || [ -n "$(git -C "$old" log --oneline --branches --not --remotes | head -1)" ]; then
-    die "$old has local changes or commits that are not on its origin. The board now runs from $SRC: commit and push that work, or set it aside, then run this again"
-  fi
-  if running; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; fi
-  if [ -d "$SRC/.git" ]; then
-    rm -rf "$old"; say "removed $old: the board now runs from $SRC, the checkout the keeper and the bots use"
-  else
-    mkdir -p "$(dirname "$SRC")"; mv "$old" "$SRC"; say "moved the board's checkout to $SRC"
-  fi
-}
-
-# Boards from before #159 kept their db, log and pid in ~/.bot_board itself, and
-# their clone in ~/.bot_board/src, which bot install's keeper and bots run from.
-# Move the board's state into its own dir; the old clone is left to bot install.
-migrate() {
-  local old="$HOME/.bot_board"
-  [ -z "${BOT_BOARD_DIR:-}" ] && [ -f "$old/board.db" ] && [ ! -e "$DIR/board.db" ] || return 0
-  if [ -s "$old/board.pid" ] && kill "$(cat "$old/board.pid")" 2>/dev/null; then
-    for _ in $(seq 1 20); do kill -0 "$(cat "$old/board.pid")" 2>/dev/null || break; sleep 0.5; done
-  fi
-  mkdir -p "$DIR"
-  for f in board.db board.db-wal board.db-shm board.log; do
-    if [ -e "$old/$f" ]; then mv "$old/$f" "$DIR/"; fi
-  done
-  rm -f "$old/board.pid"
-  say "moved the board's database and log from $old to $DIR"
-}
-
 running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
 start() {
@@ -113,7 +78,12 @@ start() {
 
 stop() {
   running || { echo "nothing to stop"; return 1; }
-  kill "$(cat "$PIDFILE")"; rm -f "$PIDFILE"; echo "stopped"
+  local pid; pid=$(cat "$PIDFILE")
+  kill "$pid"
+  # gone before it returns: a board started next would find the port still taken, and the
+  # old one, still answering, would pass for the new one
+  for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+  rm -f "$PIDFILE"; echo "stopped"
 }
 
 healthy() {
@@ -128,11 +98,9 @@ healthy() {
 case "$CMD" in
   up|update)
     if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ]; then
-      migrate; migrate_src     # the board and the bots move onto the new code together
+      # the board and the bots move onto the new code together
       exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DIR" "$SRC/bin/bot_board" update
     fi
-    migrate
-    migrate_src
     fetch
     say "starting bot_board on $URL"
     start
@@ -146,14 +114,13 @@ Next:  open $URL and sign in with any handle. This is a single-user board:
        First sign-in creates the Admin workspace and its General channel.
        If you reset the board but your browser still shows a handle, sign out
        and sign in again.
-       Then install bots on any machine with a coding harness (from another
-       machine, use this box's address instead of $URL):
+       Bots on another machine with a coding harness (use this box's address
+       instead of $URL):
 
-  curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot \\
-    | BOARD=$URL bash -s -- install
+  curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board \\
+    | BOARD=$URL bash -s -- install bots
 
-After accepting the default bot, wait about 15 seconds and check $URL/fleet.
-Post in Admin > General ($URL/c/admin) to give your bot work.
+Post in Admin > General ($URL/c/admin) to give your bots work; $URL/fleet shows them.
 
 Data:  $DIR/board.db (back this file up; everything is in it)
 Log:   $LOG
@@ -161,16 +128,15 @@ Log:   $LOG
 It runs in the background until you stop it or this machine restarts.
 To start it again at every boot:
 
-  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND BOT_BOARD_DIR=$DIR $SRC/run.sh") | crontab -
+  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND $(dirname "$SRC")/bot_board start board") | crontab -
 
 Manage:  $(dirname "$SRC")/bot_board status|stop|restart|update   (the board and this machine's bots)
 TXT
     ;;
-  stop)   migrate; stop || true ;;
-  migrate) migrate; migrate_src; fetch ;;     # onto the one checkout, without starting anything
+  stop)   stop || true ;;
   status)
     if curl -fs "$URL/healthz" 2>/dev/null; then echo; else echo "not running on $URL"; exit 1; fi
     ;;
   logs)   tail -n 50 -f "$LOG" ;;
-  *) die "unknown command: $CMD (up, stop, status, logs, update, migrate)" ;;
+  *) die "unknown command: $CMD (up, stop, status, logs, update)" ;;
 esac

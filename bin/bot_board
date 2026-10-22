@@ -3,7 +3,13 @@
 #
 #   ~/.bot_board/bot_board <command> [board|bots|all] [--purge]
 #
-#   install    board: the board on this machine (run.sh); bots: the keeper (bot install)
+# The first install, on a machine with nothing yet (the board and the bots, with BOARD=
+# for bots that report to a board elsewhere: ... bash -s -- install bots):
+#
+#   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | bash -s -- install
+#
+#   install    board: the board on this machine; bots: the keeper, which runs this
+#              machine's bots. Without a component: both
 #   start      board: start it; bots: start the keeper, which starts the bots the board wants
 #   stop       board: stop it; bots: stop the keeper and let each bot finish, then exit
 #   restart    both: start again on the code in the checkout; a busy bot finishes first
@@ -16,15 +22,15 @@
 #              (~/.config/bot_board). --purge removes those too, and the checkout once
 #              nothing is left that uses it.
 #
-# Without a component, a command acts on what is installed here (install and uninstall
-# need one): the board when its venv is in ~/.bot_board/board, the bots when the keeper's
-# service is. Everything runs from one checkout, ~/.bot_board/src: the board, the keeper
+# Without a component, a command acts on what is installed here (uninstall needs one):
+# the board when its venv is in ~/.bot_board/board, the bots when the keeper's service is. Everything runs from one checkout, ~/.bot_board/src: the board, the keeper
 # and the bots' launchers. A bots-only machine follows the board it reports to (#240); a
 # board run here says which commit it runs, so the keeper next to it never runs ahead.
 #
 # Env: BOT_BOARD_SRC (the checkout, default ~/.bot_board/src), BOT_BOARD_DIR (the board's
-# data, default ~/.bot_board/board), BOT_CONFIG (the bots' config); run.sh and bot install
-# read the rest (PORT, BIND, BOARD, ...).
+# data, default ~/.bot_board/board), BOT_BOARD_REPO and BOT_BOARD_REF (where the checkout
+# is cloned from), BOT_CONFIG (the bots' config); PORT and BIND (the board), BOARD (the
+# board bots report to; the one installed here by default).
 set -euo pipefail
 
 SRC=${BOT_BOARD_SRC:-$HOME/.bot_board/src}
@@ -59,11 +65,20 @@ for a in "$@"; do
   case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; *) usage ;; esac
 done
 case $CMD in
-  install|uninstall) [ -n "$WHAT" ] || die "$CMD what? board, bots or all" ;;
+  install) WHAT=${WHAT:-all} ;;
+  uninstall) [ -n "$WHAT" ] || die "uninstall what? board, bots or all" ;;
   start|stop|restart|status|update) ;;
   *) usage ;;
 esac
-[ -x "$BOT" ] || [ "$CMD" = install ] || die "no checkout at $SRC: install first"
+if [ ! -x "$BOT" ]; then
+  [ "$CMD" = install ] || die "no checkout at $SRC: install first"
+  # piped from curl, or a first install: clone the one checkout, and go on from it
+  [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] || cat >/dev/null
+  command -v git >/dev/null || die "git is required"
+  mkdir -p "$(dirname "$SRC")"
+  git clone -q --depth 1 -b "${BOT_BOARD_REF:-main}" "${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}" "$SRC"
+  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" bash "$SRC/bin/bot_board" "$CMD" "$WHAT"
+fi
 # which components this command acts on
 BOARD_ON=""; BOTS_ON=""
 case ${WHAT:-installed} in
@@ -77,9 +92,16 @@ board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 
 case $CMD in
   install)
-    # the board first: a bots install on the same machine reports to it
+    ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
+    # the board first: bots installed beside it report to it, unless BOARD says otherwise
     [ -z "$BOARD_ON" ] || board up
-    [ -z "$BOTS_ON" ] || BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install ;;
+    if [ -n "$BOTS_ON" ]; then
+      board_url=${BOARD:-}
+      [ -n "$board_url" ] || grep -qs '^BOARD=' "$CFG_FILE" || [ -z "$BOARD_ON" ] \
+        || board_url="http://127.0.0.1:${PORT:-8080}"
+      BOARD=$board_url BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install
+    fi
+    say "installed; manage it all with $(dirname "$SRC")/bot_board status|stop|restart|update|uninstall" ;;
   start|restart)
     [ -z "$BOARD_ON" ] || board up        # up stops a running board first
     if [ -n "$BOTS_ON" ]; then
@@ -106,16 +128,19 @@ case $CMD in
   update)
     # bin/bot update pulls, checks the new code and rolls back what fails; it refuses a
     # checkout with local changes and asks the running bots to restart once idle
-    out=$("$BOT" update) || die "update failed: $out"
-    echo "$out"
-    case $out in *"up to date"*) say "nothing new"; exit 0 ;; esac
+    before=$(git -C "$SRC" rev-parse HEAD)
+    "$BOT" update || die "update failed; the checkout is where it was"
+    after=$(git -C "$SRC" rev-parse HEAD)
+    if [ "$before" = "$after" ]; then say "nothing new: still on ${after:0:12}"; exit 0; fi
+    say "updated ${before:0:12} -> ${after:0:12}; restarting on it"
     [ -z "$BOARD_ON" ] || board up
     [ -z "$BOTS_ON" ] || "$BOT" keeper install ;;
   uninstall)
     if [ -n "$BOARD_ON" ]; then
       board stop || true
-      if crontab -l 2>/dev/null | grep -q "$RUN"; then
-        crontab -l | grep -v "$RUN" | crontab -; say "removed the board's @reboot line from crontab"
+      boot="$(dirname "$SRC")/bot_board start board"      # the @reboot line run.sh suggests, or the older one
+      if crontab -l 2>/dev/null | grep -qF -e "$boot" -e "$RUN"; then
+        crontab -l | grep -vF -e "$boot" -e "$RUN" | crontab -; say "removed the board's @reboot line from crontab"
       fi
       if [ -n "$PURGE" ]; then rm -rf "$DATA"; say "removed the board's data: $DATA"
       else rm -rf "$DATA/venv"; say "board removed; its database stays in $DATA (--purge removes it)"; fi
@@ -132,5 +157,9 @@ case $CMD in
       else
         rm -rf "$SRC" "$(dirname "$SRC")/bot_board"; say "removed the checkout $SRC"
       fi
-    fi ;;
+    fi
+    # what installing made and nothing holds now
+    for d in "$HOME/.config/systemd/user" "$HOME/.config/systemd" "$HOME/.config" "$(dirname "$SRC")"; do
+      rmdir "$d" 2>/dev/null || true
+    done ;;
 esac
