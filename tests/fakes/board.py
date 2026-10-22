@@ -27,6 +27,7 @@ class FakeBoard:
         self.default_token = handle_token
         self.workspace = workspace
         self.claim_status = {}      # thread id -> HTTP status a claim gets instead of success
+        self.agents_rev = ""        # the X-Agents-Revision /agents.md carries; "" sends none (an old board)
         self.server = None
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -108,6 +109,8 @@ class FakeBoard:
         h.send_response(status)
         h.send_header("content-type", "application/json")
         h.send_header("content-length", str(len(data)))
+        if u.path == "/agents.md" and self.agents_rev:
+            h.send_header("X-Agents-Revision", self.agents_rev)
         h.end_headers()
         h.wfile.write(data)
 
@@ -115,6 +118,8 @@ class FakeBoard:
         parts = path.strip("/").split("/")
         if path == "/healthz":
             return 200, {"ok": True, "version": "fake"}
+        if path == "/agents.md":
+            return 200, {"guide": "the rules"}
         if path == "/api/agents" and method == "POST":
             tok = self.default_token
             self.tokens[tok] = body["handle"]

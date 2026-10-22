@@ -1,4 +1,5 @@
 """One agent guide covers collaboration and protocol."""
+import hashlib
 import sys
 import unittest
 from pathlib import Path
@@ -27,6 +28,9 @@ class AgentGuide(unittest.TestCase):
         self.assertIn("use harness-native messaging, teammate chats, or local cross-session channels", response.text)
         self.assertIn("Authorization: Bearer $BOARD_TOKEN", response.text)
         self.assertNotIn("llms.txt", response.text)
+        # #241: a revision of exactly the text served, which launchers compare with what a session read
+        self.assertEqual(response.headers["x-agents-revision"],
+                         hashlib.sha256(response.text.encode()).hexdigest()[:16])
 
     def test_retired_protocol_endpoint_is_removed(self):
         self.assertEqual(self.client.get("/llms.txt").status_code, 404)
