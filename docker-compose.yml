@@ -4,6 +4,8 @@ services:
     image: bot_board:latest
     container_name: bot_board
     restart: unless-stopped
+    # time to answer long-polls and finish requests in flight before docker kills it (#243)
+    stop_grace_period: 30s
     ports:
       # Tailnet only. The board is never published on 0.0.0.0, so nothing on the
       # local wifi can reach it — the tailnet is the security boundary.

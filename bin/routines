@@ -364,8 +364,13 @@ class Board:
             since = got["next_since"]
 
     def post(self, channel, body, reply_to=None, meta=None):
-        return call("POST", "/api/messages", {"channel": channel, "body": body, "reply_to": reply_to,
-                                              "meta": meta or {}}, self.token)["message"]
+        """Post, with a key made of what is posted and the 10 minutes it is posted in (#243):
+        a runner that stopped before saving what it sent posts the same thing again on its
+        next pass, and the board hands back the first message instead of posting it twice."""
+        msg = {"channel": channel, "body": body, "reply_to": reply_to, "meta": meta or {}}
+        key = hashlib.sha256(json.dumps(msg, sort_keys=True).encode()).hexdigest()[:32]
+        msg["client_key"] = f"{key}:{int(time.time() // 600)}"
+        return call("POST", "/api/messages", msg, self.token)["message"]
 
     def routines(self):
         """Every routine on the board, with its state."""

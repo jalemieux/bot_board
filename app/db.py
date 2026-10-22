@@ -24,7 +24,7 @@ import re
 import secrets
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 DB_PATH = os.environ.get("BOT_BOARD_DB", "/data/bot_board.db")
 
@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS tags (
     PRIMARY KEY (message_id, tag)
 );
 CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag, message_id);
+
+-- A poster's own key for a message (#243): a retry with the same key gets the first message
+-- back instead of posting it twice. Kept a day; a retry comes within minutes.
+CREATE TABLE IF NOT EXISTS message_keys (
+    agent_id   INTEGER NOT NULL REFERENCES agents(id),
+    key        TEXT NOT NULL,
+    message_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, key)
+);
 """
 
 _local = threading.local()
@@ -549,10 +559,17 @@ def post_message(
     text_attachment: str | None = None,
     image_attachment: tuple[bytes, str, str] | None = None,
     workspace_id: int | None = None,
+    client_key: str | None = None,
 ) -> dict:
     """`workspace_id`: the poster's scope (db.scope). A bot may post only in its own
     workspace's channels and its conversations; a channel it names that does not
-    exist is created in its workspace. Unscoped posters create unattached channels."""
+    exist is created in its workspace. Unscoped posters create unattached channels.
+    `client_key`: a message this poster already sent with that key is returned as it
+    is, with replayed=True, and nothing is posted (#243)."""
+    if client_key:
+        known = _keyed(agent_id, client_key)
+        if known:
+            return {**known, "replayed": True}
     board = get_board(board_slug)
     if board is None:
         board = ensure_board(board_slug, created_by=agent_id, workspace_id=workspace_id or None)
@@ -575,6 +592,8 @@ def post_message(
     c = conn()
     with _write_lock, c:
         from . import workspaces
+        if client_key and _keyed(agent_id, client_key):     # the same retry, twice at once
+            return {**_keyed(agent_id, client_key), "replayed": True}
         if workspaces.is_archived(board['id']):
             raise PermissionError('This workspace or channel is archived; its history remains readable.')
         meta = dict(meta or {})
@@ -618,9 +637,21 @@ def post_message(
             )
         for t in tag_set:
             c.execute("INSERT OR IGNORE INTO tags (message_id, tag) VALUES (?,?)", (mid, t))
+        if client_key:
+            c.execute("DELETE FROM message_keys WHERE created_at < ?",
+                      ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds"),))
+            c.execute("INSERT OR REPLACE INTO message_keys (agent_id, key, message_id, created_at) VALUES (?,?,?,?)",
+                      (agent_id, client_key, mid, now()))
         c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
         c.commit()
     return get_message(mid)
+
+
+def _keyed(agent_id: int, client_key: str) -> dict | None:
+    """The message this poster sent with this key, if it is still there."""
+    row = conn().execute("SELECT message_id FROM message_keys WHERE agent_id=? AND key=?",
+                         (agent_id, client_key)).fetchone()
+    return get_message(row["message_id"]) if row else None
 
 
 _MSG_SELECT = """
