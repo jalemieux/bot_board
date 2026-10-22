@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from . import db
 from . import fleet as fleet_mod
+from . import versions as versions_mod
 
 MENTION_RE = re.compile(r"@([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
 TAGISH_RE = re.compile(r"(?<![\w/])#([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
@@ -2277,6 +2278,7 @@ FLEET_CSS = """
 .fleet-page .pip{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:1px;background:var(--line)}
 .fleet-page .pip.run{background:var(--good)}
 .fleet-page .pip.ok{background:transparent;box-shadow:inset 0 0 0 2px var(--good)}
+.fleet-page table.versions tr.warn td:last-child{color:var(--accent)}
 .fleet-page .pip.warn{background:var(--warn)}.fleet-page .pip.bad{background:var(--accent)}
 .fleet-page .prob{color:var(--accent)}
 .fleet-page .gauge{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
@@ -2325,6 +2327,25 @@ body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .add
 """
 
 
+def _versions_section(rows: list) -> str:
+    """What runs against what should (#239): the board, each keeper and routine, and the bots
+    whose launcher or session is not current; the current bots are counted, not listed."""
+    shown = [r for r in rows if r["what"] in ("board", "keeper", "routine") or not r["current"]]
+    bots = {r["name"] for r in rows if r["what"] in ("launcher", "session")}
+    stale = {r["name"] for r in rows if r["what"] in ("launcher", "session") and not r["current"]}
+    body = ""
+    for r in shown:
+        name = f'<a href="{e(r["href"])}">{e(r["name"])}</a>' if r["href"] else e(r["name"])
+        body += (f'<tr class="{"" if r["current"] else "warn"}"><td>{e(r["what"])}</td><td class="who">{name}</td>'
+                 f'<td class="nw">{e(r["running"])}</td><td class="nw dim">{e(r["wanted"])}</td>'
+                 f'<td>{e(r["note"]) if r["note"] else "current"}</td></tr>')
+    summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
+               if bots else "")
+    return (f'<section class="fleet-section" id="fleet-versions"><h2>Versions</h2>{summary}'
+            '<table class="bots versions"><thead><tr><th>What</th><th>Name</th><th>Running</th><th>Wanted</th>'
+            f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
+
+
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
@@ -2344,6 +2365,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
     working = sum(b["state"]["state"] == "working" for _, b in active)
     waiting = sum(b["state"]["can_work"] for _, b in active) - working
     alerts = _alerts(hosts)
+    versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
     attention = (f'<section class="fleet-section" id="fleet-attention"><h2>Needs you · {len(alerts)}</h2>'
                  f'{"".join(alerts)}</section>') if alerts else ""
@@ -2370,7 +2392,9 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
         seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
                 f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
         u = h.get("update") or {}
-        code = (f'<div class="by">bin/bot {e(u.get("revision") or "?")}'
+        k = h.get("keeper") or {}
+        code = (f'<div class="by">checkout {e(u.get("revision") or "?")}'
+                + (f' · running {e(k["loaded"][:12])}' if k.get("loaded") else "")
                 + (f' · {e(u["result"])}' if u.get("result") else "")
                 + (f' · checked {e(ago(u["checked"]))}' if u.get("checked") else "") + "</div>") if u else ""
         machines.append(
@@ -2429,6 +2453,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
 {attention}
 <section class="fleet-section" id="fleet-bots"><h2>Bots · {len(active)}</h2>{bots_html}{stopped_html}</section>
 <section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+{versions_html}
 <details class="fleet-settings" id="fleet-add-machine"><summary>Add a machine</summary>
 <p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
 <h3>1. Before you start</h3>
