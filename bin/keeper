@@ -246,7 +246,11 @@ def launcher_facts(version, head):
 class Updater:
     """Keeps the checkout current with its origin, and rolls the bots and the keeper onto it (#107).
     state is what each report carries: revision (git describe of what runs here), checked (when),
-    result (what the last check found or did), available (a revision pulled but not in use)."""
+    result (what the last check found or did), available (a revision pulled but not in use).
+
+    The target is the board's release commit, from its reply to the keeper's report (#240), so a
+    keeper never runs code the board does not know yet: it waits while it has none (None), and a
+    board too old to send one ("") leaves origin's tip as the target. BOT_UPDATE_REF overrides both."""
 
     def __init__(self, src=None, bot=None):
         self.src = src or SRC
@@ -257,6 +261,7 @@ class Updater:
         self.checked = 0
         self.quarantined = ""       # a commit that failed its checks: not tried again until the target moves
         self.loaded = self.head()   # the commit this process's code came from
+        self.release = ""           # the board's release commit; the keeper's loop sets None until it hears
         self.state = {"revision": self.revision(), "checked": "", "result": "", "available": ""}
 
     def head(self):
@@ -314,14 +319,21 @@ class Updater:
         if f.returncode:
             self.state["result"] = f"fetch failed: {_said(f)}"
             return False
-        target = self.ref if self.ref else "@{upstream}"
+        if self.release is None and not self.ref:
+            self.state["result"] = "waiting for the board's release commit"
+            return False
+        target = self.ref or self.release or "@{upstream}"
         want = git("rev-parse", target + "^{commit}", cwd=self.src)
         if want.returncode:
-            self.state["result"] = f"no such revision {target}: {_said(want)}"
+            self.state["result"] = (f"the board's release {target[:12]} is not on origin yet" if target == self.release
+                                    else f"no such revision {target}: {_said(want)}")
             return False
         want, old = want.stdout.strip(), self.head()
         if want == old:
             self.state.update(result="up to date", available="")
+            return False
+        if target == self.release and git("merge-base", "--is-ancestor", want, old, cwd=self.src).returncode == 0:
+            self.state.update(result=f"ahead of the board's release {want[:12]}; waiting for it", available="")
             return False
         if want == self.quarantined and not force:
             return False        # the result still says why it was rolled back
@@ -1064,6 +1076,7 @@ def main():
         die("a keeper is already running on this box for this user")
     hands, problems, creds, want = Hands(host), {}, Credentials(host), []
     maintenance, updater = Maintenance(), Updater()
+    updater.release = None      # no update until the board says what it runs (#240)
     while True:
         try:
             snap = snapshot()
@@ -1098,6 +1111,7 @@ def main():
                 print(f"keeper: report refused ({code}): {got}", file=sys.stderr, flush=True)
             else:
                 creds.sync(got.get("secrets"), token)
+                updater.release = str(got.get("release") or "")
                 if ask and got.get("default_bot"):
                     default_bot_note(got["default_bot"])
                 want = got.get("want", [])

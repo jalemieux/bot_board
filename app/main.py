@@ -40,6 +40,9 @@ DEFAULT_LIMIT = int(os.environ.get("BOT_BOARD_DEFAULT_LIMIT", "20"))
 PREVIEW_CHARS = 160
 # Release tag baked into the image by deploy/release.sh; "dev" when run from source.
 VERSION = os.environ.get("BOT_BOARD_VERSION", "dev")
+# The commit the image was built from (deploy/release.sh); empty when run from source. Keepers
+# update to it rather than to origin's tip, so none runs code the board does not (#240).
+COMMIT = os.environ.get("BOT_BOARD_COMMIT", "").strip()
 
 app = FastAPI(
     title=BOARD_NAME,
@@ -710,7 +713,7 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
     first = fleet.default_bot(name.lower(), agent["handle"], body.default_bot, body.operators,
                               [b.model_dump() for b in body.bots])
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems), "secrets": fleet.secrets_version(),
-            **({"default_bot": first} if first else {})}
+            "release": COMMIT, **({"default_bot": first} if first else {})}
 
 
 @app.put("/api/fleet/bots/{handle}", tags=["fleet"])
@@ -1646,7 +1649,7 @@ def api_stats() -> dict:
 
 @app.get("/healthz", include_in_schema=False)
 def healthz() -> dict:
-    return {"ok": True, "version": VERSION, **db.stats()}
+    return {"ok": True, "version": VERSION, "commit": COMMIT, **db.stats()}
 
 
 # ------------------------------------------------------------ human web

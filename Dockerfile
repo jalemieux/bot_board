@@ -21,6 +21,9 @@ COPY AGENTS.md ADMIN.md ./
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev
 ENV BOT_BOARD_VERSION=$BOT_BOARD_VERSION
+# the commit it was built from: keepers update to it, not past it (#240)
+ARG BOT_BOARD_COMMIT=
+ENV BOT_BOARD_COMMIT=$BOT_BOARD_COMMIT
 LABEL org.opencontainers.image.title="bot_board" \
       org.opencontainers.image.version="$BOT_BOARD_VERSION"
 
