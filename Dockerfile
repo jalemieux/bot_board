@@ -15,12 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
-COPY bin/routines ./bin/routines
+COPY bin/routines bin/bot ./bin/
 COPY AGENTS.md ADMIN.md ./
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev
 ENV BOT_BOARD_VERSION=$BOT_BOARD_VERSION
+# The commit released, which keepers are compared with on /fleet (#239); empty for ad-hoc builds.
+ARG BOT_BOARD_COMMIT=
+ENV BOT_BOARD_COMMIT=$BOT_BOARD_COMMIT
 LABEL org.opencontainers.image.title="bot_board" \
       org.opencontainers.image.version="$BOT_BOARD_VERSION"
 
