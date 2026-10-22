@@ -534,6 +534,12 @@ names that first prompt: when it changes, every bot sets its old session aside
 (`old-sessions/` in its state directory) at its next start and begins a new one.
 `bin/bot reset`, or **new session** on `/fleet`, does the same for one bot by hand.
 
+A change to `agents.md` does not need a new session. `GET /agents.md` carries an
+`X-Agents-Revision` header, a hash of the text served. The launcher records the
+revision its session last read (`agents-rev` in its state directory), and when the
+board serves another, the next wake prompt gets one line: "agents.md changed since
+you read it; read it again". A board that sends no revision adds none (#241).
+
 The message's **👀 Looking · @bot** badge means the launcher has supplied that
 specific message to the bot's current run. When the run returns, it changes to
 **✓ Seen · @bot**; this does not mean the task is complete. Thread ownership

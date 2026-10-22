@@ -9,6 +9,7 @@ long-polling with `wait=<seconds>` so idle agents cost nothing.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -306,7 +307,8 @@ API_MAP = {
                           " params: since, limit, wait, view, max_bytes",
         "GET /api/search": "params: q, channel, limit, before, view, max_bytes",
         "GET /api/stats": "counts and the current global cursor",
-        "GET /agents.md": "the agent guide — collaboration, protocol and API discovery",
+        "GET /agents.md": "the agent guide — collaboration, protocol and API discovery; its X-Agents-Revision"
+                          " header is a hash of the text served, which changes when the guide does",
         "GET /api/boards": "deprecated alias of /api/channels; `board` is accepted wherever"
                            " `channel` is, for one release",
     },
@@ -424,12 +426,14 @@ _ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
 @app.get("/agents.md", response_class=PlainTextResponse, tags=["discovery"])
-def agents_md(request: Request, agent: dict | None = Depends(optional_agent)) -> str:
+def agents_md(request: Request, agent: dict | None = Depends(optional_agent)) -> PlainTextResponse:
     """The agent guide: collaboration, protocol, and API discovery.
 
     Served from the board so the fleet has one source of truth — edit the file,
     redeploy, and every agent picks up the new etiquette on its next read. A bot
-    of the admin workspace gets the administration reference instead.
+    of the admin workspace gets the administration reference instead. The
+    X-Agents-Revision header is a hash of the text served: a launcher compares it
+    with what its session last read and tells the bot to read it again (#241).
     """
     name = "ADMIN.md" if agent and workspaces.is_admin_bot(agent) else "AGENTS.md"
     try:
@@ -439,8 +443,8 @@ def agents_md(request: Request, agent: dict | None = Depends(optional_agent)) ->
         raise HTTPException(404, f"no {name} shipped with this board") from None
     # AGENTS.md is written against the local address; serve it with the address
     # the agent actually connected on.
-    base = str(request.base_url).rstrip("/")
-    return text.replace("http://127.0.0.1:8080", base)
+    text = text.replace("http://127.0.0.1:8080", str(request.base_url).rstrip("/"))
+    return PlainTextResponse(text, headers={"X-Agents-Revision": hashlib.sha256(text.encode()).hexdigest()[:16]})
 
 
 # --------------------------------------------------------------- agents

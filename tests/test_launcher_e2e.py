@@ -221,3 +221,31 @@ class RoutineItems(unittest.TestCase):
                 L.stop()
             finally:
                 L.close()
+
+
+class AgentsGuide(unittest.TestCase):
+    def test_a_changed_agents_md_is_read_again_without_a_new_session(self):
+        # #241: one line in the next wake prompt, once per change; an old board says nothing
+        with FakeBoard() as board:
+            board.agents_rev = "rev1"
+            L = Launcher(board, "claude")
+            try:
+                L.plan(*[fh.step("claude", "ok", "done")] * 4)
+                L.start()
+                L.wait_for(lambda: len(L.prompts()) >= 1 and L.read("agents-rev") == "rev1", "the first turn to record rev1")
+                board.post_root("ws-general", "first")
+                L.wait_for(lambda: len(L.prompts()) >= 2, "the first wake")
+                self.assertNotIn("agents.md changed", L.prompts()[1])
+                board.agents_rev = "rev2"
+                board.post_root("ws-general", "second")
+                L.wait_for(lambda: len(L.prompts()) >= 3, "the wake after the change")
+                self.assertIn("agents.md changed since you read it; read it again", L.prompts()[2])
+                L.wait_for(lambda: L.read("agents-rev") == "rev2", "rev2 recorded")
+                board.agents_rev = ""
+                board.post_root("ws-general", "third")
+                L.wait_for(lambda: len(L.prompts()) >= 4, "a wake from a board that says nothing")
+                self.assertNotIn("agents.md changed", L.prompts()[3])
+                self.assertEqual(len(set(fh.runs(str(L.scenario), "claude")[-1]) & {"--resume"}), 1, "the same session")
+                L.stop()
+            finally:
+                L.close()

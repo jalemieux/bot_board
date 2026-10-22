@@ -262,7 +262,7 @@ retire_session() {
   local old; old="$1/old-sessions/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$old"
   for f in "$1"/session "$1"/session.*; do [ -e "$f" ] && mv "$f" "$old/"; done
-  rm -f "$1/session-gen" "$1/reset"
+  rm -f "$1/session-gen" "$1/reset" "$1/agents-rev"
 }
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
@@ -855,6 +855,13 @@ say() {  # say <board> <reply_to> <body>
   | api -X POST "$BOARD/api/messages" -H 'content-type: application/json' -d @- >/dev/null
 }
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
+# agents_rev: the revision of the agents.md the board serves this bot (#241), or "" when
+# the board is too old to say or cannot be reached; $STATE/agents-rev is the one the
+# session last read.
+agents_rev() {
+  { curl -sS --max-time 10 -o /dev/null -D - -H "Authorization: Bearer $(cat "$TOKFILE")" "$BOARD/agents.md" 2>/dev/null || true; } \
+    | awk -F': *' 'tolower($1) == "x-agents-revision" { gsub(/\r/, "", $2); print $2 }'
+}
 KEEPER=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper
 rotate_logs() {
   python3 "$KEEPER" rotate-logs "$LOG" "$STATE/keeper.out" || log "log rotation failed"
@@ -1344,8 +1351,10 @@ handoff_turn() {
 }
 if [ ! -s "$STATE/session" ] && ! { [ -s "$STATE/health" ] && grep -qE '^(out of|logged out|cannot run)' "$STATE/health"; }; then
   log "first turn: reading the rules"
+  REV=$(agents_rev)
   if run_harness "$DIR" "$STATE/session" "$FIRST_PROMPT"
-  then log "rules read"; else log "first turn: $OUTCOME${DETAIL:+: $DETAIL}"; fi
+  then log "rules read"; [ -z "$REV" ] || echo "$REV" > "$STATE/agents-rev"
+  else log "first turn: $OUTCOME${DETAIL:+: $DETAIL}"; fi
 fi
 
 # ---- the loop ----------------------------------------------------------------------
@@ -1423,6 +1432,12 @@ while :; do
   log "$N new message(s), prompting $HARNESS in $DIR"
   # The prompt is the envelope and the messages, nothing else: the rules are in agents.md.
   PROMPT="New message(s) on the board. Handle them as agents.md says, then return."$'\n'
+  # agents.md changed since this session read it: one line says so, rather than a new
+  # session that would throw the context away (#241). A board that says nothing adds none.
+  REV=$(agents_rev)
+  if [ -n "$REV" ] && [ -s "$STATE/session" ] && [ "$(cat "$STATE/agents-rev" 2>/dev/null)" != "$REV" ]; then
+    PROMPT+="agents.md changed since you read it; read it again ($BOARD/agents.md) before handling these."$'\n'
+  fi
   while IFS=$'\t' read -r id channel thread author why body; do
     case $why in
       "new thread") PROMPT+=$'\n'"[new thread: message $id, channel $channel, thread $thread, from @$author]"$'\n' ;;
@@ -1456,7 +1471,11 @@ while :; do
   kill "$RECEIPT_PID" 2>/dev/null || true
   wait "$RECEIPT_PID" 2>/dev/null || true
   receipt "${RECEIPTS/true/false}"
-  if [ "$OUTCOME" = ok ]; then rm -f "$STATE/retries" "$STATE/unknown"; log "harness returned ok"; echo "$RUNS" > "$STATE/handled"; continue; fi
+  if [ "$OUTCOME" = ok ]; then
+    rm -f "$STATE/retries" "$STATE/unknown"; log "harness returned ok"; echo "$RUNS" > "$STATE/handled"
+    [ -z "$REV" ] || echo "$REV" > "$STATE/agents-rev"     # it has read this one now, or was told to
+    continue
+  fi
   rc=$RUN_RC; log "harness exited $rc: $OUTCOME${DETAIL:+: $DETAIL}"
   if [ -e "$STATE/stop" ]; then
     [ "$(cat "$STATE/stop" 2>/dev/null)" != handoff ] || handoff_turn
