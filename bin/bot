@@ -94,6 +94,7 @@
 #      BOT_AUTH_WAIT (secs between login checks while logged out),
 #      BOT_POOL (where bots work: one directory per bot under it),
 #      BOT_CATCH_UP (how far back a starting bot looks for unclaimed threads, seconds; default a day),
+#      BOT_ITEMS_PER_WAKE (how many routine announcements one batch claims; default 1, #234),
 #      BOT_SKILLS (skill sources for `bot skill`, space-separated),
 #      BOT_NAMES (the names new bots are drawn from, space-separated),
 #      BOT_GC_DAYS (how long a session handle may be gone before bot gc removes it; default 7).
@@ -1103,12 +1104,16 @@ PY
 # claim_batch: fetch_new's lines in (id<TAB>channel<TAB>thread<TAB>author<TAB>why<TAB>body);
 # out, the ones to act on, with why rewritten for the envelope: new thread, reply or
 # mention. Replies that arrived between the fetch and the claim come along.
+# A routine's announcement (why ends in "item") is claimed BOT_ITEMS_PER_WAKE at a time:
+# the rest wait in $STATE/deferred for the next round, so one bot does not sit on a pile
+# while others idle; one another bot claims meanwhile is a 409 then, and skipped (#234).
 claim_batch() {
   python3 -c '
 import sys,json,urllib.request,urllib.error,os
 board,tokfile,state,handle,seen=sys.argv[1:]
 seen=int(seen)
 token=open(tokfile).read().strip()
+items_left=max(1,int(os.environ.get("BOT_ITEMS_PER_WAKE") or 1))
 def request(path,method="GET"):
     req=urllib.request.Request(board+path,method=method,headers={"Authorization":"Bearer "+token})
     with urllib.request.urlopen(req,timeout=20) as response: return json.load(response)
@@ -1120,6 +1125,11 @@ for line in sys.stdin.read().splitlines():
     if mid in delivered: continue
     if why in ("reply","mention"):
         print(line); delivered.add(mid); continue
+    if why.endswith("item"):
+        if not items_left:
+            with open(os.path.join(state,"deferred"),"a") as deferred: deferred.write(line+"\n")
+            continue
+        items_left-=1
     try:
         claim=request("/api/threads/"+tid+"/worker","POST")
         if claim.get("worker")!=handle or claim.get("thread_id")!=int(tid):
@@ -1206,7 +1216,8 @@ for m in messages:
         continue
     if m.get("mentions") and handle.lower() not in [h.lower() for h in m["mentions"]]:
         continue
-    out.append("\t".join([str(m["id"]),ch,str(tid),m["author"],"backlog",m["body"].replace("\n","\\n")]))
+    why="backlog item" if meta.get("routine_item") and m["id"]==tid else "backlog"
+    out.append("\t".join([str(m["id"]),ch,str(tid),m["author"],why,m["body"].replace("\n","\\n")]))
 with open(os.path.join(state,"backlog.next"),"w") as output:
     output.write(str(next_before))
 with open(threads_path,"w") as output:
@@ -1256,7 +1267,7 @@ for m in msgs:
         # a mention is for that agent, unless every one mentioned is stopped or away (#216)
         reachable=set(m.get("mentions",[]))-{u["mention"] for u in m.get("unreachable",[])}
         if reachable or meta.get("done") is True or m.get("worker"): continue
-        why="new thread"
+        why="new item" if meta.get("routine_item") and m.get("reply_to") is None else "new thread"
     else: continue
     print("\t".join([str(m["id"]),m["board"],str(tid),m["author"],why,m["body"].replace("\n","\\n")]))
 print(hi,file=sys.stderr)' "$HANDLE" "$SEEN" "$STATE/all.json" 2>"$STATE/seen.tmp"
@@ -1400,6 +1411,9 @@ while :; do
   fi
   if [ -s "$STATE/held" ]; then      # held last time: a claim that could not be made
     NEW=$(cat "$STATE/held"; if [ -n "$NEW" ]; then echo "$NEW"; fi); rm -f "$STATE/held"
+  fi
+  if [ -s "$STATE/deferred" ]; then  # routine announcements past last round's BOT_ITEMS_PER_WAKE
+    NEW=$({ cat "$STATE/deferred"; if [ -n "$NEW" ]; then echo "$NEW"; fi; } | awk -F'\t' 'NF && !seen[$1]++'); rm -f "$STATE/deferred"
   fi
   [ -n "$NEW" ] || continue
   RAW=$NEW;   # as fetched: what a logged-out harness keeps for later

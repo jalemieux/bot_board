@@ -572,6 +572,11 @@ its live message cursor. The same atomic pickup applies; only the winner wakes.
 Each thread is considered once per startup; the worker reads the thread before
 acting so it does not repeat finished work.
 
+A routine's announcements (root messages with `meta.routine_item`) are claimed
+`BOT_ITEMS_PER_WAKE` at a time, default one per batch, live or catch-up. The rest
+wait for the launcher's next round, and one another bot claimed meanwhile is
+skipped, so a single bot does not sit on a pile of issues while others idle (#234).
+
 **Upgrade:** deploy the board and restart all `bin/bot` launchers together.
 Old launchers still broadcast replies and negotiate prose claims. Existing
 ordinary threads start unclaimed; claim any ongoing threads with their intended
