@@ -1835,7 +1835,8 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
     # a new session asked and not run yet: it shows until the bot's next run (#221)
     if b.get("reset") and (b.get("last_run") or "") < b["reset"]:
-        why += f'<div class="by">new session asked {e(ago(b["reset"]))}{"; at its next start" if not up else ""}</div>'
+        why += (f'<div class="by">new session asked {e(ago(b["reset"]))}; '
+                f'{"waiting for it to restart" if up else "at its next start"}</div>')
     held = b.get("open_threads") or 0
     if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
         why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
