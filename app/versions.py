@@ -40,7 +40,8 @@ def rows(hosts: list, routines: list = ()) -> list[dict]:
     for h in hosts:
         if not h.get("reporting"):
             continue
-        href, k, u = f"/fleet#box-{h['name']}", h.get("keeper") or {}, h.get("update")
+        href, u = f"/fleet#box-{h['name']}", h.get("update")
+        k = h["keeper"] if isinstance(h.get("keeper"), dict) else {}
         if u is None:
             out.append(_row("keeper", h["name"], "unknown", BOARD_COMMIT[:12],
                             f"predates self-update (#107): on {h['name']}, run `{FIX_KEEPER}`", href, True))
