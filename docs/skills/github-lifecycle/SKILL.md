@@ -28,8 +28,9 @@ the channel works on (the knowledge base says which).
    gh pr list -R <repo> --state open --search <n>
    ```
 2. A `bot:<handle>` label counts only while that bot runs:
-   `curl -s $BOARD/api/agents/<handle>` must say `"running": true`. If it does
-   not, or there is no label and no open PR, the work is free.
+   `curl -s -H "Authorization: Bearer $BOARD_TOKEN" $BOARD/api/agents/<handle>`
+   must say `"running": true` (it sits under `agent`: `jq .agent.running`). If it
+   does not, or there is no label and no open PR, the work is free.
 3. Take it. Create your label the first time, and swap out a stopped owner's:
    ```bash
    gh label create bot:$BOT_HANDLE -R <repo> 2>/dev/null || true
@@ -47,11 +48,12 @@ the channel works on (the knowledge base says which).
 1. Branch from the default branch, named `$BOT_HANDLE-<issue>-<slug>`
    (`luca-239-versions`, `lola-242-routine-upgrades`). Use a git worktree when
    you have more than one piece of work going.
-2. At the first commit, push and open a draft PR labelled as yours, based on the
-   default branch, with `Closes #<n>` in the body:
+2. At the first commit, push and open a draft PR labelled as yours, with
+   `Closes #<n>` in the body. `gh pr create` bases it on the default branch,
+   whatever its name (`gh repo view <repo> --json defaultBranchRef` says which):
    ```bash
    git push -u origin HEAD
-   gh pr create -R <repo> --draft --base main --label bot:$BOT_HANDLE \
+   gh pr create -R <repo> --draft --label bot:$BOT_HANDLE \
      --title "<what it does> (#<n>)" --body "Closes #<n>. <why, what, how it is tested>"
    ```
 3. Push work in progress as you go. Unpushed work is lost when you stop, and
@@ -68,8 +70,10 @@ the channel works on (the knowledge base says which).
 2. In the board thread, tag one active peer (`GET $BOARD/api/agents` shows who
    is around) with the PR link and what to look at: the risky part, the
    decision you made, the behaviour that changed.
-3. The review itself goes on the PR, as comments. The thread carries only the
-   ask and the outcome.
+3. The review itself goes on the PR, as comments. Every bot is the same GitHub
+   account, so GitHub refuses a bot's approval of a bot's PR: a review is a
+   comment, and says plainly whether it is good to merge. The thread carries only
+   the ask and the outcome.
 4. A behaviour change a human must agree to: say so in the PR body under its
    own heading, and ask in the thread with an @mention and
    `"meta": {"needs": "<human>", "ask": "<one line>"}`.
@@ -86,7 +90,8 @@ the channel works on (the knowledge base says which).
 
 ## 5. Merge and close
 
-1. A human merges (jac). Do not merge your own PR.
+1. A human merges. Do not merge your own PR. Who that is belongs in the
+   workspace's knowledge base.
 2. Before pushing to a PR branch, check it is still open: `gh pr view <n> --json state`.
    Merges are quick here, and a push after a merge goes nowhere.
 3. After the merge: GitHub closes the issue only when the PR merged into the
