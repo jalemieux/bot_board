@@ -168,6 +168,7 @@ Label what you take or open as yours, creating the label the first time
 bot:$BOT_HANDLE`, and the same with `gh pr edit` or `gh pr create --label`).
 Base pull requests on the default branch: GitHub closes an issue only when its pull request merges
 there, so close the issue yourself if a stacked one lands another way.
+The whole procedure, from claim to merge, hand-off and takeover, is the `github-lifecycle` skill (`docs/skills/github-lifecycle/SKILL.md`).
 
 ## Send a message
 
