@@ -94,7 +94,8 @@ def init() -> None:
         if "project" in have and "workspace" not in have:
             c.execute("ALTER TABLE fleet_bots RENAME COLUMN project TO workspace")
             have.add("workspace")
-        for col in EXTRA_COLUMNS + ("workspace",):
+        # profile: the profile the bot was added with (its role and skills); set once, never changed.
+        for col in EXTRA_COLUMNS + ("workspace", "profile"):
             if col not in have:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
@@ -192,28 +193,29 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None, threads=None):
+def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None, threads=None, profile=None):
     c.execute(
-        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, workspace, threads)"
-        " VALUES (?,?,?,?,?,?,?,?,?)"
+        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, workspace, threads, profile)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
         " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill,"
         " threads=excluded.threads, retired=CASE WHEN excluded.run THEN NULL ELSE retired END,"
-        " workspace=COALESCE(excluded.workspace, workspace)",
+        " workspace=COALESCE(excluded.workspace, workspace), profile=COALESCE(excluded.profile, profile)",
         (handle, host.lower(), harness, int(run), by, now, now if kill else None, workspace or None,
-         threads if threads in ("handoff", "retire") else None),
+         threads if threads in ("handoff", "retire") else None, profile or None),
     )
 
 
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
-         workspace: str | None = None, threads: str | None = None) -> str | None:
+         workspace: str | None = None, threads: str | None = None, profile: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
     harness run it is in. workspace: the workspace a new bot belongs to; the keeper
     starts it with that, and a registered bot of no workspace is put in it. threads,
     with a stop: keep its open threads, handoff (release them once it has stopped) or
-    retire (hand off, and drop it from the stopped list). Returns None, or why not."""
+    retire (hand off, and drop it from the stopped list). profile: for a new bot, the profile
+    it is added with; a bot that has one cannot be given another. Returns None, or why not."""
     if kill and run:
         return "a kill stops the bot: ask for run false"
     if threads not in (None,) + THREADS:
@@ -244,7 +246,7 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         except KeyError:
             return f"no workspace named {workspace}"
     with db._write_lock:
-        row = c.execute("SELECT harness, workspace FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        row = c.execute("SELECT harness, workspace, profile FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
         harness = harness or (row["harness"] if row else None)
         now = db.now()
         if harness not in HARNESSES:
@@ -252,7 +254,12 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         known = db.get_agent_by_handle(handle)
         if run and not workspace and not (row and row["workspace"]) and not (known and known.get("workspace_id")):
             return f"say which workspace {handle} belongs to"
-        _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads)
+        if profile:
+            from . import registry
+            why = registry.profile_problem(handle, profile, row["profile"] if row else None)
+            if why:
+                return why
+        _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads, profile)
         c.commit()
     if workspace and known and not known.get("workspace_id"):
         workspaces.assign_bot(handle, workspace)
@@ -650,12 +657,13 @@ def hosts() -> list[dict]:
             if w:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
-                         move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"],
+                         move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"], profile=w.get("profile"),
                          threads=w["threads"], retired=w["retired"], reset=w["reset"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"],
-                       "threads": w["threads"], "retired": w["retired"]} for w in asked.values()]
+                       "threads": w["threads"], "retired": w["retired"], "profile": w.get("profile")}
+                      for w in asked.values()]
         for b in h["bots"]:
             ack = clears.get(b["handle"].lower())
             if ack and h["reporting"] and b["status"] == "stopped" and ack["host"].lower() == h["name"].lower():

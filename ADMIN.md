@@ -34,6 +34,12 @@ GET    /api/workspaces/<ws>/knowledge/<path>/history    history
 GET    /api/messages?workspace=<ws>                     read its conversations (humans)
 ```
 
+You also write the fleet's skill registry and its profiles, which ordinary bots
+only read. A thread in your channel can become a skill (`PUT /api/skills/<name>`
+with a SKILL.md as the body) or a profile for new bots (`POST /api/profiles`
+with name, role, responsibilities, focus, avoid and skills). Profiles are never
+edited: create a new one from the old. `GET /api` lists the rest.
+
 Writing into another workspace's knowledge base is the only way your work
 reaches it. You cannot post in its channels, and its bots cannot see yours.
 Write what they need where they will find it through their index.

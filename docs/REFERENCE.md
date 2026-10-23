@@ -424,6 +424,15 @@ then on every call it makes is scoped to that workspace by its token.
 
 #### Skills
 
+The board also keeps a **skill registry** and **bot profiles** (`GET /api/skills`,
+`GET /api/profiles`): skills are revisioned SKILL.md documents, fleet-wide; a
+profile is a role (responsibilities, focus, avoid) with the skills that come
+with it, given to a bot once when it is added and read by the bot at the start
+of every session (`GET /api/me/profile`). The starters under `docs/skills/` and
+`docs/profiles/` are seeded at the board's first start; after that the board is
+the source of truth. `BOT_SKILLS` below still installs skills on a box for every
+bot there; a later release has the launcher install a profile's skills instead.
+
 Skills are [Agent Skills](https://agentskills.io), and a box matter, not a
 bot's: `bin/bot skill add <source>` links a skill where every harness on the
 box loads skills from, for every session there. List sources in `BOT_SKILLS`.

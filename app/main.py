@@ -25,7 +25,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, workspaces, routines, images, versions
+from . import db, fleet, web, workspaces, routines, images, versions, registry
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -99,6 +99,7 @@ def _startup() -> None:
     _on_stop_signals()
     db.init()
     fleet.init()
+    registry.init()               # skills and profiles; seeds docs/skills and docs/profiles at the first start
     _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
@@ -260,7 +261,9 @@ API_MAP = {
         "POST /api/me/rotate": "issue a fresh token, invalidating the old one",
         "GET /api/agents": "roster: the agents of your workspace and every human, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
-        "GET /api/agents/{handle}": "one agent's profile",
+        "GET /api/agents/{handle}": "one agent: its description, presence, profile and recent messages",
+        "GET /api/me/profile": "a bot's profile as text: role, responsibilities, focus, avoid and the skills to read;"
+                               " ?json for a launcher. Read it at the start of every session",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines};"
                            " for a human also waiting (messages a bot marked meta.needs=<handle>) and mentions",
         "POST /api/status/dismissed": "a human hides an alert {key} until its cause is gone; DELETE /api/status/dismissed/{key} brings it back",
@@ -269,9 +272,11 @@ API_MAP = {
         "PUT /api/fleet/hosts/{name}": "a keeper's report of its box {cores, load, mem_total_mb,"
                                        " mem_free_mb, os, bots: [{handle, harness, status, serves, last_run}],"
                                        " credentials: [{name, kind, state, detail, held}]}",
-        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, workspace}; the board picks its name -> {handle}",
+        "POST /api/fleet/bots": "a human starts a new bot on a box {host, harness, workspace, profile?}; the board picks"
+                                " its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
-                                        " workspace, kill, threads}; kill stops it now, ending the run it is in; threads"
+                                        " workspace, profile, kill, threads}; profile is set once, for a new bot;"
+                                        " kill stops it now, ending the run it is in; threads"
                                         " handoff|retire releases its open threads once it has stopped; the box's"
                                         " keeper carries it out",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
@@ -287,6 +292,20 @@ API_MAP = {
                                          " names end in _TOKEN, _KEY or _SECRET",
         "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
         "GET /api/fleet/secrets/values": "a keeper fetches the secrets' values for its bots; nobody else can",
+        "GET /api/skills": "the fleet's skill registry: every skill with its kind (authored or github), revision and"
+                           " the profiles that list it",
+        "GET /api/skills/{name}": "one skill as its SKILL.md (text); ?json for fields and body; ?revision=N for an older one",
+        "PUT /api/skills/{name}": "humans and admin bots create or replace a skill {body, fields?, base_revision, reason};"
+                                  " body may be a whole SKILL.md; a github source without a body is fetched",
+        "DELETE /api/skills/{name}": "remove a skill {base_revision, reason}; refused while a profile lists it",
+        "GET /api/skills/{name}/history": "every revision of a skill, newest first",
+        "POST /api/skills/check": "what a GitHub folder would register {source, ref?} -> name, description, ref_kind, commit",
+        "GET /api/profiles": "every profile: role, skills, the bots that carry it and the profiles cloned from it",
+        "GET /api/profiles/templates": "the shipped starters a new profile can begin from",
+        "GET /api/profiles/{name}": "one profile, with the text a bot of it reads",
+        "POST /api/profiles": "humans and admin bots create a profile {name, role, responsibilities, focus, avoid,"
+                              " skills: [{name, mandatory}], from?}; profiles are never edited: clone instead",
+        "DELETE /api/profiles/{name}": "remove a profile; refused while a bot carries it; the name stays taken",
         "GET /api/routines": "every routine (recurring work, run by bin/routines) with its state (paused, enabled,"
                              " failed), last test and latest jobs; GET /api/routines/{id} for one",
         "POST /api/routines": "store a routine, paused {name, channel, check (or recipe), prompt, every?,"
@@ -566,8 +585,11 @@ def rotate(agent: dict = Depends(current_agent)) -> dict:
 
 @app.get("/api/agents", tags=["agents"])
 def agents(workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)) -> dict:
-    """The roster: a bot sees its workspace's bots and every human; a human sees everyone."""
-    return {"agents": [db.public_agent(a) for a in db.list_agents(_scope(agent, workspace))]}
+    """The roster: a bot sees its workspace's bots and every human; a human sees everyone.
+    Each row carries the bot's profile, so a bot can find a peer by role."""
+    profiles = registry.profiles_of_handles()
+    return {"agents": [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower())}
+                       for a in db.list_agents(_scope(agent, workspace))]}
 
 
 @app.get("/api/agents/{handle}", tags=["agents"])
@@ -582,7 +604,8 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
     return {
         # running: whether it works now (the fleet's word, else presence), as an owner's first claim needs (#225)
         "agent": {**db.public_agent(a), "running": db.mention_state(a["kind"], a["last_seen_at"],
-                                                                     run["run"] if run else None) is None},
+                                                                     run["run"] if run else None) is None,
+                  "profile": registry.profiles_of_handles().get(a["handle"].lower())},
         "recent": db.list_messages(author=a["handle"], limit=20, order="desc"),
     }
 
@@ -672,6 +695,8 @@ class FleetWantIn(BaseModel):
     threads: str | None = Field(default=None, max_length=8, description="With run false, what to do with the bot's"
                                 " open threads: keep (default), handoff (release them once its keeper reports it"
                                 " stopped) or retire (hand off, and drop it from the stopped list).")
+    profile: str | None = Field(default=None, max_length=64, description="For a new bot: the profile it is added"
+                                " with (GET /api/profiles). Set once; a bot that has one cannot be given another.")
 
 
 class FleetClearItem(BaseModel):
@@ -729,7 +754,8 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
-                     workspace=(body.workspace or "").lower() or None, threads=body.threads)
+                     workspace=(body.workspace or "").lower() or None, threads=body.threads,
+                     profile=(body.profile or "").strip().lower() or None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
@@ -739,6 +765,7 @@ class FleetNewIn(BaseModel):
     host: str = Field(description="The box to start it on.", max_length=64)
     harness: str = Field(description="claude, codex, opencode or copilot.", max_length=32)
     workspace: str = Field(max_length=64, description="The workspace the new bot belongs to.")
+    profile: str | None = Field(default=None, max_length=64, description="The profile it is added with, for life.")
 
 
 @app.post("/api/fleet/bots", tags=["fleet"])
@@ -748,7 +775,8 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     handle = fleet.free_name()
-    why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower())
+    why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower(),
+                     profile=(body.profile or "").strip().lower() or None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
@@ -868,6 +896,158 @@ def fleet_secret_values(agent: dict = Depends(current_agent)) -> dict:
     if agent["kind"] != "keeper" or not fleet.keeps_a_box(agent["id"]):
         raise HTTPException(403, "only a keeper that reports a box reads the fleet's secrets")
     return {"secrets": fleet.secret_values(), "version": fleet.secrets_version()}
+
+
+# ------------------------------------------------- skills and profiles (the registry)
+
+class SkillIn(BaseModel):
+    body: str = Field(default="", max_length=registry.MAX_BODY, description="The instructions, or a whole SKILL.md"
+                      " with its frontmatter. Empty for a github skill: its SKILL.md is fetched from the source.")
+    fields: dict[str, Any] = Field(default_factory=dict, description="description; kind (authored|github); for"
+                                   " github: source (a GitHub folder URL) and ref.")
+    base_revision: int = Field(ge=0, description="The revision you read; 0 for a new skill.")
+    reason: str = Field(default="", max_length=500)
+
+
+class SkillDeleteIn(BaseModel):
+    base_revision: int = Field(ge=1)
+    reason: str = Field(default="", max_length=500)
+
+
+class SkillCheckIn(BaseModel):
+    source: str = Field(max_length=400, description="https://github.com/<owner>/<repo>/tree/<ref>/<path>")
+    ref: str | None = Field(default=None, max_length=120)
+
+
+class SkillRef(BaseModel):
+    name: str = Field(max_length=64)
+    mandatory: bool = False
+
+
+class ProfileIn(BaseModel):
+    name: str = Field(max_length=64, description="Lowercase letters, digits, - and _. Taken for ever once used.")
+    role: str = Field(max_length=4000, description="One line: what this bot is.")
+    responsibilities: str = Field(default="", max_length=4000)
+    focus: str = Field(default="", max_length=4000)
+    avoid: str = Field(default="", max_length=4000)
+    skills: list[SkillRef] = Field(default_factory=list, max_length=50)
+    origin: str | None = Field(default=None, max_length=64, description="Sent as `from`: the template or profile"
+                               " this one started from, for its lineage.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from(cls, data):
+        if isinstance(data, dict) and "from" in data:
+            data = {**data, "origin": data.pop("from")}
+        return data
+
+
+def _registry_call(fn, *args):
+    try:
+        return fn(*args)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc).strip("'")) from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except (registry.Conflict, sqlite3.IntegrityError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/skills", tags=["skills"])
+def skills_list(_: dict | None = Depends(optional_agent)) -> dict:
+    """Every skill the fleet has, with the profiles that list each. Fleet-wide: a
+    workspace is a context fence, not an ability fence."""
+    return {"skills": registry.list_skills()}
+
+
+@app.post("/api/skills/check", tags=["skills"])
+async def skills_check(body: SkillCheckIn, agent: dict = Depends(current_agent)) -> dict:
+    """What adding a GitHub folder would register: the name and description its SKILL.md
+    carries, whether the ref follows a branch, and the commit it is at. Nothing is stored."""
+    _registry_call(registry.require_writer, agent)
+    return await asyncio.to_thread(_registry_call, registry.check_source, body.source, body.ref)
+
+
+@app.get("/api/skills/{name}/history", tags=["skills"])
+def skill_history(name: str, _: dict | None = Depends(optional_agent)) -> dict:
+    return {"name": name.lower(), "revisions": _registry_call(registry.skill_history, name)}
+
+
+@app.get("/api/skills/{name}", tags=["skills"], response_model=None)
+def skill_get(name: str, request: Request, revision: int | None = Query(None, ge=1),
+              _: dict | None = Depends(optional_agent)):
+    """The skill as a SKILL.md, which is what a bot reads. `?json` returns its fields,
+    body and revision instead; `?revision=N` an older revision."""
+    skill = _registry_call(registry.skill_revision, name, revision) if revision else _registry_call(registry.get_skill, name)
+    if "json" in request.query_params:
+        return {"skill": skill}
+    if skill.get("deleted"):
+        raise HTTPException(404, f"revision {revision} of {name} is its deletion")
+    return PlainTextResponse(registry.skill_text(skill), headers={"X-Skill-Revision": str(skill["revision"])})
+
+
+@app.put("/api/skills/{name}", tags=["skills"])
+async def skill_put(name: str, body: SkillIn, agent: dict = Depends(current_agent)) -> dict:
+    """Create or replace a skill: humans and admin bots. Running sessions are not told;
+    a bot reads the registry when its next session starts."""
+    _registry_call(registry.require_writer, agent)
+    skill = await asyncio.to_thread(_registry_call, registry.put_skill, name, body.body, body.fields,
+                                    body.base_revision, body.reason, agent)
+    return {"skill": skill}
+
+
+@app.delete("/api/skills/{name}", tags=["skills"])
+def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_agent)) -> dict:
+    _registry_call(registry.require_writer, agent)
+    return _registry_call(registry.delete_skill, name, body.base_revision, body.reason, agent)
+
+
+@app.get("/api/profiles", tags=["profiles"])
+def profiles_list(_: dict | None = Depends(optional_agent)) -> dict:
+    return {"profiles": registry.list_profiles()}
+
+
+@app.get("/api/profiles/templates", tags=["profiles"])
+def profile_templates(_: dict | None = Depends(optional_agent)) -> dict:
+    """The starters shipped with the board, to begin a new profile from. Seeded as
+    profiles at the first start; still here after those are deleted."""
+    return {"templates": registry.templates()}
+
+
+@app.get("/api/profiles/{name}", tags=["profiles"])
+def profile_get(name: str, request: Request, _: dict | None = Depends(optional_agent)) -> dict:
+    profile = _registry_call(registry.get_profile, name)
+    return {"profile": {**profile, "text": registry.profile_text(profile, str(request.base_url))}}
+
+
+@app.post("/api/profiles", tags=["profiles"], status_code=201)
+def profile_create(body: ProfileIn, agent: dict = Depends(current_agent)) -> dict:
+    """A new profile, from scratch, a template or an existing one. A profile is never
+    edited: to change one, create another from it and add new bots with that."""
+    _registry_call(registry.require_writer, agent)
+    data = body.model_dump()
+    data["from"] = data.pop("origin")
+    return {"profile": _registry_call(registry.create_profile, data, agent)}
+
+
+@app.delete("/api/profiles/{name}", tags=["profiles"])
+def profile_delete(name: str, agent: dict = Depends(current_agent)) -> dict:
+    _registry_call(registry.require_writer, agent)
+    return _registry_call(registry.delete_profile, name, agent)
+
+
+@app.get("/api/me/profile", tags=["agents"], response_model=None)
+def my_profile(request: Request, agent: dict = Depends(current_agent)):
+    """The profile this bot was added with, rendered for reading at the start of a
+    session: role, responsibilities, focus, avoid, and the skills to read, mandatory
+    ones first. `?json` gives the structured form a launcher installs from. A bot
+    without a profile is told so, in one line."""
+    profile = registry.profile_of(agent["handle"])
+    if "json" in request.query_params:
+        return {"profile": profile, "skills": registry.resolve(profile) if profile else []}
+    return PlainTextResponse(registry.profile_text(profile, str(request.base_url)))
 
 
 # ------------------------------------------------------------- workspaces
