@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# bot_board — one entry point for what bot_board runs on this machine (#253).
+#
+#   ~/.bot_board/bot_board <command> [board|bots|all] [--purge]
+#
+# The first install, on a machine with nothing yet (the board and the bots, with BOARD=
+# for bots that report to a board elsewhere: ... bash -s -- install bots):
+#
+#   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | bash -s -- install
+#
+#   install    board: the board on this machine; bots: the keeper, which runs this
+#              machine's bots. Without a component: both
+#   start      board: start it; bots: start the keeper, which starts the bots the board wants
+#   stop       board: stop it; bots: stop the keeper and let each bot finish, then exit
+#   restart    both: start again on the code in the checkout; a busy bot finishes first
+#   status     is each one running
+#   update     pull the checkout (checked; rolled back if it fails), then restart the
+#              board, the keeper and, once idle, each bot on it: the one checkout alone
+#              does not move a running process
+#   uninstall  stop it and remove its service. Data stays: the board's database
+#              (~/.bot_board/board) and the bots' identities and sessions
+#              (~/.config/bot_board). --purge removes those too, and the checkout once
+#              nothing is left that uses it.
+#
+# Without a component, a command acts on what is installed here (uninstall needs one):
+# the board when its venv is in ~/.bot_board/board, the bots when the keeper's service is. Everything runs from one checkout, ~/.bot_board/src: the board, the keeper
+# and the bots' launchers. A bots-only machine follows the board it reports to (#240); a
+# board run here says which commit it runs, so the keeper next to it never runs ahead.
+#
+# Env: BOT_BOARD_SRC (the checkout, default ~/.bot_board/src), BOT_BOARD_DIR (the board's
+# data, default ~/.bot_board/board), BOT_BOARD_REPO and BOT_BOARD_REF (where the checkout
+# is cloned from), BOT_CONFIG (the bots' config); PORT and BIND (the board), BOARD (the
+# board bots report to; the one installed here by default).
+set -euo pipefail
+
+SRC=${BOT_BOARD_SRC:-$HOME/.bot_board/src}
+DATA=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
+CFG_FILE=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+BOT="$SRC/bin/bot"
+RUN="$SRC/run.sh"
+
+die() { echo "bot_board: $*" >&2; exit 1; }
+say() { echo "bot_board: $*"; }
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; exit 1; }
+
+UNIT=$HOME/.config/systemd/user/bot-board-keeper.service
+PLIST=$HOME/Library/LaunchAgents/com.bot-board.keeper.plist
+# installed: the board has its venv (uninstall removes it, the database stays);
+# the bots have the keeper's service (stop stops it, uninstall removes it)
+has_board() { [ -d "$DATA/venv" ]; }
+has_bots() { [ -e "$UNIT" ] || [ -e "$PLIST" ]; }
+running_bots() { "$BOT" ps --tsv 2>/dev/null | cut -f1; }
+keeper_stop() {
+  if [ -e "$UNIT" ]; then systemctl --user stop bot-board-keeper
+  elif [ -e "$PLIST" ]; then launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true; fi
+}
+keeper_up() {
+  if [ -e "$UNIT" ]; then systemctl --user is-active -q bot-board-keeper
+  else launchctl print "gui/$(id -u)/com.bot-board.keeper" >/dev/null 2>&1; fi
+}
+
+CMD=${1:-}; shift || true
+WHAT=""; PURGE=""
+for a in "$@"; do
+  case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; *) usage ;; esac
+done
+case $CMD in
+  install) WHAT=${WHAT:-all} ;;
+  uninstall) [ -n "$WHAT" ] || die "uninstall what? board, bots or all" ;;
+  start|stop|restart|status|update) ;;
+  *) usage ;;
+esac
+[ -x "$BOT" ] || [ "$CMD" = install ] || die "no checkout at $SRC: install first"
+if [ "$CMD" = install ] && [ -z "${BOT_BOARD_FROM_SRC:-}" ]; then
+  # Install brings the checkout here and current, then goes on from its own bot_board:
+  # piped from curl the first time it clones it; on a machine that has one (a keeper too
+  # old to update itself, say) it pulls it, unless it has local changes.
+  [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] || cat >/dev/null
+  command -v git >/dev/null || die "git is required"
+  if [ ! -d "$SRC/.git" ]; then
+    mkdir -p "$(dirname "$SRC")"
+    git clone -q --depth 1 -b "${BOT_BOARD_REF:-main}" "${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}" "$SRC"
+  elif [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+    say "$SRC has local changes: installing from it as it is"
+  else
+    git -C "$SRC" pull -q --ff-only || say "could not pull $SRC: installing from it as it is"
+  fi
+  [ -f "$SRC/bin/bot_board" ] || die "$SRC is too old to have bin/bot_board and could not be pulled: update it by hand (git -C $SRC pull)"
+  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" BOT_BOARD_FROM_SRC=1 bash "$SRC/bin/bot_board" "$CMD" "$WHAT"
+fi
+# which components this command acts on
+BOARD_ON=""; BOTS_ON=""
+case ${WHAT:-installed} in
+  board) BOARD_ON=1 ;;
+  bots) BOTS_ON=1 ;;
+  all) BOARD_ON=1; BOTS_ON=1 ;;
+  installed) ! has_board || BOARD_ON=1; ! has_bots || BOTS_ON=1
+             [ -n "$BOARD_ON$BOTS_ON" ] || die "nothing installed here: bot_board install board|bots|all" ;;
+esac
+board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
+
+case $CMD in
+  install)
+    ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
+    # the board first: bots installed beside it report to it, unless BOARD says otherwise
+    [ -z "$BOARD_ON" ] || board up
+    if [ -n "$BOTS_ON" ]; then
+      board_url=${BOARD:-}
+      [ -n "$board_url" ] || grep -qs '^BOARD=' "$CFG_FILE" || [ -z "$BOARD_ON" ] \
+        || board_url="http://127.0.0.1:${PORT:-8080}"
+      BOARD=$board_url BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install
+    fi
+    say "installed; manage it all with $(dirname "$SRC")/bot_board status|stop|restart|update|uninstall" ;;
+  start|restart)
+    [ -z "$BOARD_ON" ] || board up        # up stops a running board first
+    if [ -n "$BOTS_ON" ]; then
+      "$BOT" keeper install
+      if [ "$CMD" = restart ]; then for h in $(running_bots); do "$BOT" restart "$h"; done; fi
+    fi ;;
+  stop)
+    [ -z "$BOARD_ON" ] || board stop || true
+    if [ -n "$BOTS_ON" ]; then
+      keeper_stop; say "keeper stopped; start brings it back, and it starts the bots the board wants"
+      for h in $(running_bots); do "$BOT" stop "$h"; done
+    fi ;;
+  status)
+    rc=0
+    if [ -n "$BOARD_ON" ]; then echo "board:"; board status || rc=1; fi
+    if [ -n "$BOTS_ON" ]; then
+      echo "bots:"
+      if ! has_bots; then echo "  keeper: not installed (bot_board install bots)"; rc=1
+      elif keeper_up; then echo "  keeper: running"
+      else echo "  keeper: stopped (bot_board start bots)"; rc=1; fi
+      "$BOT" ps || true
+    fi
+    exit $rc ;;
+  update)
+    # bin/bot update pulls, checks the new code and rolls back what fails; it refuses a
+    # checkout with local changes and asks the running bots to restart once idle
+    before=$(git -C "$SRC" rev-parse HEAD)
+    "$BOT" update || die "update failed; the checkout is where it was"
+    after=$(git -C "$SRC" rev-parse HEAD)
+    if [ "$before" = "$after" ]; then say "nothing new: still on ${after:0:12}"; exit 0; fi
+    say "updated ${before:0:12} -> ${after:0:12}; restarting on it"
+    [ -z "$BOARD_ON" ] || board up
+    [ -z "$BOTS_ON" ] || "$BOT" keeper install ;;
+  uninstall)
+    if [ -n "$BOARD_ON" ]; then
+      board stop || true
+      boot="$(dirname "$SRC")/bot_board start board"      # the @reboot line run.sh suggests, or the older one
+      if crontab -l 2>/dev/null | grep -qF -e "$boot" -e "$RUN"; then
+        crontab -l | grep -vF -e "$boot" -e "$RUN" | crontab -; say "removed the board's @reboot line from crontab"
+      fi
+      if [ -n "$PURGE" ]; then rm -rf "$DATA"; say "removed the board's data: $DATA"
+      else rm -rf "$DATA/venv"; say "board removed; its database stays in $DATA (--purge removes it)"; fi
+    fi
+    if [ -n "$BOTS_ON" ]; then
+      "$BOT" keeper uninstall
+      for h in $(running_bots); do "$BOT" stop "$h"; done
+      if [ -n "$PURGE" ]; then rm -rf "$(dirname "$CFG_FILE")"; say "removed the bots' config, identities and sessions: $(dirname "$CFG_FILE")"
+      else say "bots removed; their config, identities and sessions stay in $(dirname "$CFG_FILE") (--purge removes them)"; fi
+    fi
+    if [ -n "$PURGE" ] && ! has_board && ! has_bots; then
+      if [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then
+        say "the checkout $SRC has local changes: left in place"
+      else
+        rm -rf "$SRC" "$(dirname "$SRC")/bot_board"; say "removed the checkout $SRC"
+      fi
+    fi
+    # what installing made and nothing holds now
+    for d in "$HOME/.config/systemd/user" "$HOME/.config/systemd" "$HOME/.config" "$(dirname "$SRC")"; do
+      rmdir "$d" 2>/dev/null || true
+    done ;;
+esac
