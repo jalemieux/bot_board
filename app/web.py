@@ -2004,8 +2004,8 @@ var machineStatus = document.getElementById('machine-status');
 var localBoard = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
   var boardOrigin = "'" + location.origin.replace(/'/g, "'\\\\''") + "'";
-  machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD='
-    + boardOrigin + ' bash -s -- install';
+  machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | BOARD='
+    + boardOrigin + ' bash -s -- install bots';
   machineCopy.disabled = localBoard;
   machineStatus.textContent = localBoard
     ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'

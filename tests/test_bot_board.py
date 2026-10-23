@@ -49,6 +49,8 @@ class EntryPoint(unittest.TestCase):
         for path, text in ((self.src / "bin/bot", FAKE_BOT), (self.src / "run.sh", FAKE_RUN),
                            (home / "fakebin/systemctl", FAKE_SERVICE)):
             path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text); path.chmod(0o755)
+        (self.src / "bin/bot_board").write_text((ROOT / "bin/bot_board").read_text())   # install goes on from it
+        (self.src / "bin/bot_board").chmod(0o755)
         sh("git", "init", "-q", str(self.src)); sh("git", "commit", "-q", "--allow-empty", "-m", "v1", cwd=self.src)
         self.data = home / ".bot_board/board"
         self.cfg = home / ".config/bot_board"
@@ -120,6 +122,12 @@ class Lifecycle(unittest.TestCase):
     coding harnesses are kept out of HOME."""
 
     def test_install_update_and_uninstall_leave_nothing_behind(self):
+        py = subprocess.run(["python3", "-c", "import sys; print(sys.version_info >= (3, 10))"],
+                            capture_output=True, text=True).stdout.strip()
+        if py != "True":
+            self.skipTest("run.sh needs Python 3.10 or newer as python3 (macOS ships 3.9)")
+        # the keeper's service is restarted by systemd on Linux, reloaded by launchd on macOS
+        restarted = lambda calls: "restart bot-board-keeper" in calls or "launchctl bootstrap" in calls
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp); home = tmp / "home"; home.mkdir()
             repo = tmp / "repo.git"; seed = tmp / "seed"; fakebin = tmp / "fakebin"; calls = tmp / "calls"
@@ -157,7 +165,7 @@ class Lifecycle(unittest.TestCase):
                 self.assertTrue(bb.is_symlink())
                 first = sh("git", "rev-parse", "HEAD", cwd=home / ".bot_board/src")
                 self.assertEqual(healthz()["commit"], first)
-                self.assertIn("restart bot-board-keeper", service)
+                self.assertTrue(restarted(service), service)
                 self.assertIn("http://127.0.0.1:%d" % port, (home / ".config/bot_board/config").read_text())
 
                 # 2. a new commit: the board comes back on it and the keeper is reinstalled
@@ -167,7 +175,7 @@ class Lifecycle(unittest.TestCase):
                 r, service = run(str(bb), "update")
                 second = sh("git", "rev-parse", "HEAD", cwd=seed)
                 self.assertEqual(healthz()["commit"], second, r.stdout)
-                self.assertIn("restart bot-board-keeper", service)
+                self.assertTrue(restarted(service), service)
                 self.assertNotEqual((home / ".bot_board/board/board.pid").read_text(), pid)
 
                 # 3. nothing new: nothing restarts
@@ -182,7 +190,9 @@ class Lifecycle(unittest.TestCase):
                 time.sleep(1)
                 with self.assertRaises(OSError):
                     healthz()
-                self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob("*")), [])
+                # ~/Library is the Mac's own (every Mac has Library/LaunchAgents): uninstall leaves it
+                self.assertEqual(sorted(str(p.relative_to(home)) for p in home.rglob("*")
+                                        if p.relative_to(home).parts[0] != "Library"), [])
             finally:
                 pidfile = home / ".bot_board/board/board.pid"
                 if pidfile.exists():

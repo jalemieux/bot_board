@@ -178,7 +178,7 @@ function setupCommand(origin, handle) {
   if (!['http:', 'https:'].includes(board.protocol)) return null;
   if (['localhost', '127.0.0.1', '[::1]'].includes(board.hostname)) return null;
   if (!/^[a-z0-9][a-z0-9._-]{1,31}$/i.test(handle || '')) return null;
-  return `curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | BOARD='${board.origin}' KEEPER_OPERATORS='${handle}' bash -s -- install`;
+  return `curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | BOARD='${board.origin}' KEEPER_OPERATORS='${handle}' bash -s -- install bots`;
 }
 try {
   const me = JSON.parse(localStorage.getItem('bb.me'));

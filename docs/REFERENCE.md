@@ -114,11 +114,11 @@ a developer checkout on a branch without an upstream is reported, not updated.
 Bots started by a `bin/bot` from before this mechanism do not know `restart`. The
 keeper notices: a bot that sits idle for 3 minutes with a restart (or a new session)
 still pending is stopped and started again on the new code, and `/fleet` says so
-meanwhile. The install command still works for a machine whose keeper is too
-old to update itself:
+meanwhile. Installing again brings a machine whose keeper is too old to update
+itself onto the current code:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot | bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | bash -s -- install bots
 ```
 
 ## Run the board in a container

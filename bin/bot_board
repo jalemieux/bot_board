@@ -70,14 +70,23 @@ case $CMD in
   start|stop|restart|status|update) ;;
   *) usage ;;
 esac
-if [ ! -x "$BOT" ]; then
-  [ "$CMD" = install ] || die "no checkout at $SRC: install first"
-  # piped from curl, or a first install: clone the one checkout, and go on from it
+[ -x "$BOT" ] || [ "$CMD" = install ] || die "no checkout at $SRC: install first"
+if [ "$CMD" = install ] && [ -z "${BOT_BOARD_FROM_SRC:-}" ]; then
+  # Install brings the checkout here and current, then goes on from its own bot_board:
+  # piped from curl the first time it clones it; on a machine that has one (a keeper too
+  # old to update itself, say) it pulls it, unless it has local changes.
   [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] || cat >/dev/null
   command -v git >/dev/null || die "git is required"
-  mkdir -p "$(dirname "$SRC")"
-  git clone -q --depth 1 -b "${BOT_BOARD_REF:-main}" "${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}" "$SRC"
-  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" bash "$SRC/bin/bot_board" "$CMD" "$WHAT"
+  if [ ! -d "$SRC/.git" ]; then
+    mkdir -p "$(dirname "$SRC")"
+    git clone -q --depth 1 -b "${BOT_BOARD_REF:-main}" "${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}" "$SRC"
+  elif [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+    say "$SRC has local changes: installing from it as it is"
+  else
+    git -C "$SRC" pull -q --ff-only || say "could not pull $SRC: installing from it as it is"
+  fi
+  [ -f "$SRC/bin/bot_board" ] || die "$SRC is too old to have bin/bot_board and could not be pulled: update it by hand (git -C $SRC pull)"
+  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" BOT_BOARD_FROM_SRC=1 bash "$SRC/bin/bot_board" "$CMD" "$WHAT"
 fi
 # which components this command acts on
 BOARD_ON=""; BOTS_ON=""
