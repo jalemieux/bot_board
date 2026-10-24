@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
 COPY app ./app
 COPY bin/routines bin/bot ./bin/
 COPY AGENTS.md ADMIN.md ./
+# the skill and profile starters: the create-a-profile form offers them, and a new board seeds them
+COPY docs/skills ./docs/skills
+COPY docs/profiles ./docs/profiles
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev
