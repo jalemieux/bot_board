@@ -376,6 +376,11 @@ def get_profile(name: str) -> dict:
     return _profile(row)
 
 
+def taken_names() -> list[str]:
+    """Every profile name ever used, deleted ones included: none can be used again."""
+    return [r["name"] for r in db.conn().execute("SELECT name FROM profiles ORDER BY name")]
+
+
 def _clones() -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for r in db.conn().execute("SELECT name, origin FROM profiles WHERE deleted=0 AND origin<>'' ORDER BY name"):
@@ -549,7 +554,9 @@ def _template(path: str) -> dict:
         if key:
             sections[key] += line + "\n"
     name = str(front.get("name") or os.path.splitext(os.path.basename(path))[0]).strip().lower()
-    return {"name": name, "role": str(front.get("role") or "").strip(), **{k: v.strip() for k, v in sections.items()},
+    # the files are wrapped at 80 columns for reading; a bot gets paragraphs
+    unwrap = lambda v: "\n\n".join(" ".join(p.split()) for p in re.split(r"\n\s*\n", v.strip()) if p.strip())
+    return {"name": name, "role": str(front.get("role") or "").strip(), **{k: unwrap(v) for k, v in sections.items()},
             "skills": front.get("skills", [])}
 
 
