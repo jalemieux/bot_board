@@ -182,6 +182,20 @@ class Registry(unittest.TestCase):
             registry.fetch_skill = real
         self.assertEqual(len(calls), 4)       # the bot's 403 and the bad URL never fetch
 
+    def test_any_github_link_to_a_skill_is_read_as_its_folder(self):
+        # board thread 8119: the link people copy is the SKILL.md's page, or the raw file
+        folder = "https://github.com/acme/skills/tree/main/release-notes"
+        for link in (folder, folder + "/", "https://github.com/acme/skills/blob/main/release-notes/SKILL.md",
+                     "https://github.com/acme/skills/tree/main/release-notes/SKILL.md",
+                     "https://raw.githubusercontent.com/acme/skills/main/release-notes/SKILL.md",
+                     "github.com/acme/skills/blob/main/release-notes/SKILL.md"):
+            with self.subTest(link=link):
+                self.assertEqual(registry._check_source(link, None), (folder, "main"))
+        self.assertEqual(registry._check_source("https://github.com/acme/skills/blob/v1.2.0/SKILL.md", None),
+                         ("https://github.com/acme/skills/tree/v1.2.0", "v1.2.0"))
+        with self.assertRaises(ValueError):
+            registry._check_source("https://example.com/release-notes/SKILL.md", None)
+
     def test_deleting_a_skill_a_profile_lists_is_refused(self):
         r = self.client.request("DELETE", "/api/skills/github-lifecycle", headers=self.human, json={"base_revision": 1})
         self.assertEqual(r.status_code, 409, r.text)

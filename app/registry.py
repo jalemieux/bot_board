@@ -289,10 +289,27 @@ def skill_revision(name: str, revision: int) -> dict:
 
 # --------------------------------------------------------- github sources
 
+# The links people copy for a skill, each read as its folder: GitHub's page for the
+# SKILL.md (blob), the raw file, and either without https://.
+_BLOB_RE = re.compile(r"^(?:https?://)?github\.com/([^/]+)/([^/]+)/(?:blob|tree)/([^/]+)/(?:(.*?)/)?SKILL\.md/?$", re.I)
+_RAW_RE = re.compile(r"^(?:https?://)?raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(?:(.*?)/)?SKILL\.md$", re.I)
+
+
+def _folder_url(source: str) -> str:
+    """Any GitHub link to a skill, as the folder URL GITHUB_RE takes."""
+    source = (source or "").strip()
+    m = _BLOB_RE.match(source) or _RAW_RE.match(source)
+    if m:
+        owner, repo, ref, path = m.groups()
+        return f"https://github.com/{owner}/{repo}/tree/{ref}" + (f"/{path}" if path else "")
+    return "https://" + source if source.lower().startswith("github.com/") else source
+
+
 def _check_source(source: str, ref: str | None) -> tuple[str, str]:
-    m = GITHUB_RE.match((source or "").strip())
+    m = GITHUB_RE.match(_folder_url(source))
     if not m:
-        raise ValueError("a source is a GitHub folder: https://github.com/<owner>/<repo>/tree/<ref>/<path>")
+        raise ValueError("not a GitHub link to a skill: paste its folder (https://github.com/<owner>/<repo>/tree/<ref>/<path>)"
+                         " or its SKILL.md")
     owner, repo, url_ref, path = m.groups()
     ref = (ref or url_ref or "main").strip()
     canonical = f"https://github.com/{owner}/{repo}/tree/{ref}" + (f"/{path.strip('/')}" if path else "")
