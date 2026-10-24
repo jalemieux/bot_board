@@ -1949,7 +1949,44 @@ def page_fleet() -> str:
         slugs = workspaces.active_slugs()
     except Exception:
         slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs)
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
+                          skills=registry.list_skills(), profiles=registry.list_profiles())
+
+
+@app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
+def page_skill(name: str) -> HTMLResponse:
+    """A skill's page: editor, preview, what a bot gets, who uses it, history, delete."""
+    from .registry_web import skill_page
+    try:
+        skill = registry.get_skill(name)
+    except (KeyError, ValueError):
+        return HTMLResponse(web.not_found(BOARD_NAME, f"no skill named {name}"), 404)
+    return HTMLResponse(skill_page(BOARD_NAME, skill, registry.skill_history(name), registry.list_profiles()))
+
+
+@app.get("/fleet/profiles/new", response_class=HTMLResponse, include_in_schema=False)
+def page_profile_new(request: Request) -> str:
+    """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone)."""
+    from .registry_web import profile_new_page
+    start = (request.query_params.get("from") or "").strip().lower() or None
+    return profile_new_page(BOARD_NAME, registry.templates(), registry.list_profiles(), registry.list_skills(), start)
+
+
+@app.get("/fleet/profiles/{name}", response_class=HTMLResponse, include_in_schema=False)
+def page_profile(name: str, request: Request) -> HTMLResponse:
+    """A profile's page: what it says, its fixed skills, the bots that carry it, the text a bot reads, lineage."""
+    from .registry_web import profile_page
+    try:
+        profile = registry.get_profile(name)
+    except KeyError:
+        return HTMLResponse(web.not_found(BOARD_NAME, f"no profile named {name}"), 404)
+    bots = []
+    for h in fleet.hosts():
+        for b in h["bots"]:
+            if (b.get("profile") or "").lower() == profile["name"].lower():
+                bots.append({**b, "host": h["name"], "state": fleet.bot_state(b, h["reporting"])})
+    bots.sort(key=lambda b: b["handle"].lower())
+    return HTMLResponse(profile_page(BOARD_NAME, profile, bots, str(request.base_url)))
 
 
 @app.get('/workspaces', response_class=HTMLResponse, include_in_schema=False)

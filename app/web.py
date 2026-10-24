@@ -1857,6 +1857,9 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
     group = (f'<a href="/workspaces/{e(b["workspace"])}">{e(b["workspace"])}</a>' if b.get("workspace")
              else '<span class="prob">no workspace</span>' if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
+    # its profile, set once when it was added: a chip to the profile page, or "none" with nothing to click
+    profile = (f'<a class="chip" href="/fleet/profiles/{e(b["profile"])}">{e(b["profile"])}</a>' if b.get("profile")
+               else '<span class="dim">none</span>')
     # last active: the keeper knows its last harness run, the board its last post
     last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
     # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
@@ -1885,7 +1888,8 @@ def _bot_row(b: dict, host: str, others: list) -> str:
                 '<option value="">move…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
     return (f'<tr id="bot-{e(b["handle"])}"><td class="who"><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
             f'<td class="doing"><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
-            f'<td data-label="group">{group}</td><td data-label="harness">{e(b.get("harness") or "?")}</td>'
+            f'<td data-label="group">{group}</td><td data-label="profile">{profile}</td>'
+            f'<td data-label="harness">{e(b.get("harness") or "?")}</td>'
             f'<td data-label="machine"><a href="#box-{e(host)}">{e(host)}</a></td>'
             f'<td data-label="active" class="dim nw">{e(ago(last)) if last else "never"}</td>'
             f'<td class="acts">{btn}</td></tr>' + (_stop_panel(b, host) if asks and can else ""))
@@ -1901,7 +1905,7 @@ def _stop_panel(b: dict, host: str) -> str:
     items += f'<li class="dim">and {more} more</li>' if more > 0 else ""
     opt = lambda v, label, note, on="": (f'<label><input type="radio" name="threads-{h}" value="{v}"{on}> <b>{label}</b>'
                                          f' <span class="dim">{note}</span></label>')
-    return (f'<tr class="stop-panel" id="stop-{h}" hidden><td colspan="7">'
+    return (f'<tr class="stop-panel" id="stop-{h}" hidden><td colspan="8">'
             f'<p>@{h} holds {n} open thread{"s" * (n != 1)}. What should happen to {"them" if n != 1 else "it"}?</p>'
             f'<ul>{items}</ul><div class="opts">'
             # hand off by default: a stopped bot that keeps its threads holds them from everyone (#217)
@@ -1913,7 +1917,7 @@ def _stop_panel(b: dict, host: str) -> str:
 
 
 def _bot_table(entries: list, others_of) -> str:
-    head = ('<thead><tr><th>Bot</th><th>Doing</th><th>Group</th><th>Harness</th><th>Machine</th>'
+    head = ('<thead><tr><th>Bot</th><th>Doing</th><th>Group</th><th>Profile</th><th>Harness</th><th>Machine</th>'
             '<th>Active</th><th><span class="sr-only">Actions</span></th></tr></thead>')
     rows = "".join(_bot_row(b, h["name"], others_of(h)) for h, b in entries)
     return f'<table class="bots">{head}<tbody>{rows}</tbody></table>'
@@ -2019,13 +2023,13 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, workspace, threads) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, workspace, threads, profile) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
     body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, workspace: workspace || null,
-                                   threads: threads || null}
-                                : {host: host, harness: harness, workspace: workspace || null})})
+                                   threads: threads || null, profile: profile || null}
+                                : {host: host, harness: harness, workspace: workspace || null, profile: profile || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -2127,7 +2131,7 @@ document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot-top'); if (!f) return;
   ev.preventDefault();
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
-      f.elements.harness.value, false, f.elements.workspace.value);
+      f.elements.harness.value, false, f.elements.workspace.value, null, f.elements.profile.value);
 });
 // Add a bot suggests reviving a stopped bot of the same harness and workspace instead (#168): it
 // keeps its name, sessions and claimed threads. On another machine, a bot moves here and starts.
@@ -2346,7 +2350,8 @@ def _versions_section(rows: list) -> str:
             f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=()) -> str:
+    from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
@@ -2362,6 +2367,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
             (active if live else stopped if h["reporting"] else []).append((h, b))
     active.sort(key=lambda x: (order.get(x[1]["state"]["state"], 6), x[1]["handle"].lower()))
     stopped.sort(key=lambda x: x[1]["handle"].lower())
+    # bots with no profile, gathered on the Profiles table's last row so they are not forgotten
+    orphans = sorted({b["handle"] for _, b in active + stopped if not b.get("profile")}, key=str.lower)
     working = sum(b["state"]["state"] == "working" for _, b in active)
     waiting = sum(b["state"]["can_work"] for _, b in active) - working
     alerts = _alerts(hosts)
@@ -2424,23 +2431,27 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
         ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
                    or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
+        profile_opts = ('<option value="">none</option>'
+                        + "".join(f'<option value="{e(p["name"])}">{e(p["name"])} · {e(p["role"][:60])}</option>' for p in profiles))
         add_bot = f"""<details id="addbot" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">
 <label class="fld"><span>Machine</span><select name="host" aria-label="machine">{host_opts}</select></label>
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
 <label class="fld"><span>Workspace</span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
+<label class="fld"><span>Profile <small>(set once)</small></span><select name="profile" aria-label="the profile the bot is added with, for life">{profile_opts}</select></label>
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
 <div class="revive" id="revive" hidden></div>
 <button type="submit" class="addbot-go">Start a new bot</button>
 </form>
 <script type="application/json" id="revive-data">{revive_json}</script>
-<p class="addbot-note">The machine's keeper starts it within a few seconds. The bot belongs to the workspace you pick and sees only that workspace.</p>
+<p class="addbot-note">The machine's keeper starts it within a few seconds. The bot belongs to the workspace you pick and sees only that workspace.
+It reads the profile you pick, and its skills, when its session starts, and keeps that profile for life.</p>
 </details>"""
     else:
         add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'
     return shell(board_name, "fleet", here="/fleet", content=f"""
-<style>{FLEET_CSS}</style>
+<style>{FLEET_CSS}{registry_web.REG_CSS}</style>
 <div class="fleet-page">
 <div class="fleet-head"><h1>Fleet</h1>{add_bot}</div>
 <div class="statstrip" role="status">
@@ -2453,6 +2464,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=()) -> str:
 {attention}
 <section class="fleet-section" id="fleet-bots"><h2>Bots · {len(active)}</h2>{bots_html}{stopped_html}</section>
 <section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+{registry_web.skills_section(list(skills), list(profiles))}
+{registry_web.profiles_section(list(profiles), orphans)}
 {versions_html}
 <details class="fleet-settings" id="fleet-add-machine"><summary>Add a machine</summary>
 <p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
@@ -2482,7 +2495,7 @@ shown again.</p>
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
  autocomplete="off" required> <button type="submit">save</button></form></details>
 </div>
-<script>{FLEET_JS}</script>""")
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 
 
 def agent_page(board_name, agent, recent) -> str:
