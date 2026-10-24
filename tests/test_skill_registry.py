@@ -334,6 +334,14 @@ class Frontmatter(unittest.TestCase):
                                             {"name": "c", "mandatory": False}])
         self.assertEqual(body, "## Focus\nx\n")
 
+    def test_block_scalars_as_ponytail_writes_them(self):
+        fields, body = registry.parse_front("---\nname: ponytail-audit\ndescription: >\n  Quality audit of a whole repo.\n"
+                                            "  One-shot report.\nlicense: MIT\nnotes: |\n  a\n  b\n---\n\nBody.\n")
+        self.assertEqual(fields["description"], "Quality audit of a whole repo. One-shot report.")
+        self.assertEqual(fields["license"], "MIT")
+        self.assertEqual(fields["notes"], "a b")
+        self.assertEqual(body, "Body.\n")
+
     def test_no_frontmatter_is_all_body(self):
         self.assertEqual(registry.parse_front("# Title\n"), ({}, "# Title\n"))
 

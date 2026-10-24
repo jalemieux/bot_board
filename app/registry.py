@@ -90,10 +90,15 @@ def parse_front(text: str) -> tuple[dict, str]:
     head, body = text[3:end], text[end + 4:]
     fields: dict = {}
     key = None
+    block = None      # the key whose block scalar (key: > or key: |) the indented lines below belong to
     for raw in head.splitlines():
         line = raw.rstrip()
         if not line.strip() or line.strip().startswith("#"):
             continue
+        if block and line.startswith((" ", "\t")):
+            fields[block] = (fields[block] + " " + line.strip()).strip()
+            continue
+        block = None
         if line.startswith((" ", "\t", "-")) and key == "skills":
             s = line.strip()
             if s.startswith("- "):
@@ -114,6 +119,9 @@ def parse_front(text: str) -> tuple[dict, str]:
         if key == "skills":      # a block list follows, or an inline one: [] or [a, b]
             inline = v.strip().strip("[]")
             fields["skills"] = [{"name": _scalar(x)} for x in inline.split(",") if x.strip()]
+        elif v.strip() in (">", "|", ">-", "|-"):      # a block scalar: its text is on the lines below
+            fields[key] = ""
+            block = key
         else:
             fields[key] = _scalar(v)
     if "skills" in fields:
