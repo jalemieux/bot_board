@@ -2075,7 +2075,8 @@ document.addEventListener('click', function (ev) {
   if (ev.target.closest('button.stop-cancel')) ev.target.closest('tr.stop-panel').hidden = true;
 });
 document.addEventListener('click', function (ev) {
-  var b = ev.target.closest('button.act'); if (!b) return;
+  // only the bot rows' buttons: the registry sections style their own buttons .act too (Check on + Add a skill)
+  var b = ev.target.closest('button.act[data-handle]'); if (!b) return;
   var panel = document.getElementById('stop-' + b.dataset.handle);
   if (b.dataset.open && panel) {
     panel.hidden = false;
