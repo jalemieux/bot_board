@@ -2,7 +2,7 @@
 
 The fleet page gets two sections between Machines and Versions: Skills (every skill,
 its kind, revision and the profiles that list it; + Add a skill opens an inline panel
-with two tabs, written here or from GitHub) and Profiles (every profile, its skills and
+with one form: a GitHub link, or the skill written there) and Profiles (every profile, its skills and
 the bots that carry it; view, clone, and delete only when no bot carries it). Each
 skill has a page with an editor, history and who uses it; each profile a read-only
 page with what it says, its fixed skills, its bots, the text a bot reads, and its
@@ -133,28 +133,21 @@ def _skill_chip(s: dict) -> str:
 
 ADD_SKILL_PANEL = """<details id="addskill" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a skill</span></summary>
-<div class="tabs" role="tablist">
-<button type="button" class="tab" role="tab" aria-selected="true" data-tab="write">Write it here</button>
-<button type="button" class="tab" role="tab" aria-selected="false" data-tab="github">From GitHub</button>
-</div>
-<form class="reg-form" id="skill-write" aria-label="Write a skill">
+<form class="reg-form" id="skill-add" aria-label="Add a skill">
+<label class="fld"><span>From GitHub <small>· a link to a skill's folder or its SKILL.md; or leave it empty and write the skill below</small></span>
+<div class="row"><input name="source" placeholder="https://github.com/owner/repo/blob/main/skills/some-skill/SKILL.md" autocomplete="off" style="flex:1">
+<button type="button" class="act" id="skill-check">Check</button></div></label>
+<div class="checked" id="skill-checked" hidden></div>
+<div id="skill-own">
 <label class="fld"><span>Name <small>· slug, this is how profiles name it</small></span>
 <input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{1,63}" placeholder="art-to-3d" autocomplete="off"></label>
 <label class="fld"><span>Description <small>· one line; this is what a bot sees in its profile</small></span>
 <input name="description" required maxlength="500" placeholder="Turn approved concept art into a game-ready 3D model." autocomplete="off"></label>
 <label class="fld"><span>Instructions <small>· Markdown; the body of SKILL.md. Name and description become its frontmatter.</small></span>
 <textarea name="body" required rows="12" placeholder="## When to use this&#10;&#10;## Steps&#10;1. &#10;&#10;## What not to do"></textarea></label>
+</div>
 <div class="row"><button type="submit" class="addbot-go">Add skill</button>
-<span class="note">It appears in the list; a profile created or cloned from now on can tick it.</span></div>
-<p class="status-line" role="status" aria-live="polite"></p>
-</form>
-<form class="reg-form" id="skill-github" aria-label="Add a skill from GitHub" hidden>
-<label class="fld"><span>Folder with a SKILL.md</span>
-<div class="row"><input name="source" required placeholder="https://github.com/owner/repo/tree/main/skills/some-skill" autocomplete="off" style="flex:1">
-<button type="button" class="act" id="skill-check">Check</button></div></label>
-<div class="checked" id="skill-checked" hidden></div>
-<div class="row"><button type="submit" class="addbot-go" disabled>Add skill</button>
-<span class="note">The board keeps a copy of its SKILL.md, so every bot can read it. A bot whose profile lists it reads it when its next session starts.</span></div>
+<span class="note" id="skill-note">It appears in the list; a profile created or cloned from now on can tick it.</span></div>
 <p class="status-line" role="status" aria-live="polite"></p>
 </form>
 </details>"""
@@ -222,33 +215,26 @@ REG_SECTION_JS = r"""
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
         if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
   }
-  var panel = document.getElementById('addskill');
-  if (panel) {
-    panel.addEventListener('click', function (ev) {
-      var t = ev.target.closest('button.tab'); if (!t) return;
-      panel.querySelectorAll('button.tab').forEach(function (b) { b.setAttribute('aria-selected', String(b === t)); });
-      document.getElementById('skill-write').hidden = t.dataset.tab !== 'write';
-      document.getElementById('skill-github').hidden = t.dataset.tab !== 'github';
-    });
-    var write = document.getElementById('skill-write');
-    write.addEventListener('submit', function (ev) {
-      ev.preventDefault(); if (!need()) return;
-      var msg = write.querySelector('.status-line'), name = write.elements.name.value.trim().toLowerCase();
-      msg.textContent = 'Saving…';
-      call('PUT', '/api/skills/' + encodeURIComponent(name),
-           {body: write.elements.body.value, fields: {description: write.elements.description.value.trim()},
-            base_revision: 0, reason: 'added on the fleet page'})
-      .then(function () { location.href = '/fleet/skills/' + encodeURIComponent(name); },
-            function (e) { msg.textContent = e.message; });
-    });
-    var gh = document.getElementById('skill-github'), checked = null;
-    document.getElementById('skill-check').addEventListener('click', function () {
-      if (!need()) return;
-      var box = document.getElementById('skill-checked'), msg = gh.querySelector('.status-line');
-      checked = null; gh.querySelector('button[type=submit]').disabled = true; msg.textContent = 'Checking…'; box.hidden = true;
-      call('POST', '/api/skills/check', {source: gh.elements.source.value.trim()}).then(function (d) {
-        checked = d; msg.textContent = '';
-        box.textContent = ''; box.hidden = false;
+  var form = document.getElementById('skill-add');
+  if (form) {
+    // One form (board thread 8119): a GitHub link adds that skill, as the board fetches it;
+    // without one, the name, description and instructions below are the skill.
+    var own = document.getElementById('skill-own'), box = document.getElementById('skill-checked'),
+        note = document.getElementById('skill-note'), msg = form.querySelector('.status-line'), checked = null;
+    var link = function () { return form.elements.source.value.trim(); };
+    function mode() {
+      var gh = !!link();
+      own.hidden = gh;
+      own.querySelectorAll('input, textarea').forEach(function (el) { el.required = !gh; });
+      note.textContent = gh ? 'The board keeps a copy of its SKILL.md, so every bot can read it. A bot whose profile '
+        + 'lists it reads it when its next session starts.' : 'It appears in the list; a profile created or cloned from now on can tick it.';
+      if (!gh) { checked = null; box.hidden = true; }
+    }
+    function check() {
+      if (!need()) return Promise.reject(new Error('sign in first'));
+      checked = null; msg.textContent = 'Checking…'; box.hidden = true;
+      return call('POST', '/api/skills/check', {source: link()}).then(function (d) {
+        checked = d; msg.textContent = ''; box.textContent = ''; box.hidden = false;
         var h = document.createElement('b'); h.textContent = d.name + ' · ' + d.description; box.appendChild(h);
         var l = document.createElement('div'); l.className = 'by';
         l.textContent = 'SKILL.md found · ' + (d.ref_kind === 'pinned' ? 'pinned at ' + d.ref
@@ -257,18 +243,34 @@ REG_SECTION_JS = r"""
         box.appendChild(l);
         if (d.ref_kind !== 'pinned') { var n = document.createElement('div'); n.className = 'by';
           n.textContent = 'To stop it moving, pin a tag or a commit in the URL instead of ' + d.ref + '.'; box.appendChild(n); }
-        gh.querySelector('button[type=submit]').disabled = false;
-      }, function (e) { msg.textContent = e.message; });
-    });
-    gh.addEventListener('submit', function (ev) {
-      ev.preventDefault(); if (!need() || !checked) return;
-      var msg = gh.querySelector('.status-line'); msg.textContent = 'Saving…';
-      call('PUT', '/api/skills/' + encodeURIComponent(checked.name),
-           {fields: {source: checked.source, ref: checked.ref}, base_revision: checked.exists ? checked.exists.revision : 0,
-            reason: 'added from ' + checked.source})
-      .then(function () { location.href = '/fleet/skills/' + encodeURIComponent(checked.name); },
+        return d;
+      }, function (e) { msg.textContent = e.message; throw e; });
+    }
+    form.elements.source.addEventListener('input', function () { checked = null; box.hidden = true; mode(); });
+    form.elements.source.addEventListener('change', function () { if (link()) check().catch(function () {}); });
+    document.getElementById('skill-check').addEventListener('click', function () { if (link()) check().catch(function () {}); });
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault(); if (!need()) return;
+      if (link()) {
+        // checked first: what is added is what the box shows
+        (checked ? Promise.resolve(checked) : check()).then(function (d) {
+          msg.textContent = 'Saving…';
+          return call('PUT', '/api/skills/' + encodeURIComponent(d.name),
+               {fields: {source: d.source, ref: d.ref}, base_revision: d.exists ? d.exists.revision : 0,
+                reason: 'added from ' + d.source})
+            .then(function () { location.href = '/fleet/skills/' + encodeURIComponent(d.name); });
+        }).catch(function (e) { msg.textContent = e.message; });
+        return;
+      }
+      var name = form.elements.name.value.trim().toLowerCase();
+      msg.textContent = 'Saving…';
+      call('PUT', '/api/skills/' + encodeURIComponent(name),
+           {body: form.elements.body.value, fields: {description: form.elements.description.value.trim()},
+            base_revision: 0, reason: 'added on the fleet page'})
+      .then(function () { location.href = '/fleet/skills/' + encodeURIComponent(name); },
             function (e) { msg.textContent = e.message; });
     });
+    mode();
   }
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest('button.del-profile'); if (!b || !need()) return;

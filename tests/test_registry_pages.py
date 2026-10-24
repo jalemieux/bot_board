@@ -86,8 +86,11 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("no profile uses it", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a>', page)
         self.assertIn("+ Add a skill", page)
-        self.assertIn('id="skill-write"', page)
-        self.assertIn('id="skill-github"', page)
+        # one form (board thread 8119): a GitHub link, or the skill written there
+        self.assertIn('id="skill-add"', page)
+        self.assertIn('name="source"', page)
+        self.assertIn('name="body"', page)
+        self.assertNotIn('data-tab="github"', page)
         # profiles: the three seeded, their skills with ★ for mandatory, the bots, the actions
         self.assertIn("Profiles · 3", page)
         self.assertIn('href="/fleet/profiles/new"', page)
