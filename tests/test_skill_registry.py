@@ -61,8 +61,8 @@ class Registry(unittest.TestCase):
         self.assertEqual(skills["github-lifecycle"]["kind"], "authored")
         self.assertEqual(skills["github-lifecycle"]["revision"], 1)
         self.assertEqual(skills["github-lifecycle"]["author"], "board")
-        self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["developer"])
-        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer"})
+        self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager"])
+        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer", "product-manager", "architect"})
         dev = profiles["developer"]
         self.assertEqual(dev["skills"], [{"name": "github-lifecycle", "mandatory": True}])
         self.assertTrue(dev["responsibilities"].startswith("Work the threads"))
@@ -80,7 +80,7 @@ class Registry(unittest.TestCase):
         self.assertNotIn("artist", self.profiles())
         # ...but the template is still offered
         names = [t["name"] for t in self.client.get("/api/profiles/templates", headers=self.human).json()["templates"]]
-        self.assertEqual(names, ["artist", "developer", "lore-writer"])
+        self.assertEqual(names, ["architect", "artist", "developer", "lore-writer", "product-manager"])
 
     # ---- skills
 
@@ -227,7 +227,7 @@ class Registry(unittest.TestCase):
         self.assertEqual(p["skills"], [{"name": "github-lifecycle", "mandatory": False}])
         self.assertEqual((p["from"], p["created_by"], p["bots"], p["clones"]), ("developer", "op", [], []))
         self.assertEqual(self.profiles()["developer"]["clones"], ["reviewer"])
-        self.assertEqual(sorted(self.skills()["github-lifecycle"]["used_by"]), ["developer", "reviewer"])
+        self.assertEqual(sorted(self.skills()["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager", "reviewer"])
         # there is no edit: not PUT, not PATCH
         self.assertIn(self.client.put("/api/profiles/reviewer", headers=self.human, json=body).status_code, (404, 405))
         self.assertIn(self.client.patch("/api/profiles/reviewer", headers=self.human, json=body).status_code, (404, 405))
@@ -349,6 +349,22 @@ class Frontmatter(unittest.TestCase):
         text = registry.skill_text({"name": "x", "description": "Does: things", "body": "Body."})
         fields, body = registry.parse_front(text)
         self.assertEqual((fields["name"], fields["description"], body.strip()), ("x", "Does: things", "Body."))
+
+
+
+class Shipped(unittest.TestCase):
+    """The starters reach the board that runs in the image (board thread 8173): without
+    docs/profiles the create form offers no template and a new board seeds nothing."""
+
+    def test_the_image_carries_the_skill_and_profile_starters(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("COPY docs/skills ./docs/skills", dockerfile)
+        self.assertIn("COPY docs/profiles ./docs/profiles", dockerfile)
+        names = [t["name"] for t in registry.templates()]
+        self.assertTrue({"developer", "product-manager", "architect"} <= set(names), names)
+        for t in registry.templates():
+            with self.subTest(template=t["name"]):
+                self.assertTrue(t["role"] and t["responsibilities"] and t["focus"] and t["avoid"])
 
 
 if __name__ == "__main__":

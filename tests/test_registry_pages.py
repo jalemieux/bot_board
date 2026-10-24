@@ -91,8 +91,8 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="source"', page)
         self.assertIn('name="body"', page)
         self.assertNotIn('data-tab="github"', page)
-        # profiles: the three seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Profiles · 3", page)
+        # profiles: the five seeded, their skills with ★ for mandatory, the bots, the actions
+        self.assertIn("Profiles · 5", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
@@ -140,10 +140,10 @@ class RegistryPages(unittest.TestCase):
         # the seeded skill is used by developer, so its delete is refused on the page too
         page = self.client.get("/fleet/skills/github-lifecycle").text
         self.balanced(page)
-        self.assertIn("Used by · 1", page)
+        self.assertIn("Used by · 3", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a> <span class="dim">1 bot · @jane', page)
         self.assertIn('data-name="github-lifecycle" data-rev="1" disabled>', page)
-        self.assertIn("Refused while 1 profile lists it: developer.", page)
+        self.assertIn("Refused while 3 profiles list it: architect, developer, product-manager.", page)
         self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 404)
         # history grows and old revisions offer restore
         self.client.put("/api/skills/release-notes", headers=self.human,
@@ -226,7 +226,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["artist", "developer", "lore-writer"]', page)
+        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "product-manager"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
