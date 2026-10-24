@@ -2172,7 +2172,7 @@ document.addEventListener('click', function (ev) {
           .then(function (r2) { return r2.json().then(function (d2) {
             lines.push(d.name + ': ' + (r2.ok ? 'added' : (d2.error || r2.status))); }); });
       }); });
-  }); }, Promise.resolve()).then(function () { alert(lines.join('\n') || 'nothing to add'); location.reload(); })
+  }); }, Promise.resolve()).then(function () { alert(lines.join('\\n') || 'nothing to add'); location.reload(); })
   .catch(function () { b.disabled = false; alert('could not reach the board'); });
 });
 // The top-of-page "Add a bot" form: machine, harness, workspace, optional name.
