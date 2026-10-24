@@ -68,6 +68,8 @@ def rows(hosts: list, routines: list = ()) -> list[dict]:
                 note = "behind the keeper's checkout: it restarts on it once idle"
             elif b.get("protocol") is not None and b["protocol"] < MIN_PROTOCOL:
                 note = f"protocol {b['protocol']} is below {MIN_PROTOCOL}"
+            elif (b.get("protocol") or 0) < 2:
+                note = "predates profile skills (protocol 2): it installs its profile's skills once it restarts on the new launcher"
             else:
                 note = ""
             out.append(_row("launcher", b["handle"], launcher or "no version file", "the keeper's checkout", note, href))

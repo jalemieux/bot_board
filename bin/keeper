@@ -93,10 +93,11 @@ def setting(name, default=""):
     if os.environ.get(name):
         return os.environ[name]
     try:
-        for line in open(os.environ.get("BOT_CONFIG") or os.path.join(CFG, "config"), encoding="utf-8"):
-            m = re.match(rf"\s*(?:export\s+)?{name}=(.*)$", line)
-            if m:   # a shell file: quotes, and a comment after the value
-                return "".join(shlex.split(m.group(1), comments=True)[:1])
+        with open(os.environ.get("BOT_CONFIG") or os.path.join(CFG, "config"), encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(rf"\s*(?:export\s+)?{name}=(.*)$", line)
+                if m:   # a shell file: quotes, and a comment after the value
+                    return "".join(shlex.split(m.group(1), comments=True)[:1])
     except OSError:
         pass
     return default
@@ -446,7 +447,10 @@ def bots():
                      "health": health.strip(), "outcome": outcome, "launcher": launcher,
                      "behind": behind, "restartable": restartable,
                      "protocol": read_int(os.path.join(state, "protocol")),
-                     "session_gen": read_text(os.path.join(state, "session-gen"))[:16]})
+                     "session_gen": read_text(os.path.join(state, "session-gen"))[:16],
+                     # when its session began (a launcher at PROTOCOL 2 writes it): the board tells
+                     # which bots run a session older than a skill's last edit
+                     "session_started": read_text(os.path.join(state, "session-started"))[:40]})
     return rows
 
 
@@ -470,7 +474,9 @@ def snapshot():
     except OSError:
         load = None
     return {"cores": os.cpu_count(), "load": load, "mem_total_mb": total, "mem_free_mb": free,
-            "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots()}
+            "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots(),
+            # the box's BOT_SKILLS, deprecated: /fleet says which are not on the board yet
+            "bot_skills": setting("BOT_SKILLS").split()[:50]}
 
 
 class Handover:
