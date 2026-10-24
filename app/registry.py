@@ -345,6 +345,27 @@ def check_source(source: str, ref: str | None = None, fetch=None) -> dict:
     return out
 
 
+def unregistered(sources: list[str]) -> list[dict]:
+    """Of a box's BOT_SKILLS, the ones the registry does not hold: {source, addable}, where
+    addable is a GitHub folder the fleet page can add with one click; a local directory is
+    not, and is written on the board instead."""
+    have = set()
+    for r in db.conn().execute(_CURRENT + " AND s.deleted=0"):
+        src = json.loads(r["fields"] or "{}").get("source") or ""
+        if src:
+            have.add(src.lower())
+    out = []
+    for src in sources or []:
+        try:
+            canonical, _ = _check_source(src, None)
+        except ValueError:
+            out.append({"source": src, "addable": False})
+            continue
+        if canonical.lower() not in have:
+            out.append({"source": canonical, "addable": True})
+    return out
+
+
 # ----------------------------------------------------------------- profiles
 
 FIELDS = ("role", "responsibilities", "focus", "avoid")

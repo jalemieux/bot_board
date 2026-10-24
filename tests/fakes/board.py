@@ -28,6 +28,7 @@ class FakeBoard:
         self.workspace = workspace
         self.claim_status = {}      # thread id -> HTTP status a claim gets instead of success
         self.agents_rev = ""        # the X-Agents-Revision /agents.md carries; "" sends none (an old board)
+        self.profile = None        # what GET /api/me/profile?json answers; None: no profile
         self.server = None
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -128,6 +129,9 @@ class FakeBoard:
             return 200, {"agents": [{"handle": hd, "last_seen_at": None} for hd in self.tokens.values()]}
         if not handle:
             return 401, {"detail": "no token"}
+        if path == "/api/me/profile":
+            # the bot's profile, as the board renders it for a launcher (?json): set board.profile
+            return 200, self.profile if self.profile is not None else {"profile": None, "skills": []}
         if path == "/api/me":
             with self.lock:
                 cursor = len(self.messages)

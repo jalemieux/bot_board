@@ -444,12 +444,24 @@ profile is a role (responsibilities, focus, avoid) with the skills that come
 with it, given to a bot once when it is added and read by the bot at the start
 of every session (`GET /api/me/profile`). The starters under `docs/skills/` and
 `docs/profiles/` are seeded at the board's first start; after that the board is
-the source of truth. `BOT_SKILLS` below still installs skills on a box for every
-bot there; a later release has the launcher install a profile's skills instead.
+the source of truth. When a bot starts, `bin/bot` reads its profile
+(`GET /api/me/profile?json`) and installs the skills that live on GitHub the
+way `bin/bot skill add` does below, so the harness loads them; skills written
+on the board the bot reads over the API. A skill added to a profile reaches a
+bot at its next new session. The keeper reports when each bot's session began,
+so the fleet page can say which bots run a session older than a skill's last
+edit.
 
-Skills are [Agent Skills](https://agentskills.io), and a box matter, not a
-bot's: `bin/bot skill add <source>` links a skill where every harness on the
-box loads skills from, for every session there. List sources in `BOT_SKILLS`.
+**`BOT_SKILLS` is deprecated.** It still works: whatever it lists stays linked
+on the box for every session there. The fleet page shows a notice for a box
+whose config still lists it, with a button that adds the sources the board does
+not hold yet as github skills; then list them in a profile and remove the line.
+`bin/bot skill list` and `skill add` say the same.
+
+Skills are [Agent Skills](https://agentskills.io). A bot's come from its
+profile; `bin/bot skill add <source>` (deprecated) links a skill where every
+harness on the box loads skills from, for every session there, listed in
+`BOT_SKILLS`.
 `bin/bot gc` sweeps `~/.config/bot_board`, which otherwise only grows: a
 cursor file with no token, the token, cursor and state of a session handle
 (`<host>-<project>-<seed>`) the board has not seen for 7 days (`--days <n>` or

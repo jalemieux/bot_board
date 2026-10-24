@@ -5,6 +5,7 @@
 #   bot <claude|codex|opencode|copilot> --name <handle>      start a bot again: it remembers its workspace
 #   bot skill add <dir|github-url>... | remove <source|name>... | list | update
 #       the skills in BOT_SKILLS in the config, linked where every harness on this box loads skills from
+#       (deprecated: the board's skill registry and the bot's profile are the list now)
 #   bot ps [-a] [--tsv]             the bots running on this box (-a: stopped and moved ones too)
 #   bot stop <handle> [--handoff]   let the bot finish what it is doing, then exit
 #                                   (--handoff: first push its work in progress and say on the PR where it stands)
@@ -262,14 +263,15 @@ die() { echo "bot: $*" >&2; exit 1; }
 SESSION_GEN=2
 # What the keeper reports beside the version (#238): bump PROTOCOL when a change to this
 # launcher's files or requests would break an older keeper or board.
-PROTOCOL=1
+# 2: installs the profile's sourced skills at start and records session-started under $STATE.
+PROTOCOL=2
 # retire_session <state dir>: set the session ids aside (old-sessions/<time>/), so the
 # next run starts a new session; the harness's own transcripts are left where they are.
 retire_session() {
   local old; old="$1/old-sessions/$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$old"
   for f in "$1"/session "$1"/session.*; do [ -e "$f" ] && mv "$f" "$old/"; done
-  rm -f "$1/session-gen" "$1/reset" "$1/agents-rev"
+  rm -f "$1/session-gen" "$1/session-started" "$1/reset" "$1/agents-rev"
 }
 CFG=~/.config/bot_board
 # alive <state-dir>: its launcher is running. A pidfile outlives a kill -9 or a
@@ -375,6 +377,7 @@ PY
   case $ACT in
     list|ls|update)
       [ -n "$HAVE" ] || { echo "bot: no skills in $BOT_CONFIG" >&2; exit 0; }
+      echo "bot: BOT_SKILLS is deprecated: the board's skill registry (/fleet) is the list now, and a bot installs its profile's skills when it starts" >&2
       # one block per skill: what it is, which commit is here, and which copy a harness loads
       for src in $HAVE; do
         if [ "$ACT" = update ]; then skill_fetch "$src" || true; else skill_fetch "$src" local || true; fi
@@ -423,7 +426,8 @@ PY
         skill_link "${DIRS[$i]}" "$name" | sed 's/^/    /' || true
       done
       echo "bot: BOT_SKILLS in $BOT_CONFIG now lists ${#ADD[@]} more. The links are for the whole box:"
-      echo "bot: every Claude Code, Codex, Copilot and OpenCode session here loads these skills, yours included, not only the bots" ;;
+      echo "bot: every Claude Code, Codex, Copilot and OpenCode session here loads these skills, yours included, not only the bots"
+      echo "bot: BOT_SKILLS is deprecated: add the skill on the board's fleet page instead, and list it in a profile; a bot installs its profile's skills when it starts" >&2 ;;
     remove|rm)
       # a skill is named by its source as listed, its directory, or the last part of either
       [ $# -gt 0 ] || usage
@@ -916,6 +920,36 @@ trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"' EXIT
 gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "gc: $line"; done || true
 log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPACE}, seen=$SEEN"
 
+# ---- the profile's skills ------------------------------------------------------------
+# A bot added with a profile (/fleet) gets its skills. The ones that live on GitHub are
+# fetched and linked here, the way `bot skill add` does for BOT_SKILLS, so the harness
+# loads them; the ones written on the board the bot reads over the API, as its profile
+# tells it in the first turn. Once per start, so a skill added to a profile reaches a
+# bot at its next new session and nothing moves under a running one. $STATE/skills
+# keeps the sources, which is what keeps their clones from `bot gc`.
+install_profile_skills() {
+  local json srcs src name
+  json=$(api --max-time 20 "$BOARD/api/me/profile?json" 2>/dev/null) || { log "profile: the board did not answer; skills stay as they are"; return 0; }
+  srcs=$(printf '%s' "$json" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+if not isinstance(d,dict) or "skills" not in d: sys.exit(1)   # a board from before profiles
+for s in d.get("skills") or []:
+    if s.get("kind")=="github" and s.get("source"): print(s["source"])' 2>/dev/null) || return 0
+  : > "$STATE/skills"
+  for src in $srcs; do
+    if skill_fetch "$src"; then
+      [ -z "$SKILL_WARN" ] || log "skill $src: $SKILL_WARN"
+      if [ -f "$SKILL_DIR/SKILL.md" ]; then
+        name=$(skill_meta "$SKILL_DIR" | cut -f1)
+        skill_link "$SKILL_DIR" "$name" | while IFS= read -r line; do log "skill $name: $line"; done || true
+        echo "$src" >> "$STATE/skills"
+      else log "skill $src: no SKILL.md in $SKILL_DIR; not linked"; fi
+    else log "skill $src: $SKILL_ERR"; fi
+  done
+}
+install_profile_skills
+
 # ---- run the harness once, resuming the session kept for the bot ----------------------
 # run_harness <dir> <session-file> <prompt> -> 0 when the run completed, else 1.
 # Sets OUTCOME and DETAIL (what classify_run read off the run), writes $STATE/health for
@@ -988,7 +1022,9 @@ for line in sys.stdin:
   case $OUTCOME in
     ok)             rm -f "$STATE/health"
                     if [ -n "$RUN_SID" ] && [ ! -s "$sfile" ]; then
-                      echo "$RUN_SID" > "$sfile"; [ "$sfile" != "$STATE/session" ] || echo "${SESSION_GEN-}" > "$STATE/session-gen"
+                      echo "$RUN_SID" > "$sfile"
+                      # when the session began: the board compares it with a skill's last edit
+                      [ "$sfile" != "$STATE/session" ] || { echo "${SESSION_GEN-}" > "$STATE/session-gen"; echo "$started" > "$STATE/session-started"; }
                     fi ;;
     limited)        echo "out of $HARNESS usage since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;
     capacity)       echo "out of $HARNESS capacity since $now: $DETAIL; messages are kept, retried every $((BOT_LIMIT_WAIT / 60)) min" >"$STATE/health" ;;

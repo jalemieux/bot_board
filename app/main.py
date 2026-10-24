@@ -632,6 +632,8 @@ class FleetBot(BaseModel):
     protocol: int | None = Field(default=None, description="Its bin/bot's PROTOCOL; null from one before #238.")
     session_gen: str = Field(default="", description="The first-prompt generation its session started under"
                              " (SESSION_GEN, #221); empty before that was recorded.", max_length=16)
+    session_started: str = Field(default="", description="When its session began, ISO 8601; empty from a launcher"
+                                 " before PROTOCOL 2, or before a first run succeeded.", max_length=40)
 
 
 class FleetCredential(BaseModel):
@@ -657,6 +659,8 @@ class FleetReportIn(BaseModel):
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
+    bot_skills: list[str] = Field(default_factory=list, max_length=50, description="The box's BOT_SKILLS sources,"
+                                  " deprecated in favour of the registry; the fleet page says which are not on it yet.")
     credentials: list[FleetCredential] = Field(default_factory=list, max_length=20, description="What bots here"
                                                " need, as the keeper last checked it. Secrets themselves never come here.")
     operators: list[str] = Field(default_factory=list, max_length=50, description="Sent by keepers from before"
