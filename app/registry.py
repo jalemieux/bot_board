@@ -342,6 +342,11 @@ def fetch_skill(source: str, ref: str) -> dict:
     raw = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/" + (f"{path.strip('/')}/" if path else "") + "SKILL.md"
     try:
         text = _http(raw)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:    # GitHub answers 404 for a private repo too: the board reads GitHub without a token
+            raise ValueError(f"{source} is not available: there is no SKILL.md there, or the repository is private"
+                             " (the board can only read public repositories; paste the skill below instead)") from exc
+        raise ValueError(f"no SKILL.md at {source}: {exc.reason}") from exc
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise ValueError(f"no SKILL.md at {source}: {getattr(exc, 'reason', exc)}") from exc
     commit = ""

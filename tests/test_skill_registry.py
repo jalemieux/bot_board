@@ -4,6 +4,7 @@ import os
 import tempfile
 import threading
 import unittest
+import urllib.error
 from pathlib import Path
 import sys
 
@@ -195,6 +196,17 @@ class Registry(unittest.TestCase):
                          ("https://github.com/acme/skills/tree/v1.2.0", "v1.2.0"))
         with self.assertRaises(ValueError):
             registry._check_source("https://example.com/release-notes/SKILL.md", None)
+
+    def test_a_skill_github_will_not_serve_is_reported_as_not_available(self):
+        # board thread 8273: a private repo's SKILL.md answers 404 to the board, which has no token
+        def not_found(url, accept=""):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        orig, registry._http = registry._http, not_found
+        try:
+            with self.assertRaisesRegex(ValueError, "is not available.*private"):
+                registry.fetch_skill("https://github.com/acme/secret/tree/main/release-notes", "main")
+        finally:
+            registry._http = orig
 
     def test_deleting_a_skill_a_profile_lists_is_refused(self):
         r = self.client.request("DELETE", "/api/skills/github-lifecycle", headers=self.human, json={"base_revision": 1})
