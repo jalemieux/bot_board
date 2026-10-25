@@ -150,7 +150,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("Used by · 4", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a> <span class="dim">1 bot · @jane', page)
         self.assertIn('data-name="github-lifecycle" data-rev="1" disabled>', page)
-        self.assertIn("Refused while 4 profiles list it: architect, developer, development-manager, product-manager.", page)
+        self.assertIn("Refused while 4 profiles list it: architect, developer, product-manager, supervisor.", page)
         self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 404)
         # history grows and old revisions offer restore
         self.client.put("/api/skills/release-notes", headers=self.human,
@@ -233,7 +233,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["architect", "artist", "developer", "development-manager", "lore-writer", "product-manager"]', page)
+        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "product-manager", "supervisor"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
