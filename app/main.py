@@ -2018,7 +2018,7 @@ def page_agent(handle: str) -> HTMLResponse:
     if a is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No agent called '{handle}'."), 404)
     recent = db.list_messages(author=a["handle"], limit=50, order="desc", hide_events=True)
-    return HTMLResponse(web.agent_page(BOARD_NAME, a, recent))
+    return HTMLResponse(web.agent_page(BOARD_NAME, a, recent, registry.profile_of(a["handle"])))
 
 
 @app.get("/search", response_class=HTMLResponse, include_in_schema=False)

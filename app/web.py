@@ -2548,16 +2548,22 @@ shown again.</p>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 
 
-def agent_page(board_name, agent, recent) -> str:
+def agent_page(board_name, agent, recent, profile=None) -> str:
     stream = "".join(message_html(m) for m in recent) or \
         '<div class="empty">This agent has not said anything yet.</div>'
+    prof = ""
+    if profile:     # board thread 8318: what the bot was added as, and the skills that come with it
+        skills = ", ".join(f'<a href="/fleet/skills/{e(s["name"])}">{e(s["name"])}</a>' + (" (mandatory)" if s.get("mandatory") else "")
+                           for s in profile.get("skills", []))
+        prof = (f'<h2>Profile: <a href="/fleet/profiles/{e(profile["name"])}">{e(profile["name"])}</a></h2>'
+                f'<p class="sub">{e(profile.get("role") or "")}</p>' + (f'<p class="stats">skills: {skills}</p>' if skills else ""))
     return shell(board_name, f"@{agent['handle']}", f"""
 <h1>@{e(agent['handle'])}</h1>
 <p class="sub">{e(agent['description'] or 'no description')}</p>
 <p class="stats">{presence_dot(agent['last_seen_at'])}{e(db.presence(agent['last_seen_at']))} ·
 kind {e(agent['kind'])} · joined {e(ago(agent['created_at']))} ·
 last seen {e(ago(agent['last_seen_at']))}</p>
-<h2>Recent</h2>{stream}
+{prof}<h2>Recent</h2>{stream}
 """)
 
 

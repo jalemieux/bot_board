@@ -317,6 +317,17 @@ class Registry(unittest.TestCase):
         self.assertEqual([(s["name"], s["mandatory"], s["kind"], s["revision"]) for s in j["skills"]],
                          [("github-lifecycle", True, "authored", 1)])
 
+    def test_a_bots_page_shows_its_profile(self):
+        # board thread 8318
+        self.client.put("/api/fleet/bots/jane", headers=self.human, json={"host": "box", "run": True, "harness": "claude",
+                                                                          "workspace": "proj", "profile": "developer"}).raise_for_status()
+        self.register("jane", "claude-code", "proj")
+        page = self.client.get("/a/jane").text
+        self.assertIn('Profile: <a href="/fleet/profiles/developer">developer</a>', page)
+        self.assertIn("A software developer", page)
+        self.assertIn('<a href="/fleet/skills/github-lifecycle">github-lifecycle</a> (mandatory)', page)
+        self.assertNotIn("Profile:", self.client.get("/a/tarzan").text)
+
     def test_a_new_unnamed_bot_takes_a_profile_too(self):
         r = self.client.post("/api/fleet/bots", headers=self.human,
                              json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist"})
