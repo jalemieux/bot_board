@@ -95,7 +95,8 @@ def init() -> None:
             c.execute("ALTER TABLE fleet_bots RENAME COLUMN project TO workspace")
             have.add("workspace")
         # profile: the profile the bot was added with (its role and skills); set once, never changed.
-        for col in EXTRA_COLUMNS + ("workspace", "profile"):
+        # channels: the channels of its workspace it claims new threads in (JSON list); empty: any.
+        for col in EXTRA_COLUMNS + ("workspace", "profile", "channels"):
             if col not in have:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         c.commit()
@@ -193,21 +194,47 @@ def forget(name: str) -> bool:
     return bool(n)
 
 
-def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None, threads=None, profile=None):
+def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None, threads=None, profile=None,
+              channels=None):
     c.execute(
-        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, workspace, threads, profile)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)"
+        "INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, kill, workspace, threads, profile, channels)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
         " ON CONFLICT(handle) DO UPDATE SET host=excluded.host, harness=excluded.harness, run=excluded.run,"
         " set_by=excluded.set_by, set_at=excluded.set_at, problem='', move_to=NULL, kill=excluded.kill,"
         " threads=excluded.threads, retired=CASE WHEN excluded.run THEN NULL ELSE retired END,"
-        " workspace=COALESCE(excluded.workspace, workspace), profile=COALESCE(excluded.profile, profile)",
+        " workspace=COALESCE(excluded.workspace, workspace), profile=COALESCE(excluded.profile, profile),"
+        " channels=COALESCE(excluded.channels, channels)",
         (handle, host.lower(), harness, int(run), by, now, now if kill else None, workspace or None,
-         threads if threads in ("handoff", "retire") else None, profile or None),
+         threads if threads in ("handoff", "retire") else None, profile or None,
+         json.dumps(channels) if channels is not None else None),
     )
 
 
+def _channels_problem(workspace: str | None, profile: str | None, channels: list[str] | None,
+                      stored: str | None, run: bool) -> str | None:
+    """Why these channels will not do: one is not a channel of the bot's workspace, or the
+    profile is specialized and the bot would start bound to nothing."""
+    from . import registry, workspaces
+    if channels is not None:
+        if not workspace:
+            return "say which workspace the bot belongs to before binding it to channels"
+        try:
+            ws = workspaces.find(workspace)
+        except KeyError:
+            return f"no workspace named {workspace}"
+        known = {ch["slug"].lower() for ch in workspaces.channels_of(ws, include_archived=False)}
+        bad = [ch for ch in channels if ch.lower() not in known]
+        if bad:
+            return f"not a channel of {workspace}: {', '.join(bad)}"
+    bound = channels if channels is not None else (json.loads(stored) if stored else [])
+    if run and not bound and registry.is_specialized(profile):
+        return f"{profile} is a specialized profile: pick at least one channel of its workspace for the bot"
+    return None
+
+
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
-         workspace: str | None = None, threads: str | None = None, profile: str | None = None) -> str | None:
+         workspace: str | None = None, threads: str | None = None, profile: str | None = None,
+         channels: list[str] | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
@@ -215,7 +242,9 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     starts it with that, and a registered bot of no workspace is put in it. threads,
     with a stop: keep its open threads, handoff (release them once it has stopped) or
     retire (hand off, and drop it from the stopped list). profile: for a new bot, the profile
-    it is added with; a bot that has one cannot be given another. Returns None, or why not."""
+    it is added with; a bot that has one cannot be given another. channels: the channels of its
+    workspace it claims new threads in; required for a specialized profile, and changed any
+    time with set_channels. Returns None, or why not."""
     if kill and run:
         return "a kill stops the bot: ask for run false"
     if threads not in (None,) + THREADS:
@@ -246,7 +275,7 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         except KeyError:
             return f"no workspace named {workspace}"
     with db._write_lock:
-        row = c.execute("SELECT harness, workspace, profile FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        row = c.execute("SELECT harness, workspace, profile, channels FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
         harness = harness or (row["harness"] if row else None)
         now = db.now()
         if harness not in HARNESSES:
@@ -259,11 +288,41 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
             why = registry.profile_problem(handle, profile, row["profile"] if row else None)
             if why:
                 return why
-        _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads, profile)
+        ws_slug = workspace or (row["workspace"] if row else None) or db.workspace_slug((known or {}).get("workspace_id"))
+        why = _channels_problem(ws_slug, profile or (row["profile"] if row else None), channels,
+                                row["channels"] if row else None, run)
+        if why:
+            return why
+        _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads, profile, channels)
         c.commit()
     if workspace and known and not known.get("workspace_id"):
         workspaces.assign_bot(handle, workspace)
     return None
+
+
+def set_channels(handle: str, channels: list[str]) -> str | None:
+    """Bind a fleet bot to these channels of its workspace, or to none (an empty list: it
+    claims anywhere, unless its profile is specialized). Returns None, or why not."""
+    c = db.conn()
+    row = c.execute("SELECT workspace, profile, run FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    if row is None:
+        return f"{handle} is not a fleet bot"
+    known = db.get_agent_by_handle(handle)
+    ws_slug = row["workspace"] or db.workspace_slug((known or {}).get("workspace_id"))
+    why = _channels_problem(ws_slug, row["profile"], channels, None, bool(row["run"]))
+    if why:
+        return why
+    with db._write_lock:
+        c.execute("UPDATE fleet_bots SET channels=? WHERE handle=?", (json.dumps(channels), handle))
+        c.commit()
+    return None
+
+
+def _channels(w: dict) -> list[str]:
+    try:
+        return list(json.loads(w.get("channels") or "[]"))
+    except ValueError:
+        return []
 
 
 def bot_state(b: dict, reporting: bool = True) -> dict:
@@ -658,11 +717,12 @@ def hosts() -> list[dict]:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
                          move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"], profile=w.get("profile"),
-                         threads=w["threads"], retired=w["retired"], reset=w["reset"])
+                         channels=_channels(w), threads=w["threads"], retired=w["retired"], reset=w["reset"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"],
-                       "threads": w["threads"], "retired": w["retired"], "profile": w.get("profile")}
+                       "threads": w["threads"], "retired": w["retired"], "profile": w.get("profile"),
+                       "channels": _channels(w)}
                       for w in asked.values()]
         for b in h["bots"]:
             ack = clears.get(b["handle"].lower())

@@ -38,6 +38,25 @@ something changed since the last one: what moved, what is stuck and on whom,
 and what you did about it. Point at the GitHub artifacts and the threads
 rather than retelling them.
 
+The worker of a thread owns its outcome until it posts the result and completes
+the thread, whatever the thread turns out to need. Owning does not mean doing
+every part: split the work into units, open an issue or a thread for each in the
+channel where its result is judged, and let the bot whose profile fits take it.
+Bring a helper in by mention; a mention never moves ownership. When a unit
+lands, its owner says so in the outcome thread by mention, so the loop closes.
+Post where "done" is judged: a developer's channel for code, the art channel for
+a painting. If the whole ask belongs to another profile, say so in the thread
+and release it, once, with a line on where it should go.
+
+When a human says something in a thread that outlives the task, a rule of taste
+("nothing is that bright and clean in space"), a process rule ("close a pull
+request that will not merge"), or a decision about the world, write it to the
+workspace knowledge base the same day: the owner's taste and decisions go in the
+channel's INDEX.md or a `decisions.md` beside it, with the message id as the
+source. Search the knowledge base first. If what the human said contradicts an
+entry, do not overwrite it: say so in the thread, quote both, and ask which
+holds. The next bot reads the knowledge base, not this thread.
+
 ## Focus
 
 Progress per item, not volume. The oldest unattended item first. One nudge per

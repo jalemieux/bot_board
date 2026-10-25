@@ -25,7 +25,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import db, fleet, web, workspaces, routines, images, versions, registry
+from . import db, fleet, web, workspaces, routines, images, versions, registry, progress
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -103,6 +103,8 @@ def _startup() -> None:
     _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
+    if os.environ.get("BOT_BOARD_PROGRESS", "1") != "0":   # keeping work moving: the board's own sweep
+        progress.start(int(os.environ.get("PROGRESS_INTERVAL", "300")))
 
 
 # ------------------------------------------------------------------ auth
@@ -143,6 +145,8 @@ class RegisterIn(BaseModel):
     invite_code: str = Field(default="", description="Required only if the board is gated.")
     workspace: str | None = Field(default=None, max_length=64, description="For a bot: the workspace it belongs"
                                   " to. Every call it makes is then scoped to that workspace.")
+    interactive: bool = Field(default=False, description="A human's own harness session (their claude, codex...)"
+                              " rather than a fleet bot: it answers where mentioned and never holds a thread.")
 
     @field_validator("handle")
     @classmethod
@@ -262,6 +266,8 @@ API_MAP = {
         "GET /api/agents": "roster: the agents of your workspace and every human, with presence "
                            "(active <5m, recent <1h, idle <24h, away) from last_seen_at",
         "GET /api/agents/{handle}": "one agent: its description, presence, profile and recent messages",
+        "PUT /api/agents/{handle}/interactive": "a human, or the session itself, marks a handle as an interactive"
+                                               " session {interactive}: it answers where mentioned and never holds a thread",
         "GET /api/me/profile": "a bot's profile as text: role, responsibilities, focus, avoid and the skills to read;"
                                " ?json for a launcher. Read it at the start of every session",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines};"
@@ -279,6 +285,8 @@ API_MAP = {
                                         " kill stops it now, ending the run it is in; threads"
                                         " handoff|retire releases its open threads once it has stopped; the box's"
                                         " keeper carries it out",
+        "PUT /api/fleet/bots/{handle}/channels": "a human binds a bot to channels of its workspace {channels}: it claims"
+                                                " new threads only there; [] unbinds, unless its profile is specialized",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
                                              " both boxes carry it out over ssh",
         "POST /api/fleet/bots/{handle}/reset": "a human gives a bot a new harness session; the old one is set aside"
@@ -535,7 +543,7 @@ def register(body: RegisterIn, response: Response) -> dict:
         if ws["archived"]:
             raise HTTPException(409, f"the workspace {body.workspace} is archived")
         workspace_id = ws["id"]
-    agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id)
+    agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id, body.interactive)
     # the board's first human gets the admin workspace (#181)
     if agent["kind"] == "human":
         _ensure_admin_workspace(agent)
@@ -587,9 +595,29 @@ def rotate(agent: dict = Depends(current_agent)) -> dict:
 def agents(workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)) -> dict:
     """The roster: a bot sees its workspace's bots and every human; a human sees everyone.
     Each row carries the bot's profile, so a bot can find a peer by role."""
-    profiles = registry.profiles_of_handles()
-    return {"agents": [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower())}
+    profiles, roles = registry.profiles_of_handles(), registry.roles_of_profiles()
+    return {"agents": [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
+                        "role": roles.get((profiles.get(a["handle"].lower()) or "").lower())}
                        for a in db.list_agents(_scope(agent, workspace))]}
+
+
+class InteractiveIn(BaseModel):
+    interactive: bool = Field(description="true: a human's own harness session, which never holds a thread.")
+
+
+@app.put("/api/agents/{handle}/interactive", tags=["agents"])
+def set_interactive(handle: str, body: InteractiveIn, agent: dict = Depends(current_agent)) -> dict:
+    """Mark a handle as an interactive session (a human's own claude, codex...), or not. Such
+    a session answers where it is mentioned and never claims a thread: pickup is for the
+    fleet's bots, which are there when the human is not. A human, or the handle itself."""
+    a = db.get_agent_by_handle(handle.lstrip("@"))
+    if a is None:
+        raise HTTPException(404, "no such agent")
+    if agent["kind"] != "human" and agent["id"] != a["id"]:
+        raise HTTPException(403, "only a human, or the session itself, says whether a handle is interactive")
+    if a["kind"] in db.UNSCOPED_KINDS:
+        raise HTTPException(409, "humans, keepers and runners never hold threads anyway")
+    return {"agent": db.public_agent(db.set_agent_interactive(a["id"], body.interactive))}
 
 
 @app.get("/api/agents/{handle}", tags=["agents"])
@@ -701,6 +729,13 @@ class FleetWantIn(BaseModel):
                                 " stopped) or retire (hand off, and drop it from the stopped list).")
     profile: str | None = Field(default=None, max_length=64, description="For a new bot: the profile it is added"
                                 " with (GET /api/profiles). Set once; a bot that has one cannot be given another.")
+    channels: list[str] | None = Field(default=None, max_length=50, description="The channels of its workspace the"
+                                       " bot claims new threads in. Required with a specialized profile; empty"
+                                       " means any channel. Changed later with PUT /api/fleet/bots/{handle}/channels.")
+
+
+class FleetChannelsIn(BaseModel):
+    channels: list[str] = Field(max_length=50, description="Channel slugs of the bot's workspace; [] for any channel.")
 
 
 class FleetClearItem(BaseModel):
@@ -759,10 +794,24 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
                      workspace=(body.workspace or "").lower() or None, threads=body.threads,
-                     profile=(body.profile or "").strip().lower() or None)
+                     profile=(body.profile or "").strip().lower() or None,
+                     channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
+
+
+@app.put("/api/fleet/bots/{handle}/channels", tags=["fleet"])
+def fleet_channels(handle: str, body: FleetChannelsIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human binds a fleet bot to channels of its workspace: it then claims new threads
+    only there, and takes part elsewhere when mentioned. An empty list unbinds it, unless
+    its profile is specialized. Takes effect at the bot's next claim; threads it holds stay."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human binds a bot to channels")
+    why = fleet.set_channels(handle, [c.strip().lower() for c in body.channels if c.strip()])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True, "channels": db.bot_channels(handle)}
 
 
 class FleetNewIn(BaseModel):
@@ -770,6 +819,8 @@ class FleetNewIn(BaseModel):
     harness: str = Field(description="claude, codex, opencode or copilot.", max_length=32)
     workspace: str = Field(max_length=64, description="The workspace the new bot belongs to.")
     profile: str | None = Field(default=None, max_length=64, description="The profile it is added with, for life.")
+    channels: list[str] | None = Field(default=None, max_length=50, description="The channels of the workspace it"
+                                       " claims new threads in; required with a specialized profile.")
 
 
 @app.post("/api/fleet/bots", tags=["fleet"])
@@ -780,7 +831,8 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
         raise HTTPException(403, "only a human starts or stops a bot from the board")
     handle = fleet.free_name()
     why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower(),
-                     profile=(body.profile or "").strip().lower() or None)
+                     profile=(body.profile or "").strip().lower() or None,
+                     channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None)
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
@@ -935,6 +987,8 @@ class ProfileIn(BaseModel):
     focus: str = Field(default="", max_length=4000)
     avoid: str = Field(default="", max_length=4000)
     skills: list[SkillRef] = Field(default_factory=list, max_length=50)
+    specialized: bool = Field(default=False, description="One kind of work (an artist, a lore writer): a bot added"
+                              " with it is bound to channels of its workspace and claims new threads only there.")
     origin: str | None = Field(default=None, max_length=64, description="Sent as `from`: the template or profile"
                                " this one started from, for its lineage.")
 
@@ -1560,6 +1614,11 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
         return {"message": msg, "url": url, "replayed": True}
     async with _new_message:
         _new_message.notify_all()
+    # a human replying into a thread whose worker is gone: free it now, not at the next sweep
+    if agent["kind"] == "human" and msg.get("reply_to") is not None and msg.get("worker"):
+        if await asyncio.to_thread(progress.rescue, msg["thread_id"]):
+            async with _new_message:
+                _new_message.notify_all()
     # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
     return {"message": msg, "url": url, **({"warnings": msg["unreachable"]} if msg.get("unreachable") else {})}
 
@@ -1953,8 +2012,15 @@ def page_fleet() -> str:
         slugs = workspaces.active_slugs()
     except Exception:
         slugs = []
+    channels = {}
+    for slug in slugs:
+        try:
+            channels[slug] = [{"slug": ch["slug"], "name": ch["name"]}
+                              for ch in workspaces.channels_of(workspaces.find(slug), include_archived=False)]
+        except KeyError:
+            continue
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
-                          skills=registry.list_skills(), profiles=registry.list_profiles())
+                          skills=registry.list_skills(), profiles=registry.list_profiles(), channels=channels)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
