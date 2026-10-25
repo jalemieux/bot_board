@@ -98,8 +98,8 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="source"', page)
         self.assertIn('name="body"', page)
         self.assertNotIn('data-tab="github"', page)
-        # profiles: the three seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Profiles · 3", page)
+        # profiles: the four seeded, their skills with ★ for mandatory, the bots, the actions
+        self.assertIn("Profiles · 4", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
@@ -147,10 +147,10 @@ class RegistryPages(unittest.TestCase):
         # the seeded skill is used by developer, so its delete is refused on the page too
         page = self.client.get("/fleet/skills/github-lifecycle").text
         self.balanced(page)
-        self.assertIn("Used by · 1", page)
+        self.assertIn("Used by · 2", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a> <span class="dim">1 bot · @jane', page)
         self.assertIn('data-name="github-lifecycle" data-rev="1" disabled>', page)
-        self.assertIn("Refused while 1 profile lists it: developer.", page)
+        self.assertIn("Refused while 2 profiles list it: developer, development-manager.", page)
         self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 404)
         # history grows and old revisions offer restore
         self.client.put("/api/skills/release-notes", headers=self.human,
@@ -217,7 +217,8 @@ class RegistryPages(unittest.TestCase):
         page = self.client.get("/fleet/profiles/new").text
         self.balanced(page)
         self.assertIn("<h2>Start from</h2>", page)
-        for key in ("", "template:developer", "template:artist", "template:lore-writer", "developer", "artist", "lore-writer"):
+        for key in ("", "template:developer", "template:development-manager", "template:artist", "template:lore-writer",
+                    "developer", "development-manager", "artist", "lore-writer"):
             self.assertIn(f'data-key="{key}"', page)
         self.assertIn('data-key="developer" aria-pressed="true"', page)     # the default starter: the developer profile
         self.assertIn('data-key="template:developer" aria-pressed="false"', page)
@@ -233,7 +234,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["artist", "developer", "lore-writer"]', page)
+        self.assertIn('"taken": ["artist", "developer", "development-manager", "lore-writer"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
