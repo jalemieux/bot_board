@@ -152,6 +152,43 @@ class WhoMayClaim(Base):
         self.assertTrue(rows["lena"]["role"].startswith("A visual artist"))
 
 
+class Supervision(Base):
+    def workspace(self):
+        return self.client.get("/api/workspaces/sg", headers=self.human).json()["workspace"]["supervisor"]
+
+    def test_a_workspace_knows_its_supervisor(self):
+        # one bot: nobody is expected to supervise yet
+        self.assertEqual(self.workspace(), {"handle": None, "running": False, "wanted": False})
+        for h in ("jonas", "nico"):
+            self.register(h, "claude-code", "sg")
+        self.assertEqual(self.workspace(), {"handle": None, "running": False, "wanted": True})
+        listed = next(w for w in self.client.get("/api/workspaces", headers=self.human).json()["workspaces"]
+                      if w["slug"] == "sg")
+        self.assertEqual(listed["supervisor"]["wanted"], True)
+        # a bot added with the supervisor profile, or a clone of it, is the supervisor
+        r = self.client.post("/api/profiles", headers=self.human,
+                             json={"name": "sg-supervisor", "role": "keeps sg moving", "from": "supervisor"})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.report("sven", "waiting")
+        self.add("sven", profile="sg-supervisor")
+        self.register("sven", "claude-code", "sg")
+        self.assertEqual(self.workspace(), {"handle": "sven", "running": True, "wanted": True})
+        # stopped from the fleet page: still named, not running
+        r = self.client.put("/api/fleet/bots/sven", headers=self.human,
+                            json={"host": "box", "run": False, "harness": "claude"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.workspace(), {"handle": "sven", "running": False, "wanted": True})
+
+    def test_the_pages_say_so(self):
+        page = self.client.get("/workspaces/sg").text
+        self.assertIn("No supervisor here.", page)
+        self.assertIn("Add a bot with the supervisor profile", page)
+        self.assertIn("supervisorFact(w)", page)
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("### Supervisor", readme)
+        self.assertIn("| Supervisor | The bot that owns progress in a workspace |", readme)
+
+
 class KeepingWorkMoving(Base):
     def setUp(self):
         super().setUp()
