@@ -62,8 +62,8 @@ class Registry(unittest.TestCase):
         self.assertEqual(skills["github-lifecycle"]["kind"], "authored")
         self.assertEqual(skills["github-lifecycle"]["revision"], 1)
         self.assertEqual(skills["github-lifecycle"]["author"], "board")
-        self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager", "supervisor"])
-        self.assertEqual(set(profiles), {"developer", "supervisor", "artist", "lore-writer", "product-manager", "architect"})
+        self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["architect", "developer", "moderator", "product-manager"])
+        self.assertEqual(set(profiles), {"developer", "moderator", "artist", "lore-writer", "product-manager", "architect"})
         dev = profiles["developer"]
         self.assertEqual(dev["skills"], [{"name": "github-lifecycle", "mandatory": True}])
         self.assertTrue(dev["responsibilities"].startswith("Work the threads"))
@@ -81,7 +81,7 @@ class Registry(unittest.TestCase):
         self.assertNotIn("artist", self.profiles())
         # ...but the template is still offered
         names = [t["name"] for t in self.client.get("/api/profiles/templates", headers=self.human).json()["templates"]]
-        self.assertEqual(names, ["architect", "artist", "developer", "lore-writer", "product-manager", "supervisor"])
+        self.assertEqual(names, ["architect", "artist", "developer", "lore-writer", "moderator", "product-manager"])
 
     # ---- skills
 
@@ -239,7 +239,7 @@ class Registry(unittest.TestCase):
         self.assertEqual(p["skills"], [{"name": "github-lifecycle", "mandatory": False}])
         self.assertEqual((p["from"], p["created_by"], p["bots"], p["clones"]), ("developer", "op", [], []))
         self.assertEqual(self.profiles()["developer"]["clones"], ["reviewer"])
-        self.assertEqual(sorted(self.skills()["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager", "reviewer", "supervisor"])
+        self.assertEqual(sorted(self.skills()["github-lifecycle"]["used_by"]), ["architect", "developer", "moderator", "product-manager", "reviewer"])
         # there is no edit: not PUT, not PATCH
         self.assertIn(self.client.put("/api/profiles/reviewer", headers=self.human, json=body).status_code, (404, 405))
         self.assertIn(self.client.patch("/api/profiles/reviewer", headers=self.human, json=body).status_code, (404, 405))

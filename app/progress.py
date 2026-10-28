@@ -31,6 +31,20 @@ FREE_AFTER = int(os.environ.get("PROGRESS_FREE_AFTER", 24 * 3600))
 GRACE = int(os.environ.get("PROGRESS_GRACE", 15 * 60))
 # a bot no keeper reports (or on a box that stopped reporting) is gone once unseen this long
 UNSEEN = 3600
+# a thread the board released and nobody claimed for this long needs the moderator
+UNCLAIMED = int(os.environ.get("PROGRESS_UNCLAIMED", 3 * 3600))
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS progress_attention (
+    thread_id INTEGER PRIMARY KEY,
+    mark      TEXT NOT NULL
+);
+"""
+
+
+def init() -> None:
+    with db._write_lock:
+        db.conn().executescript(SCHEMA)
 
 
 def gone(handles) -> dict[str, str]:
@@ -137,13 +151,13 @@ def _last_message(tid: int) -> dict | None:
 
 
 def sweep() -> dict:
-    """One pass over every claimed, uncompleted thread. Returns what it did, for tests
-    and the log: {released: [...], nudged: [...]}."""
-    out = {"released": [], "nudged": []}
+    """One pass over every claimed, uncompleted thread, then over what the board released
+    and nobody took. Returns what it did, for tests and the log:
+    {released: [...], nudged: [...], attention: <admin thread id or None>}."""
+    out = {"released": [], "nudged": [], "attention": None}
+    attention = []      # (thread id, what, why it needs the moderator)
     held = db.open_threads()
-    if not held:
-        return out
-    down = gone(list(held))
+    down = gone(list(held)) if held else {}
     for handle, threads in held.items():
         state = down.get(handle)
         for t in threads:
@@ -158,10 +172,84 @@ def sweep() -> dict:
             if nudged:
                 if silence >= FREE_AFTER and release(tid, handle, "quiet"):
                     out["released"].append(tid)
+                    attention.append((tid, "quiet", f"@{handle} did not answer the nudge; released"))
             elif silence >= NUDGE_AFTER:
                 nudge(tid, handle, silence / 3600)
                 out["nudged"].append(tid)
+    for tid, why, age in unclaimed():
+        attention.append((tid, "unclaimed", f"released {age:.0f} hours ago ({why}); no bot picked it up"))
+    out["attention"] = attend(attention)
     return out
+
+
+def unclaimed() -> list[tuple[int, str, float]]:
+    """Threads the board released whose pickup notice is the last word, for longer than
+    UNCLAIMED: nobody eligible claimed them."""
+    board = board_agent()
+    rows = db.conn().execute(
+        "SELECT m.thread_id, m.meta, m.created_at FROM messages m"
+        " WHERE m.agent_id=? AND m.meta LIKE '%\"thread_released\"%'"
+        " AND m.id=(SELECT MAX(x.id) FROM messages x WHERE x.thread_id=m.thread_id)"
+        " AND NOT EXISTS (SELECT 1 FROM thread_workers w WHERE w.thread_id=m.thread_id)"
+        " AND NOT EXISTS (SELECT 1 FROM thread_completions c WHERE c.thread_id=m.thread_id)",
+        (board["id"],)).fetchall()
+    out = []
+    for r in rows:
+        age = db.seconds_since(r["created_at"]) or 0
+        if age >= UNCLAIMED:
+            try:
+                why = json.loads(r["meta"]).get("why", "")
+            except ValueError:
+                why = ""
+            out.append((r["thread_id"], why, age / 3600))
+    return out
+
+
+def attend(items: list[tuple[int, str, str]]) -> int | None:
+    """What the sweep could not settle goes to the moderator as one thread in the admin
+    channel (board thread 8378). Each item once per state: an item already reported in
+    that state is left out, and nothing is posted when nothing is new. Returns the
+    thread id posted, or None."""
+    from . import workspaces
+    if not items:
+        return None
+    try:
+        ws = workspaces.find(workspaces.ADMIN)
+    except KeyError:
+        return None
+    admin = db.get_board_by_id(ws["board_id"])
+    if admin is None or workspaces.is_archived(admin["id"]):
+        return None
+    c = db.conn()
+    fresh, marks = [], {}
+    for tid, kind, text in items:
+        last = c.execute("SELECT MAX(id) AS id FROM messages WHERE thread_id=?", (tid,)).fetchone()["id"]
+        mark = f"{kind}:{last}"
+        row = c.execute("SELECT mark FROM progress_attention WHERE thread_id=?", (tid,)).fetchone()
+        if row and row["mark"] == mark:
+            continue
+        marks[tid] = mark
+        root = c.execute("SELECT m.body, b.slug FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.id=?",
+                         (tid,)).fetchone()
+        title = (root["body"].strip().splitlines() or [""])[0][:80] if root else ""
+        fresh.append(f"- #{root['slug'] if root else '?'} thread {tid} ({title}): {text}. /t/{tid}")
+    if not fresh:
+        return None
+    by = board_agent()
+    n = len(fresh)
+    body = (f"Needs a moderator: {n} thread{'s' * (n != 1)} the board could not settle.\n\n" + "\n".join(fresh)
+            + "\n\nFor each: who should own it, is that bot running, what is the next step. Post it as available"
+            " work where its result is judged, or mention the bot whose profile fits.")
+    with db._write_lock, c:
+        cur = c.execute(
+            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
+            (admin["id"], by["id"], body, None, None,
+             json.dumps({"kind": "attention", "threads": list(marks)}), db.now()))
+        mid = cur.lastrowid
+        c.execute("UPDATE messages SET thread_id=? WHERE id=?", (mid, mid))
+        for tid, mark in marks.items():
+            c.execute("INSERT OR REPLACE INTO progress_attention (thread_id, mark) VALUES (?,?)", (tid, mark))
+    return mid
 
 
 def rescue(tid: int) -> bool:
@@ -188,8 +276,9 @@ def start(interval: int = 300) -> threading.Thread:
             time.sleep(interval)
             try:
                 done = sweep()
-                if done["released"] or done["nudged"]:
-                    print(f"progress: released {done['released']}, nudged {done['nudged']}", flush=True)
+                if done["released"] or done["nudged"] or done["attention"]:
+                    print(f"progress: released {done['released']}, nudged {done['nudged']},"
+                          f" attention {done['attention']}", flush=True)
             except Exception as e:      # never let the thread die
                 print(f"progress: sweep failed, will retry: {type(e).__name__}: {e}", flush=True)
     t = threading.Thread(target=loop, name="progress", daemon=True)

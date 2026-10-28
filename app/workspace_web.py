@@ -139,6 +139,7 @@ function listView() {
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
+    var mod = moderatorNote(d); if (mod) root.appendChild(mod);
     var cards = h('div', {'class': 'cards'});
     if (!d.workspaces.length) cards.appendChild(h('p', {'class': 'sub', text: 'No workspace yet.'}));
     d.workspaces.forEach(function (w) {
@@ -148,8 +149,7 @@ function listView() {
         h('p', {text: w.purpose || ''}),
         h('div', {'class': 'facts'},
           h('span', null, 'channel ', h('a', {href: '/c/' + encodeURIComponent(w.channel), text: '#' + w.channel})),
-          h('span', null, 'bots ', h('b', {text: w.bots.length ? w.bots.map(function (b) { return '@' + b; }).join(', ') : 'none'})),
-          supervisorFact(w))));
+          h('span', null, 'bots ', h('b', {text: w.bots.length ? w.bots.map(function (b) { return '@' + b; }).join(', ') : 'none'})))));
     });
     root.appendChild(cards);
     if (d.can_create) root.appendChild(newWorkspace());
@@ -187,25 +187,17 @@ function wsView() {
     if (w.can_manage && !w.archived) root.appendChild(settingsSection(w));
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
 }
-// Who owns progress here. The board frees stuck threads by itself; a supervisor is the judgment on
-// top (reviewers, the next step, orphaned GitHub work, cross-cutting asks). A workspace of some size
-// with none running is told so (board thread 8378).
-function supervisorFact(w) {
-  var sv = w.supervisor || {};
-  if (sv.handle) return h('span', null, 'supervisor ', h('a', {href: '/a/' + encodeURIComponent(sv.handle), text: '@' + sv.handle}), sv.running ? '' : ' (stopped)');
-  return sv.wanted ? h('span', {'class': 'warn', text: 'no supervisor'}) : null;
-}
-function supervisorNote(w) {
-  var sv = w.supervisor || {};
-  if (sv.handle && sv.running) return null;
-  if (!sv.handle && !sv.wanted) return null;
-  var what = sv.handle ? '@' + sv.handle + ' is this workspace\'s supervisor and is stopped. ' : 'No supervisor here. ';
-  return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is finding reviewers, naming the next step for a stalled owner, freeing orphaned GitHub work or owning the asks that span channels. ',
-    sv.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot with the supervisor profile'}), '.');
+// The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
+// top, and the one a person asks. A board with none running is told so (board thread 8378).
+function moderatorNote(d) {
+  var m = d.moderator || {};
+  if (m.handle && m.running) return null;
+  var what = m.handle ? '@' + m.handle + ' is the moderator and is stopped. ' : 'No moderator. ';
+  return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is answering questions in the admin channel, finding reviewers, naming the next step for a stalled owner or freeing orphaned GitHub work. ',
+    m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace with the moderator profile'}), '.');
 }
 function botsSection(w) {
   var sec = h('section', null, h('h2', null, 'Bots', h('small', {text: String(w.bots.length)})));
-  var note = supervisorNote(w); if (note) sec.appendChild(note);
   sec.appendChild(h('p', {'class': 'sub'}, w.bots.length ? w.bots.map(function (b, i) {
     return [i ? ', ' : '', h('a', {href: '/a/' + encodeURIComponent(b), text: '@' + b})];
   }) : 'No bot works here yet. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), ' and pick this workspace.'));

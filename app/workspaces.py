@@ -239,33 +239,35 @@ def bots_of(ws) -> list[str]:
         "SELECT handle FROM agents WHERE workspace_id=? ORDER BY handle COLLATE NOCASE", (ws['id'],))]
 
 
-SUPERVISOR = 'supervisor'
-# a workspace with this many bots and no running supervisor is told so (board thread 8378)
-SUPERVISED_FROM = 3
+MODERATOR = 'moderator'
 
 
-def supervision(ws, bots=None) -> dict:
-    """Who owns progress here: the bot added with the supervisor profile (or one cloned from
-    it), and whether it is running. The board frees stuck threads on its own; a supervisor is
-    the judgment on top: reviewers, the next step, orphaned GitHub work, cross-cutting asks."""
+def moderation() -> dict:
+    """The board's resident bot: a bot of the admin workspace added with the moderator
+    profile (or one cloned from it), and whether it is running. The board frees stuck
+    threads on its own; the moderator is the judgment on top, and the one humans ask."""
     from . import registry
-    bots = bots_of(ws) if bots is None else bots
+    try:
+        ws = find(ADMIN)
+    except KeyError:
+        return {'handle': None, 'running': False}
+    bots = bots_of(ws)
     try:
         profiles = registry.profiles_of_handles()
         lineage = {p['name'].lower(): (p.get('from') or '').lower() for p in registry.list_profiles()}
     except db.sqlite3.OperationalError:
-        return {'handle': None, 'running': False, 'wanted': len(bots) >= SUPERVISED_FROM}
-    def supervises(name):
+        return {'handle': None, 'running': False}
+    def moderates(name):
         seen = set()
         while name and name not in seen:
-            if name == SUPERVISOR:
+            if name == MODERATOR:
                 return True
             seen.add(name)
             name = lineage.get(name, '')
         return False
     handle, running = None, False
     for b in bots:
-        if not supervises((profiles.get(b.lower()) or '').lower()):
+        if not moderates((profiles.get(b.lower()) or '').lower()):
             continue
         a = db.get_agent_by_handle(b)
         try:
@@ -277,14 +279,13 @@ def supervision(ws, bots=None) -> dict:
             handle, running = b, up
         if up:
             break
-    return {'handle': handle, 'running': running, 'wanted': len(bots) >= SUPERVISED_FROM}
+    return {'handle': handle, 'running': running}
 
 
 def describe(ws, agent=None, full=True) -> dict:
     out = {k: ws[k] for k in ('id', 'slug', 'name', 'purpose', 'created_at', 'updated_at', 'seed_thread_id')}
-    bots = bots_of(ws)
     out.update(channel=home_slug(ws), archived=bool(ws['archived']), can_manage=can_manage(ws, agent),
-               bots=bots, supervisor=supervision(ws, bots))
+               bots=bots_of(ws))
     if full:
         out.update(channels=channels_of(ws),
                    documents=db.conn().execute(
@@ -299,7 +300,8 @@ def describe(ws, agent=None, full=True) -> dict:
 def list_workspaces(agent=None, after=0, limit=50) -> dict:
     rows = db.conn().execute('SELECT * FROM workspaces WHERE id>? ORDER BY id LIMIT ?',
                              (after, limit + 1)).fetchall()
-    return {'workspaces': [describe(dict(w), agent, full=False) for w in rows[:limit]],
+    return {'moderator': moderation(),
+            'workspaces': [describe(dict(w), agent, full=False) for w in rows[:limit]],
             'can_create': is_admin(agent), 'has_more': len(rows) > limit,
             'next_after': rows[limit - 1]['id'] if len(rows) > limit else None}
 

@@ -465,7 +465,14 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
         "SELECT 1 FROM fleet_bots WHERE handle=?", (handle,)).fetchone())
     if not db.HANDLE_RE.fullmatch(handle) or taken:
         handle = free_name()
-    why = want(handle, host, True, harness, (operators or [keeper])[0], workspace=workspaces.ADMIN)
+    # the board's resident bot: the moderator profile when the registry has it (board thread 8378)
+    from . import registry
+    try:
+        registry.get_profile(workspaces.MODERATOR)
+        profile = workspaces.MODERATOR
+    except (KeyError, db.sqlite3.OperationalError):
+        profile = None
+    why = want(handle, host, True, harness, (operators or [keeper])[0], workspace=workspaces.ADMIN, profile=profile)
     if why:
         return {"waiting": why}
     return {"handle": handle, "harness": harness, "created": True, "workspace": workspaces.ADMIN}

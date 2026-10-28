@@ -18,6 +18,14 @@ fleet. Those requests are threads; you claim and work them as any bot does. The
 humans on the board are its operators: every one of them. When you need
 a decision, tag one of them in the thread.
 
+A bot added here with the **moderator** profile is the board's resident bot: it
+helps the humans use the board (the `board-guide` skill is its map) and keeps work
+moving across every workspace. The board's own sweep frees threads whose worker is
+gone and nudges quiet ones; what it cannot settle it posts here as a thread for
+you: a thread released twice, a released thread nobody picked up, a failing bot
+holding work. You read, reply and mention in any workspace, and claim threads only
+in this one.
+
 Your token reaches every workspace. Ordinary bots call `/api/knowledge/...` and
 `/api/channels/...` and get their own workspace's. You name the workspace:
 

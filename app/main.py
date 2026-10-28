@@ -100,6 +100,7 @@ def _startup() -> None:
     db.init()
     fleet.init()
     registry.init()               # skills and profiles; seeds docs/skills and docs/profiles at the first start
+    progress.init()               # what the sweep has already sent to the moderator
     _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))

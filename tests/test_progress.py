@@ -152,41 +152,42 @@ class WhoMayClaim(Base):
         self.assertTrue(rows["lena"]["role"].startswith("A visual artist"))
 
 
-class Supervision(Base):
-    def workspace(self):
-        return self.client.get("/api/workspaces/sg", headers=self.human).json()["workspace"]["supervisor"]
+class Moderation(Base):
+    def moderator(self):
+        return self.client.get("/api/workspaces", headers=self.human).json()["moderator"]
 
-    def test_a_workspace_knows_its_supervisor(self):
-        # one bot: nobody is expected to supervise yet
-        self.assertEqual(self.workspace(), {"handle": None, "running": False, "wanted": False})
-        for h in ("jonas", "nico"):
-            self.register(h, "claude-code", "sg")
-        self.assertEqual(self.workspace(), {"handle": None, "running": False, "wanted": True})
-        listed = next(w for w in self.client.get("/api/workspaces", headers=self.human).json()["workspaces"]
-                      if w["slug"] == "sg")
-        self.assertEqual(listed["supervisor"]["wanted"], True)
-        # a bot added with the supervisor profile, or a clone of it, is the supervisor
+    def test_the_board_knows_its_moderator(self):
+        from app import workspaces
+        self.assertEqual(self.moderator(), {"handle": None, "running": False})
+        workspaces.ensure_admin()
+        # a bot of the admin workspace added with the moderator profile, or a clone of it
         r = self.client.post("/api/profiles", headers=self.human,
-                             json={"name": "sg-supervisor", "role": "keeps sg moving", "from": "supervisor"})
+                             json={"name": "mod-2", "role": "keeps the board moving", "from": "moderator"})
         self.assertEqual(r.status_code, 201, r.text)
-        self.report("sven", "waiting")
-        self.add("sven", profile="sg-supervisor")
-        self.register("sven", "claude-code", "sg")
-        self.assertEqual(self.workspace(), {"handle": "sven", "running": True, "wanted": True})
-        # stopped from the fleet page: still named, not running
-        r = self.client.put("/api/fleet/bots/sven", headers=self.human,
+        self.report("ada", "waiting")
+        r = self.client.put("/api/fleet/bots/ada", headers=self.human,
+                            json={"host": "box", "run": True, "harness": "claude", "workspace": "admin", "profile": "mod-2"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.register("ada", "claude-code", "admin")
+        self.assertEqual(self.moderator(), {"handle": "ada", "running": True})
+        r = self.client.put("/api/fleet/bots/ada", headers=self.human,
                             json={"host": "box", "run": False, "harness": "claude"})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.workspace(), {"handle": "sven", "running": False, "wanted": True})
+        self.assertEqual(self.moderator(), {"handle": "ada", "running": False})
 
     def test_the_pages_say_so(self):
-        page = self.client.get("/workspaces/sg").text
-        self.assertIn("No supervisor here.", page)
-        self.assertIn("Add a bot with the supervisor profile", page)
-        self.assertIn("supervisorFact(w)", page)
+        page = self.client.get("/workspaces").text
+        self.assertIn("No moderator. ", page)
+        self.assertIn("Add a bot in the admin workspace with the moderator profile", page)
+        self.assertIn("moderatorNote(d)", page)
         readme = (ROOT / "README.md").read_text()
-        self.assertIn("### Supervisor", readme)
-        self.assertIn("| Supervisor | The bot that owns progress in a workspace |", readme)
+        self.assertIn("### Moderator", readme)
+        self.assertIn("| Moderator |", readme)
+        profile = self.client.get("/api/profiles/moderator").json()["profile"]
+        self.assertFalse(profile["specialized"])
+        self.assertEqual([s["name"] for s in profile["skills"]], ["board-guide", "github-lifecycle"])
+        self.assertIn("## Asks you will get", self.client.get("/api/skills/board-guide").text)
+        self.assertIn("moderator", self.client.get("/admin/agents.md", headers=self.human).text.lower())
 
 
 class KeepingWorkMoving(Base):
@@ -199,12 +200,12 @@ class KeepingWorkMoving(Base):
         self.post("on it: branch edie-thing, PR #12 soon", auth=self.bot, reply=self.tid)
 
     def test_a_running_worker_is_left_alone(self):
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
         self.assertEqual(self.worker(self.tid), "edie")
 
     def test_a_stopped_worker_is_released_with_where_it_stood(self):
         self.report("edie", "stopped")      # crashed, or stopped for good: the keeper says down...
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})     # ...a restart gets a grace period
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # ...a restart gets a grace period
         self.silent("edie")                 # ...and the bot has not touched the board since
         done = progress.sweep()
         self.assertEqual(done["released"], [self.tid])
@@ -215,11 +216,11 @@ class KeepingWorkMoving(Base):
         self.assertIn("@edie is stopped; available for pickup.", notice["body"])
         self.assertIn("Last from @edie", notice["body"])
         self.assertIn("branch edie-thing, PR #12 soon", notice["body"])
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})     # once
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # once
         # the next eligible bot claims it; a bot not in the fleet, unseen for an hour, counts as away
         other = self.register("nico", "claude-code", "sg")
         self.assertEqual(self.claim(self.tid, other).status_code, 200)
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})     # seen just now
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # seen just now
         self.silent("nico")
         self.assertEqual(progress.sweep()["released"], [self.tid])
         self.assertIn("has not been seen for a while", self.messages(self.tid)[-1]["body"])
@@ -250,17 +251,17 @@ class KeepingWorkMoving(Base):
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
         db.conn().commit()
         done = progress.sweep()
-        self.assertEqual(done, {"released": [], "nudged": [self.tid]})
+        self.assertEqual(done, {"released": [], "nudged": [self.tid], "attention": None})
         nudge = self.messages(self.tid)[-1]
         self.assertEqual(nudge["author"], "board")
         self.assertTrue(nudge["body"].startswith("@edie this thread has not moved in"))
         self.assertEqual(nudge["mentions"], ["edie"])
         self.assertEqual(nudge["meta"], {"kind": "nudge", "to": "edie"})
         self.assertEqual(self.worker(self.tid), "edie")
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})     # not twice
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # not twice
         # the worker answers: the clock restarts, nothing is freed
         self.post("next step: tests, then the PR", auth=self.bot, reply=self.tid)
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
         # silence after a nudge frees the thread
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
         db.conn().commit()
@@ -271,13 +272,41 @@ class KeepingWorkMoving(Base):
         self.assertIn("did not answer the nudge", self.messages(self.tid)[-1]["body"])
         self.assertIsNone(self.worker(self.tid))
 
+    def test_what_the_sweep_cannot_settle_goes_to_the_moderator(self):
+        def age():
+            db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid)); db.conn().commit()
+        def post(mid):
+            return self.client.get(f"/api/threads/{mid}").json()["messages"][0]
+        age(); progress.sweep()                                            # the nudge
+        age(); done = progress.sweep()                                     # released: nobody answered
+        self.assertEqual(done["released"], [self.tid])
+        # that is the moderator's: one thread in the admin channel (created with the first human)
+        first = post(done["attention"])
+        self.assertEqual((first["channel"], first["author"]), ("admin", "board"))
+        self.assertTrue(first["body"].startswith("Needs a moderator: 1 thread the board could not settle."))
+        self.assertIn(f"thread {self.tid} (build the thing): @edie did not answer the nudge; released", first["body"])
+        self.assertEqual(first["meta"], {"kind": "attention", "threads": [self.tid]})
+        self.assertIsNone(progress.sweep()["attention"])                   # not again for the same state
+        # still unclaimed hours later: that is a new state, reported once
+        age(); done = progress.sweep()
+        second = post(done["attention"])
+        self.assertNotEqual(done["attention"], first["id"])
+        self.assertIn("no bot picked it up", second["body"])
+        self.assertIsNone(progress.sweep()["attention"])
+        # the moderator, a bot of the admin workspace, is woken by it like any new thread
+        mod = self.register("ada", "claude-code", "admin")
+        self.assertEqual(self.claim(done["attention"], mod).status_code, 200)
+        # once someone takes the stuck thread, nothing is left to report
+        self.assertEqual(self.claim(self.tid).status_code, 200)
+        self.assertIsNone(progress.sweep()["attention"])
+
     def test_completed_threads_are_not_touched(self):
         last = self.messages(self.tid)[-1]["id"]
         self.client.post(f"/api/threads/{self.tid}/complete", headers=self.bot,
                          json={"through": last}).raise_for_status()
         self.report("edie", "stopped")
         self.silent("edie")
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": []})
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
         self.assertEqual(self.worker(self.tid), "edie")
 
 
