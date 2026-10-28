@@ -168,7 +168,6 @@ class Board(unittest.TestCase):
         self.assertEqual(got['default_bot'], {'handle': 'ada', 'harness': 'claude', 'created': True, 'workspace': 'admin'})
         [w] = got['want']
         self.assertEqual((w['handle'], w['harness'], w['run'], w['workspace']), ('ada', 'claude', True, 'admin'))
-        self.assertEqual(w['profile'], 'moderator')     # the board's resident bot (board thread 8378)
         again = self.report(bots=[{'handle': 'ada', 'harness': 'claude', 'status': 'waiting'}], ask={'harness': 'claude'})
         self.assertEqual(again['default_bot'], {'handle': 'ada', 'harness': '', 'created': False})
 

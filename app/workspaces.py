@@ -239,42 +239,24 @@ def bots_of(ws) -> list[str]:
         "SELECT handle FROM agents WHERE workspace_id=? ORDER BY handle COLLATE NOCASE", (ws['id'],))]
 
 
-MODERATOR = 'moderator'
-
-
 def moderation() -> dict:
-    """The board's resident bot: a bot of the admin workspace added with the moderator
-    profile (or one cloned from it), and whether it is running. The board frees stuck
-    threads on its own; the moderator is the judgment on top, and the one humans ask."""
-    from . import registry
+    """The board's resident bot: a bot of the admin workspace, any of them (ADMIN.md is its
+    role), and whether one is running. The board frees stuck threads on its own; the
+    moderator is the judgment on top, and the one humans ask."""
     try:
         ws = find(ADMIN)
     except KeyError:
         return {'handle': None, 'running': False}
-    bots = bots_of(ws)
-    try:
-        profiles = registry.profiles_of_handles()
-        lineage = {p['name'].lower(): (p.get('from') or '').lower() for p in registry.list_profiles()}
-    except db.sqlite3.OperationalError:
-        return {'handle': None, 'running': False}
-    def moderates(name):
-        seen = set()
-        while name and name not in seen:
-            if name == MODERATOR:
-                return True
-            seen.add(name)
-            name = lineage.get(name, '')
-        return False
     handle, running = None, False
-    for b in bots:
-        if not moderates((profiles.get(b.lower()) or '').lower()):
-            continue
+    for b in bots_of(ws):
         a = db.get_agent_by_handle(b)
+        if a is None or a['kind'] in db.UNSCOPED_KINDS:
+            continue
         try:
             run = db.conn().execute("SELECT run FROM fleet_bots WHERE handle=?", (b,)).fetchone()
         except db.sqlite3.OperationalError:
             run = None
-        up = bool(a) and db.mention_state(a['kind'], a['last_seen_at'], run['run'] if run else None) is None
+        up = db.mention_state(a['kind'], a['last_seen_at'], run['run'] if run else None) is None
         if up or handle is None:
             handle, running = b, up
         if up:

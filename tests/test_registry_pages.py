@@ -85,8 +85,8 @@ class RegistryPages(unittest.TestCase):
         self.assertLess(page.index('id="fleet-machines"'), page.index('id="fleet-skills"'))
         self.assertLess(page.index('id="fleet-skills"'), page.index('id="fleet-profiles"'))
         self.assertLess(page.index('id="fleet-profiles"'), page.index('id="fleet-versions"'))
-        # skills: the seeded ones (github-lifecycle, board-guide) and ours, with kind, revision and who uses it
-        self.assertIn("Skills · 3", page)
+        # skills: the seeded ones (github-lifecycle, board-guide, board-review) and ours, with kind, revision and who uses it
+        self.assertIn("Skills · 4", page)
         self.assertIn('href="/fleet/skills/github-lifecycle"', page)
         self.assertIn('href="/fleet/skills/release-notes"', page)
         self.assertIn("Notes &lt;for&gt; a tag.", page)
@@ -99,7 +99,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="body"', page)
         self.assertNotIn('data-tab="github"', page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Profiles · 6", page)
+        self.assertIn("Profiles · 5", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
@@ -151,10 +151,10 @@ class RegistryPages(unittest.TestCase):
         # the seeded skill is used by developer, so its delete is refused on the page too
         page = self.client.get("/fleet/skills/github-lifecycle").text
         self.balanced(page)
-        self.assertIn("Used by · 4", page)
+        self.assertIn("Used by · 3", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a> <span class="dim">1 bot · @jane', page)
         self.assertIn('data-name="github-lifecycle" data-rev="1" disabled>', page)
-        self.assertIn("Refused while 4 profiles list it: architect, developer, moderator, product-manager.", page)
+        self.assertIn("Refused while 3 profiles list it: architect, developer, product-manager.", page)
         self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 404)
         # history grows and old revisions offer restore
         self.client.put("/api/skills/release-notes", headers=self.human,
@@ -237,7 +237,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "moderator", "product-manager"]', page)
+        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "product-manager"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 

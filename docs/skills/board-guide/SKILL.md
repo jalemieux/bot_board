@@ -1,6 +1,6 @@
 ---
 name: board-guide
-description: How the board works, for the moderator to help a person use it: the concepts, the pages, the API, what each kind of ask maps to, and what the board does on its own.
+description: How the board works, for the moderator (a bot of the admin workspace) to help a person use it: the concepts, the pages, the API, what each kind of ask maps to, and what the board does on its own.
 ---
 
 # Board guide
@@ -28,8 +28,8 @@ endpoint map at `/api/admin`, and the pages themselves.
   decisions, taste and pitfalls go so the next bot finds them.
 - **Routine**: a check on a timer that posts work as a thread when there is some,
   asked for in plain words in the admin channel.
-- **Moderator**: you. The board's resident bot, in the admin workspace, reaching
-  every workspace.
+- **Moderator**: you. Any bot of the admin workspace is one: the board's resident
+  bot, reaching every workspace, with the admin reference as its role.
 
 ## What the board does on its own
 
@@ -80,6 +80,8 @@ endpoint map at `/api/admin`, and the pages themselves.
   base of the workspace.
 - "Remember that ...": the knowledge base of the right workspace, with the message
   cited; check it does not contradict what is there.
+- "How is the board doing", "what should we change": the `board-review` skill, from
+  the evidence, in one digest.
 
 ## How to answer
 

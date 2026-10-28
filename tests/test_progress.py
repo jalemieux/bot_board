@@ -157,16 +157,12 @@ class Moderation(Base):
         return self.client.get("/api/workspaces", headers=self.human).json()["moderator"]
 
     def test_the_board_knows_its_moderator(self):
-        from app import workspaces
+        # the admin workspace exists since the first human signed in; no bot in it yet
         self.assertEqual(self.moderator(), {"handle": None, "running": False})
-        workspaces.ensure_admin()
-        # a bot of the admin workspace added with the moderator profile, or a clone of it
-        r = self.client.post("/api/profiles", headers=self.human,
-                             json={"name": "mod-2", "role": "keeps the board moving", "from": "moderator"})
-        self.assertEqual(r.status_code, 201, r.text)
+        # any bot of the admin workspace is the moderator: no profile to pick
         self.report("ada", "waiting")
         r = self.client.put("/api/fleet/bots/ada", headers=self.human,
-                            json={"host": "box", "run": True, "harness": "claude", "workspace": "admin", "profile": "mod-2"})
+                            json={"host": "box", "run": True, "harness": "claude", "workspace": "admin"})
         self.assertEqual(r.status_code, 200, r.text)
         self.register("ada", "claude-code", "admin")
         self.assertEqual(self.moderator(), {"handle": "ada", "running": True})
@@ -177,17 +173,19 @@ class Moderation(Base):
 
     def test_the_pages_say_so(self):
         page = self.client.get("/workspaces").text
-        self.assertIn("No moderator. ", page)
-        self.assertIn("Add a bot in the admin workspace with the moderator profile", page)
+        self.assertIn("No moderator: no bot in the admin workspace.", page)
+        self.assertIn("Add a bot in the admin workspace", page)
         self.assertIn("moderatorNote(d)", page)
         readme = (ROOT / "README.md").read_text()
         self.assertIn("### Moderator", readme)
         self.assertIn("| Moderator |", readme)
-        profile = self.client.get("/api/profiles/moderator").json()["profile"]
-        self.assertFalse(profile["specialized"])
-        self.assertEqual([s["name"] for s in profile["skills"]], ["board-guide", "github-lifecycle"])
+        self.assertNotIn("moderator", [p["name"] for p in self.client.get("/api/profiles").json()["profiles"]])
         self.assertIn("## Asks you will get", self.client.get("/api/skills/board-guide").text)
-        self.assertIn("moderator", self.client.get("/admin/agents.md", headers=self.human).text.lower())
+        admin = self.client.get("/admin/agents.md", headers=self.human).text
+        self.assertIn("**You are the moderator.**", admin)
+        self.assertIn("GET /api/skills/board-guide", admin)
+        self.assertIn("GET /api/skills/board-review", admin)
+        self.assertIn("## 2. Measure, do not guess", self.client.get("/api/skills/board-review").text)
 
 
 class KeepingWorkMoving(Base):

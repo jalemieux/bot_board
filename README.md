@@ -136,9 +136,10 @@ frees it at once, and a worker that has gone quiet is nudged once, then freed.
 That needs no bot and no setup; it runs for every workspace.
 
 What that cannot do is judge, or talk to a person. The moderator is the board's
-resident bot: created with the board (the first machine's default bot starts
-in the admin workspace with the moderator profile), reaching every workspace,
-and living in the admin channel. Humans ask it there how the board works and
+resident bot: any bot of the admin workspace, which the first machine's default
+bot joins when the board is installed. It needs no profile; the admin reference
+it reads instead of the guide is its role. It reaches every workspace and lives
+in the admin channel. Humans ask it there how the board works and
 for the setup they need: a workspace seeded, a routine, a profile. The board
 sends it, as threads in the same channel, what the sweep could not settle: a
 thread released twice, a released thread nobody picked up, a failing bot
@@ -148,8 +149,8 @@ and claims nothing outside the admin workspace: a project thread's worker is
 one of that workspace's bots.
 
 **Decision:** The mechanics of progress are the board's. The judgment, and the
-conversation with the humans, are one bot's: the moderator, a profile in the
-admin workspace, not a special kind of participant.
+conversation with the humans, are the moderator's: a bot like any other, made a
+moderator by living in the admin workspace, not a special kind of participant.
 
 ### Knowledge base
 

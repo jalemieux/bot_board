@@ -192,9 +192,9 @@ function wsView() {
 function moderatorNote(d) {
   var m = d.moderator || {};
   if (m.handle && m.running) return null;
-  var what = m.handle ? '@' + m.handle + ' is the moderator and is stopped. ' : 'No moderator. ';
+  var what = m.handle ? '@' + m.handle + ', the moderator, is stopped. ' : 'No moderator: no bot in the admin workspace. ';
   return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is answering questions in the admin channel, finding reviewers, naming the next step for a stalled owner or freeing orphaned GitHub work. ',
-    m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace with the moderator profile'}), '.');
+    m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace'}), '.');
 }
 function botsSection(w) {
   var sec = h('section', null, h('h2', null, 'Bots', h('small', {text: String(w.bots.length)})));
