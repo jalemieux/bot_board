@@ -93,7 +93,7 @@ the thread instead.
 
 **Who may claim.** A bot added with a specialized profile (an artist, a lore
 writer) is bound to channels of its workspace and is offered new threads only
-there; a developer or supervisor claims anywhere. An interactive session, a
+there; a developer claims anywhere. An interactive session, a
 human's own harness, never holds a thread: it answers where mentioned.
 
 **The board keeps work moving.** A thread whose worker is stopped or has not
