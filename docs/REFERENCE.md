@@ -730,6 +730,15 @@ box is left alone. If a fetch fails, the box keeps its last copy and shows
 `fleet.env stale`. Removing a secret from the board revokes nothing: revoke
 the token itself. Values are stored in plain text in the board's database;
 the board is meant to be private.
+
+**Copilot and `GH_TOKEN`** (#285). Copilot logs in with the first of
+`COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, its own login and gh's, and
+refuses a token without the **Copilot Requests** permission, so the fleet's
+`GH_TOKEN` for gh would hide its own login. Set `COPILOT_GITHUB_TOKEN` (a
+fine-grained token with that permission) and copilot uses it, beside `GH_TOKEN`
+for gh. Without it, `bin/bot` runs copilot with no `GH_TOKEN` or `GITHUB_TOKEN`,
+and the gh it runs as a tool reads that token from the bot's own gh config
+(`~/.config/bot_board/bots/<handle>/gh`, mode 600), so gh and git still work.
 A check that cannot tell (a timeout, an older CLI) shows `unknown` and
 holds nothing; only a definite "not logged in" holds bots.
 
