@@ -346,6 +346,15 @@ class Registry(unittest.TestCase):
         self.assertTrue(self.profiles()["artist"]["specialized"])
         self.assertFalse(self.profiles()["artist-2"]["specialized"])
 
+    def test_a_board_with_the_column_but_not_the_flag_gets_it_too(self):
+        # the column arrived (#270) before the template said specialized: the next start still marks it
+        with db._write_lock, db.conn() as c:
+            c.execute("UPDATE profiles SET specialized=0")
+        self.assertFalse(self.profiles()["artist"]["specialized"])
+        registry.init()
+        self.assertTrue(self.profiles()["artist"]["specialized"])
+        self.assertFalse(self.profiles()["developer"]["specialized"])
+
     def test_a_new_unnamed_bot_takes_a_profile_too(self):
         # artist is specialized: it needs the channels it will claim in (board thread 8378)
         r = self.client.post("/api/fleet/bots", headers=self.human,
