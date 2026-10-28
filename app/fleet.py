@@ -233,6 +233,26 @@ def keeps_a_box(agent_id: int) -> bool:
     return db.conn().execute("SELECT 1 FROM fleet_hosts WHERE reported_by=?", (agent_id,)).fetchone() is not None
 
 
+def members(name: str) -> dict | None:
+    """Who belongs to a box, for taking it off the fleet (#279): its keeper, the bots it
+    reports and the bots asked of it, and whether its keeper is reporting now."""
+    c = db.conn()
+    row = c.execute("SELECT h.reported_at, h.report, a.handle keeper FROM fleet_hosts h"
+                    " LEFT JOIN agents a ON a.id = h.reported_by WHERE h.name=?", (name,)).fetchone()
+    if row is None:
+        return None
+    try:
+        # a bot that moved off this box stays in its report as `moved`: it lives elsewhere
+        reported = [b.get("handle") for b in (json.loads(row["report"]).get("bots") or [])
+                    if isinstance(b, dict) and b.get("status") != "moved"]
+    except (ValueError, AttributeError):
+        reported = []
+    asked = [r[0] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (name,))]
+    bots = sorted({h for h in reported + asked if h}, key=str.lower)
+    secs = db.seconds_since(row["reported_at"])
+    return {"keeper": row["keeper"], "bots": bots, "reporting": secs is not None and secs < STALE_AFTER}
+
+
 def forget(name: str) -> bool:
     """Drop a box, so its name is free again: a retired box, or one whose keeper lost its token."""
     c = db.conn()

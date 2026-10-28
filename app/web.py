@@ -2207,6 +2207,24 @@ document.addEventListener('click', function (ev) {
     alert('Draining ' + b.dataset.host + ':\\n' + lines.join('\\n')); location.reload(); }); })
   .catch(function () { alert('could not reach the board'); });
 });
+// Take a box off the fleet (#279): forget it and retire its keeper and bots, so a fresh
+// install there reports without a 403. A box still reporting asks twice.
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.remove-box'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  var who = b.dataset.bots ? ' and its bots ' + b.dataset.bots.split(' ').map(function (h) { return '@' + h; }).join(', ') : '';
+  if (!confirm('Remove ' + b.dataset.host + ' from the fleet? Its keeper' + who + ' are taken off the board: '
+      + 'their tokens stop working and their threads are released. Their old messages stay.')) return;
+  var force = b.dataset.reporting === '1';
+  if (force && !confirm(b.dataset.host + ' is still reporting: its keeper is running. Remove it anyway? '
+      + 'Stop the keeper there, or run "bot_board uninstall all --purge" on it, or it will be refused when it next reports.')) return;
+  fetch('/api/fleet/hosts/' + encodeURIComponent(b.dataset.host) + (force ? '?force=true' : ''), {method: 'DELETE',
+    headers: {'Authorization': 'Bearer ' + ME.token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (!r.ok) { alert(d.error || d.detail || ('refused: ' + r.status)); return; }
+    location.reload(); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
 // A box's leftover BOT_SKILLS: each source is checked, then added as a github skill (#258).
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.add-skills'); if (!b) return;
@@ -2407,7 +2425,7 @@ FLEET_CSS = """
 .fleet-page .chip{font:12px var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 .fleet-page .chip span{color:var(--dim)}
 .fleet-page .abtns{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
-.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page select.move{
+.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page button.remove-box,.fleet-page select.move{
  font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
 .fleet-page button.redo,.fleet-page .fleet-alert button.clear-alert{border-color:var(--accent);color:var(--accent)}
 .fleet-page button.redo.quiet{border-color:var(--line);color:var(--ink)}
@@ -2554,6 +2572,10 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         drain = (f'<button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
                  f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
                  if h["reporting"] and drainable and others_of(h) else "")
+        # take the box off the fleet (#279): its keeper and bots are retired with it
+        remove = (f'<button type="button" class="remove-box" data-host="{e(name)}" '
+                  f'data-bots="{e(" ".join(b["handle"] for b in bots))}" data-reporting="{int(bool(h["reporting"]))}" '
+                  'title="take this machine off the fleet, with its keeper and bots">remove</button>')
         seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
                 f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
         u = h.get("update") or {}
@@ -2567,7 +2589,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
             f'<td data-label="status" class="nw">{seen}</td>'
             f'<td data-label="bots" class="nw">{len(up)} up · {len(bots) - len(up)} stopped</td>'
             f'<td data-label="load">{gauges[0]}</td><td data-label="memory">{gauges[1]}</td>'
-            f'<td data-label="logins">{creds or "—"}</td><td class="acts">{drain}</td></tr>')
+            f'<td data-label="logins">{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
     machines_html = (('<table class="bots machines"><thead><tr><th>Machine</th><th>Status</th><th>Bots</th><th>Load</th>'
                       '<th>Memory</th><th>Logins</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
