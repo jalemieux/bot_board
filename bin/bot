@@ -244,7 +244,6 @@ PY
 }
 load_fleet_env
 
-
 BOARD=${BOARD:-http://127.0.0.1:8080}
 BOT_WAIT=${BOT_WAIT:-60}
 # Headless runs cannot answer permission prompts, so the harness must be told
@@ -1045,10 +1044,15 @@ for line in sys.stdin:
 # Requests permission, so it would hide copilot's own login. Unless COPILOT_GITHUB_TOKEN is set,
 # copilot runs without GH_TOKEN and GITHUB_TOKEN, and the gh it runs as a tool reads that token
 # from a gh config of the bot's own ($STATE/gh, 0600), so gh and git still work as the fleet's.
+# It is written only when the token changes: gh rewrites it in its own form on first use.
 run_copilot() {
   if [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then copilot "$@"; return; fi
-  local t=${GH_TOKEN:-$GITHUB_TOKEN} d=$STATE/gh
-  (umask 077; mkdir -p "$d"; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n' "$t" > "$d/hosts.yml")
+  local t=${GH_TOKEN:-$GITHUB_TOKEN} d=$STATE/gh sum
+  sum=$(printf '%s' "$t" | python3 -c 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
+  if [ ! -s "$d/hosts.yml" ] || [ "$(cat "$d/token.sha" 2>/dev/null)" != "$sum" ]; then
+    (umask 077; mkdir -p "$d"; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n' "$t" > "$d/hosts.yml"
+     echo "$sum" > "$d/token.sha")
+  fi
   (unset GH_TOKEN GITHUB_TOKEN; export GH_CONFIG_DIR="$d"; copilot "$@")
 }
 # classify_run <exit> <log offset> <session id> <started>: what the run that just ended

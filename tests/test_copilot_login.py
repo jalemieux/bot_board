@@ -2,8 +2,11 @@
 otherwise runs without GH_TOKEN, so copilot's own login is used, while the gh it runs still has
 the token. Run with python -m unittest discover -s tests."""
 import json
+import os
 import stat
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -39,6 +42,24 @@ class CopilotLogin(unittest.TestCase):
         self.assertEqual(seen["GH_CONFIG_DIR"], str(state / "gh"))
         self.assertIn("oauth_token: ghp_fleet", hosts[0])
         self.assertEqual(hosts[1], 0o600)
+
+    def test_the_gh_config_is_written_again_only_when_the_token_changes(self):
+        # gh rewrites a legacy hosts.yml in its own form on first use (one GET /user): rewriting
+        # it on every run would make gh migrate it on every run
+        fn = (ROOT / "bin" / "bot").read_text().split("run_copilot() {", 1)[1].split("\n}\n", 1)[0]
+        with tempfile.TemporaryDirectory() as state:
+            hosts = Path(state) / "gh" / "hosts.yml"
+            run = lambda token: subprocess.run(
+                ["bash", "-euc", "run_copilot() {" + fn + "\n}\ncopilot() { :; }\nrun_copilot -p hi"],
+                env={**os.environ, "STATE": state, "GH_TOKEN": token, "COPILOT_GITHUB_TOKEN": "", "GITHUB_TOKEN": ""},
+                check=True)
+            run("ghp_one")
+            self.assertIn("ghp_one", hosts.read_text())
+            hosts.write_text("migrated by gh")
+            run("ghp_one")
+            self.assertEqual(hosts.read_text(), "migrated by gh")
+            run("ghp_two")
+            self.assertIn("ghp_two", hosts.read_text())
 
     def test_a_copilot_token_is_used_and_gh_keeps_gh_token(self):
         seen, hosts, _ = self.run_once({"GH_TOKEN": "ghp_fleet", "COPILOT_GITHUB_TOKEN": "github_pat_copilot"})
