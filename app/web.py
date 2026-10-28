@@ -1854,6 +1854,22 @@ def _fleet_detail(text: str) -> str:
     return ''.join(parts)
 
 
+# What a sort by Doing puts first (#282): what is wrong, then what works, then what is off.
+DOING_ORDER = {s: i for i, s in enumerate(("failing", "needs login", "out of usage", "at capacity", "starting", "working",
+                                           "waiting", "stopping", "moving", "stopped", "unknown"))}
+
+
+def _sort_value(v) -> str:
+    """The data-sort attribute a sortable cell carries: what FLEET_JS compares, a number as a number."""
+    return f' data-sort="{e(str(v).lower())}"'
+
+
+def _sortable(*labels: str) -> str:
+    """Table headings, each a button that sorts the table by its column; None: a column with nothing to sort by."""
+    return "".join(f'<th><button type="button" class="sort">{l}</button></th>' if l else
+                   '<th><span class="sr-only">Actions</span></th>' for l in labels)
+
+
 def _bot_row(b: dict, host: str, others: list) -> str:
     """One bot as one table row: who, what it is doing, its group, harness, box, when last active, and its buttons."""
     st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
@@ -1913,12 +1929,14 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
                 '<option value="">move…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
-    return (f'<tr id="bot-{e(b["handle"])}"><td class="who"><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
-            f'<td class="doing"><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
-            f'<td data-label="group">{group}</td><td data-label="profile">{profile}</td>'
-            f'<td data-label="harness">{e(b.get("harness") or "?")}</td>'
-            f'<td data-label="machine"><a href="#box-{e(host)}">{e(host)}</a></td>'
-            f'<td data-label="active" class="dim nw">{e(ago(last)) if last else "never"}</td>'
+    srt = _sort_value
+    return (f'<tr id="bot-{e(b["handle"])}"><td class="who"{srt(b["handle"])}><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
+            f'<td class="doing"{srt(DOING_ORDER.get(st["state"], len(DOING_ORDER)))}><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
+            f'<td data-label="group"{srt(b.get("workspace") or b.get("serves") or "")}>{group}</td>'
+            f'<td data-label="profile"{srt(b.get("profile") or "")}>{profile}</td>'
+            f'<td data-label="harness"{srt(b.get("harness") or "")}>{e(b.get("harness") or "?")}</td>'
+            f'<td data-label="machine"{srt(host)}><a href="#box-{e(host)}">{e(host)}</a></td>'
+            f'<td data-label="active" class="dim nw"{srt(last)}>{e(ago(last)) if last else "never"}</td>'
             f'<td class="acts">{btn}</td></tr>' + (_stop_panel(b, host) if asks and can else ""))
 
 
@@ -1944,8 +1962,7 @@ def _stop_panel(b: dict, host: str) -> str:
 
 
 def _bot_table(entries: list, others_of) -> str:
-    head = ('<thead><tr><th>Bot</th><th>Doing</th><th>Group</th><th>Profile</th><th>Harness</th><th>Machine</th>'
-            '<th>Active</th><th><span class="sr-only">Actions</span></th></tr></thead>')
+    head = f'<thead><tr>{_sortable("Bot", "Doing", "Group", "Profile", "Harness", "Machine", "Active", None)}</tr></thead>'
     rows = "".join(_bot_row(b, h["name"], others_of(h)) for h, b in entries)
     return f'<table class="bots">{head}<tbody>{rows}</tbody></table>'
 
@@ -2298,6 +2315,40 @@ document.addEventListener('submit', function (ev) {
   secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
   .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
 });
+// Each table sorts by a column from its heading (#282), by the cell's data-sort: numbers as
+// numbers, the rest as text. The sort is kept per table in this browser, so a refresh keeps it;
+// until a heading is clicked the table stays in the order the board gave it.
+function loadSorts() { try { return JSON.parse(localStorage.getItem('bb.fleetSort')) || {}; } catch (err) { return {}; } }
+function sortTable(table, col, dir) {
+  var tbody = table.tBodies[0], groups = [];
+  Array.from(tbody.rows).forEach(function (r) {     // a bot's stop panel stays under its bot
+    if (r.classList.contains('stop-panel') && groups.length) groups[groups.length - 1].push(r); else groups.push([r]);
+  });
+  var val = function (g) { var c = g[0].cells[col]; return c ? (c.dataset.sort || '') : ''; };
+  var num = function (v) { return v !== '' && !isNaN(v); };
+  groups.sort(function (a, b) {
+    var x = val(a), y = val(b);
+    return dir * (num(x) && num(y) ? x - y : x.localeCompare(y));
+  });
+  groups.forEach(function (g) { g.forEach(function (r) { tbody.appendChild(r); }); });
+  Array.from(table.tHead.rows[0].cells).forEach(function (th, i) {
+    if (i === col) th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending'); else th.removeAttribute('aria-sort');
+  });
+}
+document.querySelectorAll('.fleet-page table').forEach(function (table) {
+  var key = table.parentElement.closest('[id]'); key = key && key.id;
+  var kept = loadSorts()[key];
+  if (kept) sortTable(table, kept[0], kept[1]);
+  table.querySelectorAll('thead button.sort').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var th = b.closest('th'), col = th.cellIndex;
+      var dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
+      sortTable(table, col, dir);
+      var all = loadSorts(); all[key] = [col, dir];
+      try { localStorage.setItem('bb.fleetSort', JSON.stringify(all)); } catch (err) {}
+    });
+  });
+});
 // A link to a bot in a folded list (an alert's chip, a status item) opens the list first.
 function showTarget() {
   var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -2349,6 +2400,10 @@ FLEET_CSS = """
 .fleet-page .statstrip .stat.run b{color:var(--good)}
 .fleet-page .statstrip .stat.warn{border-color:var(--accent)}.fleet-page .statstrip .stat.warn b{color:var(--accent)}
 .fleet-page .fleet-section{margin:0 0 28px}
+.fleet-page th button.sort{all:unset;cursor:pointer}
+.fleet-page th button.sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.fleet-page th[aria-sort=ascending] button.sort::after{content:" ▲";font-size:.8em}
+.fleet-page th[aria-sort=descending] button.sort::after{content:" ▼";font-size:.8em}
 .fleet-page #fleet-attention h2{color:var(--accent)}
 .fleet-page .fleet-alert{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
  margin:0 0 8px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px}
@@ -2443,13 +2498,15 @@ def _versions_section(rows: list) -> str:
     body = ""
     for r in shown:
         name = f'<a href="{e(r["href"])}">{e(r["name"])}</a>' if r["href"] else e(r["name"])
-        body += (f'<tr class="{"" if r["current"] else "warn"}"><td>{e(r["what"])}</td><td class="who">{name}</td>'
-                 f'<td class="nw">{e(r["running"])}</td><td class="nw dim">{e(r["wanted"])}</td>'
+        srt = _sort_value
+        body += (f'<tr class="{"" if r["current"] else "warn"}"><td{srt(r["what"])}>{e(r["what"])}</td>'
+                 f'<td class="who"{srt(r["name"])}>{name}</td>'
+                 f'<td class="nw"{srt(r["running"])}>{e(r["running"])}</td><td class="nw dim"{srt(r["wanted"])}>{e(r["wanted"])}</td>'
                  f'<td>{e(r["note"]) if r["note"] else "current"}</td></tr>')
     summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
                if bots else "")
     return (f'<section class="fleet-section" id="fleet-versions"><h2>Versions</h2>{summary}'
-            '<table class="bots versions"><thead><tr><th>What</th><th>Name</th><th>Running</th><th>Wanted</th>'
+            f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
             f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
 
 
@@ -2507,14 +2564,18 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                 + (f' · running {e(k["loaded"][:12])}' if k.get("loaded") else "")
                 + (f' · {e(u["result"])}' if u.get("result") else "")
                 + (f' · checked {e(ago(u["checked"]))}' if u.get("checked") else "") + "</div>") if u else ""
+        srt = _sort_value
+        bad = sum(c["state"] != "ok" for c in h.get("credentials") or [])
         machines.append(
-            f'<tr id="box-{e(name)}"><td class="who">{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
-            f'<td data-label="status" class="nw">{seen}</td>'
-            f'<td data-label="bots" class="nw">{len(up)} up · {len(bots) - len(up)} stopped</td>'
-            f'<td data-label="load">{gauges[0]}</td><td data-label="memory">{gauges[1]}</td>'
-            f'<td data-label="logins">{creds or "—"}</td><td class="acts">{drain}</td></tr>')
-    machines_html = (('<table class="bots machines"><thead><tr><th>Machine</th><th>Status</th><th>Bots</th><th>Load</th>'
-                      '<th>Memory</th><th>Logins</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>'
+            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
+            f'<td data-label="status" class="nw"{srt(int(h["reporting"]))}>{seen}</td>'
+            f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up · {len(bots) - len(up)} stopped</td>'
+            f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
+            f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
+            # how many of its logins are in trouble
+            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}</td></tr>')
+    machines_html = (('<table class="bots machines"><thead><tr>'
+                      + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
                      '<div class="empty">No box has reported yet. Add a machine below.</div>')
     # which workspace each bot serves is on its row; the form below puts a new one in a workspace
