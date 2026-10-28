@@ -2105,7 +2105,8 @@ def page_fleet(_: dict | None = Depends(page_gate)) -> str:
         except KeyError:
             continue
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
-                          skills=registry.list_skills(), profiles=registry.list_profiles(), channels=channels)
+                          skills=registry.list_skills(), profiles=registry.list_profiles(), channels=channels,
+                          claude_token=fleet.claude_token_due())
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)

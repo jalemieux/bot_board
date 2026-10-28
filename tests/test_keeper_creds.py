@@ -7,6 +7,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from pathlib import Path
 import sys
@@ -101,6 +102,65 @@ class Keeper(unittest.TestCase):
         hands.blocked = self.creds().blocked()
         self.assertEqual(hands.reconcile([self.want()], []), {})
         self.assertEqual(len(spawned), 1)
+
+    def fleet_claude(self):
+        """claude as it behaves with CLAUDE_CODE_OAUTH_TOKEN (#283): auth status says logged in for
+        any token; a real request (-p) works for 'good', 401s for 'bad', and cannot tell for 'slow'."""
+        fake(self.bin, 'claude', f'echo "$*" >> {self.home}/claude-calls\n'
+             'if [ "$1" = auth ]; then [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] && echo \'{"loggedIn": true}\' '
+             '|| echo \'{"loggedIn": false}\'; exit 0; fi\n'
+             'case $CLAUDE_CODE_OAUTH_TOKEN in good) echo \'{"is_error": false, "result": "OK."}\' ;;\n'
+             ' bad) echo \'{"is_error": true, "api_error_status": 401, '
+             '"result": "Failed to authenticate. API Error: 401 OAuth access token is invalid."}\' ;;\n'
+             ' *) echo \'{"is_error": true, "api_error_status": 529, "result": "Overloaded"}\' ;; esac')
+
+    def tries(self):
+        try:
+            return sum(1 for line in open(os.path.join(self.home, 'claude-calls')) if line.startswith('-p'))
+        except FileNotFoundError:
+            return 0
+
+    def test_the_fleet_claude_token_is_tried_for_real(self):
+        self.fleet_claude()
+        # no token: not logged in, and no real request
+        c = self.creds()
+        self.assertEqual(c.state['claude'][0], 'missing')
+        self.assertEqual(self.tries(), 0)
+        # a good one: logged in, tried once, then not again within a day
+        c = self.creds(c, self.secrets('v1', CLAUDE_CODE_OAUTH_TOKEN='good'))
+        self.assertEqual(c.state['claude'], ('ok', ''))
+        self.creds(c); self.creds(c)
+        self.assertEqual(self.tries(), 1)
+        self.assertEqual(c.blocked(), {})
+        # rotated to a bad one: tried at once, rejected, and its bots are held
+        c = self.creds(c, self.secrets('v2', CLAUDE_CODE_OAUTH_TOKEN='bad'))
+        self.assertEqual(self.tries(), 2)
+        self.assertEqual(c.state['claude'][0], 'rejected')
+        self.assertIn('401', c.state['claude'][1])
+        self.assertEqual(c.blocked(), {'claude': 'claude token rejected: Failed to authenticate. '
+                                                 'API Error: 401 OAuth access token is invalid.'})
+        self.assertNotIn("'bad'", str(c.report({})))    # the token never goes into the report
+        # a day later the same token is tried again
+        c.probe['at'] -= self.k.TOKEN_CHECK_EVERY
+        self.creds(c)
+        self.assertEqual(self.tries(), 3)
+
+    def test_a_token_try_that_cannot_tell_holds_nothing_and_comes_again_in_an_hour(self):
+        self.fleet_claude()
+        c = self.creds(None, self.secrets('v1', CLAUDE_CODE_OAUTH_TOKEN='slow'))
+        self.assertEqual(c.state['claude'], ('ok', ''))     # what auth status said stands
+        self.assertEqual(c.blocked(), {})
+        self.creds(c)
+        self.assertEqual(self.tries(), 1)
+        c.probe['at'] -= 3600
+        self.creds(c)
+        self.assertEqual(self.tries(), 2)
+
+    def test_a_login_without_the_fleet_token_is_not_tried(self):
+        open(os.path.join(self.home, 'claude-login'), 'w').close()
+        c = self.creds()
+        self.assertEqual(c.state['claude'], ('ok', ''))
+        self.assertIsNone(c.probe)
 
     def test_codex_login_does_not_hold_claude_bots(self):
         open(os.path.join(self.home, 'claude-login'), 'w').close()
@@ -242,6 +302,28 @@ class Page(unittest.TestCase):
         self.assertIn('not logged in. It is holding 2 bots.', page)
         self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
 
+
+    def test_a_rejected_fleet_token_says_how_to_replace_it(self):
+        tok = self.client.post('/api/agents', json={'handle': 'keeper-box', 'kind': 'keeper'}).json()['token']
+        self.client.put('/api/fleet/hosts/box', headers={'Authorization': 'Bearer ' + tok}, json={
+            'bots': [], 'credentials': [{'name': 'claude', 'kind': 'login', 'state': 'rejected', 'held': 1,
+                                         'detail': 'token rejected: API Error: 401 OAuth access token is invalid.'}]})
+        page = self.client.get('/fleet').text
+        self.assertIn('claude rejected on box', page)
+        self.assertIn('Make a new one with <code>claude setup-token</code>', page)
+        self.assertIn('claude rejected on box, 1 bot held', str(self.client.get('/api/status').json()['attention']))
+
+    def test_the_fleet_claude_token_is_flagged_two_weeks_before_a_year(self):
+        admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
+        self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
+        self.assertNotIn("claude token", self.client.get('/fleet', headers=admin).text.split('Settings: shared secrets')[0])
+        self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
+        with db.conn() as c:
+            c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
+                      ((datetime.now(timezone.utc) - timedelta(days=355)).isoformat(),))
+        page = self.client.get('/fleet', headers=admin).text
+        self.assertIn("The fleet's claude token expires in 10 days", page)
+        self.assertIn("The fleet's claude token expires in 10 days", str(self.client.get('/api/status').json()['attention']))
 
     def test_the_board_tells_keepers_and_healthz_the_commit_it_runs(self):
         # #240: keepers update to the board's release commit; "" from source, origin's tip for them

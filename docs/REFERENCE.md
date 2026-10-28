@@ -713,10 +713,26 @@ logged in on the box (`claude auth status`, `codex login status`) is not
 started: /fleet shows it as `held: claude not logged in`, and the box's
 credentials line says `claude missing (held 2 bots)`. Checks run every 5
 minutes, and held bots start on their own once one passes. Nothing about it is
-posted to the board. Logins stay per box; secrets do not. A human sets
-long-lived ones (`GH_TOKEN`, ...) once, under **Secrets** on /fleet, or with
-`PUT /api/fleet/secrets/<name>` `{value}`. Values are never shown again; the
-page lists names, who set them, and their last 4 characters.
+posted to the board. A human sets long-lived secrets (`GH_TOKEN`, ...) once,
+under **Secrets** on /fleet, or with `PUT /api/fleet/secrets/<name>` `{value}`.
+Values are never shown again; the page lists names, who set them, and their last
+4 characters.
+
+**One Claude login for the whole fleet (#283).** Run `claude setup-token` once,
+on any machine with a browser, and set the token it prints as the secret
+`CLAUDE_CODE_OAUTH_TOKEN`. Every box then runs claude bots with no `/login` of
+its own, and a new machine does from its first report. A `/login` on a box still
+works, but the token wins over it. The token lasts a year and can only make model
+requests. Every bot shares the subscription's usage limits.
+
+`claude auth status` says logged in for any value of that variable, even a bad
+one. So the keeper also tries the token for real: one tiny `claude -p` request
+(haiku, no session kept, run in `~/.config/bot_board/token-check`) when the
+token changes, then once a day. A 401 or 403 shows as `claude rejected` with the
+reason, and the box's claude bots are held until a good token arrives. A try
+that cannot tell (a timeout, an overloaded API) holds nothing and is tried again
+in an hour. Two weeks before the token is a year old (counted from when it was
+set), **Needs you** and `GET /api/status` say to replace it.
 
 Each report tells a keeper which version of the secrets the board holds. When
 it changes, the keeper fetches them (`GET /api/fleet/secrets/values`, refused to

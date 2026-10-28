@@ -1983,7 +1983,13 @@ def _skills_alert(h: dict) -> str:
     return _alert(f'{name} still lists skills in its config', text, (), button)
 
 
-def _alerts(hosts: list) -> list:
+# A machine with no claude login can take the fleet's (#283) instead of a login of its own.
+CLAUDE_TOKEN_HINT = (' Or log every machine in at once: run <code>claude setup-token</code> on a machine with a browser, '
+                     'and set the token it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
+                     '<a href="#secrets">Settings: shared secrets</a>.')
+
+
+def _alerts(hosts: list, claude_token: dict | None = None) -> list:
     """What needs a human, each said once, in plain words, with the button that deals with it."""
     groups = {}
     for h in hosts:
@@ -2019,7 +2025,7 @@ def _alerts(hosts: list) -> list:
             out.append(_alert(title, text, bots, "" if stopped else redo("Stop them" if n > 1 else "Stop it", 0)))
         elif kind == "needs login":
             text = (f'{_fleet_detail(reason)}. On {e(", ".join(boxes))}, open a terminal, run <code>{e(harness)}</code> '
-                    'and sign in; the bots carry on by themselves.')
+                    'and sign in; the bots carry on by themselves.' + (CLAUDE_TOKEN_HINT if harness == "claude" else ""))
             out.append(_alert(f"{e(harness)} needs a login on {e(', '.join(boxes))}", text, bots))
         else:
             asked_start = any(b.get("want") == "running" for _, b in bots)
@@ -2039,9 +2045,19 @@ def _alerts(hosts: list) -> list:
             continue
         for c in h.get("credentials") or []:
             if c["state"] != "ok":
+                fix = ""
+                if c["name"] == "claude":
+                    fix = (' Make a new one with <code>claude setup-token</code> and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> '
+                           'under <a href="#secrets">Settings: shared secrets</a>.' if c["state"] == "rejected" else CLAUDE_TOKEN_HINT)
                 out.append(_alert(f'{e(c["name"])} {e(c["state"])} on {e(h["name"])}',
                                   e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
-                                  + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "")))
+                                  + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "") + fix))
+    if claude_token:
+        when = (f'expires in {claude_token["days_left"]} days' if claude_token["days_left"] > 0 else "has expired")
+        out.append(_alert(f"The fleet's claude token {when}",
+                          f'It was set on {e(claude_token["set_at"][:10])}, and a token from <code>claude setup-token</code> '
+                          'lasts a year. Make a new one and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
+                          '<a href="#secrets">Settings: shared secrets</a>; every machine picks it up within minutes.'))
     return out
 
 
@@ -2453,7 +2469,8 @@ def _versions_section(rows: list) -> str:
             f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None,
+               claude_token=None) -> str:
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
@@ -2474,7 +2491,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     orphans = sorted({b["handle"] for _, b in active + stopped if not b.get("profile")}, key=str.lower)
     working = sum(b["state"]["state"] == "working" for _, b in active)
     waiting = sum(b["state"]["can_work"] for _, b in active) - working
-    alerts = _alerts(hosts)
+    alerts = _alerts(hosts, claude_token)
     versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
     attention = (f'<section class="fleet-section" id="fleet-attention"><h2>Needs you · {len(alerts)}</h2>'
@@ -2598,7 +2615,9 @@ If this board requires an invite code, configure it on the machine before instal
 within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}
 <p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
-shown again.</p>
+shown again. To log Claude Code in on every machine at once, run <code>claude setup-token</code> on a machine with a
+browser and set what it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code>; it lasts a year, and every bot shares the
+subscription's usage limits.</p>
 <div id="secretlist" class="sub"></div>
 <form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
