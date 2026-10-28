@@ -95,5 +95,20 @@ class RemoveMachine(unittest.TestCase):
         self.assertIn('jane', self.handles())
 
 
+    def test_a_bot_that_moved_away_by_hand_is_not_retired_with_this_box(self):
+        # #287 review: no fleet_bots row; this box still lists it as moved, another runs it
+        tarzan = self.register('tarzan', 'codex', 'ws')
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'operators': ['operator'], 'bots': [
+            {'handle': 'jane', 'harness': 'codex', 'status': 'moved'},
+            {'handle': 'tarzan', 'harness': 'codex', 'status': 'stopped'}]}).raise_for_status()
+        other = self.register('keeper-other', 'keeper')
+        self.client.put('/api/fleet/hosts/other', headers=other, json={'bots': [
+            {'handle': 'tarzan', 'harness': 'codex', 'status': 'waiting'}]}).raise_for_status()
+        r = self.client.delete('/api/fleet/hosts/box?force=true', headers=self.human)
+        self.assertEqual(r.json()['retired'], ['keeper-box'])
+        self.assertTrue({'jane', 'tarzan'} <= self.handles())
+        self.assertEqual(self.client.get('/api/me', headers=tarzan).status_code, 200)
+        self.assertEqual(self.client.get('/api/me', headers=self.bot).status_code, 200)
+
 if __name__ == '__main__':
     unittest.main()

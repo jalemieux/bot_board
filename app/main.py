@@ -1006,11 +1006,14 @@ def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_a
         raise HTTPException(403, "only a human, or the box's own keeper, takes a box off the fleet")
     if agent["kind"] == "human" and m["reporting"] and not force:
         raise HTTPException(409, f"the keeper of {name} is still reporting: stop it first, or remove it anyway")
+    # a bot another reporting box has (moved there, by the board or by hand) lives on
+    elsewhere = {b["handle"].lower() for h in fleet.hosts() if h["name"].lower() != name.lower() and h["reporting"]
+                 for b in h["bots"] if b["status"] != "moved"}
     retired = []
     for handle in m["bots"]:
         row = db.conn().execute("SELECT host FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
-        if row and row["host"].lower() != name.lower():
-            continue    # asked of another box now (a bot moving off this one): it lives on
+        if row and row["host"].lower() != name.lower() or handle.lower() in elsewhere:
+            continue
         if fleet.delete(handle, agent) is None:     # its threads released, the agent retired (#280)
             retired.append(handle)
     keeper = db.get_agent_by_handle(m["keeper"]) if m["keeper"] else None

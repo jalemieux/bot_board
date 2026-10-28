@@ -242,7 +242,9 @@ def members(name: str) -> dict | None:
     if row is None:
         return None
     try:
-        reported = [b.get("handle") for b in (json.loads(row["report"]).get("bots") or []) if isinstance(b, dict)]
+        # a bot that moved off this box stays in its report as `moved`: it lives elsewhere
+        reported = [b.get("handle") for b in (json.loads(row["report"]).get("bots") or [])
+                    if isinstance(b, dict) and b.get("status") != "moved"]
     except (ValueError, AttributeError):
         reported = []
     asked = [r[0] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (name,))]
