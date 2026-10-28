@@ -145,6 +145,9 @@ case $CMD in
     [ -z "$BOARD_ON" ] || board up
     [ -z "$BOTS_ON" ] || "$BOT" keeper install ;;
   uninstall)
+    # --purge deletes the keeper's token: tell the board first, while it is still up even
+    # when it runs here, so the name is free and the bots are retired (#279)
+    if [ -n "$BOTS_ON" ] && [ -n "$PURGE" ]; then "$BOT" keeper leave || true; fi
     if [ -n "$BOARD_ON" ]; then
       board stop || true
       boot="$(dirname "$SRC")/bot_board start board"      # the @reboot line run.sh suggests, or the older one

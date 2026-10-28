@@ -993,14 +993,33 @@ def fleet_unwant(handle: str, agent: dict = Depends(current_agent)) -> dict:
 
 
 @app.delete("/api/fleet/hosts/{name}", tags=["fleet"])
-def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
-    """A human takes a box off the fleet: one that is retired, or whose keeper lost
-    its token. The name is free again, and the next agent to report it owns it."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human takes a box off the fleet")
-    if not fleet.forget(name):
+def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_agent)) -> dict:
+    """Take a box off the fleet (#279): the name is free again, and its keeper and the bots
+    it ran are retired, so a fresh install there starts clean. A human does it from /fleet,
+    and not while the keeper is reporting unless `force`; the box's own keeper does it on
+    `uninstall --purge`, before it deletes its token."""
+    m = fleet.members(name)
+    if m is None:
         raise HTTPException(404, f"no box named {name}")
-    return {"ok": True}
+    own = agent["kind"] != "human" and m["keeper"] and agent["handle"].lower() == m["keeper"].lower()
+    if agent["kind"] != "human" and not own:
+        raise HTTPException(403, "only a human, or the box's own keeper, takes a box off the fleet")
+    if agent["kind"] == "human" and m["reporting"] and not force:
+        raise HTTPException(409, f"the keeper of {name} is still reporting: stop it first, or remove it anyway")
+    retired = []
+    for handle in m["bots"]:
+        row = db.conn().execute("SELECT host FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        if row and row["host"].lower() != name.lower():
+            continue    # asked of another box now (a bot moving off this one): it lives on
+        if fleet.delete(handle, agent) is None:     # its threads released, the agent retired (#280)
+            retired.append(handle)
+    keeper = db.get_agent_by_handle(m["keeper"]) if m["keeper"] else None
+    if keeper and not keeper.get("retired_at"):
+        db.hand_off_threads(keeper["handle"], agent)
+        db.retire_agent(keeper["id"])
+        retired.append(keeper["handle"])
+    fleet.forget(name)      # after: fleet.delete records each bot against this box, and this drops those rows
+    return {"ok": True, "retired": retired}
 
 
 class SecretIn(BaseModel):
