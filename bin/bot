@@ -150,16 +150,16 @@ if [ "${1:-}" = install ]; then
   # harness <TAB> ok|missing|unknown|absent, checked as the keeper checks logins
   _rows=$(python3 "$SRC/bin/keeper" harnesses 2>/dev/null || true)
   _state() { awk -F'\t' -v h="$1" '$1 == h {print $2}' <<<"$_rows"; }
-  _words() { case $(_state "$1") in ok) echo "logged in" ;; unknown) echo "login not confirmed" ;; esac; }
+  _words() { case $(_state "$1") in ok) echo "logged in" ;; unknown) echo "login not confirmed" ;; missing) echo "not logged in yet" ;; esac; }
   _hint() { case $1 in claude) echo "run claude, then /login" ;; codex) echo "run codex login" ;; *) echo "log $1 in" ;; esac; }
   _harness=
   if [ -n "$_fresh" ] && [ -z "$_nobot" ]; then
     _pick=$(awk -F'\t' '$2 == "ok" {print $1; exit}' <<<"$_rows")
     [ -n "$_pick" ] || _pick=$(awk -F'\t' '$2 == "unknown" {print $1; exit}' <<<"$_rows")
-    _out=$(awk -F'\t' '$2 == "missing" {print $1; exit}' <<<"$_rows")
-    if [ -z "$_pick" ] && [ -n "$_out" ]; then
-      echo "bot: no default bot: $_out is installed but not logged in: $(_hint "$_out"), then rerun install" >&2
-    elif [ -z "$_pick" ]; then
+    # nothing logged in yet: the bot is made all the same, and the keeper holds it until a login
+    # or the fleet's claude token arrives (#283), so the install needs no second run
+    [ -n "$_pick" ] || _pick=$(awk -F'\t' '$2 == "missing" {print $1; exit}' <<<"$_rows")
+    if [ -z "$_pick" ]; then
       echo "bot: no default bot: no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install or use + Add a bot on $_board/fleet" >&2
     elif { exec 3<"${BOT_TTY:-/dev/tty}"; } 2>/dev/null; then
       printf 'Start a default bot with %s (%s)? [Y/n/other] ' "$_pick" "$(_words "$_pick")" >&2
@@ -173,8 +173,7 @@ if [ "${1:-}" = install ]; then
         ""|[Yy]|[Yy]es) _harness=$_pick ;;
         [Nn]|[Nn]o) echo "bot: no default bot: add bots with + Add a bot on $_board/fleet" >&2 ;;
         *) case $(_state "$_ans") in
-             ok|unknown) _harness=$_ans ;;
-             missing) echo "bot: no default bot: $_ans is installed but not logged in: $(_hint "$_ans"), then rerun install" >&2 ;;
+             ok|unknown|missing) _harness=$_ans ;;
              *) echo "bot: no default bot: $_ans is not a harness on this PATH" >&2 ;;
            esac ;;
       esac
@@ -201,6 +200,11 @@ if [ "${1:-}" = install ]; then
     *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/fleet" >&2 ;;
     *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/fleet" >&2 ;;
   esac
+  if [ "$(_state "$_harness")" = missing ]; then
+    _how=$(_hint "$_harness")
+    [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet (make it with claude setup-token on a machine with a browser), or $_how here"
+    echo "bot: $_harness is not logged in on this machine yet, so the keeper holds the bot until it is: $_how. It starts by itself; no second install." >&2
+  fi
   exit 0
 fi
 
