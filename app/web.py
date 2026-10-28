@@ -2321,6 +2321,29 @@ document.addEventListener('submit', function (ev) {
   secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
   .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
 });
+// Each section folds from its heading (#281), and stays folded in this browser. Needs you
+// folds only until something new is in it: an alert is never hidden.
+function loadFolded() { try { return JSON.parse(localStorage.getItem('bb.fleetFolded')) || {}; } catch (err) { return {}; } }
+function saveFolded(f) { try { localStorage.setItem('bb.fleetFolded', JSON.stringify(f)); } catch (err) {} }
+function alertsNow() {
+  // an alert is its title and its bots, not its text, which says how long ago and changes by itself
+  return Array.from(document.querySelectorAll('#fleet-attention .fleet-alert')).map(function (a) {
+    var c = a.querySelector('.chips'); return a.querySelector('h3').textContent + (c ? ' ' + c.textContent : '');
+  });
+}
+(function () {
+  var folded = loadFolded();
+  document.querySelectorAll('details.fleet-section').forEach(function (d) {
+    var was = folded[d.id];
+    if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
+    if (was) d.open = false;
+    d.addEventListener('toggle', function () {
+      var f = loadFolded();
+      if (d.open) delete f[d.id]; else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : 1;
+      saveFolded(f);
+    });
+  });
+})();
 // A link to a bot in a folded list (an alert's chip, a status item) opens the list first.
 function showTarget() {
   var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -2372,6 +2395,9 @@ FLEET_CSS = """
 .fleet-page .statstrip .stat.run b{color:var(--good)}
 .fleet-page .statstrip .stat.warn{border-color:var(--accent)}.fleet-page .statstrip .stat.warn b{color:var(--accent)}
 .fleet-page .fleet-section{margin:0 0 28px}
+.fleet-page .fleet-section>summary{cursor:pointer;margin:0 0 10px;color:var(--dim)}
+.fleet-page .fleet-section>summary h2{display:inline;margin:0}
+.fleet-page .fleet-section:not([open])>summary{margin:0}
 .fleet-page #fleet-attention h2{color:var(--accent)}
 .fleet-page .fleet-alert{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
  margin:0 0 8px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px}
@@ -2471,9 +2497,16 @@ def _versions_section(rows: list) -> str:
                  f'<td>{e(r["note"]) if r["note"] else "current"}</td></tr>')
     summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
                if bots else "")
-    return (f'<section class="fleet-section" id="fleet-versions"><h2>Versions</h2>{summary}'
-            '<table class="bots versions"><thead><tr><th>What</th><th>Name</th><th>Running</th><th>Wanted</th>'
-            f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
+    behind = sum(not r["current"] for r in shown)
+    return _fleet_section("fleet-versions", f"Versions · {behind} behind" if behind else "Versions · current", summary +
+                          '<table class="bots versions"><thead><tr><th>What</th><th>Name</th><th>Running</th><th>Wanted</th>'
+                          f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>')
+
+
+def _fleet_section(id_: str, title: str, body: str) -> str:
+    """A /fleet section that folds from its heading (#281); FLEET_JS remembers which are folded."""
+    return (f'<details class="fleet-section" id="{id_}" open><summary><h2>{title}</h2></summary>'
+            f'{body}</details>')
 
 
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None) -> str:
@@ -2500,8 +2533,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     alerts = _alerts(hosts)
     versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
-    attention = (f'<section class="fleet-section" id="fleet-attention"><h2>Needs you · {len(alerts)}</h2>'
-                 f'{"".join(alerts)}</section>') if alerts else ""
+    attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
     bots_html = (_bot_table(active, others_of) if active else
                  '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from the stopped list below.</p>')
     stopped_html = (f'<details class="stopped" id="fleet-stopped"><summary>Stopped · {len(stopped)}</summary>'
@@ -2594,8 +2626,8 @@ Pick channels to have it claim new threads only there (it still answers mentions
 <span class="stat"><b>{len(reporting)} of {_plural(len(hosts), "machine")}</b> reporting</span>
 </div>
 {attention}
-<section class="fleet-section" id="fleet-bots"><h2>Bots · {len(active)}</h2>{bots_html}{stopped_html}</section>
-<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+{_fleet_section("fleet-bots", f"Bots · {len(active)}", bots_html + stopped_html)}
+{_fleet_section("fleet-machines", f"Machines · {len(hosts)}", machines_html)}
 {registry_web.skills_section(list(skills), list(profiles))}
 {registry_web.profiles_section(list(profiles), orphans)}
 {versions_html}
