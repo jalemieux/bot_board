@@ -73,6 +73,7 @@ KEEPER_HANDOVER (where archives of
 moving bots wait: host:dir, e.g. box-1:.config/bot_board/handover).
 """
 import argparse, fcntl, hashlib, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
+from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -546,20 +547,27 @@ class Handover:
                 pass
 
 
-# What a box needs before it starts a bot. name, kind, the env var a secret is kept in,
-# the command that checks it, and the harnesses whose bots are held while it fails.
+# What a box needs before it starts a bot, one row each (#285). name; kind (secret or login);
+# var, the fleet secret that logs it in ("" for none); cmd, the command that checks it; holds,
+# the harnesses whose bots are held while it fails; apply, run with var's value on stdin when it
+# changes, for a harness that does not read it from the environment; probe, a real request with
+# var, tried when it changes and then daily, since the check only says that something is set.
+Cred = namedtuple("Cred", "name kind var cmd holds apply probe", defaults=(None, None))
 CREDENTIALS = (
-    ("gh", "secret", "GH_TOKEN", ("gh", "auth", "status"), ()),     # reported; a bot without gh can still answer
-    ("claude", "login", "", ("claude", "auth", "status"), ("claude",)),
-    ("codex", "login", "", ("codex", "login", "status"), ("codex",)),
+    Cred("gh", "secret", "GH_TOKEN", ("gh", "auth", "status"), ()),     # reported; a bot without gh can still answer
+    # `claude auth status` says logged in whenever CLAUDE_CODE_OAUTH_TOKEN is set, even to a bad token (#283)
+    Cred("claude", "login", "CLAUDE_CODE_OAUTH_TOKEN", ("claude", "auth", "status"), ("claude",),
+         probe=("claude", "-p", "--no-session-persistence", "--output-format", "json", "--model", "haiku",
+                "Reply with OK.")),
+    # codex does not read OPENAI_API_KEY from the environment: `codex login --with-api-key` stores
+    # it, unchecked, and `codex login status` then says logged in whatever the key is
+    Cred("codex", "login", "OPENAI_API_KEY", ("codex", "login", "status"), ("codex",),
+         apply=("codex", "login", "--with-api-key"),
+         probe=("codex", "exec", "--skip-git-repo-check", "--json", "Reply with OK.")),
 )
 CHECK_EVERY = 300
-# `claude auth status` says logged in whenever CLAUDE_CODE_OAUTH_TOKEN is set, even to a bad
-# token (#283), so a fleet token is tried for real: one tiny request when it changes, then
-# daily. It spends a few tokens of the subscription; a run that cannot tell is tried in an hour.
+# A probe spends a few tokens of the fleet's account; one that cannot tell is tried in an hour.
 TOKEN_CHECK_EVERY = 24 * 3600
-TOKEN_PROBE = ("claude", "-p", "--no-session-persistence", "--output-format", "json", "--model", "haiku",
-               "Reply with OK.")
 FLEET_ENV = os.path.join(CFG, "fleet.env")
 FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits here are replaced\n"
 
@@ -587,6 +595,36 @@ def read_env(path):
     return env
 
 
+def probe_result(name, out):
+    """What a probe's output says: ("ok", ""), ("rejected", why), or None when it cannot tell.
+    claude prints one JSON result; codex a JSON event per line, ending in turn.completed or turn.failed."""
+    if name == "claude":
+        try:
+            d = json.loads(out)
+        except ValueError:
+            return None
+        if not isinstance(d, dict):
+            return None
+        if d.get("is_error") is False:
+            return "ok", ""
+        if d.get("api_error_status") in (401, 403):
+            return "rejected", f"token rejected: {d.get('result') or d.get('api_error_status')}"[:200]
+        return None
+    for line in reversed(out.splitlines()):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("type") == "turn.completed":
+            return "ok", ""
+        if d.get("type") == "turn.failed":
+            why = str((d.get("error") or {}).get("message") or "")
+            return ("rejected", f"key rejected: {why}"[:200]) if re.search(r"\b40[13]\b|unauthorized", why, re.I) else None
+    return None
+
+
 class Credentials:
     """Checks what bots need on this box, and keeps fleet.env in step with the board's secrets."""
 
@@ -596,7 +634,8 @@ class Credentials:
         self.checked = 0        # when the checks last ran
         self.version = None     # the version of the board's secrets fleet.env holds
         self.sync_error = ""
-        self.probe = None       # the last real try of the fleet's claude token: {fp, at, result}
+        self.probes = {}        # name -> the last real try of its fleet secret: {fp, at, result}
+        self.applied = {}       # name -> the fingerprint of the secret its apply step last stored
 
     def sync(self, version, token):
         """When the board's secrets changed (version, from the report), fetch them and write
@@ -629,7 +668,7 @@ class Credentials:
         return [c for c in CREDENTIALS if c[1] == "secret" or set(c[4]) & set(harnesses)]
 
     def check(self, cred, env):
-        name, kind, var, cmd, _ = cred
+        name, kind, var, cmd = cred[:4]
         if not shutil.which(cmd[0], path=env.get("PATH")):
             return "missing", f"{cmd[0]} is not installed (or not on the keeper's PATH)"
         try:
@@ -669,47 +708,70 @@ class Credentials:
         if not force and time.time() - self.checked < CHECK_EVERY and all(c[0] in self.state for c in need):
             return
         env = self.env()
+        for c in need:
+            if c.apply:
+                self.apply(c, env)
         self.state = {c[0]: self.check(c, env) for c in need}
-        if self.state.get("claude", ("",))[0] == "ok":
-            self.state["claude"] = self.try_token(env) or self.state["claude"]
+        for c in need:
+            if c.probe and self.state[c.name][0] == "ok":
+                self.state[c.name] = self.try_token(c, env) or self.state[c.name]
         self.checked = time.time()
 
-    def try_token(self, env):
-        """(state, detail) from a real request with the fleet's CLAUDE_CODE_OAUTH_TOKEN, or None:
-        no such token here, or the request could not tell (a timeout, a usage limit)."""
-        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    def apply(self, cred, env):
+        """Store the fleet's secret where a harness that does not read it from the environment
+        looks (codex: `codex login --with-api-key`), once per value. Never over a login of
+        another kind: a box logged in to a ChatGPT plan keeps it."""
+        value = env.get(cred.var, "")
+        fp = value and hashlib.sha256(value.encode()).hexdigest()[:16]
+        if not value or self.applied.get(cred.name) == fp or not shutil.which(cred.apply[0], path=env.get("PATH")):
+            return
+        try:
+            st = subprocess.run(cred.cmd, capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
+            said = st.stdout + st.stderr
+            if st.returncode == 0 and "API key" not in said:
+                self.applied[cred.name] = fp
+                return print(f"keeper: {cred.var} not applied to {cred.name}: it is logged in another way here", flush=True)
+            r = subprocess.run(cred.apply, input=value, capture_output=True, text=True, timeout=60, env=env)
+        except (OSError, subprocess.SubprocessError) as e:
+            return print(f"keeper: could not apply {cred.var} to {cred.name}: {e}", file=sys.stderr, flush=True)
+        if r.returncode == 0:
+            self.applied[cred.name] = fp
+            self.probes.pop(cred.name, None)     # a new key: try it for real now
+            print(f"keeper: {cred.var} applied to {cred.name}", flush=True)
+        else:
+            print(f"keeper: could not apply {cred.var} to {cred.name}: {(r.stderr or r.stdout).strip()[-200:]}",
+                  file=sys.stderr, flush=True)
+
+    def try_token(self, cred, env):
+        """(state, detail) from a real request with the fleet's secret for this harness, or None:
+        no such secret here, or the request could not tell (a timeout, a usage limit)."""
+        token = env.get(cred.var, "")
         if not token:
-            self.probe = None
+            self.probes.pop(cred.name, None)
             return None
         fp = hashlib.sha256(token.encode()).hexdigest()[:16]     # never the token itself
-        p = self.probe
+        p = self.probes.get(cred.name)
         if p and p["fp"] == fp and time.time() - p["at"] < TOKEN_CHECK_EVERY:
             return p["result"]
-        where = os.path.join(CFG, "token-check")     # one directory, so claude keeps one project for it
+        where = os.path.join(CFG, "token-check")     # one directory, so a harness keeps one project for it
         os.makedirs(where, mode=0o700, exist_ok=True)
-        result, retry = None, False
         try:
-            r = subprocess.run(TOKEN_PROBE, capture_output=True, text=True, timeout=90, env=env, cwd=where,
+            r = subprocess.run(cred.probe, capture_output=True, text=True, timeout=90, env=env, cwd=where,
                                stdin=subprocess.DEVNULL)
-            d = json.loads(r.stdout)
-            if d.get("is_error") is False:
-                result = ("ok", "")
-            elif d.get("api_error_status") in (401, 403):
-                result = ("rejected", f"token rejected: {d.get('result') or d.get('api_error_status')}"[:200])
-            else:
-                retry = True
-        except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
-            retry = True
+            result = probe_result(cred.name, r.stdout)
+        except (OSError, subprocess.SubprocessError):
+            result = None
         # a try that could not tell comes again in an hour, not at every check
-        self.probe = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if retry else 0), "result": result}
+        self.probes[cred.name] = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if result is None else 0),
+                                  "result": result}
         if result:
-            print(f"keeper: the fleet's claude token: {result[0]}", flush=True)
+            print(f"keeper: the fleet's {cred.name} {cred.var}: {result[0]}", flush=True)
         return result
 
     def blocked(self):
         """harness -> why its bots are not started."""
         out = {}
-        for name, _, _, _, holds in CREDENTIALS:
+        for name, _, _, _, holds, *_ in CREDENTIALS:
             st, why = self.state.get(name, ("ok", ""))
             for hn in holds if st in ("missing", "rejected") else ():   # "unknown" and "expired" hold nothing
                 out[hn] = f"{name} {why or st}"

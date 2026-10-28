@@ -141,7 +141,7 @@ class Keeper(unittest.TestCase):
                                                  'API Error: 401 OAuth access token is invalid.'})
         self.assertNotIn("'bad'", str(c.report({})))    # the token never goes into the report
         # a day later the same token is tried again
-        c.probe['at'] -= self.k.TOKEN_CHECK_EVERY
+        c.probes['claude']['at'] -= self.k.TOKEN_CHECK_EVERY
         self.creds(c)
         self.assertEqual(self.tries(), 3)
 
@@ -152,7 +152,7 @@ class Keeper(unittest.TestCase):
         self.assertEqual(c.blocked(), {})
         self.creds(c)
         self.assertEqual(self.tries(), 1)
-        c.probe['at'] -= 3600
+        c.probes['claude']['at'] -= 3600
         self.creds(c)
         self.assertEqual(self.tries(), 2)
 
@@ -160,7 +160,63 @@ class Keeper(unittest.TestCase):
         open(os.path.join(self.home, 'claude-login'), 'w').close()
         c = self.creds()
         self.assertEqual(c.state['claude'], ('ok', ''))
-        self.assertIsNone(c.probe)
+        self.assertNotIn('claude', c.probes)
+
+    def fleet_codex(self, login=None):
+        """codex as 0.153 behaves (#285): it ignores OPENAI_API_KEY in the environment;
+        `login --with-api-key` stores whatever it reads, `login status` says what is stored, and
+        only a real `exec` finds out whether the key works. login: 'chatgpt', or a stored key."""
+        auth = os.path.join(self.home, 'codex-auth')
+        if login:
+            open(auth, 'w').write(login)
+        fake(self.bin, 'codex', f'echo "$*" >> {self.home}/codex-calls\n'
+             f'A={auth}\n'
+             'if [ "$1 $2" = "login status" ]; then\n'
+             '  [ -s $A ] || { echo "Not logged in" >&2; exit 1; }\n'
+             '  [ "$(cat $A)" = chatgpt ] && echo "Logged in using ChatGPT" || echo "Logged in using an API key - x"; exit 0; fi\n'
+             'if [ "$1 $2" = "login --with-api-key" ]; then cat > $A; echo "Successfully logged in"; exit 0; fi\n'
+             'case $(cat $A 2>/dev/null) in good) echo \'{"type":"turn.completed"}\' ;;\n'
+             ' bad) echo \'{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key"}}\' ;;\n'
+             ' *) echo \'{"type":"turn.failed","error":{"message":"stream disconnected"}}\' ;; esac')
+        return auth
+
+    def codex_calls(self, kind):
+        try:
+            return sum(1 for line in open(os.path.join(self.home, 'codex-calls')) if line.startswith(kind))
+        except FileNotFoundError:
+            return 0
+
+    def codex_creds(self, c=None, version=None):
+        c = c or self.k.Credentials('box')
+        if version:
+            c.sync(version, 'keeper-token')
+        c.refresh({'codex'}, force=True)
+        return c
+
+    def test_the_fleet_codex_key_is_logged_in_once_and_tried_for_real(self):
+        auth = self.fleet_codex()
+        c = self.codex_creds()
+        self.assertEqual(c.state['codex'][0], 'missing')
+        self.assertEqual(c.blocked(), {'codex': 'codex not logged in'})
+        c = self.codex_creds(c, self.secrets('v1', OPENAI_API_KEY='good'))
+        self.assertEqual(open(auth).read(), 'good')
+        self.assertEqual(c.state['codex'], ('ok', ''))
+        self.codex_creds(c); self.codex_creds(c)
+        self.assertEqual((self.codex_calls('login --with-api-key'), self.codex_calls('exec')), (1, 1))
+        # rotated to a bad key: stored at once, tried at once, and codex bots are held
+        c = self.codex_creds(c, self.secrets('v2', OPENAI_API_KEY='bad'))
+        self.assertEqual((self.codex_calls('login --with-api-key'), self.codex_calls('exec')), (2, 2))
+        self.assertEqual(c.state['codex'][0], 'rejected')
+        self.assertIn('codex', c.blocked())
+        self.assertNotIn("'bad'", str(c.report({})))
+
+    def test_a_chatgpt_login_is_never_replaced_by_the_fleet_key(self):
+        auth = self.fleet_codex(login='chatgpt')
+        c = self.codex_creds(None, self.secrets('v1', OPENAI_API_KEY='good'))
+        self.assertEqual(open(auth).read(), 'chatgpt')
+        self.assertEqual(self.codex_calls('login --with-api-key'), 0)
+        self.assertEqual(c.state['codex'], ('ok', ''))
+        self.assertEqual(c.blocked(), {})
 
     def test_codex_login_does_not_hold_claude_bots(self):
         open(os.path.join(self.home, 'claude-login'), 'w').close()

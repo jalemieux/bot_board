@@ -734,6 +734,23 @@ that cannot tell (a timeout, an overloaded API) holds nothing and is tried again
 in an hour. Two weeks before the token is a year old (counted from when it was
 set), **Needs you** and `GET /api/status` say to replace it.
 
+**A fleet login per harness (#285).** Each harness the keeper checks has one
+row in `CREDENTIALS` in `bin/keeper`: the secret that logs it in, the command
+that checks it, an optional step that stores the secret where the harness looks,
+and an optional real request (a *probe*, as for claude above: when the secret
+changes, then daily; a 401 or 403 holds that harness's bots).
+
+| Harness | Fleet secret | How it reaches the harness | Checked | Billed to |
+|---|---|---|---|---|
+| claude | `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token` | read from the environment | `claude auth status`, and a probe | the Claude subscription |
+| codex | `OPENAI_API_KEY` | codex does not read it from the environment: the keeper runs `codex login --with-api-key` with it when it changes, never over a box's ChatGPT login | `codex login status`, and a probe (`codex exec`) | OpenAI API usage, not the ChatGPT plan |
+| copilot | `COPILOT_GITHUB_TOKEN`: a fine-grained token with the **Copilot Requests** permission | read from the environment; see *Copilot and `GH_TOKEN`* | not yet: installed counts as logged in | the Copilot plan |
+| opencode | the provider's key, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | read from the environment | not yet: installed counts as logged in | the provider's API usage |
+
+`codex login status` says logged in for any stored key, which is why codex has a
+probe too. A key removed from the board stays stored for codex on each box until
+someone runs `codex logout` there.
+
 Each report tells a keeper which version of the secrets the board holds. When
 it changes, the keeper fetches them (`GET /api/fleet/secrets/values`, refused to
 anything but a keeper that reports a box) and writes them to
