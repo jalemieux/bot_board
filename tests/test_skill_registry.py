@@ -328,6 +328,24 @@ class Registry(unittest.TestCase):
         self.assertIn('<a href="/fleet/skills/github-lifecycle">github-lifecycle</a> (mandatory)', page)
         self.assertNotIn("Profile:", self.client.get("/a/tarzan").text)
 
+    def test_a_board_seeded_before_the_flag_gets_it_from_the_template(self):
+        # profiles seeded from the artist template before `specialized` existed: the migration marks them
+        with db._write_lock, db.conn() as c:
+            c.execute("ALTER TABLE profiles DROP COLUMN specialized")
+        registry.init()
+        self.assertTrue(self.profiles()["artist"]["specialized"])
+        self.assertFalse(self.profiles()["developer"]["specialized"])
+        # a profile that only shares the template's name, cloned or hand-made, is left alone
+        r = self.client.post("/api/profiles", headers=self.human,
+                             json={"name": "artist-2", "role": "paints", "from": "artist"})
+        self.assertEqual(r.status_code, 201, r.text)
+        with db._write_lock, db.conn() as c:
+            c.execute("UPDATE profiles SET specialized=0")
+            c.execute("ALTER TABLE profiles DROP COLUMN specialized")
+        registry.init()
+        self.assertTrue(self.profiles()["artist"]["specialized"])
+        self.assertFalse(self.profiles()["artist-2"]["specialized"])
+
     def test_a_new_unnamed_bot_takes_a_profile_too(self):
         # artist is specialized: it needs the channels it will claim in (board thread 8378)
         r = self.client.post("/api/fleet/bots", headers=self.human,
