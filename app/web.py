@@ -780,6 +780,24 @@ APP_JS = r"""
 (function(){
 'use strict';
 var INIT = window.__INIT__;
+// Every read of /api carries the sign-in, so a private board (BOT_BOARD_PRIVATE_READS) reads like an open one.
+var _fetch = window.fetch.bind(window);
+function fetch(url, opts){
+  opts = opts || {};
+  if (ME && String(url).indexOf('/api/') === 0) {
+    var h = Object.assign({}, opts.headers || {});
+    if (!h.Authorization) h.Authorization = 'Bearer ' + ME.token;
+    opts = Object.assign({}, opts, {headers: h});
+  }
+  return _fetch(url, opts);
+}
+// On a private board the pages need the token too, and a browser sends none when it opens one:
+// the sign-in is kept in a cookie the server reads for pages only (never for /api).
+function pageCookie(m){
+  if (m && !INIT.private) return;
+  document.cookie = m ? 'bb_token=' + m.token + '; Path=/; SameSite=Strict; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '')
+                      : 'bb_token=; Path=/; Max-Age=0';
+}
 var S = {
   channels: INIT.channels, convs: INIT.conversations, agents: {},
   unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}),
@@ -1249,9 +1267,10 @@ $('#tpop').addEventListener('click', function(){
 // The human's identity lives in this browser: {handle, token}, set by the
 // sign-in dialog. Posting is the same POST /api/messages the bots use.
 var ME = load('bb.me', null);
+if (ME) pageCookie(ME);
 var signin = $('#signin'), sform = $('#signinform');
 var afterSignin = null;   // what to do once the dialog succeeds (e.g. focus the box that was clicked)
-function setMe(m){ ME = m; save('bb.me', m); renderWho(); showCompose(); }
+function setMe(m){ ME = m; save('bb.me', m); pageCookie(m); renderWho(); showCompose(); }
 function renderWho(){
   $('#whoami').textContent = ME ? 'posting as @' + ME.handle : 'humans read · agents post';
   $('#signinbtn').textContent = ME ? 'sign out' : 'sign in to post';
@@ -1260,7 +1279,7 @@ function openSignin(msg, then, gate){
   afterSignin = then || null;
   signin.classList.toggle('gate', !!gate);
   $('#si-title').textContent = gate ? 'Sign in as\u2026' : 'Post as a human';
-  $('#si-first').hidden = !gate || INIT.channels.length > 0;
+  $('#si-first').hidden = !gate || INIT.channels.length > 0 || INIT.private;
   $('#si-err').textContent = msg || '';
   $('#si-invite').hidden = $('#si-invite-l').hidden = !INIT.invite_required;
   $('#si-go').disabled = false;
@@ -1651,14 +1670,15 @@ def running_chip(r: dict | None) -> str:
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
              stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
-             max_image_attachment_bytes: int = 10 * 1024 * 1024) -> str:
+             max_image_attachment_bytes: int = 10 * 1024 * 1024, private: bool = False) -> str:
+    # no '<' survives in the embedded JSON, so no text from the board can close the script block
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats, "invite_required": invite_required,
+         "agents": agents, "stats": stats, "invite_required": invite_required, "private": private,
          "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes,
          "max_image_attachment_bytes": max_image_attachment_bytes},
         ensure_ascii=False,
-    ).replace("</", "<\\/")
+    ).replace("<", "\\u003c")
     return f"""<title>{e(board_name)}</title>
 <style>{APP_CSS}{BELL_CSS}</style>
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
@@ -2508,7 +2528,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                       "stopped": ago(max(b.get("last_run") or "", b.get("set_at") or "")) if (b.get("last_run") or b.get("set_at")) else ""}
                      for h, b in stopped if not b.get("move_to") and not b.get("fetch") and b["status"] != "moved"),
                     key=lambda x: (-x["open"], x["handle"].lower()))
-    revive_json = json.dumps(revive).replace("</", "<\\/")     # safe inside <script>
+    revive_json = json.dumps(revive).replace("<", "\\u003c")     # safe inside <script>
     if reporting:
         host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
         harness_opts = "".join(f"<option>{x}</option>" for x in ("claude", "codex", "opencode", "copilot"))
@@ -2518,7 +2538,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                         + "".join(f'<option value="{e(p["name"])}"{" data-specialized=1" if p.get("specialized") else ""}>'
                                   f'{e(p["name"])}{" · specialized" if p.get("specialized") else ""} · {e(p["role"][:60])}</option>'
                                   for p in profiles))
-        channels_json = json.dumps(channels or {}).replace("</", "<\\/")
+        channels_json = json.dumps(channels or {}).replace("<", "\\u003c")
         add_bot = f"""<details id="addbot" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">
@@ -2620,6 +2640,12 @@ def search_page(board_name, q, results) -> str:
 def not_found(board_name, detail) -> str:
     return shell(board_name, "not found", f"""
 <h1>Not here</h1><p class="sub">{e(detail)}</p><p><a href="/">← back to the channels</a></p>""")
+
+
+def private_page(board_name, detail) -> str:
+    """A private board (BOT_BOARD_PRIVATE_READS) to someone it does not know."""
+    return shell(board_name, "sign in", f"""
+<h1>Sign in first</h1><p class="sub">{e(detail)} Sign in on the <a href="/">board page</a>, then come back.</p>""")
 
 
 # What a human pastes into their agent's instruction file. Everything else the
