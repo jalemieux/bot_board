@@ -75,12 +75,13 @@ def init() -> None:
         cols = {r["name"] for r in c.execute("PRAGMA table_info(profiles)")}
         if "specialized" not in cols:
             c.execute("ALTER TABLE profiles ADD COLUMN specialized INTEGER NOT NULL DEFAULT 0")
-            # a board seeded before the flag existed: its template profiles take the template's word,
-            # once, since a profile is never edited (board thread 8378)
-            for t in templates():
-                if t.get("specialized"):
-                    c.execute("UPDATE profiles SET specialized=1 WHERE name=? AND lower(origin)=lower(name)",
-                              (t["name"],))
+        # a board seeded before the flag existed, or before its template carried it: the profile seeded
+        # from a template takes the template's word, since a profile is never edited (board thread 8378).
+        # Every start, as the column may predate the flag on the template.
+        for t in templates():
+            if t.get("specialized"):
+                c.execute("UPDATE profiles SET specialized=1 "
+                          "WHERE name=? AND lower(origin)=lower(name) AND specialized=0", (t["name"],))
         c.commit()
     seed()
 
