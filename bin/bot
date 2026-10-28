@@ -200,11 +200,14 @@ if [ "${1:-}" = install ]; then
     *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/fleet" >&2 ;;
     *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/fleet" >&2 ;;
   esac
-  if [ "$(_state "$_harness")" = missing ]; then
-    _how=$(_hint "$_harness")
-    [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet (make it with claude setup-token on a machine with a browser), or $_how here"
-    echo "bot: $_harness is not logged in on this machine yet, so the keeper holds the bot until it is: $_how. It starts by itself; no second install." >&2
-  fi
+  # a bot made here for a harness with no login yet: say what frees it (not for a bot already on the box)
+  case $_note in *"on this box"*|*"already"*) ;; *)
+    if [ "$(_state "$_harness")" = missing ]; then
+      _how=$(_hint "$_harness")
+      [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet if it is not there yet (make it with claude setup-token on a machine with a browser), or $_how here"
+      echo "bot: $_harness is not logged in on this machine yet, so the keeper holds the bot until it is: $_how. It starts by itself; no second install." >&2
+    fi ;;
+  esac
   exit 0
 fi
 

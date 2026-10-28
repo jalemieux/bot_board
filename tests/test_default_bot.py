@@ -90,10 +90,15 @@ class Install(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         self.assertIn("starting a default bot with claude (not logged in yet)", r.stderr)
         self.assertIn(f"claude is not logged in on this machine yet, so the keeper holds the bot until it is: set "
-                      f"CLAUDE_CODE_OAUTH_TOKEN under Secrets on {BOARD}/fleet (make it with claude setup-token on a "
+                      f"CLAUDE_CODE_OAUTH_TOKEN under Secrets on {BOARD}/fleet if it is not there yet (make it with claude setup-token on a "
                       "machine with a browser), or run claude, then /login here. It starts by itself; no second install.",
                       r.stderr)
         self.assertNotIn("rerun install", r.stderr)
+        # a bot already on the box says so, and nothing about holding a new one
+        r, _ = self.install([("claude", "missing", "not logged in"), ("codex", "absent", ""),
+                             ("copilot", "absent", ""), ("opencode", "absent", "")], note="@ada already on this box")
+        self.assertIn("@ada is on this box already", r.stderr)
+        self.assertNotIn("holds the bot", r.stderr)
 
     def test_no_harness_starts_nothing_and_says_what_to_do(self):
         r, config = self.install([(h, "absent", "") for h in ("claude", "codex", "copilot", "opencode")])
