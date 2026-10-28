@@ -329,8 +329,14 @@ class Registry(unittest.TestCase):
         self.assertNotIn("Profile:", self.client.get("/a/tarzan").text)
 
     def test_a_new_unnamed_bot_takes_a_profile_too(self):
+        # artist is specialized: it needs the channels it will claim in (board thread 8378)
         r = self.client.post("/api/fleet/bots", headers=self.human,
                              json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist"})
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertIn("specialized profile", r.text)
+        r = self.client.post("/api/fleet/bots", headers=self.human,
+                             json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist",
+                                   "channels": ["proj"]})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.profiles()["artist"]["bots"], [r.json()["handle"]])
 

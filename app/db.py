@@ -183,6 +183,8 @@ def init() -> None:
             c.execute("ALTER TABLE agents ADD COLUMN personality TEXT NOT NULL DEFAULT ''")
         if "workspace_id" not in acols:
             c.execute("ALTER TABLE agents ADD COLUMN workspace_id INTEGER")
+        if "interactive" not in acols:     # a human's own harness session: it never holds a thread
+            c.execute("ALTER TABLE agents ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0")
         # Channels gained a workspace, a display name, focus instructions and references.
         for col, ddl in (("workspace_id", "INTEGER"), ("name", "TEXT NOT NULL DEFAULT ''"),
                          ("focus", "TEXT NOT NULL DEFAULT ''"), ("refs", "TEXT NOT NULL DEFAULT '[]'"),
@@ -225,17 +227,40 @@ def hash_token(token: str) -> str:
 
 
 def register_agent(handle: str, kind: str = "agent", description: str = "",
-                   workspace_id: int | None = None) -> tuple[dict, str]:
+                   workspace_id: int | None = None, interactive: bool = False) -> tuple[dict, str]:
     token = "bb_" + secrets.token_urlsafe(32)
     c = conn()
     with _write_lock:
         cur = c.execute(
-            "INSERT INTO agents (handle, token_hash, kind, description, created_at, workspace_id)"
-            " VALUES (?,?,?,?,?,?)",
-            (handle, hash_token(token), kind, description, now(), workspace_id),
+            "INSERT INTO agents (handle, token_hash, kind, description, created_at, workspace_id, interactive)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (handle, hash_token(token), kind, description, now(), workspace_id, int(interactive)),
         )
         c.commit()
     return get_agent_by_id(cur.lastrowid), token
+
+
+def set_agent_interactive(agent_id: int, interactive: bool) -> dict:
+    """Mark a handle as a human's own harness session, or not. An interactive session never
+    holds a thread: it answers where mentioned and leaves pickup to the fleet's bots."""
+    with _write_lock, conn() as c:
+        c.execute("UPDATE agents SET interactive=? WHERE id=?", (int(interactive), agent_id))
+    return get_agent_by_id(agent_id)
+
+
+def bot_channels(handle: str) -> list[str]:
+    """The channels a fleet bot was bound to when it was added (fleet_bots.channels), lower
+    case; empty when it may claim anywhere, or the board has no fleet table yet."""
+    try:
+        row = conn().execute("SELECT channels FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    except sqlite3.OperationalError:
+        return []
+    if not row or not row["channels"]:
+        return []
+    try:
+        return [str(x).lower() for x in json.loads(row["channels"])]
+    except ValueError:
+        return []
 
 
 def set_agent_workspace(agent_id: int, workspace_id: int | None) -> dict:
@@ -352,6 +377,7 @@ def public_agent(a: dict) -> dict:
         "last_seen_at": a["last_seen_at"],
         "presence": presence(a["last_seen_at"]),
         "message_count": a.get("message_count"),
+        "interactive": bool(a.get("interactive")),
     }
 
 
@@ -806,7 +832,7 @@ def thread_worker(tid: int) -> dict:
 
 def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     root = c.execute(
-        "SELECT m.id, m.board_id, m.thread_id, b.kind FROM messages m"
+        "SELECT m.id, m.board_id, m.thread_id, b.kind, b.slug FROM messages m"
         " JOIN boards b ON b.id=m.board_id WHERE m.id=?", (tid,),
     ).fetchone()
     if root is None:
@@ -817,6 +843,13 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
         raise ValueError("thread is completed; a new ordinary reply reopens it")
     if agent["kind"] in ("human", "keeper", "cron"):
         raise PermissionError("only bots can be thread workers")
+    if agent.get("interactive"):
+        raise PermissionError("an interactive session does not hold threads: answer where you are mentioned,"
+                              " and leave pickup to the fleet's bots")
+    bound = bot_channels(agent["handle"])
+    if bound and root["kind"] == "channel" and root["slug"].lower() not in bound:
+        raise PermissionError(f"@{agent['handle']} is bound to {', '.join(bound)}: threads in #{root['slug']}"
+                              " are for the workspace's other bots")
     if root["kind"] == "conversation" and not is_member(root["board_id"], agent["id"]):
         raise PermissionError("only conversation participants can claim its threads")
     if not in_scope(get_board_by_id(root["board_id"]), scope(agent)):

@@ -185,7 +185,8 @@ def profiles_section(profiles: list, orphans: list) -> str:
                   if p.get("from") and p["from"].lower() != p["name"].lower() else "")
         acts = (f'<a class="act" href="{page}">view</a><a class="act" href="/fleet/profiles/new?from={e(p["name"])}">clone</a>'
                 + (f'<button type="button" class="act del-profile" data-name="{e(p["name"])}">delete</button>' if not bots else ""))
-        rows.append(f'<tr id="profile-{e(p["name"])}"><td class="who"><a href="{page}">{e(p["name"])}</a>'
+        spec = ' <span class="chip" title="bound to channels when added">specialized</span>' if p.get("specialized") else ""
+        rows.append(f'<tr id="profile-{e(p["name"])}"><td class="who"><a href="{page}">{e(p["name"])}</a>{spec}'
                     f'<div class="by desc">{e(p["role"])}</div>{origin}</td>'
                     f'<td data-label="skills"><div class="chips">{chips}</div></td>'
                     f'<td data-label="bots">{who}</td><td class="acts">{acts}</td></tr>')
@@ -562,7 +563,7 @@ def profile_page(board_name: str, profile: dict, bots: list, base: str) -> str:
 <div class="reg-head"><h1>{name}</h1>
 <div class="right"><a class="addbot-btn needs-me" href="/fleet/profiles/new?from={name}">Clone</a></div></div>
 <p class="role">{e(profile["role"])}</p>
-<p class="sub">created {e(ago(profile["created_at"]))} by {e(profile["created_by"])} · {from_html}. A profile never changes: to change this one, clone it and add new bots with the clone.</p>
+<p class="sub">created {e(ago(profile["created_at"]))} by {e(profile["created_by"])} · {from_html}. A profile never changes: to change this one, clone it and add new bots with the clone.{" <b>Specialized:</b> a bot added with it is bound to channels of its workspace and claims new threads only there." if profile.get("specialized") else ""}</p>
 <div class="two"><div>
 <div class="card" id="says"><h2>What it says</h2><dl>{says}</dl></div>
 <div class="card" id="skills"><h2>Skills · {len(skills)}</h2>{skills_html}
@@ -611,10 +612,11 @@ PROFILE_PAGE_JS = r"""
 
 def profile_new_page(board_name: str, templates: list, profiles: list, skills: list, start: str | None) -> str:
     starters = ([{"key": "", "label": "Blank", "kind": "blank", "data": {"name": "", "role": "", "responsibilities": "",
-                                                                          "focus": "", "avoid": "", "skills": []}}]
+                                                                          "focus": "", "avoid": "", "skills": [], "specialized": False}}]
                 + [{"key": "template:" + t["name"], "label": t["name"], "kind": "template", "data": t} for t in templates]
                 + [{"key": p["name"], "label": p["name"], "kind": "profile",
-                    "data": {k: p[k] for k in ("name", "role", "responsibilities", "focus", "avoid", "skills")}} for p in profiles])
+                    "data": {k: p.get(k) for k in ("name", "role", "responsibilities", "focus", "avoid", "skills", "specialized")}}
+                   for p in profiles])
     keys = [s["key"] for s in starters]
     # ?from= names a profile (Clone) or a template; the default is the developer starter
     chosen = next((k for k in (start, "template:" + (start or ""), "developer", "template:developer") if k in keys), "")
@@ -648,6 +650,7 @@ def profile_new_page(board_name: str, templates: list, profiles: list, skills: l
 <label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000"></textarea></label>
 <label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000"></textarea></label>
 <label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000"></textarea></label>
+<label class="fld"><span><input type="checkbox" name="specialized"> Specialized <small>· one kind of work (an artist, a lore writer): a bot added with it is bound to channels of its workspace and claims new threads only there. Leave it off for a profile that drives anything, such as a developer.</small></span></label>
 <div><h2 style="margin-bottom:6px">Skills</h2>{skills_html}</div>
 <div class="row needs-me"><button type="submit" class="addbot-go" id="create-go">Create</button><span class="note" id="create-note"></span></div>
 <p class="status-line" role="status" aria-live="polite"></p>
@@ -674,6 +677,7 @@ NEW_PROFILE_JS = r"""
     document.querySelectorAll('#starters button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.key === key)); });
     form.elements.name.value = s.kind === 'blank' ? '' : (D.taken.indexOf(s.data.name) >= 0 ? s.data.name + '-2' : s.data.name);
     ['role', 'responsibilities', 'focus', 'avoid'].forEach(function (k) { form.elements[k].value = s.data[k] || ''; });
+    form.elements.specialized.checked = !!s.data.specialized;
     var picked = {}; (s.data.skills || []).forEach(function (x) { picked[x.name] = !!x.mandatory; });
     form.querySelectorAll('input[name=skill]').forEach(function (c) { c.checked = c.value in picked; });
     form.querySelectorAll('input[name=mandatory]').forEach(function (c) { c.checked = !!picked[c.value]; });
@@ -690,6 +694,7 @@ NEW_PROFILE_JS = r"""
   function render() {
     var f = form.elements, name = f.name.value.trim() || '<name>';
     var lines = ['# Your profile: ' + name, '', '**Role.** ' + f.role.value.trim(), ''];
+    if (f.specialized.checked) lines.push('**Specialized.** This profile is for one kind of work. The board offers you new threads only in the channels your bot was added for; elsewhere you take part when mentioned.', '');
     [['responsibilities', 'Responsibilities'], ['focus', 'Focus'], ['avoid', 'Avoid']].forEach(function (p) {
       if (f[p[0]].value.trim()) lines.push('## ' + p[1], '', f[p[0]].value.trim(), '');
     });
@@ -722,6 +727,7 @@ NEW_PROFILE_JS = r"""
     fetch('/api/profiles', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
       body: JSON.stringify({name: name, role: f.role.value.trim(), responsibilities: f.responsibilities.value.trim(),
                             focus: f.focus.value.trim(), avoid: f.avoid.value.trim(), skills: skills(),
+                            specialized: f.specialized.checked,
                             from: current && current.kind !== 'blank' ? current.data.name : null})})
     .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
       if (!r.ok) { msg.textContent = d.error || d.detail || ('refused: ' + r.status); return; }

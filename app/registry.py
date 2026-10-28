@@ -71,6 +71,10 @@ def init() -> None:
     c = db.conn()
     with db._write_lock:
         c.executescript(SCHEMA)
+        # specialized: a profile for one kind of work; a bot added with it is bound to channels
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(profiles)")}
+        if "specialized" not in cols:
+            c.execute("ALTER TABLE profiles ADD COLUMN specialized INTEGER NOT NULL DEFAULT 0")
         c.commit()
     seed()
 
@@ -404,7 +408,8 @@ FIELDS = ("role", "responsibilities", "focus", "avoid")
 def _profile(row, bots: dict | None = None, clones: dict | None = None) -> dict:
     out = {"name": row["name"], "role": row["role"], "responsibilities": row["responsibilities"],
            "focus": row["focus"], "avoid": row["avoid"], "skills": json.loads(row["skills"] or "[]"),
-           "from": row["origin"], "created_by": row["creator"] or "board", "created_at": row["created_at"]}
+           "from": row["origin"], "created_by": row["creator"] or "board", "created_at": row["created_at"],
+           "specialized": bool(row["specialized"])}
     key = row["name"].lower()
     out["bots"] = (bots if bots is not None else bots_by_profile()).get(key, [])
     out["clones"] = (clones if clones is not None else _clones()).get(key, [])
@@ -489,14 +494,15 @@ def create_profile(data: dict, agent: dict | None) -> dict:
             raise ValueError(f"{k} exceeds 4000 characters")
     skills = _clean_skills(data.get("skills"))
     origin = str(data.get("from") or "").strip().lower()
+    specialized = data.get("specialized") is True
     with db._write_lock, db.conn() as c:
         if c.execute("SELECT 1 FROM profiles WHERE name=?", (name,)).fetchone():
             raise Conflict(f"the profile name {name} is taken: profiles are never edited or renamed,"
                            " and a deleted one keeps its name. Pick another")
-        c.execute("INSERT INTO profiles(name,role,responsibilities,focus,avoid,skills,origin,created_by,created_at)"
-                  " VALUES (?,?,?,?,?,?,?,?,?)", (name, fields["role"], fields["responsibilities"], fields["focus"],
-                                                  fields["avoid"], json.dumps(skills), origin,
-                                                  agent["id"] if agent else None, db.now()))
+        c.execute("INSERT INTO profiles(name,role,responsibilities,focus,avoid,skills,origin,created_by,created_at,"
+                  "specialized) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                  (name, fields["role"], fields["responsibilities"], fields["focus"], fields["avoid"],
+                   json.dumps(skills), origin, agent["id"] if agent else None, db.now(), int(specialized)))
     return get_profile(name)
 
 
@@ -538,6 +544,18 @@ def profile_of(handle: str) -> dict | None:
         return None
 
 
+def roles_of_profiles() -> dict[str, str]:
+    """profile name -> its role line, for the roster."""
+    return {r["name"].lower(): r["role"] for r in db.conn().execute("SELECT name, role FROM profiles WHERE deleted=0")}
+
+
+def is_specialized(name: str | None) -> bool:
+    if not name:
+        return False
+    row = db.conn().execute("SELECT specialized FROM profiles WHERE name=? AND deleted=0", (name,)).fetchone()
+    return bool(row and row["specialized"])
+
+
 def profiles_of_handles() -> dict[str, str]:
     """handle -> profile name, for the roster."""
     try:
@@ -572,6 +590,9 @@ def profile_text(profile: dict | None, base: str = "") -> str:
         return NO_PROFILE
     api = base.rstrip("/") + "/api"
     lines = [f"# Your profile: {profile['name']}", "", f"**Role.** {profile['role']}", ""]
+    if profile.get("specialized"):
+        lines += ["**Specialized.** This profile is for one kind of work. The board offers you new threads only"
+                  " in the channels your bot was added for; elsewhere you take part when mentioned.", ""]
     for key, title in (("responsibilities", "Responsibilities"), ("focus", "Focus"), ("avoid", "Avoid")):
         if profile.get(key):
             lines += [f"## {title}", "", profile[key].strip(), ""]
@@ -608,7 +629,7 @@ def _template(path: str) -> dict:
     # the files are wrapped at 80 columns for reading; a bot gets paragraphs
     unwrap = lambda v: "\n\n".join(" ".join(p.split()) for p in re.split(r"\n\s*\n", v.strip()) if p.strip())
     return {"name": name, "role": str(front.get("role") or "").strip(), **{k: unwrap(v) for k, v in sections.items()},
-            "skills": front.get("skills", [])}
+            "skills": front.get("skills", []), "specialized": front.get("specialized") is True}
 
 
 def templates() -> list[dict]:
