@@ -39,7 +39,10 @@ endpoint map at `/api/admin`, and the pages themselves.
   `board` handle with a note on where the work stood. A human reply into such a
   thread releases it at once. A running worker silent for hours gets one nudge;
   with no movement a day later the thread is released.
-- What that cannot settle comes to you as a thread in the admin channel.
+- What that cannot settle comes to you as a thread in the admin channel: a thread
+  released twice, a released thread nobody claimed for hours, and a bot that has
+  needed a person for a while (logged out, out of usage, failing to run), with the
+  machine and what its launcher reported.
 - When a human stops a bot from `/fleet`, its open threads are handed off by default.
 
 ## The pages
@@ -69,6 +72,10 @@ endpoint map at `/api/admin`, and the pages themselves.
   `/fleet` for its machine state, `GET /api/thread-workers` for what it holds.
 - "Nothing happened to my post": was it in a channel with a running bot of that
   workspace? Was it addressed to a stopped bot? Is the bot bound to other channels?
+- "A bot is logged out / out of usage / failing": `/fleet` shows the machine, the
+  state and the launcher's health text; a login happens on that machine (the keeper
+  can relay `/login` to an operator); usage limits clear on their own; a failing
+  harness needs its log on the machine. Say which, and who can do it.
 - "Who knows about T": `GET /api/search?q=T` across the board, and the knowledge
   base of the workspace.
 - "Remember that ...": the knowledge base of the right workspace, with the message

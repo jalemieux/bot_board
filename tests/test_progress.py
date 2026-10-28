@@ -283,9 +283,9 @@ class KeepingWorkMoving(Base):
         # that is the moderator's: one thread in the admin channel (created with the first human)
         first = post(done["attention"])
         self.assertEqual((first["channel"], first["author"]), ("admin", "board"))
-        self.assertTrue(first["body"].startswith("Needs a moderator: 1 thread the board could not settle."))
+        self.assertTrue(first["body"].startswith("Needs a moderator: 1 thing the board could not settle."))
         self.assertIn(f"thread {self.tid} (build the thing): @edie did not answer the nudge; released", first["body"])
-        self.assertEqual(first["meta"], {"kind": "attention", "threads": [self.tid]})
+        self.assertEqual(first["meta"], {"kind": "attention", "threads": [self.tid], "bots": []})
         self.assertIsNone(progress.sweep()["attention"])                   # not again for the same state
         # still unclaimed hours later: that is a new state, reported once
         age(); done = progress.sweep()
@@ -299,6 +299,36 @@ class KeepingWorkMoving(Base):
         # once someone takes the stuck thread, nothing is left to report
         self.assertEqual(self.claim(self.tid).status_code, 200)
         self.assertIsNone(progress.sweep()["attention"])
+
+    def test_a_bot_that_needs_a_person_is_reported_once_per_spell(self):
+        def report(health):
+            r = self.client.put("/api/fleet/hosts/box", headers=self.keeper, json={"bots": [
+                {"handle": "edie", "harness": "claude", "status": "waiting", "serves": "/pool", "pool": True,
+                 "health": health}]})
+            self.assertEqual(r.status_code, 200, r.text)
+        def aged():
+            db.conn().execute("UPDATE progress_health SET since=?", (LONG_AGO,)); db.conn().commit()
+        report("logged out of claude: run claude login on the box")
+        self.assertIsNone(progress.sweep()["attention"])                   # a login may be seconds away
+        self.assertEqual(self.worker(self.tid), "edie")                    # its launcher holds the messages
+        aged()
+        done = progress.sweep()
+        post = self.client.get(f"/api/threads/{done['attention']}").json()["messages"][0]
+        self.assertEqual(post["channel"], "admin")
+        self.assertIn("@edie on box has needed a login since 2026-01-01 00:00 UTC; its launcher says: logged out of claude",
+                      post["body"])
+        self.assertIn("Tell an operator, and mark the message so it waits for them.", post["body"])
+        self.assertIn("For a bot: tell an operator what it needs", post["body"])
+        self.assertEqual(post["meta"], {"kind": "attention", "threads": [], "bots": ["edie"]})
+        self.assertIsNone(progress.sweep()["attention"])                   # once per spell
+        report("")                                                         # logged in again
+        self.assertIsNone(progress.sweep()["attention"])
+        self.assertEqual(db.conn().execute("SELECT COUNT(*) FROM progress_health").fetchone()[0], 0)
+        report("out of usage until 18:00")                                 # a new spell, a new state
+        self.assertIsNone(progress.sweep()["attention"])                   # the spell starts now
+        aged()
+        done = progress.sweep()
+        self.assertIn("has been out of usage since", self.client.get(f"/api/threads/{done['attention']}").json()["messages"][0]["body"])
 
     def test_completed_threads_are_not_touched(self):
         last = self.messages(self.tid)[-1]["id"]

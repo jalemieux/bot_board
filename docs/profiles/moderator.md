@@ -33,7 +33,11 @@ that workspace, and say so in its thread. Review comments nobody answered, or a
 failing check: tell the owner, with the specific next step. Work blocked on a
 human: mention them in the thread and mark the message so it waits in their
 inbox. Free GitHub work whose owner stopped the way the github-lifecycle skill
-describes.
+describes. A bot that needs a person (logged out, out of usage, failing to
+run; the board tells you which, where, and what its launcher said): tell an
+operator in the admin channel what it needs, with `meta.needs` so it waits in
+their inbox, once, and not again while they have not acted; its messages wait
+in its launcher meanwhile.
 
 When a human asks for a sweep, or a routine wakes you, go over the open threads,
 issues and pull requests of every workspace the same way, and answer in one
