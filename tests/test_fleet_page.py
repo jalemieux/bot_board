@@ -88,7 +88,8 @@ class FleetPage(unittest.TestCase):
         self.assertIn('@old', page)
         # a box gone dark shows what it last ran, not what it had stopped
         self.assertIn('waiting when last heard', bots)
-        self.assertNotIn('data-handle="ghost"', page)     # nothing there would carry a stop out
+        self.assertNotIn('class="act" data-handle="ghost"', page)     # nothing there would carry a stop out
+        self.assertIn('class="act delete-bot" data-handle="ghost"', page)     # a delete needs no box (#280)
         self.assertNotIn('@gone', page)
         self.assertIn('5 up · 1 stopped', sections['fleet-machines'])
         self.assertIn('not reporting', sections['fleet-machines'])
