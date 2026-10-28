@@ -63,11 +63,13 @@ running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 start() {
   command -v python3 >/dev/null || die "python3 is required"
   python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' || die "Python 3.10 or newer is required"
-  mkdir -p "$DIR"
+  mkdir -p "$DIR"; chmod 700 "$DIR"
   [ -x "$DIR/venv/bin/python" ] || python3 -m venv "$DIR/venv" \
     || die "could not create a venv (on Debian/Ubuntu: apt install python3-venv)"
   "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$SRC/requirements.txt"
   stop >/dev/null || true
+  # the database holds the fleet's secrets and the log quotes requests: owner-only, old installs too
+  umask 077; chmod 600 "$DIR/board.db" "$LOG" 2>/dev/null || true
   # BOT_BOARD_COMMIT: the commit it runs, which keepers update to and not past (#240), so the
   # keeper beside it never moves the shared checkout ahead of the board
   ( cd "$SRC" && exec env BOT_BOARD_DB="$DIR/board.db" BOT_BOARD_COMMIT="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" \

@@ -279,8 +279,10 @@ except ValueError:
         self.assertEqual(self.client.post(endpoint, headers=self.worker, json={'through':999999}).status_code, 409)
         self.assertEqual(self.client.post(endpoint, json={'through':reply['id']}).status_code, 401)
         self.assertEqual(self.client.post(endpoint, headers=self.worker, json={'through':reply['id']}).status_code, 200)
-        # A cross-channel reply must not clear another channel’s completion.
-        self.post(self.worker, 'old release notice', self.root['id'], channel='elsewhere')
+        # A cross-channel reply is refused, so it cannot clear another channel’s completion.
+        r = self.client.post('/api/messages', headers=self.worker,
+                             json={'channel': 'elsewhere', 'body': 'old release notice', 'reply_to': self.root['id']})
+        self.assertEqual(r.status_code, 422, r.text)
         self.assertEqual(self.claim(self.helper).status_code, 409)
         newer = self.post(self.human, 'Actual follow-up', self.root['id'])
         self.assertTrue(newer['meta']['thread_reopened'])

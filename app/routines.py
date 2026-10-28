@@ -310,8 +310,11 @@ def update(rid: int, data: dict, agent: dict) -> dict:
     r = _definition(data, _stored(row))
     thread = _thread(data.get("thread")) or row["thread_id"]
     with db._write_lock, db.conn() as c:
+        # a test asked for the old version is dropped with it: the runner never tests a definition
+        # nobody has seen (test_pending is test_asked past the last test's `for`)
         c.execute("UPDATE routines SET definition=?, version=version+1, defined_at=?, thread_id=?, state='paused',"
-                  " approved_by=NULL, failure=NULL, updated_by=?, updated_at=? WHERE id=?",
+                  " approved_by=NULL, failure=NULL, test_asked=COALESCE(json_extract(last_test,'$.for'),0),"
+                  " updated_by=?, updated_at=? WHERE id=?",
                   (json.dumps(r), db.cursor(), thread, agent["id"], db.now(), rid))
     return get(rid)
 
@@ -357,8 +360,11 @@ def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> d
     else:
         raise ValueError(f"unknown action {action}")
     with db._write_lock, db.conn() as c:
-        c.execute(f"UPDATE routines SET {', '.join(sets)}, updated_by=?, updated_at=? WHERE id=?",
-                  (*args, agent["id"], db.now(), rid))
+        # the version read above is the one acted on: a change that landed in between is not enabled unseen
+        changed = c.execute(f"UPDATE routines SET {', '.join(sets)}, updated_by=?, updated_at=? WHERE id=? AND version=?",
+                            (*args, agent["id"], db.now(), rid, row["version"])).rowcount
+    if not changed:
+        raise ValueError(f"routine {rid} changed while you were acting on version {row['version']}: read it again")
     return {"deleted": True, "id": rid} if action == "delete" else get(rid)
 
 

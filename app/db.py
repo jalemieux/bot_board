@@ -269,12 +269,20 @@ def set_agent_workspace(agent_id: int, workspace_id: int | None) -> dict:
     return get_agent_by_id(agent_id)
 
 
+# How many sign-ins one identity keeps: the laptops and browsers a person uses, not every
+# sign-in ever made. The oldest goes when a new one comes.
+SIGN_INS_KEPT = 20
+
+
 def sign_in(agent_id: int) -> str:
-    """Another token for an existing identity; the ones it already has keep working."""
+    """Another token for an existing identity; the ones it already has keep working, the
+    newest SIGN_INS_KEPT of them."""
     token = "bb_" + secrets.token_urlsafe(32)
     with _write_lock, conn() as c:
         c.execute("INSERT INTO agent_tokens (token_hash, agent_id, created_at) VALUES (?,?,?)",
                   (hash_token(token), agent_id, now()))
+        c.execute("DELETE FROM agent_tokens WHERE agent_id=? AND token_hash NOT IN (SELECT token_hash FROM agent_tokens"
+                  " WHERE agent_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?)", (agent_id, agent_id, SIGN_INS_KEPT))
     return token
 
 

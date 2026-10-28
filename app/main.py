@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.openapi.utils import get_openapi
 from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.datastructures import MutableHeaders
 
 from . import db, fleet, web, workspaces, routines, images, versions, registry, progress
 
@@ -31,6 +33,10 @@ BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
 READ_TOKEN_REQUIRED = os.environ.get("BOT_BOARD_PRIVATE_READS", "").lower() in ("1", "true", "yes")
 MAX_BODY = int(os.environ.get("BOT_BOARD_MAX_BODY", "16000"))
+# Bounds on the rest of a message, so no post is a way to fill the database.
+MAX_TAGS = 32
+MAX_TAG_CHARS = 64
+MAX_META = int(os.environ.get("BOT_BOARD_MAX_META", "16000"))      # characters of JSON
 MAX_TEXT_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_WAIT = int(os.environ.get("BOT_BOARD_MAX_WAIT", "60"))
 # Hard ceiling on the JSON size of any message list. Agents read these into a
@@ -51,6 +57,32 @@ app = FastAPI(
     docs_url="/api/docs",
     openapi_url=None,
 )
+
+
+class _PageHeaders:
+    """Every HTML page refuses to be framed (a framed /fleet would act with the token the browser
+    holds) and to have its type sniffed. Done at the ASGI layer so no page can forget."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                if headers.get("content-type", "").startswith("text/html"):
+                    headers.setdefault("X-Frame-Options", "DENY")
+                    headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+                    headers.setdefault("X-Content-Type-Options", "nosniff")
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(_PageHeaders)
 
 # Woken on every insert so long-pollers return the instant a message lands.
 _new_message = asyncio.Condition()
@@ -137,6 +169,34 @@ def optional_agent(authorization: str = Header(default="")) -> dict | None:
     return None
 
 
+# The pages are rendered with the board's data in them, so on a private board
+# (BOT_BOARD_PRIVATE_READS) they need a token like the API does. A browser sends no bearer
+# header when it opens a page, so the board page keeps a copy of the signed-in token in this
+# cookie (SameSite=Strict). It is read by page_reader and nowhere else: /api never looks at it.
+PAGE_COOKIE = "bb_token"
+
+
+def page_reader(request: Request, authorization: str = Header(default="")) -> dict | None:
+    """Who is opening an HTML page: by bearer header, else by the page cookie; None if nobody known."""
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    else:
+        token = request.cookies.get(PAGE_COOKIE, "")
+    return db.agent_by_token(token) if token else None
+
+
+def private_page(reader: dict | None) -> bool:
+    """Whether this reader gets a page with none of the board's data in it."""
+    return READ_TOKEN_REQUIRED and reader is None
+
+
+def page_gate(reader: dict | None = Depends(page_reader)) -> dict | None:
+    """For a page that is nothing without its data: on a private board an unknown reader signs in first."""
+    if private_page(reader):
+        raise HTTPException(401, "This board requires a token to read.")
+    return reader
+
+
 # --------------------------------------------------------------- schemas
 
 class RegisterIn(BaseModel):
@@ -212,6 +272,22 @@ class PostIn(BaseModel):
                 raise ValueError("text attachment cannot be empty")
             if len(v.encode("utf-8")) > MAX_TEXT_ATTACHMENT_BYTES:
                 raise ValueError("text attachment exceeds 10 MiB in UTF-8")
+        return v
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v: list[str]) -> list[str]:
+        if len(v) > MAX_TAGS:
+            raise ValueError(f"at most {MAX_TAGS} tags on a message")
+        if any(len(t) > MAX_TAG_CHARS for t in v):
+            raise ValueError(f"a tag is at most {MAX_TAG_CHARS} characters")
+        return v
+
+    @field_validator("meta")
+    @classmethod
+    def _meta(cls, v: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(v)) > MAX_META:
+            raise ValueError(f"meta exceeds {MAX_META} characters of JSON")
         return v
 
 
@@ -520,7 +596,7 @@ def agents_md(request: Request, agent: dict | None = Depends(optional_agent)) ->
 
 @app.post("/api/agents", tags=["agents"], status_code=201)
 def register(body: RegisterIn, response: Response) -> dict:
-    if INVITE_CODE and body.invite_code != INVITE_CODE:
+    if INVITE_CODE and not hmac.compare_digest(body.invite_code.encode(), INVITE_CODE.encode()):
         raise HTTPException(403, "invalid invite_code")
     existing = db.get_agent_by_handle(body.handle)
     if existing and existing["kind"] == "human" and body.kind == "human":
@@ -622,7 +698,7 @@ def set_interactive(handle: str, body: InteractiveIn, agent: dict = Depends(curr
 
 
 @app.get("/api/agents/{handle}", tags=["agents"])
-def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict:
+def agent_profile(handle: str, agent: dict | None = Depends(optional_agent)) -> dict:
     a = db.get_agent_by_handle(handle.lstrip("@"))
     if a is None:
         raise HTTPException(404, "no such agent")
@@ -635,7 +711,7 @@ def agent_profile(handle: str, _: dict | None = Depends(optional_agent)) -> dict
         "agent": {**db.public_agent(a), "running": db.mention_state(a["kind"], a["last_seen_at"],
                                                                      run["run"] if run else None) is None,
                   "profile": registry.profiles_of_handles().get(a["handle"].lower())},
-        "recent": db.list_messages(author=a["handle"], limit=20, order="desc"),
+        "recent": db.list_messages(author=a["handle"], limit=20, order="desc", workspace_id=db.scope(agent)),
     }
 
 
@@ -1457,10 +1533,10 @@ def get_conversation(slug: str, _: dict | None = Depends(optional_agent)) -> dic
 def boards(
     since: int | None = SinceParam,
     seen: str | None = SeenParam,
-    _: dict | None = Depends(optional_agent),
+    agent: dict | None = Depends(optional_agent),
 ) -> dict:
     """Deprecated alias of GET /api/channels."""
-    rows = db.list_boards(since, "channel", seen=_parse_seen(seen))
+    rows = db.list_boards(since, "channel", seen=_parse_seen(seen), workspace_id=db.scope(agent))
     return {"boards": rows, "channels": rows, "board_cursor": db.cursor(), "cursor": db.cursor()}
 
 
@@ -1588,16 +1664,18 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
     channel = body.channel
-    if channel is None:
-        if body.reply_to is not None:
-            parent = db.get_message(body.reply_to)
-            if parent is None:
-                raise HTTPException(404, f"reply_to message {body.reply_to} does not exist")
-            channel = parent["board"]
-        elif agent.get("workspace_id") and agent["kind"] not in db.UNSCOPED_KINDS:
-            channel = workspaces.home_slug(workspaces.by_id(agent["workspace_id"]))
-        else:
-            raise HTTPException(422, "say which channel to post in")
+    parent = db.get_message(body.reply_to) if body.reply_to is not None else None
+    if body.reply_to is not None and parent is None:
+        raise HTTPException(404, f"reply_to message {body.reply_to} does not exist")
+    if parent is not None and channel is None:
+        channel = parent["board"]
+    elif parent is not None and parent["board"] != channel:
+        # a reply lands in its own thread's channel: never in another workspace's, or in a conversation
+        raise HTTPException(422, f"reply_to message {body.reply_to} is in #{parent['board']}, not #{channel}")
+    elif channel is None and agent.get("workspace_id") and agent["kind"] not in db.UNSCOPED_KINDS:
+        channel = workspaces.home_slug(workspaces.by_id(agent["workspace_id"]))
+    elif channel is None:
+        raise HTTPException(422, "say which channel to post in")
     try:
         # Off the event loop: a contended SQLite commit must not stall long-pollers.
         msg = await asyncio.to_thread(
@@ -1625,7 +1703,8 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
 
 
 @app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)
-def download_image_attachment(mid: int, _: dict | None = Depends(optional_agent)) -> Response:
+def download_image_attachment(mid: int, agent: dict | None = Depends(optional_agent)) -> Response:
+    _visible(db.get_message(mid), agent)
     image = db.get_image_attachment(mid)
     if image is None:
         raise HTTPException(404, "image attachment not found")
@@ -1638,7 +1717,8 @@ def download_image_attachment(mid: int, _: dict | None = Depends(optional_agent)
 
 
 @app.get("/api/messages/{mid}/attachment", tags=["messages"], response_class=Response)
-def download_text_attachment(mid: int, _: dict | None = Depends(optional_agent)) -> Response:
+def download_text_attachment(mid: int, agent: dict | None = Depends(optional_agent)) -> Response:
+    _visible(db.get_message(mid), agent)
     content = db.get_text_attachment(mid)
     if content is None:
         raise HTTPException(404, "text attachment not found")
@@ -1908,17 +1988,21 @@ def healthz() -> dict:
 
 # ------------------------------------------------------------ human web
 
-def _app_page(request: Request) -> str:
+def _app_page(request: Request, reader: dict | None = None) -> str:
     """The one-page channel view. It boots from embedded data and then talks
-    to /api like any agent would; a signed-in human posts with their own token."""
+    to /api like any agent would; a signed-in human posts with their own token.
+    On a private board a reader nobody knows gets the page empty, behind its sign-in
+    (#214), and the page fills in from /api once they have signed in."""
+    private = private_page(reader)
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
-        channels=db.list_boards(kind="channel", hide_events=True),
-        conversations=db.list_boards(kind="conversation", hide_events=True),
-        agents=[db.public_agent(a) for a in db.list_agents()],
-        stats={**db.stats(), "running": fleet.running()},
+        channels=[] if private else db.list_boards(kind="channel", hide_events=True),
+        conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
+        agents=[] if private else [db.public_agent(a) for a in db.list_agents()],
+        stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
         invite_required=bool(INVITE_CODE),
+        private=private,
         max_body=MAX_BODY,
         max_text_attachment_bytes=MAX_TEXT_ATTACHMENT_BYTES,
         max_image_attachment_bytes=images.MAX_BYTES,
@@ -1926,15 +2010,15 @@ def _app_page(request: Request) -> str:
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def page_index(request: Request) -> str:
-    return _app_page(request)
+def page_index(request: Request, reader: dict | None = Depends(page_reader)) -> str:
+    return _app_page(request, reader)
 
 
 @app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
-def page_channel(slug: str, request: Request) -> HTMLResponse:
-    if db.get_board(slug.lower()) is None:
+def page_channel(slug: str, request: Request, reader: dict | None = Depends(page_reader)) -> HTMLResponse:
+    if not private_page(reader) and db.get_board(slug.lower()) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No channel called '{slug}'."), 404)
-    return HTMLResponse(_app_page(request))
+    return HTMLResponse(_app_page(request, reader))
 
 
 @app.get("/b/{slug}", include_in_schema=False)
@@ -1943,15 +2027,15 @@ def page_board(slug: str) -> RedirectResponse:
 
 
 @app.get("/unread", response_class=HTMLResponse, include_in_schema=False)
-def page_unread(request: Request) -> str:
-    return _app_page(request)
+def page_unread(request: Request, reader: dict | None = Depends(page_reader)) -> str:
+    return _app_page(request, reader)
 
 
 @app.get("/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
-def page_thread(tid: int, request: Request) -> HTMLResponse:
-    if db.get_message(tid) is None:
+def page_thread(tid: int, request: Request, reader: dict | None = Depends(page_reader)) -> HTMLResponse:
+    if not private_page(reader) and db.get_message(tid) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No message #{tid}."), 404)
-    return HTMLResponse(_app_page(request))
+    return HTMLResponse(_app_page(request, reader))
 
 
 @app.get("/agents", include_in_schema=False)
@@ -1996,7 +2080,7 @@ def status_restore(key: str, agent: dict = Depends(current_agent)) -> dict:
 
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-def page_admin() -> str:
+def page_admin(_: dict | None = Depends(page_gate)) -> str:
     from . import status
     return web.shell(BOARD_NAME, "administration", here="/admin", content=
                      '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
@@ -2006,7 +2090,7 @@ def page_admin() -> str:
 
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
-def page_fleet() -> str:
+def page_fleet(_: dict | None = Depends(page_gate)) -> str:
     from . import status
     hosts = fleet.hosts()
     try:
@@ -2025,7 +2109,7 @@ def page_fleet() -> str:
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_skill(name: str) -> HTMLResponse:
+def page_skill(name: str, _: dict | None = Depends(page_gate)) -> HTMLResponse:
     """A skill's page: editor, preview, what a bot gets, who uses it, history, delete."""
     from .registry_web import skill_page
     try:
@@ -2036,7 +2120,7 @@ def page_skill(name: str) -> HTMLResponse:
 
 
 @app.get("/fleet/profiles/new", response_class=HTMLResponse, include_in_schema=False)
-def page_profile_new(request: Request) -> str:
+def page_profile_new(request: Request, _: dict | None = Depends(page_gate)) -> str:
     """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone)."""
     from .registry_web import profile_new_page
     start = (request.query_params.get("from") or "").strip().lower() or None
@@ -2044,7 +2128,7 @@ def page_profile_new(request: Request) -> str:
 
 
 @app.get("/fleet/profiles/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_profile(name: str, request: Request) -> HTMLResponse:
+def page_profile(name: str, request: Request, _: dict | None = Depends(page_gate)) -> HTMLResponse:
     """A profile's page: what it says, its fixed skills, the bots that carry it, the text a bot reads, lineage."""
     from .registry_web import profile_page
     try:
@@ -2062,7 +2146,7 @@ def page_profile(name: str, request: Request) -> HTMLResponse:
 
 @app.get('/workspaces', response_class=HTMLResponse, include_in_schema=False)
 @app.get('/workspaces/{slug}', response_class=HTMLResponse, include_in_schema=False)
-def page_workspaces() -> str:
+def page_workspaces(_: dict | None = Depends(page_gate)) -> str:
     from .workspace_web import workspaces_page
     return workspaces_page(BOARD_NAME)
 
@@ -2074,13 +2158,13 @@ def page_projects(slug: str = "") -> RedirectResponse:
 
 
 @app.get("/routines", response_class=HTMLResponse, include_in_schema=False)
-def page_routines() -> str:
+def page_routines(_: dict | None = Depends(page_gate)) -> str:
     from .routines_web import routines_page
     return routines_page(BOARD_NAME)
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)
-def page_agent(handle: str) -> HTMLResponse:
+def page_agent(handle: str, _: dict | None = Depends(page_gate)) -> HTMLResponse:
     a = db.get_agent_by_handle(handle.lstrip("@"))
     if a is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No agent called '{handle}'."), 404)
@@ -2089,7 +2173,7 @@ def page_agent(handle: str) -> HTMLResponse:
 
 
 @app.get("/search", response_class=HTMLResponse, include_in_schema=False)
-def page_search(q: str = "") -> str:
+def page_search(q: str = "", _: dict | None = Depends(page_gate)) -> str:
     return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True) if q.strip() else [])
 
 
@@ -2105,4 +2189,6 @@ def page_onboard(request: Request) -> str:
 async def http_error(request: Request, exc: HTTPException):
     if request.url.path.startswith("/api"):
         return JSONResponse({"error": exc.detail, "status": exc.status_code}, exc.status_code)
+    if exc.status_code == 401:
+        return HTMLResponse(web.private_page(BOARD_NAME, str(exc.detail)), 401)
     return HTMLResponse(web.not_found(BOARD_NAME, str(exc.detail)), exc.status_code)

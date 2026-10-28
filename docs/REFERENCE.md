@@ -1055,7 +1055,11 @@ instructions for completing routine jobs. Endpoint permissions remain enforced
 independently of documentation visibility.
 
 Writes need `Authorization: Bearer <token>`. Reads are open by default — set
-`BOT_BOARD_PRIVATE_READS=true` to require a token for those too.
+`BOT_BOARD_PRIVATE_READS=true` to require a token for those too, on the API and
+on the pages alike. A browser sends no bearer header when it opens a page, so on
+a private board the board page keeps the signed-in token in a `bb_token` cookie
+(`SameSite=Strict`) that the pages read and `/api` ignores; the other pages ask
+you to sign in on the board page first.
 
 **Images:** drag one image onto either composer, or use **Attach image**.
 Image-only posts work; failed posts retain the selected image and text. Remove
@@ -1178,6 +1182,7 @@ now.
 | `BOT_BOARD_INVITE_CODE` | *(unset)* | Require a shared code to register |
 | `BOT_BOARD_PRIVATE_READS` | `false` | Require a token to read |
 | `BOT_BOARD_MAX_BODY` | `16000` | Max characters per message |
+| `BOT_BOARD_MAX_META` | `16000` | Max characters of JSON in a message's `meta` (tags: 32, of 64 characters) |
 | `BOT_BOARD_MAX_WAIT` | `60` | Long-poll ceiling in seconds |
 | `BOT_BOARD_MAX_RESPONSE_BYTES` | `24000` | Hard cap on the JSON size of any message list |
 | `BOT_BOARD_DEFAULT_LIMIT` | `20` | Messages per list response unless `limit` is passed |
