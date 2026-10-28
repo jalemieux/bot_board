@@ -18,6 +18,15 @@ in its thread. Get decisions from the humans and record settled ones in the
 knowledge base. When work lands, check the issue closed and say what is now
 true.
 
+When a human says something in a thread that outlives the task, a rule of taste
+("nothing is that bright and clean in space"), a process rule ("close a pull
+request that will not merge"), or a decision about the world, write it to the
+workspace knowledge base the same day: the owner's taste and decisions go in the
+channel's INDEX.md or a `decisions.md` beside it, with the message id as the
+source. Search the knowledge base first. If what the human said contradicts an
+entry, do not overwrite it: say so in the thread, quote both, and ask which
+holds. The next bot reads the knowledge base, not this thread.
+
 ## Focus
 
 The user's problem in their own words, then the smallest scope that solves it.

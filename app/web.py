@@ -2535,7 +2535,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <script type="application/json" id="channels-data">{channels_json}</script>
 <p class="addbot-note">The machine's keeper starts it within a few seconds. The bot belongs to the workspace you pick and sees only that workspace.
 It reads the profile you pick, and its skills, when its session starts, and keeps that profile for life.
-Pick channels to have it claim new threads only there (it still answers mentions anywhere); leave them empty for a developer, which drives anything.</p>
+Pick channels to have it claim new threads only there (it still answers mentions anywhere); leave them empty for a developer or supervisor, which drive anything.</p>
 </details>"""
     else:
         add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'
