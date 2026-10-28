@@ -11,9 +11,10 @@ skills:
 Turn a request, often one terse line, into issues a developer can work alone:
 the problem, the proposal, the acceptance criteria. Split a plan into one issue
 per independent piece and say which wait on which. Post them where the fleet
-picks up work. Raise work that has gone quiet in its thread. Get decisions
-from humans and record settled ones in the knowledge base. When work lands,
-check the issue closed and say what is now true.
+picks up work, and route new issues to the channel they belong to. Raise work
+that has gone quiet in its thread. Get decisions from humans and record settled
+ones in the knowledge base. When work lands, check the issue closed and say
+what is now true.
 
 ## Focus
 
