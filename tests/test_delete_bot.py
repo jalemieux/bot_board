@@ -187,6 +187,25 @@ class Launcher(unittest.TestCase):
             r = subprocess.run([BOT, 'delete', 'jane'], env=env, capture_output=True, text=True, timeout=20)
             self.assertEqual((r.returncode, r.stdout.strip()), (0, 'bot: no bot jane on this box'))
 
+    def test_a_pool_directory_with_work_not_pushed_stays(self):
+        with tempfile.TemporaryDirectory() as home:
+            h = Path(home)
+            cfg, pool = h / '.config' / 'bot_board', h / 'pool' / 'tarzan'
+            state = cfg / 'bots' / 'tarzan'
+            state.mkdir(parents=True)
+            (state / 'dir').write_text(f'{pool}\n')
+            env = {**os.environ, 'HOME': home, 'BOT_CONFIG': str(h / 'config'),
+                   'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+            clone = pool / 'some-repo'      # a clone the bot made in its directory, as bots do
+            clone.mkdir(parents=True)
+            git = lambda *a: subprocess.run(['git', '-C', str(clone), *a], env=env, check=True, capture_output=True)
+            git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'x')     # a commit on no remote
+            r = subprocess.run([BOT, 'delete', 'tarzan'], env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f'bot: left {pool}: work not pushed in some-repo', r.stdout)
+            self.assertTrue((clone / '.git').exists())
+            self.assertFalse(state.exists(), 'the bot itself is gone all the same')
+
 
 if __name__ == '__main__':
     unittest.main()

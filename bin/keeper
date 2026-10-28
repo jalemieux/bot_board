@@ -891,7 +891,8 @@ class Hands:
             return f"not deleted: {e}"
         if r.returncode:
             return f"not deleted: {(r.stderr or r.stdout).strip()[-300:]}"
-        print(f"keeper: deleted {h} from this box, asked by @{w['set_by']}", flush=True)
+        left = [x for x in r.stdout.splitlines() if x.startswith("bot: left ")]
+        print(f"keeper: deleted {h} from this box, asked by @{w['set_by']}" + "".join(f"; {x[5:]}" for x in left), flush=True)
         return None
 
     def arrive(self, w):
