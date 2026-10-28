@@ -16,6 +16,7 @@
 #   bot pack <handle> [<file>]      everything a stopped bot is, in one archive, to move it to another box
 #   bot unpack <file> [--pool <root>]    the other end of pack
 #   bot gc [--dry-run] [--days <n>] [<handle>...]    remove what ended sessions and bots left in ~/.config/bot_board
+#   bot delete <handle>             a stopped bot, gone from this box: config, token, working directory, sessions
 #   bot keeper install|uninstall|run|once|show   the box agent: report this box to the board and run its bots
 #   bot install                    stand up this box in one command (clone if needed, seed config, install the keeper)
 #   bot version                    the version of this bin/bot (from git) and of the board it talks to
@@ -696,6 +697,28 @@ print(d.get("outcome","-")+("" if age is None else " "+ago(age)))' "$d/last.json
     if alive "$S"; then die "could not kill $H (pid $P)"; fi
     rm -f "$S/pid" "$S/stop" "$S/busy" "$S/poll"   # a launcher killed with KILL never cleaned up after itself
     echo "bot: $H killed"
+    exit 0 ;;
+  delete)
+    # What a deleted bot leaves on this box (#280), removed: its state, token and cursor in
+    # $CFG, its working directory when it is its own (a pool bot's $BOT_POOL/<handle>; a
+    # repo bot's checkout stays), and the Claude Code and Codex transcripts of its sessions.
+    # The keeper runs it once the board says the bot was deleted and it has stopped.
+    H=${2:-}; [ -n "$H" ] || usage
+    [[ $H =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$ ]] || die "not a handle: '$H'"
+    S=$CFG/bots/$H
+    if [ ! -d "$S" ] && [ ! -e "$CFG/$H.token" ]; then echo "bot: no bot $H on this box"; exit 0; fi
+    alive "$S" && die "$H is running; bot stop $H first"
+    for f in "$S"/session "$S"/session.* "$S"/old-sessions/*/session "$S"/old-sessions/*/session.*; do
+      [ -s "$f" ] || continue
+      sid=$(cat "$f"); [[ $sid =~ ^[A-Za-z0-9._-]{8,}$ ]] || continue
+      for t in ~/.claude/projects/*/"$sid".jsonl ~/.claude/projects/*/"$sid" ~/.codex/sessions/*/*/*/*"$sid".jsonl; do
+        if [ -e "$t" ]; then rm -rf "$t"; echo "bot: removed the session $t"; fi
+      done
+    done
+    D=$(cat "$S/dir" 2>/dev/null || true)
+    if [ -n "$D" ] && [ "${D##*/}" = "$H" ] && [ ! -s "$S/repo" ] && [ -d "$D" ]; then rm -rf "$D"; echo "bot: removed $D"; fi
+    rm -rf "$S" "$CFG/$H.token" "$CFG/$H.seen"
+    echo "bot: $H is gone from this box"
     exit 0 ;;
   pack)
     H=${2:-}; [ -n "$H" ] || usage

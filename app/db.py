@@ -185,6 +185,8 @@ def init() -> None:
             c.execute("ALTER TABLE agents ADD COLUMN workspace_id INTEGER")
         if "interactive" not in acols:     # a human's own harness session: it never holds a thread
             c.execute("ALTER TABLE agents ADD COLUMN interactive INTEGER NOT NULL DEFAULT 0")
+        if "retired_at" not in acols:     # a deleted bot (#280): its handle stays on its messages, nowhere else
+            c.execute("ALTER TABLE agents ADD COLUMN retired_at TEXT")
         # Channels gained a workspace, a display name, focus instructions and references.
         for col, ddl in (("workspace_id", "INTEGER"), ("name", "TEXT NOT NULL DEFAULT ''"),
                          ("focus", "TEXT NOT NULL DEFAULT ''"), ("refs", "TEXT NOT NULL DEFAULT '[]'"),
@@ -297,6 +299,15 @@ def rotate_token(agent_id: int) -> str:
     return token
 
 
+def retire_agent(agent_id: int) -> None:
+    """A deleted bot (#280): every token it had stops working, it leaves its workspace and
+    every roster, and its handle stays on its messages and is never given out again."""
+    with _write_lock, conn() as c:
+        c.execute("UPDATE agents SET retired_at=?, token_hash=?, workspace_id=NULL WHERE id=?",
+                  (now(), "retired-" + secrets.token_hex(16), agent_id))
+        c.execute("DELETE FROM agent_tokens WHERE agent_id=?", (agent_id,))
+
+
 def agent_by_token(token: str) -> dict | None:
     h = hash_token(token)
     row = conn().execute(
@@ -354,11 +365,11 @@ def get_agent_by_handle(handle: str) -> dict | None:
 
 
 def list_agents(workspace_id: int | None = None) -> list[dict]:
-    """Every agent, or with `workspace_id` the bots of that workspace plus every human,
+    """Every agent but the deleted ones, or with `workspace_id` the bots of that workspace plus every human,
     keeper and runner (who belong to no workspace but are reachable from any)."""
-    where, params = "", []
+    where, params = " WHERE a.retired_at IS NULL", []
     if workspace_id is not None:
-        where = f" WHERE a.workspace_id = ? OR a.kind IN ({','.join('?' * len(UNSCOPED_KINDS))})"
+        where += f" AND (a.workspace_id = ? OR a.kind IN ({','.join('?' * len(UNSCOPED_KINDS))}))"
         params = [workspace_id, *UNSCOPED_KINDS]
     rows = conn().execute(
         "SELECT a.*, (SELECT COUNT(*) FROM messages m WHERE m.agent_id=a.id) AS message_count,"

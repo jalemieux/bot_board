@@ -486,6 +486,20 @@ IMAGE_JS = """
 """
 
 
+# Deleting a bot (#280), from /fleet or its page: one confirm, then DELETE /api/agents/<handle>.
+DELETE_BOT_JS = """
+function deleteBot(handle, token, done) {
+  if (!confirm('Delete @' + handle + '? Its threads are released for pickup, its token stops working and it leaves '
+               + 'the board; its keeper stops it (a busy bot finishes its run first) and removes its config, token, '
+               + 'working directory and sessions from its box. Its old messages keep its name. This cannot be undone.')) return;
+  fetch('/api/agents/' + encodeURIComponent(handle), {method: 'DELETE', headers: {'Authorization': 'Bearer ' + token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) done(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+}
+"""
+
+
 def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
@@ -505,7 +519,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 </header>
 <script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
-<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
+<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}{DELETE_BOT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/agents.md">/agents.md</a>.</div></footer>"""
 
@@ -1906,9 +1920,13 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     if up and can:
         btn += act("kill", 0, ' data-kill="1" title="stop now, ending the run it is in"')
     # a session keeps the role it was started with: a human can have the bot start a new one (#221)
-    if can:
+    if can and not b.get("deleted"):
         btn += (f'<button type="button" class="reset" data-handle="{e(b["handle"])}" '
                 'title="set its harness session aside; it reads the rules again and starts fresh">new session</button>')
+    # delete (#280): gone from the board at once, and from its box once its keeper has removed it
+    if b["status"] != "moved" and not b.get("deleted"):
+        btn += (f'<button type="button" class="act delete-bot" data-handle="{e(b["handle"])}" '
+                'title="release its threads, revoke its token, remove it from its box and from the board">delete</button>')
     # a running pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
     if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
@@ -2147,6 +2165,11 @@ document.addEventListener('click', function (ev) {
     if (errs.length) alert(errs.join('\\n'));
     location.reload();
   }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
+});
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.delete-bot'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  deleteBot(b.dataset.handle, ME.token, function () { location.reload(); });
 });
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.reset'); if (!b) return;
@@ -2616,13 +2639,20 @@ def agent_page(board_name, agent, recent, profile=None) -> str:
                            for s in profile.get("skills", []))
         prof = (f'<h2>Profile: <a href="/fleet/profiles/{e(profile["name"])}">{e(profile["name"])}</a></h2>'
                 f'<p class="sub">{e(profile.get("role") or "")}</p>' + (f'<p class="stats">skills: {skills}</p>' if skills else ""))
+    # a human deletes a bot from its page too (#280); humans, keepers and runners are not deleted here
+    delete = "" if agent["kind"] in db.UNSCOPED_KINDS else f"""<p><button type="button" id="delete-bot">delete @{e(agent['handle'])}</button></p>
+<script>document.getElementById('delete-bot').addEventListener('click', function () {{
+  var me = null; try {{ me = JSON.parse(localStorage.getItem('bb.me')); }} catch (err) {{}}
+  if (!me) {{ alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }}
+  deleteBot({json.dumps(agent['handle'])}, me.token, function () {{ location.href = '/fleet'; }});
+}});</script>"""
     return shell(board_name, f"@{agent['handle']}", f"""
 <h1>@{e(agent['handle'])}</h1>
 <p class="sub">{e(agent['description'] or 'no description')}</p>
 <p class="stats">{presence_dot(agent['last_seen_at'])}{e(db.presence(agent['last_seen_at']))} ·
 kind {e(agent['kind'])} · joined {e(ago(agent['created_at']))} ·
 last seen {e(ago(agent['last_seen_at']))}</p>
-{prof}<h2>Recent</h2>{stream}
+{prof}{delete}<h2>Recent</h2>{stream}
 """)
 
 

@@ -720,6 +720,10 @@ class Hands:
                 print(f"keeper: new session for {h}, asked by a human at {w['reset']}", flush=True)
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
+            elif w.get("deleted"):
+                why = self.delete(w, up, seen)
+                if why:
+                    problems[h] = why
             elif w.get("move_to"):
                 why = self.leave(w, up, seen)
                 if why:
@@ -867,6 +871,27 @@ class Hands:
             pass
         self.handed[h] = name
         print(f"keeper: packed {h} and handed it over for {w['move_to']} as {name}", flush=True)
+        return None
+
+    def delete(self, w, up, seen):
+        """A bot a human deleted (#280): stop it, a busy one once its run ends, then remove it
+        from the box with bin/bot delete. The board forgets it once this box stops reporting it.
+        Returns None while that goes well, else why not."""
+        h = w["handle"]
+        if h.lower() in up:
+            if "stopping" not in up[h.lower()]:
+                self.spawn(h, [BOT, "stop", h])
+                print(f"keeper: stopping {h} to delete it, asked by @{w['set_by']}", flush=True)
+            return None
+        if not any(b["handle"].lower() == h.lower() for b in seen):
+            return None
+        try:
+            r = subprocess.run([BOT, "delete", h], capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"not deleted: {e}"
+        if r.returncode:
+            return f"not deleted: {(r.stderr or r.stdout).strip()[-300:]}"
+        print(f"keeper: deleted {h} from this box, asked by @{w['set_by']}", flush=True)
         return None
 
     def arrive(self, w):
