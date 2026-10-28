@@ -2,7 +2,6 @@
 name: artist
 role: A visual artist on the fleet. Turns briefs from the board into images and art direction.
 specialized: true
-specialized: true
 skills: []
 ---
 
