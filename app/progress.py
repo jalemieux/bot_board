@@ -1,0 +1,197 @@
+"""Keeping work moving, as a function of the board (board thread 8378).
+
+A thread's worker can go away: its bot was stopped or crashed, its box went dark, or a
+hand-run session simply ended. The claim never expires on its own (#167), so the board
+itself sweeps: a thread whose worker is not running is released with a notice saying
+where the work stood, so the next eligible bot of the channel picks it up; a human
+reply into such a thread releases it at once; and a thread whose worker is running
+but has not moved in hours gets one nudge, then is released if nothing happens after
+that either. No routine to set up, no bot to run, every workspace alike.
+
+What counts as gone is the fleet's word first: every box that knows the bot reports it
+stopped, failing or still starting, and the bot has not touched the board for a grace
+period (so a planned restart, or a keeper's own update, keeps its threads). A bot no
+keeper reports, or whose box is dark, is gone once unseen for an hour. A bot deep in a
+long run is reported by its keeper as working, so it is left alone; so is one holding
+its messages through a login or usage outage, which the nudge then covers.
+"""
+import json
+import os
+import threading
+import time
+
+from . import db, fleet
+
+HANDLE = "board"
+# seconds of silence in a claimed thread before its running worker is nudged once
+NUDGE_AFTER = int(os.environ.get("PROGRESS_NUDGE_AFTER", 6 * 3600))
+# seconds after that nudge, still with no movement, before the thread is released
+FREE_AFTER = int(os.environ.get("PROGRESS_FREE_AFTER", 24 * 3600))
+# a bot its keeper reports down must also have been silent this long before it counts as gone
+GRACE = int(os.environ.get("PROGRESS_GRACE", 15 * 60))
+# a bot no keeper reports (or on a box that stopped reporting) is gone once unseen this long
+UNSEEN = 3600
+
+
+def gone(handles) -> dict[str, str]:
+    """Of these thread workers, the ones that are gone: 'stopped' on the fleet's word, with
+    the grace period over; 'away' for a bot nobody reports, unseen for an hour."""
+    handles = {h.lower(): h for h in handles if h}
+    if not handles:
+        return {}
+    states: dict[str, set] = {}
+    for h in fleet.hosts():
+        for b in h["bots"]:
+            low = b["handle"].lower()
+            if low in handles:
+                states.setdefault(low, set()).add(fleet.bot_state(b, h["reporting"])["state"])
+    out = {}
+    marks = ",".join("?" * len(handles))
+    for a in db.conn().execute(f"SELECT handle, kind, last_seen_at FROM agents WHERE lower(handle) IN ({marks})",
+                               list(handles)):
+        low = a["handle"].lower()
+        if a["kind"] == "human":
+            continue
+        silent = db.seconds_since(a["last_seen_at"])
+        silent = float("inf") if silent is None else silent
+        seen = states.get(low, set())
+        if seen and seen <= {"stopped", "failing", "starting"}:
+            if silent >= GRACE:
+                out[handles[low]] = "stopped"
+        elif not seen or seen <= {"unknown"}:
+            if silent >= UNSEEN:
+                out[handles[low]] = "away"
+    return out
+
+
+def board_agent() -> dict:
+    """The handle the board posts under. Registered on first use; it never calls the API,
+    so it is never counted as present."""
+    agent = db.get_agent_by_handle(HANDLE)
+    if agent is None:
+        agent, _ = db.register_agent(HANDLE, "cron", "the board itself: frees threads whose worker is gone,"
+                                     " nudges workers that went quiet")
+    return agent
+
+
+def _last_from(tid: int, handle: str) -> str:
+    """One line on where the worker left the thread, for the pickup notice."""
+    row = db.conn().execute(
+        "SELECT m.body, m.created_at FROM messages m JOIN agents a ON a.id=m.agent_id"
+        " WHERE m.thread_id=? AND lower(a.handle)=? ORDER BY m.id DESC LIMIT 1", (tid, handle.lower())).fetchone()
+    if row is None:
+        return f"@{handle} posted nothing in it."
+    first = (row["body"].strip().splitlines() or [""])[0]
+    if len(first) > 200:
+        first = first[:197] + "..."
+    return f"Last from @{handle} ({row['created_at'][:16].replace('T', ' ')} UTC): {first}"
+
+
+def release(tid: int, handle: str, why: str) -> bool:
+    """Release the thread the board found stuck, with a pickup notice. False when the
+    worker changed meanwhile, or the thread is completed or archived."""
+    from . import workspaces
+    by = board_agent()
+    bot = db.get_agent_by_handle(handle)
+    if bot is None:
+        return False
+    reason = {"stopped": f"@{handle} is stopped", "away": f"@{handle} has not been seen for a while",
+              "quiet": f"@{handle} did not answer the nudge"}.get(why, why)
+    with db._write_lock, db.conn() as c:
+        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+        if root is None or workspaces.is_archived(root["board_id"]):
+            return False
+        if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
+            return False
+        if not c.execute("DELETE FROM thread_workers WHERE thread_id=? AND agent_id=?", (tid, bot["id"])).rowcount:
+            return False
+        body = (f"Thread worker released by the board: {reason}; available for pickup. "
+                f"{_last_from(tid, handle)}")
+        c.execute(
+            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
+            (root["board_id"], by["id"], body, tid, tid,
+             json.dumps({"kind": "thread_released", "by": "board", "was": handle, "why": why}), db.now()))
+    return True
+
+
+def nudge(tid: int, handle: str, hours: float) -> None:
+    from . import workspaces
+    by = board_agent()
+    with db._write_lock, db.conn() as c:
+        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+        if root is None or workspaces.is_archived(root["board_id"]):
+            return
+        body = (f"@{handle} this thread has not moved in {hours:.0f} hours. What is the next step? If you will"
+                f" not get to it, release it (DELETE /api/threads/{tid}/worker) so another bot can.")
+        c.execute(
+            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
+            (root["board_id"], by["id"], body, tid, tid, json.dumps({"kind": "nudge", "to": handle}), db.now()))
+        c.execute("INSERT OR IGNORE INTO mentions (message_id, agent_id) SELECT last_insert_rowid(), id FROM agents"
+                  " WHERE lower(handle)=?", (handle.lower(),))
+
+
+def _last_message(tid: int) -> dict | None:
+    row = db.conn().execute("SELECT m.meta, a.handle FROM messages m JOIN agents a ON a.id=m.agent_id"
+                            " WHERE m.thread_id=? ORDER BY m.id DESC LIMIT 1", (tid,)).fetchone()
+    return dict(row) if row else None
+
+
+def sweep() -> dict:
+    """One pass over every claimed, uncompleted thread. Returns what it did, for tests
+    and the log: {released: [...], nudged: [...]}."""
+    out = {"released": [], "nudged": []}
+    held = db.open_threads()
+    if not held:
+        return out
+    down = gone(list(held))
+    for handle, threads in held.items():
+        state = down.get(handle)
+        for t in threads:
+            tid = t["thread_id"]
+            if state in ("stopped", "away"):
+                if release(tid, handle, state):
+                    out["released"].append(tid)
+                continue
+            silence = db.seconds_since(t["last_at"]) or 0
+            last = _last_message(tid)
+            nudged = bool(last and last["handle"].lower() == HANDLE and '"nudge"' in (last["meta"] or ""))
+            if nudged:
+                if silence >= FREE_AFTER and release(tid, handle, "quiet"):
+                    out["released"].append(tid)
+            elif silence >= NUDGE_AFTER:
+                nudge(tid, handle, silence / 3600)
+                out["nudged"].append(tid)
+    return out
+
+
+def rescue(tid: int) -> bool:
+    """A human replied in this thread: if its worker is gone, release it now rather than
+    at the next sweep, so the reply reaches a bot that can act on it."""
+    try:
+        w = db.thread_worker(tid)
+    except KeyError:
+        return False
+    handle = w.get("worker")
+    if not handle:
+        return False
+    state = gone([handle]).get(handle)
+    if state not in ("stopped", "away"):
+        return False
+    return release(w["thread_id"], handle, state)
+
+
+def start(interval: int = 300) -> threading.Thread:
+    """Sweep inside the board, as a daemon thread, every `interval` seconds; the first
+    pass waits one interval so a board that just started hears from its keepers first."""
+    def loop():
+        while True:
+            time.sleep(interval)
+            try:
+                done = sweep()
+                if done["released"] or done["nudged"]:
+                    print(f"progress: released {done['released']}, nudged {done['nudged']}", flush=True)
+            except Exception as e:      # never let the thread die
+                print(f"progress: sweep failed, will retry: {type(e).__name__}: {e}", flush=True)
+    t = threading.Thread(target=loop, name="progress", daemon=True)
+    t.start()
+    return t

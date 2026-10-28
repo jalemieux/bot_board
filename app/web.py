@@ -1860,6 +1860,13 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     # its profile, set once when it was added: a chip to the profile page, or "none" with nothing to click
     profile = (f'<a class="chip" href="/fleet/profiles/{e(b["profile"])}">{e(b["profile"])}</a>' if b.get("profile")
                else '<span class="dim">none</span>')
+    # the channels it claims new threads in, when bound (fleet bots only; a hand-run bot has no row)
+    if b.get("pool") or b.get("want"):
+        bound = b.get("channels") or []
+        profile += (f'<div class="by">in {", ".join("#" + e(c) for c in bound)}</div>' if bound
+                    else '<div class="by dim">any channel</div>')
+        profile += (f'<button type="button" class="act chan-edit needs-me" data-handle="{e(b["handle"])}"'
+                    f' data-workspace="{e(b.get("workspace") or "")}" data-channels="{e(", ".join(bound))}">channels</button>')
     # last active: the keeper knows its last harness run, the board its last post
     last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
     # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
@@ -2052,13 +2059,14 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, workspace, threads, profile) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, workspace, threads, profile, channels) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
     body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, workspace: workspace || null,
-                                   threads: threads || null, profile: profile || null}
-                                : {host: host, harness: harness, workspace: workspace || null, profile: profile || null})})
+                                   threads: threads || null, profile: profile || null, channels: channels || null}
+                                : {host: host, harness: harness, workspace: workspace || null, profile: profile || null,
+                                   channels: channels || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -2180,8 +2188,33 @@ document.addEventListener('click', function (ev) {
 document.addEventListener('submit', function (ev) {
   var f = ev.target.closest('form.newbot-top'); if (!f) return;
   ev.preventDefault();
+  var picked = Array.prototype.map.call(f.elements.channels.selectedOptions || [], function (o) { return o.value; });
+  var prof = f.elements.profile.selectedOptions[0];
+  if (prof && prof.dataset.specialized && !picked.length) { alert(prof.value + ' is a specialized profile: pick at least one channel for the bot.'); return; }
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
-      f.elements.harness.value, false, f.elements.workspace.value, null, f.elements.profile.value);
+      f.elements.harness.value, false, f.elements.workspace.value, null, f.elements.profile.value, picked.length ? picked : null);
+});
+// The channel picker lists the channels of the workspace chosen above it.
+var CHANNELS = JSON.parse((document.getElementById('channels-data') || {}).textContent || '{}');
+function fillChannels() {
+  var f = document.querySelector('form.newbot-top'); if (!f || !f.elements.channels) return;
+  var sel = f.elements.channels, list = CHANNELS[f.elements.workspace.value] || [];
+  sel.innerHTML = list.map(function (c) { return '<option value="' + c.slug + '">' + (c.name || c.slug) + '</option>'; }).join('');
+}
+document.addEventListener('change', function (ev) { if (ev.target.name === 'workspace' && ev.target.closest('form.newbot-top')) fillChannels(); });
+fillChannels();
+// Bound channels on a bot row: edit asks for the list and sends it.
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.chan-edit'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  var now = b.dataset.channels || '', list = (CHANNELS[b.dataset.workspace] || []).map(function (c) { return c.slug; });
+  var v = prompt('Channels @' + b.dataset.handle + ' claims new threads in, comma-separated; empty for any.' + (list.length ? '\\nIn this workspace: ' + list.join(', ') : ''), now);
+  if (v === null) return;
+  var chans = v.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/channels', {method: 'PUT',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: JSON.stringify({channels: chans})})
+  .then(function (r) { return r.json().then(function (d) { if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
 });
 // Add a bot suggests reviving a stopped bot of the same harness and workspace instead (#168): it
 // keeps its name, sessions and claimed threads. On another machine, a bot moves here and starts.
@@ -2400,7 +2433,7 @@ def _versions_section(rows: list) -> str:
             f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=()) -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None) -> str:
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
@@ -2482,7 +2515,10 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
                    or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
         profile_opts = ('<option value="">none</option>'
-                        + "".join(f'<option value="{e(p["name"])}">{e(p["name"])} · {e(p["role"][:60])}</option>' for p in profiles))
+                        + "".join(f'<option value="{e(p["name"])}"{" data-specialized=1" if p.get("specialized") else ""}>'
+                                  f'{e(p["name"])}{" · specialized" if p.get("specialized") else ""} · {e(p["role"][:60])}</option>'
+                                  for p in profiles))
+        channels_json = json.dumps(channels or {}).replace("</", "<\\/")
         add_bot = f"""<details id="addbot" class="addbot-cta">
 <summary><span class="addbot-btn">+ Add a bot</span></summary>
 <form class="newbot-top" aria-label="Add a bot">
@@ -2490,13 +2526,16 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
 <label class="fld"><span>Workspace</span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
 <label class="fld"><span>Profile <small>(set once)</small></span><select name="profile" aria-label="the profile the bot is added with, for life">{profile_opts}</select></label>
+<label class="fld"><span>Channels <small>(where it picks up threads; a specialized profile needs one)</small></span><select name="channels" multiple size="4" aria-label="channels of the workspace the bot claims new threads in"></select></label>
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
 <div class="revive" id="revive" hidden></div>
 <button type="submit" class="addbot-go">Start a new bot</button>
 </form>
 <script type="application/json" id="revive-data">{revive_json}</script>
+<script type="application/json" id="channels-data">{channels_json}</script>
 <p class="addbot-note">The machine's keeper starts it within a few seconds. The bot belongs to the workspace you pick and sees only that workspace.
-It reads the profile you pick, and its skills, when its session starts, and keeps that profile for life.</p>
+It reads the profile you pick, and its skills, when its session starts, and keeps that profile for life.
+Pick channels to have it claim new threads only there (it still answers mentions anywhere); leave them empty for a developer, which drives anything.</p>
 </details>"""
     else:
         add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'
@@ -2603,7 +2642,8 @@ values: BOARD (the address above), BOT_HANDLE and BOARD_TOKEN.
 2. No line? Ask the user which workspace this directory works in (they are
    listed at {base}/api/workspaces), which handle to use there, or whether to
    stay off the board. Register that handle once with POST {base}/api/agents,
-   sending "handle" and "workspace"; save the returned token to
+   sending "handle", "workspace" and "interactive": true (you are a person's own
+   session, so you never hold a thread: the fleet's bots do); save the returned token to
    ~/.config/bot_board/<handle>.token with mode 600, and add the line to the
    workspaces file. Never register twice for the same workspace.
 3. Wherever the guide uses $BOARD, $BOT_HANDLE or $BOARD_TOKEN, use these

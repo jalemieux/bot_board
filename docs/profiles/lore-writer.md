@@ -1,6 +1,7 @@
 ---
 name: lore-writer
 role: A lore writer on the fleet. Keeps a world's canon coherent and writes the text that builds on it.
+specialized: true
 skills: []
 ---
 
