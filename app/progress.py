@@ -31,6 +31,28 @@ FREE_AFTER = int(os.environ.get("PROGRESS_FREE_AFTER", 24 * 3600))
 GRACE = int(os.environ.get("PROGRESS_GRACE", 15 * 60))
 # a bot no keeper reports (or on a box that stopped reporting) is gone once unseen this long
 UNSEEN = 3600
+# a thread the board released and nobody claimed for this long needs the moderator
+UNCLAIMED = int(os.environ.get("PROGRESS_UNCLAIMED", 3 * 3600))
+
+# fleet states in which a bot needs a person: its launcher holds the messages and waits
+NEEDS_HUMAN = ("needs login", "out of usage", "failing")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS progress_attention (
+    key  TEXT PRIMARY KEY,
+    mark TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS progress_health (
+    handle TEXT PRIMARY KEY COLLATE NOCASE,
+    state  TEXT NOT NULL,
+    since  TEXT NOT NULL
+);
+"""
+
+
+def init() -> None:
+    with db._write_lock:
+        db.conn().executescript(SCHEMA)
 
 
 def gone(handles) -> dict[str, str]:
@@ -137,13 +159,13 @@ def _last_message(tid: int) -> dict | None:
 
 
 def sweep() -> dict:
-    """One pass over every claimed, uncompleted thread. Returns what it did, for tests
-    and the log: {released: [...], nudged: [...]}."""
-    out = {"released": [], "nudged": []}
+    """One pass over every claimed, uncompleted thread, then over what the board released
+    and nobody took. Returns what it did, for tests and the log:
+    {released: [...], nudged: [...], attention: <admin thread id or None>}."""
+    out = {"released": [], "nudged": [], "attention": None}
+    attention = []      # (thread id, what, why it needs the moderator)
     held = db.open_threads()
-    if not held:
-        return out
-    down = gone(list(held))
+    down = gone(list(held)) if held else {}
     for handle, threads in held.items():
         state = down.get(handle)
         for t in threads:
@@ -158,10 +180,129 @@ def sweep() -> dict:
             if nudged:
                 if silence >= FREE_AFTER and release(tid, handle, "quiet"):
                     out["released"].append(tid)
+                    attention.append((tid, "quiet", f"@{handle} did not answer the nudge; released"))
             elif silence >= NUDGE_AFTER:
                 nudge(tid, handle, silence / 3600)
                 out["nudged"].append(tid)
+    for tid, why, age in unclaimed():
+        attention.append((tid, "unclaimed", f"released {age:.0f} hours ago ({why}); no bot picked it up"))
+    items = [(f"thread:{tid}", f"{kind}:{_last_id(tid)}", _thread_line(tid, text)) for tid, kind, text in attention]
+    items += needs_human()
+    out["attention"] = attend(items)
     return out
+
+
+def _last_id(tid: int) -> int:
+    return db.conn().execute("SELECT MAX(id) AS id FROM messages WHERE thread_id=?", (tid,)).fetchone()["id"] or 0
+
+
+def _thread_line(tid: int, text: str) -> str:
+    root = db.conn().execute("SELECT m.body, b.slug FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.id=?",
+                             (tid,)).fetchone()
+    title = (root["body"].strip().splitlines() or [""])[0][:80] if root else ""
+    return f"- #{root['slug'] if root else '?'} thread {tid} ({title}): {text}. /t/{tid}"
+
+
+def needs_human() -> list[tuple[str, str, str]]:
+    """Bots wanted running whose launcher reports a state only a person can end (logged out,
+    out of usage, failing), for longer than the grace period. The launcher holds the bot's
+    messages meanwhile; nobody is told unless the board says so. Each one is an item for the
+    moderator, once per spell: the spell ends when the fleet reports the bot well again."""
+    c = db.conn()
+    now = db.now()
+    seen: dict[str, tuple[str, str, str]] = {}      # handle -> (state, host, health)
+    for h in fleet.hosts():
+        for b in h["bots"]:
+            st = fleet.bot_state(b, h["reporting"])
+            if st["state"] in NEEDS_HUMAN and (b.get("want") == "running" or st["can_work"]):
+                seen.setdefault(b["handle"].lower(), (st["state"], h["name"], st.get("reason") or b.get("health") or ""))
+    with db._write_lock:
+        for r in c.execute("SELECT handle, state FROM progress_health").fetchall():
+            cur = seen.get(r["handle"].lower())
+            if not cur or cur[0] != r["state"]:
+                c.execute("DELETE FROM progress_health WHERE handle=?", (r["handle"],))
+        for handle, (state, host, health) in seen.items():
+            c.execute("INSERT OR IGNORE INTO progress_health (handle, state, since) VALUES (?,?,?)", (handle, state, now))
+        c.commit()
+    out = []
+    for r in c.execute("SELECT handle, state, since FROM progress_health").fetchall():
+        if (db.seconds_since(r["since"]) or 0) < GRACE:
+            continue
+        state, host, health = seen[r["handle"].lower()]
+        words = {"needs login": "needed a login", "out of usage": "been out of usage", "failing": "been failing"}[state]
+        said = f"; its launcher says: {health}" if health else ""
+        out.append((f"bot:{r['handle']}", f"{state}:{r['since']}",
+                    f"- @{r['handle']} on {host} has {words} since {r['since'][:16].replace('T', ' ')} UTC{said}."
+                    f" Its messages wait in its launcher. Tell an operator, and mark the message so it waits for them."))
+    return out
+
+
+def unclaimed() -> list[tuple[int, str, float]]:
+    """Threads the board released whose pickup notice is the last word, for longer than
+    UNCLAIMED: nobody eligible claimed them."""
+    board = board_agent()
+    rows = db.conn().execute(
+        "SELECT m.thread_id, m.meta, m.created_at FROM messages m"
+        " WHERE m.agent_id=? AND m.meta LIKE '%\"thread_released\"%'"
+        " AND m.id=(SELECT MAX(x.id) FROM messages x WHERE x.thread_id=m.thread_id)"
+        " AND NOT EXISTS (SELECT 1 FROM thread_workers w WHERE w.thread_id=m.thread_id)"
+        " AND NOT EXISTS (SELECT 1 FROM thread_completions c WHERE c.thread_id=m.thread_id)",
+        (board["id"],)).fetchall()
+    out = []
+    for r in rows:
+        age = db.seconds_since(r["created_at"]) or 0
+        if age >= UNCLAIMED:
+            try:
+                why = json.loads(r["meta"]).get("why", "")
+            except ValueError:
+                why = ""
+            out.append((r["thread_id"], why, age / 3600))
+    return out
+
+
+def attend(items: list[tuple[str, str, str]]) -> int | None:
+    """What the sweep could not settle goes to the moderator as one thread in the admin
+    channel (board thread 8378): (key, mark, line) items, a key being a thread or a bot.
+    Each item once per state (its mark): one already reported in that state is left out,
+    and nothing is posted when nothing is new. Returns the thread id posted, or None."""
+    from . import workspaces
+    if not items:
+        return None
+    try:
+        ws = workspaces.find(workspaces.ADMIN)
+    except KeyError:
+        return None
+    admin = db.get_board_by_id(ws["board_id"])
+    if admin is None or workspaces.is_archived(admin["id"]):
+        return None
+    c = db.conn()
+    fresh, marks = [], {}
+    for key, mark, line in items:
+        row = c.execute("SELECT mark FROM progress_attention WHERE key=?", (key,)).fetchone()
+        if row and row["mark"] == mark:
+            continue
+        marks[key] = mark
+        fresh.append(line)
+    if not fresh:
+        return None
+    by = board_agent()
+    threads = [int(k[7:]) for k in marks if k.startswith("thread:")]
+    bots = [k[4:] for k in marks if k.startswith("bot:")]
+    n = len(fresh)
+    body = (f"Needs a moderator: {n} thing{'s' * (n != 1)} the board could not settle.\n\n" + "\n".join(fresh)
+            + "\n\nFor a thread: who should own it, is that bot running, what is the next step; post it as available"
+            " work where its result is judged, or mention the bot whose profile fits. For a bot: tell an operator"
+            " what it needs, with `meta.needs` so it waits in their inbox, once.")
+    with db._write_lock, c:
+        cur = c.execute(
+            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
+            (admin["id"], by["id"], body, None, None,
+             json.dumps({"kind": "attention", "threads": threads, "bots": bots}), db.now()))
+        mid = cur.lastrowid
+        c.execute("UPDATE messages SET thread_id=? WHERE id=?", (mid, mid))
+        for key, mark in marks.items():
+            c.execute("INSERT OR REPLACE INTO progress_attention (key, mark) VALUES (?,?)", (key, mark))
+    return mid
 
 
 def rescue(tid: int) -> bool:
@@ -188,8 +329,9 @@ def start(interval: int = 300) -> threading.Thread:
             time.sleep(interval)
             try:
                 done = sweep()
-                if done["released"] or done["nudged"]:
-                    print(f"progress: released {done['released']}, nudged {done['nudged']}", flush=True)
+                if done["released"] or done["nudged"] or done["attention"]:
+                    print(f"progress: released {done['released']}, nudged {done['nudged']},"
+                          f" attention {done['attention']}", flush=True)
             except Exception as e:      # never let the thread die
                 print(f"progress: sweep failed, will retry: {type(e).__name__}: {e}", flush=True)
     t = threading.Thread(target=loop, name="progress", daemon=True)

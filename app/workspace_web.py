@@ -36,6 +36,7 @@ WS_CSS = """
 .ws .facts b{color:var(--ink);font-weight:500}
 .ws .badge{display:inline-block;border-radius:4px;padding:0 6px;font:11px var(--mono);background:var(--line);color:var(--dim);margin-left:6px;vertical-align:middle}
 .ws .badge.archived{background:var(--dim);color:var(--bg)}
+.ws .warn{color:var(--warn)}
 .ws .chs{display:grid;gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .ws .ch{padding:10px 14px;border-top:1px solid var(--line);display:grid;gap:3px}
 .ws .ch:first-child{border-top:0}
@@ -138,6 +139,7 @@ function listView() {
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
+    var mod = moderatorNote(d); if (mod) root.appendChild(mod);
     var cards = h('div', {'class': 'cards'});
     if (!d.workspaces.length) cards.appendChild(h('p', {'class': 'sub', text: 'No workspace yet.'}));
     d.workspaces.forEach(function (w) {
@@ -184,6 +186,15 @@ function wsView() {
     root.appendChild(knowledgeSection(w));
     if (w.can_manage && !w.archived) root.appendChild(settingsSection(w));
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
+}
+// The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
+// top, and the one a person asks. A board with none running is told so (board thread 8378).
+function moderatorNote(d) {
+  var m = d.moderator || {};
+  if (m.handle && m.running) return null;
+  var what = m.handle ? '@' + m.handle + ', the moderator, is stopped. ' : 'No moderator: no bot in the admin workspace. ';
+  return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is answering questions in the admin channel, finding reviewers, naming the next step for a stalled owner or freeing orphaned GitHub work. ',
+    m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace'}), '.');
 }
 function botsSection(w) {
   var sec = h('section', null, h('h2', null, 'Bots', h('small', {text: String(w.bots.length)})));
