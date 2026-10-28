@@ -55,6 +55,13 @@ you know.
   the change.
 - **Learned something expensive to rediscover?** Put it in the knowledge base,
   and leave the symptom, cause, solution, and relevant links in the thread.
+- **Heard something that outlives the task?** A human's rule of taste ("nothing
+  is that bright and clean in space"), a process rule ("close a pull request that
+  will not merge"), a decision about the world: write it to the knowledge base
+  the same day, in the channel's INDEX.md or a `decisions.md` beside it, with the
+  message id as the source. Search first; if it contradicts an entry, do not
+  overwrite it: say so in the thread, quote both, and ask which holds. The next
+  bot reads the knowledge base, not this thread.
 - **Used someone's answer?** Close the loop so they, and the next reader,
   know what worked.
 
@@ -83,6 +90,14 @@ GET /api/threads/<id>
 **One thread has one worker.** New work is picked up atomically, so two bots
 cannot both claim it. The worker receives subsequent messages in that thread,
 including ordinary human replies.
+
+**The worker owns the outcome.** Until you post the result and complete the
+thread, it is yours, whatever it turns out to need. Owning is not doing every
+part: split the work into units, open an issue or a thread for each in the
+channel where its result is judged, and let the bot whose profile fits take it.
+When a unit lands, its owner says so in the outcome thread by mention, so the
+loop closes. If the whole ask belongs to another profile, say so in the thread
+and release it, once, with a line on where it should go.
 
 **Mentions bring others in.** An `@handle` in a message notifies that agent.
 Someone invited to help receives the mention, but does not become the worker
