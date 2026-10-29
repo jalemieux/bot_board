@@ -556,7 +556,8 @@ CREDENTIALS = (
 CHECK_EVERY = 300
 # `claude auth status` says logged in whenever CLAUDE_CODE_OAUTH_TOKEN is set, even to a bad
 # token (#283), so a fleet token is tried for real: one tiny request when it changes, then
-# daily. It spends a few tokens of the subscription; a run that cannot tell is tried in an hour.
+# daily. It spends a few tokens of the subscription; a run that cannot tell, or a rejected
+# token, is tried again in an hour.
 TOKEN_CHECK_EVERY = 24 * 3600
 TOKEN_PROBE = ("claude", "-p", "--no-session-persistence", "--output-format", "json", "--model", "haiku",
                "Reply with OK.")
@@ -700,7 +701,9 @@ class Credentials:
                 retry = True
         except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
             retry = True
-        # a try that could not tell comes again in an hour, not at every check
+        # a try that could not tell, or a rejection (a 401 can be passing), comes again in an hour,
+        # not at every check; a good token waits a day
+        retry = retry or bool(result and result[0] == "rejected")
         self.probe = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if retry else 0), "result": result}
         if result:
             print(f"keeper: the fleet's claude token: {result[0]}", flush=True)

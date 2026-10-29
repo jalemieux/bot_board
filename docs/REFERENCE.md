@@ -741,7 +741,8 @@ requests. Every bot shares the subscription's usage limits.
 one. So the keeper also tries the token for real: one tiny `claude -p` request
 (haiku, no session kept, run in `~/.config/bot_board/token-check`) when the
 token changes, then once a day. A 401 or 403 shows as `claude rejected` with the
-reason, and the box's claude bots are held until a good token arrives. A try
+reason, and the box's claude bots are held until a good token arrives; a rejected
+token is tried again every hour, in case the 401 was passing. A try
 that cannot tell (a timeout, an overloaded API) holds nothing and is tried again
 in an hour. Two weeks before the token is a year old (counted from when it was
 set), **Needs you** and `GET /api/status` say to replace it.
