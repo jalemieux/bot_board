@@ -566,7 +566,8 @@ CREDENTIALS = (
          probe=("codex", "exec", "--skip-git-repo-check", "--json", "Reply with OK.")),
 )
 CHECK_EVERY = 300
-# A probe spends a few tokens of the fleet's account; one that cannot tell is tried in an hour.
+# A probe spends a few tokens of the fleet's account; one that cannot tell, or a rejected
+# secret (a 401 can be passing), is tried again in an hour.
 TOKEN_CHECK_EVERY = 24 * 3600
 FLEET_ENV = os.path.join(CFG, "fleet.env")
 FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits here are replaced\n"
@@ -769,8 +770,10 @@ class Credentials:
             result = probe_result(cred.name, r.stdout)
         except (OSError, subprocess.SubprocessError):
             result = None
-        # a try that could not tell comes again in an hour, not at every check
-        self.probes[cred.name] = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if result is None else 0),
+        # a try that could not tell, or a rejection (a 401 can be passing), comes again in an hour,
+        # not at every check; a good secret waits a day
+        retry = result is None or result[0] == "rejected"
+        self.probes[cred.name] = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if retry else 0),
                                   "result": result}
         if result:
             print(f"keeper: the fleet's {cred.name} {cred.var}: {result[0]}", flush=True)

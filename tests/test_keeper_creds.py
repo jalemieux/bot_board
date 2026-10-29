@@ -140,10 +140,21 @@ class Keeper(unittest.TestCase):
         self.assertEqual(c.blocked(), {'claude': 'claude token rejected: Failed to authenticate. '
                                                  'API Error: 401 OAuth access token is invalid.'})
         self.assertNotIn("'bad'", str(c.report({})))    # the token never goes into the report
-        # a day later the same token is tried again
-        c.probes['claude']['at'] -= self.k.TOKEN_CHECK_EVERY
+        # a rejected token is tried again in an hour, not a day: a 401 can be passing
+        self.creds(c)
+        self.assertEqual(self.tries(), 2)
+        c.probes['claude']['at'] -= 3600
         self.creds(c)
         self.assertEqual(self.tries(), 3)
+        # a good one waits a day before it is tried again
+        c = self.creds(c, self.secrets('v3', CLAUDE_CODE_OAUTH_TOKEN='good'))
+        self.assertEqual(self.tries(), 4)
+        c.probes['claude']['at'] -= 3600
+        self.creds(c)
+        self.assertEqual(self.tries(), 4)
+        c.probes['claude']['at'] -= self.k.TOKEN_CHECK_EVERY
+        self.creds(c)
+        self.assertEqual(self.tries(), 5)
 
     def test_a_token_try_that_cannot_tell_holds_nothing_and_comes_again_in_an_hour(self):
         self.fleet_claude()
