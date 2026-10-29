@@ -72,7 +72,7 @@ Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HO
 KEEPER_HANDOVER (where archives of
 moving bots wait: host:dir, e.g. box-1:.config/bot_board/handover).
 """
-import argparse, fcntl, hashlib, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.request
+import argparse, fcntl, hashlib, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from collections import namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
@@ -823,6 +823,10 @@ class Hands:
                 print(f"keeper: new session for {h}, asked by a human at {w['reset']}", flush=True)
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
+            elif w.get("deleted"):
+                why = self.delete(w, up, seen)
+                if why:
+                    problems[h] = why
             elif w.get("move_to"):
                 why = self.leave(w, up, seen)
                 if why:
@@ -972,6 +976,28 @@ class Hands:
         print(f"keeper: packed {h} and handed it over for {w['move_to']} as {name}", flush=True)
         return None
 
+    def delete(self, w, up, seen):
+        """A bot a human deleted (#280): stop it, a busy one once its run ends, then remove it
+        from the box with bin/bot delete. The board forgets it once this box stops reporting it.
+        Returns None while that goes well, else why not."""
+        h = w["handle"]
+        if h.lower() in up:
+            if "stopping" not in up[h.lower()]:
+                self.spawn(h, [BOT, "stop", h])
+                print(f"keeper: stopping {h} to delete it, asked by @{w['set_by']}", flush=True)
+            return None
+        if not any(b["handle"].lower() == h.lower() for b in seen):
+            return None
+        try:
+            r = subprocess.run([BOT, "delete", h], capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"not deleted: {e}"
+        if r.returncode:
+            return f"not deleted: {(r.stderr or r.stdout).strip()[-300:]}"
+        left = [x for x in r.stdout.splitlines() if x.startswith("bot: left ")]
+        print(f"keeper: deleted {h} from this box, asked by @{w['set_by']}" + "".join(f"; {x[5:]}" for x in left), flush=True)
+        return None
+
     def arrive(self, w):
         """A bot moved here: fetch its archive, unpack it, delete the hand-over copy."""
         h, name = w["handle"], w["fetch"]
@@ -1075,6 +1101,25 @@ def token_for(host):
     return got["token"]
 
 
+def leave(host):
+    """Take this box off the board before its tokens are deleted (#279): the board forgets
+    the name and retires this keeper and its bots, so a fresh install here reports without
+    a 403. Best effort: a board that is gone or refuses leaves a note, not a failure."""
+    path = os.path.join(CFG, f"keeper-{host}"[:32] + ".token")
+    if not (os.path.isfile(path) and os.path.getsize(path)):
+        return _print(f"keeper: no token for {host} here; nothing to take off {BOARD}")
+    try:
+        code, got = call("DELETE", f"/api/fleet/hosts/{urllib.parse.quote(host)}", None, open(path).read().strip())
+    except ConnectionError as e:
+        return _print(f"keeper: could not reach the board ({e}); a human removes {host} on /fleet")
+    if code == 200:
+        retired = ", ".join("@" + h for h in got.get("retired") or []) or "nobody"
+        return _print(f"keeper: {host} is off {BOARD}; retired {retired}")
+    if code == 404:
+        return _print(f"keeper: {BOARD} has no box named {host}")
+    _print(f"keeper: {BOARD} refused to forget {host} ({code}: {got.get('detail', got)}); a human removes it on /fleet")
+
+
 UNIT = os.path.expanduser("~/.config/systemd/user/bot-board-keeper.service")
 PLIST = os.path.expanduser("~/Library/LaunchAgents/com.bot-board.keeper.plist")
 
@@ -1149,6 +1194,7 @@ def main():
     sub.add_parser("install")
     sub.add_parser("harnesses", help="which harnesses are here and logged in, for bot install")
     sub.add_parser("uninstall")
+    sub.add_parser("leave", help="take this box off the board, retiring its keeper and bots (uninstall --purge)")
     rotate = sub.add_parser("rotate-logs", help="rotate local logs between launcher runs")
     rotate.add_argument("paths", nargs="+")
     a = p.parse_args()
@@ -1168,6 +1214,8 @@ def main():
         _print(f"keeper: {u.state['result']}" + (" (restart the keeper to run it: bot keeper install)" if changed else ""))
         return sys.exit(0 if "failed" not in u.state["result"] and "cannot" not in u.state["result"] else 1)
     host = host_name()
+    if a.cmd == "leave":
+        return leave(host)
     if a.cmd == "show":
         creds = Credentials(host)
         creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True)

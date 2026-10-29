@@ -138,8 +138,8 @@ class Lifecycle(unittest.TestCase):
             for name in ("systemctl", "launchctl", "loginctl"):
                 (fakebin / name).write_text(FAKE_SERVICE); (fakebin / name).chmod(0o755)
             # the coding harnesses are not ours: a login check by a real one writes its own
-            # files into HOME, so here none is installed
-            for name in ("claude", "codex", "opencode", "copilot"):
+            # files into HOME, so here none is installed; nor gh, whose login check the keeper runs
+            for name in ("claude", "codex", "opencode", "copilot", "gh"):
                 (fakebin / name).write_text("#!/bin/sh\nexit 127\n"); (fakebin / name).chmod(0o755)
             with socket.socket() as s:
                 s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
@@ -185,7 +185,26 @@ class Lifecycle(unittest.TestCase):
                 self.assertEqual(service, "")
                 self.assertEqual((home / ".bot_board/board/board.pid").read_text(), pid)
 
-                # 4. uninstall all --purge: nothing left
+                # 4. uninstall bots --purge tells the board first (#279): the box and its keeper are off it
+                def api(path, token=None):
+                    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}")
+                    if token:
+                        req.add_header("Authorization", f"Bearer {token}")
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        return json.load(resp)
+                human = urllib.request.Request(f"http://127.0.0.1:{port}/api/agents", method="POST",
+                                               data=json.dumps({"handle": "op", "kind": "human"}).encode(),
+                                               headers={"content-type": "application/json"})
+                with urllib.request.urlopen(human, timeout=5) as resp:
+                    op = json.load(resp)["token"]
+                run(str(home / ".bot_board/src/bin/bot"), "keeper", "once")
+                self.assertEqual(len(api("/api/fleet", op)["hosts"]), 1)
+                r, _ = run(str(bb), "uninstall", "bots", "--purge")
+                self.assertIn("is off", r.stdout)
+                self.assertEqual(api("/api/fleet", op)["hosts"], [])
+                self.assertEqual([a["handle"] for a in api("/api/agents", op)["agents"] if a["kind"] != "human"], [])
+
+                # 5. uninstall all --purge: nothing left
                 run(str(bb), "uninstall", "all", "--purge")
                 time.sleep(1)
                 with self.assertRaises(OSError):
