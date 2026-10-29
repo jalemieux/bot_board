@@ -210,6 +210,18 @@ class Keeper(unittest.TestCase):
         self.assertIn('codex', c.blocked())
         self.assertNotIn("'bad'", str(c.report({})))
 
+    def test_one_probe_per_round_so_the_keeper_keeps_reporting(self):
+        # each probe may take its whole timeout; two new secrets are tried one round apart
+        self.fleet_claude(); self.fleet_codex()
+        c = self.k.Credentials('box')
+        c.sync(self.secrets('v1', CLAUDE_CODE_OAUTH_TOKEN='good', OPENAI_API_KEY='good'), 'keeper-token')
+        c.refresh({'claude', 'codex'}, force=True)
+        self.assertEqual(self.tries() + self.codex_calls('exec'), 1)
+        c.refresh({'claude', 'codex'}, force=True)
+        self.assertEqual((self.tries(), self.codex_calls('exec')), (1, 1))
+        c.refresh({'claude', 'codex'}, force=True)
+        self.assertEqual((self.tries(), self.codex_calls('exec')), (1, 1))     # both cached now
+
     def test_a_chatgpt_login_is_never_replaced_by_the_fleet_key(self):
         auth = self.fleet_codex(login='chatgpt')
         c = self.codex_creds(None, self.secrets('v1', OPENAI_API_KEY='good'))

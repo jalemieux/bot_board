@@ -712,9 +712,14 @@ class Credentials:
             if c.apply:
                 self.apply(c, env)
         self.state = {c[0]: self.check(c, env) for c in need}
+        # one probe per round at most: each can take its whole timeout, and the keeper does not
+        # report while it waits; another one due waits for the next round
+        ran = False
         for c in need:
             if c.probe and self.state[c.name][0] == "ok":
-                self.state[c.name] = self.try_token(c, env) or self.state[c.name]
+                result, tried = self.try_token(c, env, may_run=not ran)
+                self.state[c.name] = result or self.state[c.name]
+                ran = ran or tried
         self.checked = time.time()
 
     def apply(self, cred, env):
@@ -742,17 +747,20 @@ class Credentials:
             print(f"keeper: could not apply {cred.var} to {cred.name}: {(r.stderr or r.stdout).strip()[-200:]}",
                   file=sys.stderr, flush=True)
 
-    def try_token(self, cred, env):
-        """(state, detail) from a real request with the fleet's secret for this harness, or None:
-        no such secret here, or the request could not tell (a timeout, a usage limit)."""
+    def try_token(self, cred, env, may_run=True):
+        """((state, detail) or None, whether a request was made): the result of a real request
+        with the fleet's secret for this harness, or None when there is no such secret here, the
+        request could not tell (a timeout, a usage limit), or it is due but may not run now."""
         token = env.get(cred.var, "")
         if not token:
             self.probes.pop(cred.name, None)
-            return None
+            return None, False
         fp = hashlib.sha256(token.encode()).hexdigest()[:16]     # never the token itself
         p = self.probes.get(cred.name)
-        if p and p["fp"] == fp and time.time() - p["at"] < TOKEN_CHECK_EVERY:
-            return p["result"]
+        if p and p["fp"] == fp and (time.time() - p["at"] < TOKEN_CHECK_EVERY or not may_run):
+            return p["result"], False
+        if not may_run:
+            return None, False
         where = os.path.join(CFG, "token-check")     # one directory, so a harness keeps one project for it
         os.makedirs(where, mode=0o700, exist_ok=True)
         try:
@@ -766,7 +774,7 @@ class Credentials:
                                   "result": result}
         if result:
             print(f"keeper: the fleet's {cred.name} {cred.var}: {result[0]}", flush=True)
-        return result
+        return result, True
 
     def blocked(self):
         """harness -> why its bots are not started."""
