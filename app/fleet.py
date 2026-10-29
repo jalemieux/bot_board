@@ -68,7 +68,9 @@ MOVE_COLUMNS = ("move_to", "fetch")
 # was retired, so it leaves the stopped list; cleared by the next start.
 # reset: when a human asked for the bot's next run to start a new harness session (#221);
 # the keeper runs `bot reset --asked <reset>`, which does it once per request.
-EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset")
+# deleted: when a human deleted the bot (#280); its keeper stops it and removes it from the box
+# (`bot delete`), and the row goes once the box no longer reports it.
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "deleted")
 THREADS = ("keep", "handoff", "retire")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
@@ -124,7 +126,54 @@ def report(name: str, agent_id: int, data: dict) -> bool:
     except Exception:
         pass
     hand_off(name, data.get("bots") or [])
+    gone(name, data.get("bots") or [])
     return True
+
+
+def gone(host: str, bots: list[dict]) -> None:
+    """Forget the deleted bots this box no longer reports: its keeper has removed them."""
+    seen = {b["handle"].lower() for b in bots}
+    c = db.conn()
+    with db._write_lock:
+        for r in c.execute("SELECT handle FROM fleet_bots WHERE host=? AND deleted IS NOT NULL", (host,)).fetchall():
+            if r["handle"].lower() not in seen:
+                c.execute("DELETE FROM fleet_bots WHERE handle=?", (r["handle"],))
+        c.commit()
+
+
+def delete(handle: str, by: dict) -> str | None:
+    """A human deletes a bot (#280). On the board at once: its open threads are released and
+    the agent is retired (tokens revoked, gone from every list, its handle kept on its old
+    messages and never reused). On its box, by its keeper: stopped, a busy one once its run
+    ends, then removed. A box not reporting does that when it reports again. Returns None,
+    or why not."""
+    a = db.get_agent_by_handle(handle)
+    if a and a.get("retired_at"):
+        return f"{handle} is deleted already"
+    if a and a["kind"] in db.UNSCOPED_KINDS:
+        return f"{handle} is a {a['kind']}, not a bot"
+    c = db.conn()
+    row = c.execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    # its box: the one asked for it, else the box that reports it (where it is not just a moved-away copy)
+    box = next((h for h in hosts() for b in h["bots"]
+                if b["handle"].lower() == handle.lower() and b["status"] != "moved"), None)
+    host = row["host"] if row else box["name"] if box else None
+    if not a and not host:
+        return ""
+    if a:
+        db.hand_off_threads(handle, by)
+        db.retire_agent(a["id"])
+    if host:
+        seen = next((b for b in (box or {}).get("bots", []) if b["handle"].lower() == handle.lower()), {})
+        now = db.now()
+        with db._write_lock:
+            c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, deleted) VALUES (?,?,?,0,?,?,?)"
+                      " ON CONFLICT(handle) DO UPDATE SET run=0, set_by=excluded.set_by, set_at=excluded.set_at,"
+                      " deleted=excluded.deleted, problem='', move_to=NULL, fetch=NULL, kill=NULL, threads=NULL, reset=NULL",
+                      (handle, host, (row["harness"] if row else None) or seen.get("harness") or "claude",
+                       by["handle"], now, now))
+            c.commit()
+    return None
 
 
 def hand_off(host: str, bots: list[dict]) -> None:
@@ -182,6 +231,26 @@ def delete_secret(name: str) -> bool:
 
 def keeps_a_box(agent_id: int) -> bool:
     return db.conn().execute("SELECT 1 FROM fleet_hosts WHERE reported_by=?", (agent_id,)).fetchone() is not None
+
+
+def members(name: str) -> dict | None:
+    """Who belongs to a box, for taking it off the fleet (#279): its keeper, the bots it
+    reports and the bots asked of it, and whether its keeper is reporting now."""
+    c = db.conn()
+    row = c.execute("SELECT h.reported_at, h.report, a.handle keeper FROM fleet_hosts h"
+                    " LEFT JOIN agents a ON a.id = h.reported_by WHERE h.name=?", (name,)).fetchone()
+    if row is None:
+        return None
+    try:
+        # a bot that moved off this box stays in its report as `moved`: it lives elsewhere
+        reported = [b.get("handle") for b in (json.loads(row["report"]).get("bots") or [])
+                    if isinstance(b, dict) and b.get("status") != "moved"]
+    except (ValueError, AttributeError):
+        reported = []
+    asked = [r[0] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (name,))]
+    bots = sorted({h for h in reported + asked if h}, key=str.lower)
+    secs = db.seconds_since(row["reported_at"])
+    return {"keeper": row["keeper"], "bots": bots, "reporting": secs is not None and secs < STALE_AFTER}
 
 
 def forget(name: str) -> bool:
@@ -251,6 +320,8 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         return f"threads: one of {', '.join(THREADS)}"
     if threads and threads != "keep" and run:
         return "threads are handed off when a bot stops: ask for run false"
+    if _deleted(handle):
+        return f"{handle} was deleted"
     c = db.conn()
     boxes = {h["name"].lower(): h for h in hosts()}
     if host.lower() not in boxes:
@@ -300,6 +371,11 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     return None
 
 
+def _deleted(handle: str) -> bool:
+    a = db.get_agent_by_handle(handle)
+    return bool(a and a.get("retired_at"))
+
+
 def set_channels(handle: str, channels: list[str]) -> str | None:
     """Bind a fleet bot to these channels of its workspace, or to none (an empty list: it
     claims anywhere, unless its profile is specialized). Returns None, or why not."""
@@ -338,6 +414,8 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
         return {"state": state, "words": words, "reason": reason, "can_work": can_work}
     if not reporting:
         return out("unknown", f"{st or 'stopped'} when last heard", "its box is not reporting")
+    if b.get("deleted"):
+        return out("deleting", "deleted: " + ("stopping, once its run ends" if up else "being removed from its box"))
     if b.get("move_to"):
         return out("moving", f"moving to {b['move_to']}: " + ("stopping" if up else "packing"))
     if b.get("fetch") and not up:
@@ -449,7 +527,7 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
     from . import workspaces
     c = db.conn()
     mine = [b["handle"] for b in seen if b.get("status") != "moved"]
-    mine += [r["handle"] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=?", (host,))]
+    mine += [r["handle"] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=? AND deleted IS NULL", (host,))]
     if mine:
         return {"handle": mine[0], "harness": "", "created": False}
     harness = str(ask.get("harness") or "")
@@ -488,6 +566,8 @@ def move(handle: str, to: str, by: str, start: bool = False) -> str | None:
     box (handed), whose keeper unpacks it and starts it (fetched). A bot that was stopped
     stays stopped there, unless start: then it is revived on the new box (#168). Returns
     None, or why not."""
+    if _deleted(handle):
+        return f"{handle} was deleted"
     boxes = {h["name"].lower(): h for h in hosts()}
     to = to.lower()
     if to not in boxes or not boxes[to]["reporting"]:
@@ -532,6 +612,8 @@ def reset(handle: str, by: str) -> str | None:
     """Record that a human wants this bot to start a new harness session (#221): its old
     session keeps whatever role it was started with. The keeper of its box carries it out,
     at once for a stopped bot, when idle for a running one. Returns None, or why not."""
+    if _deleted(handle):
+        return f"{handle} was deleted"
     c = db.conn()
     row = c.execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
     boxes = {h["name"].lower(): h for h in hosts()}
@@ -698,6 +780,7 @@ def hosts() -> list[dict]:
     except db.sqlite3.OperationalError:     # a board without workspaces yet
         dedicated = {}
     holding = db.open_threads()     # each bot's claimed, not completed threads (#167)
+    retired = {r[0].lower() for r in db.conn().execute("SELECT handle FROM agents WHERE retired_at IS NOT NULL")}
     out = []
     clears = {r["handle"].lower(): dict(r) for r in db.conn().execute("SELECT * FROM fleet_alert_clears")}
     for r in rows:
@@ -717,13 +800,16 @@ def hosts() -> list[dict]:
                 b.update(want="running" if w["run"] else "stopped", set_by=w["set_by"], set_at=w["set_at"],
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
                          move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"], profile=w.get("profile"),
-                         channels=_channels(w), threads=w["threads"], retired=w["retired"], reset=w["reset"])
+                         channels=_channels(w), threads=w["threads"], retired=w["retired"], reset=w["reset"],
+                         deleted=w["deleted"])
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],
                        "problem": w["problem"], "move_to": w["move_to"], "fetch": w["fetch"],
                        "threads": w["threads"], "retired": w["retired"], "profile": w.get("profile"),
                        "channels": _channels(w)}
-                      for w in asked.values()]
+                      for w in asked.values() if not w["deleted"]]
+        # a deleted bot leaves /fleet, but for the time its box, reporting, still has it
+        h["bots"] = [b for b in h["bots"] if b["handle"].lower() not in retired or (b.get("deleted") and h["reporting"])]
         for b in h["bots"]:
             ack = clears.get(b["handle"].lower())
             if ack and h["reporting"] and b["status"] == "stopped" and ack["host"].lower() == h["name"].lower():

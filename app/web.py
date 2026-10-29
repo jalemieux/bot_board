@@ -486,6 +486,20 @@ IMAGE_JS = """
 """
 
 
+# Deleting a bot (#280), from /fleet or its page: one confirm, then DELETE /api/agents/<handle>.
+DELETE_BOT_JS = """
+function deleteBot(handle, token, done) {
+  if (!confirm('Delete @' + handle + '? Its threads are released for pickup, its token stops working and it leaves '
+               + 'the board; its keeper stops it (a busy bot finishes its run first) and removes its config, token, '
+               + 'working directory and sessions from its box. Its old messages keep its name. This cannot be undone.')) return;
+  fetch('/api/agents/' + encodeURIComponent(handle), {method: 'DELETE', headers: {'Authorization': 'Bearer ' + token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) done(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+}
+"""
+
+
 def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     return f"""<title>{e(title)} · {e(board_name)}</title>
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
@@ -505,7 +519,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 </header>
 <script>{SHELL_NAV_JS}</script>
 <main><div class="wrap">{content}</div></main>
-<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
+<script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}{DELETE_BOT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
 Start at <a href="/agents.md">/agents.md</a>.</div></footer>"""
 
@@ -1922,9 +1936,13 @@ def _bot_row(b: dict, host: str, others: list) -> str:
     if up and can:
         btn += act("kill", 0, ' data-kill="1" title="stop now, ending the run it is in"')
     # a session keeps the role it was started with: a human can have the bot start a new one (#221)
-    if can:
+    if can and not b.get("deleted"):
         btn += (f'<button type="button" class="reset" data-handle="{e(b["handle"])}" '
                 'title="set its harness session aside; it reads the rules again and starts fresh">new session</button>')
+    # delete (#280): gone from the board at once, and from its box once its keeper has removed it
+    if b["status"] != "moved" and not b.get("deleted"):
+        btn += (f'<button type="button" class="act delete-bot" data-handle="{e(b["handle"])}" '
+                'title="release its threads, revoke its token, remove it from its box and from the board">delete</button>')
     # a running pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
     if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
@@ -2166,6 +2184,11 @@ document.addEventListener('click', function (ev) {
   }).catch(function () { button.disabled = false; alert('Could not reach the board.'); });
 });
 document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.delete-bot'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  deleteBot(b.dataset.handle, ME.token, function () { location.reload(); });
+});
+document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.reset'); if (!b) return;
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   if (!confirm('Give @' + b.dataset.handle + ' a new session? It forgets what its harness session held, reads the rules '
@@ -2199,6 +2222,24 @@ document.addEventListener('click', function (ev) {
     var lines = Object.keys(d.moved || {}).map(function (k) { return '@' + k + ' -> ' + d.moved[k]; })
       .concat(Object.keys(d.skipped || {}).map(function (k) { return '@' + k + ' not moved: ' + d.skipped[k]; }));
     alert('Draining ' + b.dataset.host + ':\\n' + lines.join('\\n')); location.reload(); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
+// Take a box off the fleet (#279): forget it and retire its keeper and bots, so a fresh
+// install there reports without a 403. A box still reporting asks twice.
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.remove-box'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  var who = b.dataset.bots ? ' and its bots ' + b.dataset.bots.split(' ').map(function (h) { return '@' + h; }).join(', ') : '';
+  if (!confirm('Remove ' + b.dataset.host + ' from the fleet? Its keeper' + who + ' are taken off the board: '
+      + 'their tokens stop working and their threads are released. Their old messages stay.')) return;
+  var force = b.dataset.reporting === '1';
+  if (force && !confirm(b.dataset.host + ' is still reporting: its keeper is running. Remove it anyway? '
+      + 'Stop the keeper there, or run "bot_board uninstall all --purge" on it, or it will be refused when it next reports.')) return;
+  fetch('/api/fleet/hosts/' + encodeURIComponent(b.dataset.host) + (force ? '?force=true' : ''), {method: 'DELETE',
+    headers: {'Authorization': 'Bearer ' + ME.token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (!r.ok) { alert(d.error || d.detail || ('refused: ' + r.status)); return; }
+    location.reload(); }); })
   .catch(function () { alert('could not reach the board'); });
 });
 // A box's leftover BOT_SKILLS: each source is checked, then added as a github skill (#258).
@@ -2349,6 +2390,29 @@ document.querySelectorAll('.fleet-page table').forEach(function (table) {
     });
   });
 });
+// Each section folds from its heading (#281), and stays folded in this browser. Needs you
+// folds only until something new is in it: an alert is never hidden.
+function loadFolded() { try { return JSON.parse(localStorage.getItem('bb.fleetFolded')) || {}; } catch (err) { return {}; } }
+function saveFolded(f) { try { localStorage.setItem('bb.fleetFolded', JSON.stringify(f)); } catch (err) {} }
+function alertsNow() {
+  // an alert is its title and its bots, not its text, which says how long ago and changes by itself
+  return Array.from(document.querySelectorAll('#fleet-attention .fleet-alert')).map(function (a) {
+    var c = a.querySelector('.chips'); return a.querySelector('h3').textContent + (c ? ' ' + c.textContent : '');
+  });
+}
+(function () {
+  var folded = loadFolded();
+  document.querySelectorAll('details.fleet-section').forEach(function (d) {
+    var was = folded[d.id];
+    if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
+    if (was) d.open = false;
+    d.addEventListener('toggle', function () {
+      var f = loadFolded();
+      if (d.open) delete f[d.id]; else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : 1;
+      saveFolded(f);
+    });
+  });
+})();
 // A link to a bot in a folded list (an alert's chip, a status item) opens the list first.
 function showTarget() {
   var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -2404,6 +2468,9 @@ FLEET_CSS = """
 .fleet-page th button.sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .fleet-page th[aria-sort=ascending] button.sort::after{content:" ▲";font-size:.8em}
 .fleet-page th[aria-sort=descending] button.sort::after{content:" ▼";font-size:.8em}
+.fleet-page .fleet-section>summary{cursor:pointer;margin:0 0 10px;color:var(--dim)}
+.fleet-page .fleet-section>summary h2{display:inline;margin:0}
+.fleet-page .fleet-section:not([open])>summary{margin:0}
 .fleet-page #fleet-attention h2{color:var(--accent)}
 .fleet-page .fleet-alert{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;padding:12px 14px;
  margin:0 0 8px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px}
@@ -2413,7 +2480,7 @@ FLEET_CSS = """
 .fleet-page .chip{font:12px var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 .fleet-page .chip span{color:var(--dim)}
 .fleet-page .abtns{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
-.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page select.move{
+.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page button.remove-box,.fleet-page select.move{
  font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
 .fleet-page button.redo,.fleet-page .fleet-alert button.clear-alert{border-color:var(--accent);color:var(--accent)}
 .fleet-page button.redo.quiet{border-color:var(--line);color:var(--ink)}
@@ -2505,9 +2572,16 @@ def _versions_section(rows: list) -> str:
                  f'<td>{e(r["note"]) if r["note"] else "current"}</td></tr>')
     summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
                if bots else "")
-    return (f'<section class="fleet-section" id="fleet-versions"><h2>Versions</h2>{summary}'
-            f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
-            f'<th>Note</th></tr></thead><tbody>{body}</tbody></table></section>')
+    behind = sum(not r["current"] for r in shown)
+    return _fleet_section("fleet-versions", f"Versions · {behind} behind" if behind else "Versions · current", summary +
+                          f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
+                          f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>')
+
+
+def _fleet_section(id_: str, title: str, body: str) -> str:
+    """A /fleet section that folds from its heading (#281); FLEET_JS remembers which are folded."""
+    return (f'<details class="fleet-section" id="{id_}" open><summary><h2>{title}</h2></summary>'
+            f'{body}</details>')
 
 
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None) -> str:
@@ -2534,8 +2608,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     alerts = _alerts(hosts)
     versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
-    attention = (f'<section class="fleet-section" id="fleet-attention"><h2>Needs you · {len(alerts)}</h2>'
-                 f'{"".join(alerts)}</section>') if alerts else ""
+    attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
     bots_html = (_bot_table(active, others_of) if active else
                  '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from the stopped list below.</p>')
     stopped_html = (f'<details class="stopped" id="fleet-stopped"><summary>Stopped · {len(stopped)}</summary>'
@@ -2556,6 +2629,10 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         drain = (f'<button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
                  f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
                  if h["reporting"] and drainable and others_of(h) else "")
+        # take the box off the fleet (#279): its keeper and bots are retired with it
+        remove = (f'<button type="button" class="remove-box" data-host="{e(name)}" '
+                  f'data-bots="{e(" ".join(b["handle"] for b in bots))}" data-reporting="{int(bool(h["reporting"]))}" '
+                  'title="take this machine off the fleet, with its keeper and bots">remove</button>')
         seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
                 f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
         u = h.get("update") or {}
@@ -2573,7 +2650,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
             f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
             # how many of its logins are in trouble
-            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}</td></tr>')
+            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
     machines_html = (('<table class="bots machines"><thead><tr>'
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
@@ -2632,8 +2709,8 @@ Pick channels to have it claim new threads only there (it still answers mentions
 <span class="stat"><b>{len(reporting)} of {_plural(len(hosts), "machine")}</b> reporting</span>
 </div>
 {attention}
-<section class="fleet-section" id="fleet-bots"><h2>Bots · {len(active)}</h2>{bots_html}{stopped_html}</section>
-<section class="fleet-section" id="fleet-machines"><h2>Machines</h2>{machines_html}</section>
+{_fleet_section("fleet-bots", f"Bots · {len(active)}", bots_html + stopped_html)}
+{_fleet_section("fleet-machines", f"Machines · {len(hosts)}", machines_html)}
 {registry_web.skills_section(list(skills), list(profiles))}
 {registry_web.profiles_section(list(profiles), orphans)}
 {versions_html}
@@ -2677,13 +2754,20 @@ def agent_page(board_name, agent, recent, profile=None) -> str:
                            for s in profile.get("skills", []))
         prof = (f'<h2>Profile: <a href="/fleet/profiles/{e(profile["name"])}">{e(profile["name"])}</a></h2>'
                 f'<p class="sub">{e(profile.get("role") or "")}</p>' + (f'<p class="stats">skills: {skills}</p>' if skills else ""))
+    # a human deletes a bot from its page too (#280); humans, keepers and runners are not deleted here
+    delete = "" if agent["kind"] in db.UNSCOPED_KINDS else f"""<p><button type="button" id="delete-bot">delete @{e(agent['handle'])}</button></p>
+<script>document.getElementById('delete-bot').addEventListener('click', function () {{
+  var me = null; try {{ me = JSON.parse(localStorage.getItem('bb.me')); }} catch (err) {{}}
+  if (!me) {{ alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }}
+  deleteBot({json.dumps(agent['handle'])}, me.token, function () {{ location.href = '/fleet'; }});
+}});</script>"""
     return shell(board_name, f"@{agent['handle']}", f"""
 <h1>@{e(agent['handle'])}</h1>
 <p class="sub">{e(agent['description'] or 'no description')}</p>
 <p class="stats">{presence_dot(agent['last_seen_at'])}{e(db.presence(agent['last_seen_at']))} ·
 kind {e(agent['kind'])} · joined {e(ago(agent['created_at']))} ·
 last seen {e(ago(agent['last_seen_at']))}</p>
-{prof}<h2>Recent</h2>{stream}
+{prof}{delete}<h2>Recent</h2>{stream}
 """)
 
 
