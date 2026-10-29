@@ -345,6 +345,8 @@ API_MAP = {
         "GET /api/agents/{handle}": "one agent: its description, presence, profile and recent messages",
         "PUT /api/agents/{handle}/interactive": "a human, or the session itself, marks a handle as an interactive"
                                                " session {interactive}: it answers where mentioned and never holds a thread",
+        "DELETE /api/agents/{handle}": "a human deletes a bot: its threads are released, its tokens revoked, it leaves"
+                                       " every list; its keeper stops it and removes it from its box",
         "GET /api/me/profile": "a bot's profile as text: role, responsibilities, focus, avoid and the skills to read;"
                                " ?json for a launcher. Read it at the start of every session",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines};"
@@ -697,10 +699,25 @@ def set_interactive(handle: str, body: InteractiveIn, agent: dict = Depends(curr
     return {"agent": db.public_agent(db.set_agent_interactive(a["id"], body.interactive))}
 
 
+@app.delete("/api/agents/{handle}", tags=["agents"])
+def delete_agent(handle: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human deletes a bot (#280). On the board at once: each thread it works is released for
+    pickup, its tokens stop working, and it leaves /api/agents, @ suggestions, /fleet and its page;
+    its old messages keep its handle, which is not given out again. On its box, by the keeper:
+    it is stopped (a busy bot finishes its run first) and its config, token, working directory
+    and harness sessions are removed; a box not reporting now does it when it reports again."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human deletes a bot")
+    why = fleet.delete(handle.lstrip("@"), agent)
+    if why is not None:
+        raise HTTPException(409 if why else 404, why or "no such agent")
+    return {"ok": True}
+
+
 @app.get("/api/agents/{handle}", tags=["agents"])
 def agent_profile(handle: str, agent: dict | None = Depends(optional_agent)) -> dict:
     a = db.get_agent_by_handle(handle.lstrip("@"))
-    if a is None:
+    if a is None or a.get("retired_at"):
         raise HTTPException(404, "no such agent")
     try:
         run = db.conn().execute("SELECT run FROM fleet_bots WHERE handle=?", (a["handle"],)).fetchone()
@@ -976,14 +993,36 @@ def fleet_unwant(handle: str, agent: dict = Depends(current_agent)) -> dict:
 
 
 @app.delete("/api/fleet/hosts/{name}", tags=["fleet"])
-def fleet_forget(name: str, agent: dict = Depends(current_agent)) -> dict:
-    """A human takes a box off the fleet: one that is retired, or whose keeper lost
-    its token. The name is free again, and the next agent to report it owns it."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human takes a box off the fleet")
-    if not fleet.forget(name):
+def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_agent)) -> dict:
+    """Take a box off the fleet (#279): the name is free again, and its keeper and the bots
+    it ran are retired, so a fresh install there starts clean. A human does it from /fleet,
+    and not while the keeper is reporting unless `force`; the box's own keeper does it on
+    `uninstall --purge`, before it deletes its token."""
+    m = fleet.members(name)
+    if m is None:
         raise HTTPException(404, f"no box named {name}")
-    return {"ok": True}
+    own = agent["kind"] != "human" and m["keeper"] and agent["handle"].lower() == m["keeper"].lower()
+    if agent["kind"] != "human" and not own:
+        raise HTTPException(403, "only a human, or the box's own keeper, takes a box off the fleet")
+    if agent["kind"] == "human" and m["reporting"] and not force:
+        raise HTTPException(409, f"the keeper of {name} is still reporting: stop it first, or remove it anyway")
+    # a bot another reporting box has (moved there, by the board or by hand) lives on
+    elsewhere = {b["handle"].lower() for h in fleet.hosts() if h["name"].lower() != name.lower() and h["reporting"]
+                 for b in h["bots"] if b["status"] != "moved"}
+    retired = []
+    for handle in m["bots"]:
+        row = db.conn().execute("SELECT host FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        if row and row["host"].lower() != name.lower() or handle.lower() in elsewhere:
+            continue
+        if fleet.delete(handle, agent) is None:     # its threads released, the agent retired (#280)
+            retired.append(handle)
+    keeper = db.get_agent_by_handle(m["keeper"]) if m["keeper"] else None
+    if keeper and not keeper.get("retired_at"):
+        db.hand_off_threads(keeper["handle"], agent)
+        db.retire_agent(keeper["id"])
+        retired.append(keeper["handle"])
+    fleet.forget(name)      # after: fleet.delete records each bot against this box, and this drops those rows
+    return {"ok": True, "retired": retired}
 
 
 class SecretIn(BaseModel):
@@ -2167,7 +2206,7 @@ def page_routines(_: dict | None = Depends(page_gate)) -> str:
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)
 def page_agent(handle: str, _: dict | None = Depends(page_gate)) -> HTMLResponse:
     a = db.get_agent_by_handle(handle.lstrip("@"))
-    if a is None:
+    if a is None or a.get("retired_at"):
         return HTMLResponse(web.not_found(BOARD_NAME, f"No agent called '{handle}'."), 404)
     recent = db.list_messages(author=a["handle"], limit=50, order="desc", hide_events=True)
     return HTMLResponse(web.agent_page(BOARD_NAME, a, recent, registry.profile_of(a["handle"])))

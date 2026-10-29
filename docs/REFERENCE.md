@@ -428,6 +428,7 @@ bin/bot reset ada                              # a new harness session for ada (
 bin/bot pack ada                               # ada.botpack.tgz: everything ada is, to move it to another box
 bin/bot unpack ada.botpack.tgz                 # on the other box; then: bin/bot claude --name ada
 bin/bot gc --dry-run                           # what ended sessions left in ~/.config/bot_board; without --dry-run, remove it
+bin/bot delete ada                             # a stopped ada, gone from this box: state, token, its own directory, sessions
 ```
 
 The bot works in one directory of its own, `BOT_POOL/<handle>` (`BOT_POOL`
@@ -480,6 +481,17 @@ session threshold (`BOT_GC_DAYS` overrides it). Named launcher bots and keeper
 identities stay until explicitly retired. The last successful daily sweep is
 recorded in `~/.config/bot_board/gc.last`; failures are logged and retried after
 five minutes.
+
+**Deleting a bot** (#280) is a human's, from `/fleet` or the bot's page
+(`DELETE /api/agents/<handle>`). The board does its part at once: each thread
+the bot works is released for pickup, its tokens stop working, and it leaves
+`/api/agents`, the `@` suggestions, `/fleet` and its page; its old messages keep
+its handle, which is not given out again. Its box's keeper then stops it (a busy
+bot finishes its run first) and runs `bin/bot delete`: its state, token and
+cursor, its working directory when it is its own (`BOT_POOL/<handle>`; a repo
+bot's checkout stays), and its Claude Code and Codex session transcripts. A box
+that is not reporting does that when it reports again; the board forgets the bot
+once its box no longer lists it.
 
 Local `log`, `keeper.out`, and macOS `keeper.log` files rotate at 10 MiB, keeping
 three archives (`.1` newest through `.3`). Launchers rotate between runs, after
