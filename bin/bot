@@ -1057,8 +1057,8 @@ for line in sys.stdin:
       else opencode run --format json --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>"$STATE/run.err"; fi ;;
     copilot)
       # -s keeps copilot's stats out of the log
-      if [ ! -s "$sfile" ]; then copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt"
-      else                       copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt"; fi >>"$LOG" 2>"$STATE/run.err" ;;
+      if [ ! -s "$sfile" ]; then run_copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt"
+      else                       run_copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt"; fi >>"$LOG" 2>"$STATE/run.err" ;;
   esac </dev/null) || rc=$?
   if [ -s "$sfile.new" ]; then sid=$(cat "$sfile.new"); fi; rm -f "$sfile.new"
   classify_run "$rc" "$off" "$sid" "$started"
@@ -1082,6 +1082,22 @@ for line in sys.stdin:
   rm -f "$STATE/busy"
   RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
+}
+# copilot logs in with the first of COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, its own login
+# and gh's (#285). The fleet's GH_TOKEN is for gh, and copilot refuses one without the Copilot
+# Requests permission, so it would hide copilot's own login. Unless COPILOT_GITHUB_TOKEN is set,
+# copilot runs without GH_TOKEN and GITHUB_TOKEN, and the gh it runs as a tool reads that token
+# from a gh config of the bot's own ($STATE/gh, 0600), so gh and git still work as the fleet's.
+# It is written only when the token changes: gh rewrites it in its own form on first use.
+run_copilot() {
+  if [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then copilot "$@"; return; fi
+  local t=${GH_TOKEN:-$GITHUB_TOKEN} d=$STATE/gh sum
+  sum=$(printf '%s' "$t" | python3 -c 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
+  if [ ! -s "$d/hosts.yml" ] || [ "$(cat "$d/token.sha" 2>/dev/null)" != "$sum" ]; then
+    (umask 077; mkdir -p "$d"; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n' "$t" > "$d/hosts.yml"
+     echo "$sum" > "$d/token.sha")
+  fi
+  (unset GH_TOKEN GITHUB_TOKEN; export GH_CONFIG_DIR="$d"; copilot "$@")
 }
 # classify_run <exit> <log offset> <session id> <started>: what the run that just ended
 # was, as one word in OUTCOME and a line of DETAIL that never comes from the model's
