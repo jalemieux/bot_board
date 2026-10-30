@@ -38,6 +38,10 @@ def key_of(text: str, href: str) -> str:
     return hashlib.sha1((href + "\n" + _VOLATILE.sub("#", text)).encode()).hexdigest()[:16]
 
 
+def _token_when(due: dict) -> str:
+    return f"expires in {due['days_left']} days" if due["days_left"] > 0 else "has expired"
+
+
 def _item(text: str, href: str, where: str) -> dict:
     return {"text": text, "href": href, "where": where, "key": key_of(text, href)}
 
@@ -89,6 +93,10 @@ def _split(attention: list) -> tuple[list, list]:
 
 def _fleet(hosts: list, attention: list) -> list:
     out = []
+    due = fleet.claude_token_due()
+    if due:
+        attention.append(_item(f"The fleet's claude token {_token_when(due)}: replace {fleet.CLAUDE_TOKEN}"
+                               " with a new one from claude setup-token", "/fleet#secrets", "fleet"))
     troubles = {}      # why -> [(box, handle)]: the same trouble on many bots is one item
     for h in hosts:
         if not h["reporting"]:
@@ -97,7 +105,7 @@ def _fleet(hosts: list, attention: list) -> list:
         # a login missing here is one item, not one more per bot it holds
         out_of = {c["name"] for c in h.get("credentials") or [] if c["kind"] == "login" and c["state"] != "ok"}
         for c in h.get("credentials") or []:
-            if c["state"] in ("missing", "expired") and (c.get("held") or c["kind"] == "login"):
+            if c["state"] in ("missing", "expired", "rejected") and (c.get("held") or c["kind"] == "login"):
                 held = f", {c['held']} bot{'' if c['held'] == 1 else 's'} held" if c.get("held") else ""
                 attention.append(_item(f"{c['name']} {c['state']} on {h['name']}{held}"
                                        + (f": {c['detail']}" if c.get("detail") else ""),

@@ -202,6 +202,21 @@ def secrets() -> list[dict]:
             for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
 
 
+# The fleet's Claude login (#283): a token from `claude setup-token`, which lasts a year.
+CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_TOKEN_DAYS = 365
+
+
+def claude_token_due() -> dict | None:
+    """{set_at, days_left} once the fleet's claude token is two weeks from a year old (counted
+    from when it was set here), else None."""
+    row = db.conn().execute("SELECT set_at FROM fleet_secrets WHERE name=?", (CLAUDE_TOKEN,)).fetchone()
+    if row is None:
+        return None
+    left = CLAUDE_TOKEN_DAYS - (db.seconds_since(row["set_at"]) or 0) / 86400
+    return {"set_at": row["set_at"], "days_left": round(left)} if left < 14 else None
+
+
 def secret_values() -> dict[str, str]:
     """name -> value. For keepers only."""
     return {r["name"]: r["value"] for r in db.conn().execute("SELECT name, value FROM fleet_secrets ORDER BY name")}

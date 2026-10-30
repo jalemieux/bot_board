@@ -72,7 +72,7 @@ Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), KEEPER_HO
 KEEPER_HANDOVER (where archives of
 moving bots wait: host:dir, e.g. box-1:.config/bot_board/handover).
 """
-import argparse, fcntl, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, fcntl, hashlib, json, os, platform, re, shlex, shutil, socket, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -554,6 +554,13 @@ CREDENTIALS = (
     ("codex", "login", "", ("codex", "login", "status"), ("codex",)),
 )
 CHECK_EVERY = 300
+# `claude auth status` says logged in whenever CLAUDE_CODE_OAUTH_TOKEN is set, even to a bad
+# token (#283), so a fleet token is tried for real: one tiny request when it changes, then
+# daily. It spends a few tokens of the subscription; a run that cannot tell, or a rejected
+# token, is tried again in an hour.
+TOKEN_CHECK_EVERY = 24 * 3600
+TOKEN_PROBE = ("claude", "-p", "--no-session-persistence", "--output-format", "json", "--model", "haiku",
+               "Reply with OK.")
 FLEET_ENV = os.path.join(CFG, "fleet.env")
 FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits here are replaced\n"
 
@@ -590,6 +597,7 @@ class Credentials:
         self.checked = 0        # when the checks last ran
         self.version = None     # the version of the board's secrets fleet.env holds
         self.sync_error = ""
+        self.probe = None       # the last real try of the fleet's claude token: {fp, at, result}
 
     def sync(self, version, token):
         """When the board's secrets changed (version, from the report), fetch them and write
@@ -663,14 +671,50 @@ class Credentials:
             return
         env = self.env()
         self.state = {c[0]: self.check(c, env) for c in need}
+        if self.state.get("claude", ("",))[0] == "ok":
+            self.state["claude"] = self.try_token(env) or self.state["claude"]
         self.checked = time.time()
+
+    def try_token(self, env):
+        """(state, detail) from a real request with the fleet's CLAUDE_CODE_OAUTH_TOKEN, or None:
+        no such token here, or the request could not tell (a timeout, a usage limit)."""
+        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        if not token:
+            self.probe = None
+            return None
+        fp = hashlib.sha256(token.encode()).hexdigest()[:16]     # never the token itself
+        p = self.probe
+        if p and p["fp"] == fp and time.time() - p["at"] < TOKEN_CHECK_EVERY:
+            return p["result"]
+        where = os.path.join(CFG, "token-check")     # one directory, so claude keeps one project for it
+        os.makedirs(where, mode=0o700, exist_ok=True)
+        result, retry = None, False
+        try:
+            r = subprocess.run(TOKEN_PROBE, capture_output=True, text=True, timeout=90, env=env, cwd=where,
+                               stdin=subprocess.DEVNULL)
+            d = json.loads(r.stdout)
+            if d.get("is_error") is False:
+                result = ("ok", "")
+            elif d.get("api_error_status") in (401, 403):
+                result = ("rejected", f"token rejected: {d.get('result') or d.get('api_error_status')}"[:200])
+            else:
+                retry = True
+        except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+            retry = True
+        # a try that could not tell, or a rejection (a 401 can be passing), comes again in an hour,
+        # not at every check; a good token waits a day
+        retry = retry or bool(result and result[0] == "rejected")
+        self.probe = {"fp": fp, "at": time.time() - (TOKEN_CHECK_EVERY - 3600 if retry else 0), "result": result}
+        if result:
+            print(f"keeper: the fleet's claude token: {result[0]}", flush=True)
+        return result
 
     def blocked(self):
         """harness -> why its bots are not started."""
         out = {}
         for name, _, _, _, holds in CREDENTIALS:
             st, why = self.state.get(name, ("ok", ""))
-            for hn in holds if st == "missing" else ():   # "unknown" and "expired" hold nothing
+            for hn in holds if st in ("missing", "rejected") else ():   # "unknown" and "expired" hold nothing
                 out[hn] = f"{name} {why or st}"
         return out
 
