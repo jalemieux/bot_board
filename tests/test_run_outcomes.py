@@ -144,12 +144,14 @@ class Outcomes(unittest.TestCase):
         self.check_outage("copilot", "logged_out", "logged out of {h} since", "logged out")
 
     def test_logged_out_waits_for_the_login_then_resumes(self):
-        for harness in ("claude", "codex"):
-            with self.subTest(harness=harness):
+        # logged_out_refresh: the stored login's refresh token has expired, so claude prints one line and no
+        # result object (#295); it must be held for a login like any other logged-out run, not given up
+        for harness, scenario in (("claude", "logged_out"), ("claude", "logged_out_refresh"), ("codex", "logged_out")):
+            with self.subTest(harness=harness, scenario=scenario):
                 def log_back_in(L):
                     (L.scenario / "login").write_text("")
                 with FakeBoard() as board:
-                    L, root = self.launch(board, harness, fh.step(harness, "logged_out"), fh.step(harness, "ok", "done"),
+                    L, root = self.launch(board, harness, fh.step(harness, scenario), fh.step(harness, "ok", "done"),
                                           mention=True, before_start=lambda L: (L.scenario / "login").unlink())
                     self.settled(L, 2)
                     self.assertTrue(L.read("health").startswith("logged out of %s since" % harness), L.read("health"))

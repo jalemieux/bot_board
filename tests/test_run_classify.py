@@ -56,7 +56,7 @@ class Classify(unittest.TestCase):
     }
     CASES = {
         "claude": [("ok", "ok"), ("text_ok", "ok"), ("session_lost", "session_lost"), ("bad_invocation", "bad_invocation"),
-                   ("logged_out", "logged_out"), ("limited", "limited"), ("limited_zero_exit", "limited"),
+                   ("logged_out", "logged_out"), ("logged_out_refresh", "logged_out"), ("limited", "limited"), ("limited_zero_exit", "limited"),
                    ("capacity", "capacity"), ("retry", "retry"), ("retry_network", "retry"),
                    ("exhausted", "exhausted"), ("exhausted_budget", "exhausted"), ("unknown", "unknown"),
                    ("unknown_no_result", "unknown")],

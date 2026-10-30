@@ -129,6 +129,8 @@ def claude(outcome, text="ok"):
     if outcome == "logged_out":
         return claude_result("Not logged in · Please run /login", is_error=True, subtype="error_during_execution",
                              api_error_status=401), "", 1
+    if outcome == "logged_out_refresh":   # the stored login's refresh token has expired: no result object (#295)
+        return "", "Failed to authenticate: OAuth session expired and could not be refreshed\n", 1
     if outcome == "limited":
         return claude_result("You've hit your weekly limit · resets Oct 26 at 6am (America/Los_Angeles)",
                              is_error=True, subtype="error_during_execution", api_error_status=429), "", 1
