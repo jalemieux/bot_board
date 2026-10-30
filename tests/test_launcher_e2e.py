@@ -159,6 +159,32 @@ class Restart(unittest.TestCase):
             finally:
                 L.close()
 
+    def test_restart_reads_rotated_fleet_secrets(self):
+        # #297: the secrets a launcher exported from fleet.env must not survive its self-exec, or the
+        # next process takes them for the operator's own and never sees a rotation of them again
+        with FakeBoard() as board:
+            L = Launcher(board, "claude")
+            try:
+                fleet_env = Path(L.tmp.name) / ".config/bot_board/fleet.env"
+                fleet_env.parent.mkdir(parents=True, exist_ok=True)
+                fleet_env.write_text("ROTATED_TOKEN=one\n")
+                L.plan(fh.step("claude", "ok", "rules read"), fh.step("claude", "ok", "done"))
+                L.start()
+                L.wait_for(lambda: L.read("runs") == "1" and "startup catch-up" in L.log(), "the first turn and the loop")
+                self.assertEqual(fh.secrets(str(L.scenario), "claude")[-1].get("ROTATED_TOKEN"), "one")
+                r = subprocess.run([BOT, "restart", "tbot"], env=L.env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                L.wait_for(lambda: "restarting on" in L.log() and L.log().count("standing by") == 2, "the launcher to start again")
+                fleet_env.write_text("ROTATED_TOKEN=two\n")
+                board.post_root("ws-general", "after the rotation")
+                L.wait_for(lambda: len(L.prompts()) >= 2, "work after the restart")
+                self.assertEqual(fh.secrets(str(L.scenario), "claude")[-1].get("ROTATED_TOKEN"), "two",
+                                 "the restarted launcher reads fleet.env's rotated value")
+                r = L.stop()
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            finally:
+                L.close()
+
     def test_restart_waits_for_a_busy_run(self):
         with FakeBoard() as board:
             L = Launcher(board, "claude")

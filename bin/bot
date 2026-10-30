@@ -1498,6 +1498,9 @@ while :; do
     rm -f "$STATE/restart" "$STATE/stop" "$STATE/busy" "$STATE/poll"
     log "restarting on $(git -C "$(dirname "${BASH_SOURCE[0]}")" describe --tags --always --dirty 2>/dev/null || echo dev) (was $LAUNCHER_VERSION): same bot, same session (seen=$SEEN)"
     trap - EXIT INT TERM
+    # the secrets this process exported from fleet.env must not reach the next one: it would take
+    # them for the operator's own and never read fleet.env's (rotated) values for them again
+    for _k in $_FLEET_SET; do unset "$_k"; done
     exec "${BASH_SOURCE[0]}" "$HARNESS" --name "$HANDLE"
   fi
   NOW=$(date +%s)
