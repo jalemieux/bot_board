@@ -7,8 +7,9 @@ order (the last one repeats):
     {"stdout": "...", "stderr": "...", "exit": 0, "sleep": 0}
 
 Each script also appends the argv of every invocation, one per line, to
-<scenario_dir>/<harness>.args, and the prompt it was given to <harness>.prompts, so a
-test can check flags, session handling and what the launcher said. `claude auth status`
+<scenario_dir>/<harness>.args, the prompt it was given to <harness>.prompts, and the
+*_TOKEN/*_KEY/*_SECRET variables it saw to <harness>.secrets, so a test can check flags,
+session handling, secrets and what the launcher said. `claude auth status`
 and `codex login status` answer from <scenario_dir>/login (present: logged in).
 
 Helpers build the output a real harness produces for an outcome, so the launcher's
@@ -22,12 +23,16 @@ import uuid
 HARNESSES = ("claude", "codex", "copilot", "opencode")
 
 SCRIPT = r'''#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, re, sys, time
 name = os.path.basename(sys.argv[0])
 sdir = os.environ["FAKE_SCENARIO_DIR"]
 args = sys.argv[1:]
 with open(os.path.join(sdir, name + ".args"), "a") as fh:
     fh.write(json.dumps(args) + "\n")
+with open(os.path.join(sdir, name + ".secrets"), "a") as fh:   # the secrets each run was given
+    fh.write(json.dumps({k: v for k, v in os.environ.items() if re.fullmatch(r"[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)", k)}) + "\n")
+with open(os.path.join(sdir, name + ".env"), "a") as fh:     # the login variables each run saw
+    fh.write(json.dumps({k: os.environ.get(k) for k in ("GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "GH_CONFIG_DIR")}) + "\n")
 if name == "claude" and args[:2] == ["auth", "status"]:
     print(json.dumps({"loggedIn": os.path.exists(os.path.join(sdir, "login"))})); sys.exit(0)
 if name == "codex" and args[:2] == ["login", "status"]:
@@ -87,6 +92,14 @@ def plan(scenario_dir, harness, steps):
             pass
 
 
+def secrets(scenario_dir, harness):
+    """The *_TOKEN/*_KEY/*_SECRET variables each invocation ran with, one dict per run."""
+    try:
+        return [json.loads(l) for l in open(os.path.join(scenario_dir, harness + ".secrets")) if l.strip()]
+    except OSError:
+        return []
+
+
 def runs(scenario_dir, harness):
     """argv of each invocation so far (auth checks included)."""
     try:
@@ -129,6 +142,8 @@ def claude(outcome, text="ok"):
     if outcome == "logged_out":
         return claude_result("Not logged in · Please run /login", is_error=True, subtype="error_during_execution",
                              api_error_status=401), "", 1
+    if outcome == "logged_out_refresh":   # the stored login's refresh token has expired: no result object (#295)
+        return "", "Failed to authenticate: OAuth session expired and could not be refreshed\n", 1
     if outcome == "limited":
         return claude_result("You've hit your weekly limit · resets Oct 26 at 6am (America/Los_Angeles)",
                              is_error=True, subtype="error_during_execution", api_error_status=429), "", 1

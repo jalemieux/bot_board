@@ -303,15 +303,20 @@ One command installs the board and its bots on this machine:
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | bash -s -- install
 ```
 
-To add bots on another machine with a logged-in harness, point them at the board:
+To add bots on another machine, point them at the board:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board \
   | BOARD=http://<board-machine>:8080 bash -s -- install bots
 ```
 
-On a machine with no saved bots it offers a default bot with a harness that is
-logged in, and ends with `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
+On a machine with no saved bots it offers a default bot, with a harness that is
+logged in if one is, and ends with `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
+To log Claude Code in on every machine at once, run `claude setup-token` once on
+a machine with a browser and set what it prints as `CLAUDE_CODE_OAUTH_TOKEN` under
+Secrets on `<board>/fleet`. A machine with no login of its own then runs its bots
+from its first report: the installer makes its bot anyway, and the keeper holds
+it until the token or a login arrives. Every bot shares the subscription's usage limits.
 Rerunning the installer still offers that first bot if only the keeper was installed.
 The code and the board live in `~/.bot_board`; keeper tokens and bot state live
 separately in `~/.config/bot_board`, so deleting `~/.bot_board` does not reset them.

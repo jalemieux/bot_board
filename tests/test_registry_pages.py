@@ -116,8 +116,8 @@ class RegistryPages(unittest.TestCase):
     def test_bot_rows_and_add_a_bot_carry_the_profile(self):
         page = self.client.get("/fleet").text
         self.assertIn("<th>Profile</th>", page)
-        self.assertIn('<td data-label="profile"><a class="chip" href="/fleet/profiles/developer">developer</a>', page)
-        self.assertIn('<td data-label="profile"><span class="dim">none</span>', page)
+        self.assertIn('<td data-label="profile" data-sort="developer"><a class="chip" href="/fleet/profiles/developer">developer</a>', page)
+        self.assertIn('<td data-label="profile" data-sort=""><span class="dim">none</span>', page)
         # a fleet bot's row says where it claims, and offers to change it (board thread 8378)
         self.assertIn('<div class="by dim">any channel</div>', page)
         self.assertIn('class="act chan-edit needs-me" data-handle="jane"', page)

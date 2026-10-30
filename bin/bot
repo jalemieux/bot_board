@@ -151,16 +151,16 @@ if [ "${1:-}" = install ]; then
   # harness <TAB> ok|missing|unknown|absent, checked as the keeper checks logins
   _rows=$(python3 "$SRC/bin/keeper" harnesses 2>/dev/null || true)
   _state() { awk -F'\t' -v h="$1" '$1 == h {print $2}' <<<"$_rows"; }
-  _words() { case $(_state "$1") in ok) echo "logged in" ;; unknown) echo "login not confirmed" ;; esac; }
+  _words() { case $(_state "$1") in ok) echo "logged in" ;; unknown) echo "login not confirmed" ;; missing) echo "not logged in yet" ;; esac; }
   _hint() { case $1 in claude) echo "run claude, then /login" ;; codex) echo "run codex login" ;; *) echo "log $1 in" ;; esac; }
   _harness=
   if [ -n "$_fresh" ] && [ -z "$_nobot" ]; then
     _pick=$(awk -F'\t' '$2 == "ok" {print $1; exit}' <<<"$_rows")
     [ -n "$_pick" ] || _pick=$(awk -F'\t' '$2 == "unknown" {print $1; exit}' <<<"$_rows")
-    _out=$(awk -F'\t' '$2 == "missing" {print $1; exit}' <<<"$_rows")
-    if [ -z "$_pick" ] && [ -n "$_out" ]; then
-      echo "bot: no default bot: $_out is installed but not logged in: $(_hint "$_out"), then rerun install" >&2
-    elif [ -z "$_pick" ]; then
+    # nothing logged in yet: the bot is made all the same, and the keeper holds it until a login
+    # or the fleet's claude token arrives (#283), so the install needs no second run
+    [ -n "$_pick" ] || _pick=$(awk -F'\t' '$2 == "missing" {print $1; exit}' <<<"$_rows")
+    if [ -z "$_pick" ]; then
       echo "bot: no default bot: no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install or use + Add a bot on $_board/fleet" >&2
     elif { exec 3<"${BOT_TTY:-/dev/tty}"; } 2>/dev/null; then
       printf 'Start a default bot with %s (%s)? [Y/n/other] ' "$_pick" "$(_words "$_pick")" >&2
@@ -174,8 +174,7 @@ if [ "${1:-}" = install ]; then
         ""|[Yy]|[Yy]es) _harness=$_pick ;;
         [Nn]|[Nn]o) echo "bot: no default bot: add bots with + Add a bot on $_board/fleet" >&2 ;;
         *) case $(_state "$_ans") in
-             ok|unknown) _harness=$_ans ;;
-             missing) echo "bot: no default bot: $_ans is installed but not logged in: $(_hint "$_ans"), then rerun install" >&2 ;;
+             ok|unknown|missing) _harness=$_ans ;;
              *) echo "bot: no default bot: $_ans is not a harness on this PATH" >&2 ;;
            esac ;;
       esac
@@ -201,6 +200,14 @@ if [ "${1:-}" = install ]; then
       echo "bot: if you reset the board but your browser still shows a handle, sign out and sign in again." >&2 ;;
     *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/fleet" >&2 ;;
     *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/fleet" >&2 ;;
+  esac
+  # a bot made here for a harness with no login yet: say what frees it (not for a bot already on the box)
+  case $_note in *"on this box"*|*"already"*) ;; *)
+    if [ "$(_state "$_harness")" = missing ]; then
+      _how=$(_hint "$_harness")
+      [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet if it is not there yet (make it with claude setup-token on a machine with a browser), or $_how here"
+      echo "bot: $_harness is not logged in on this machine yet, so the keeper holds the bot until it is: $_how. It starts by itself; no second install." >&2
+    fi ;;
   esac
   exit 0
 fi
@@ -1050,8 +1057,8 @@ for line in sys.stdin:
       else opencode run --format json --session "$sid" $BOT_OPENCODE_FLAGS "$prompt" >>"$LOG" 2>"$STATE/run.err"; fi ;;
     copilot)
       # -s keeps copilot's stats out of the log
-      if [ ! -s "$sfile" ]; then copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt"
-      else                       copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt"; fi >>"$LOG" 2>"$STATE/run.err" ;;
+      if [ ! -s "$sfile" ]; then run_copilot -s --session-id "$sid" $BOT_COPILOT_FLAGS -p "$prompt"
+      else                       run_copilot -s --resume     "$sid" $BOT_COPILOT_FLAGS -p "$prompt"; fi >>"$LOG" 2>"$STATE/run.err" ;;
   esac </dev/null) || rc=$?
   if [ -s "$sfile.new" ]; then sid=$(cat "$sfile.new"); fi; rm -f "$sfile.new"
   classify_run "$rc" "$off" "$sid" "$started"
@@ -1075,6 +1082,22 @@ for line in sys.stdin:
   rm -f "$STATE/busy"
   RUNS=$(( $(cat "$STATE/runs" 2>/dev/null || echo 0) + 1 )); echo "$RUNS" > "$STATE/runs"
   return $rc
+}
+# copilot logs in with the first of COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN, its own login
+# and gh's (#285). The fleet's GH_TOKEN is for gh, and copilot refuses one without the Copilot
+# Requests permission, so it would hide copilot's own login. Unless COPILOT_GITHUB_TOKEN is set,
+# copilot runs without GH_TOKEN and GITHUB_TOKEN, and the gh it runs as a tool reads that token
+# from a gh config of the bot's own ($STATE/gh, 0600), so gh and git still work as the fleet's.
+# It is written only when the token changes: gh rewrites it in its own form on first use.
+run_copilot() {
+  if [ -n "${COPILOT_GITHUB_TOKEN:-}" ] || [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then copilot "$@"; return; fi
+  local t=${GH_TOKEN:-$GITHUB_TOKEN} d=$STATE/gh sum
+  sum=$(printf '%s' "$t" | python3 -c 'import sys,hashlib;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
+  if [ ! -s "$d/hosts.yml" ] || [ "$(cat "$d/token.sha" 2>/dev/null)" != "$sum" ]; then
+    (umask 077; mkdir -p "$d"; printf 'github.com:\n    oauth_token: %s\n    git_protocol: https\n' "$t" > "$d/hosts.yml"
+     echo "$sum" > "$d/token.sha")
+  fi
+  (unset GH_TOKEN GITHUB_TOKEN; export GH_CONFIG_DIR="$d"; copilot "$@")
 }
 # classify_run <exit> <log offset> <session id> <started>: what the run that just ended
 # was, as one word in OUTCOME and a line of DETAIL that never comes from the model's
@@ -1156,7 +1179,7 @@ if m(r"No conversation found with session|no rollout found for thread|Session no
     o, d = "session_lost", last()
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
-elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth token (has )?expired|no login"):
+elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth (token|session) (has )?expired|could not be refreshed|failed to authenticate|no login"):
     o, d = "logged_out", last() or "HTTP %s" % status
 elif subtype in ("error_max_turns", "error_max_budget_usd", "error_max_budget") or m(r"max(imum)? turns|turn limit|budget (was )?(exceeded|reached)|exceeded .*budget"):
     o, d = "exhausted", (subtype.replace("error_", "").replace("_", " ") if subtype.startswith("error_max") else last())
@@ -1475,6 +1498,9 @@ while :; do
     rm -f "$STATE/restart" "$STATE/stop" "$STATE/busy" "$STATE/poll"
     log "restarting on $(git -C "$(dirname "${BASH_SOURCE[0]}")" describe --tags --always --dirty 2>/dev/null || echo dev) (was $LAUNCHER_VERSION): same bot, same session (seen=$SEEN)"
     trap - EXIT INT TERM
+    # the secrets this process exported from fleet.env must not reach the next one: it would take
+    # them for the operator's own and never read fleet.env's (rotated) values for them again
+    for _k in $_FLEET_SET; do unset "$_k"; done
     exec "${BASH_SOURCE[0]}" "$HARNESS" --name "$HANDLE"
   fi
   NOW=$(date +%s)
