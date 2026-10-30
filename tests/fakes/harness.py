@@ -7,8 +7,9 @@ order (the last one repeats):
     {"stdout": "...", "stderr": "...", "exit": 0, "sleep": 0}
 
 Each script also appends the argv of every invocation, one per line, to
-<scenario_dir>/<harness>.args, and the prompt it was given to <harness>.prompts, so a
-test can check flags, session handling and what the launcher said. `claude auth status`
+<scenario_dir>/<harness>.args, the prompt it was given to <harness>.prompts, and the
+*_TOKEN/*_KEY/*_SECRET variables it saw to <harness>.secrets, so a test can check flags,
+session handling, secrets and what the launcher said. `claude auth status`
 and `codex login status` answer from <scenario_dir>/login (present: logged in).
 
 Helpers build the output a real harness produces for an outcome, so the launcher's
@@ -22,12 +23,14 @@ import uuid
 HARNESSES = ("claude", "codex", "copilot", "opencode")
 
 SCRIPT = r'''#!/usr/bin/env python3
-import json, os, sys, time
+import json, os, re, sys, time
 name = os.path.basename(sys.argv[0])
 sdir = os.environ["FAKE_SCENARIO_DIR"]
 args = sys.argv[1:]
 with open(os.path.join(sdir, name + ".args"), "a") as fh:
     fh.write(json.dumps(args) + "\n")
+with open(os.path.join(sdir, name + ".secrets"), "a") as fh:   # the secrets each run was given
+    fh.write(json.dumps({k: v for k, v in os.environ.items() if re.fullmatch(r"[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)", k)}) + "\n")
 with open(os.path.join(sdir, name + ".env"), "a") as fh:     # the login variables each run saw
     fh.write(json.dumps({k: os.environ.get(k) for k in ("GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN", "GH_CONFIG_DIR")}) + "\n")
 if name == "claude" and args[:2] == ["auth", "status"]:
@@ -87,6 +90,14 @@ def plan(scenario_dir, harness, steps):
             os.remove(os.path.join(scenario_dir, harness + suffix))
         except FileNotFoundError:
             pass
+
+
+def secrets(scenario_dir, harness):
+    """The *_TOKEN/*_KEY/*_SECRET variables each invocation ran with, one dict per run."""
+    try:
+        return [json.loads(l) for l in open(os.path.join(scenario_dir, harness + ".secrets")) if l.strip()]
+    except OSError:
+        return []
 
 
 def runs(scenario_dir, harness):
