@@ -76,15 +76,31 @@ class Install(unittest.TestCase):
         r, config = self.install(rows, tty="other\nopencode\n")
         self.assertIn("Which harness (claude, codex, opencode)?", r.stderr)
         self.assertIn('KEEPER_DEFAULT_BOT="opencode"', config)
-        r, config = self.install(self.CLAUDE_OK, tty="codex\n")
-        self.assertNotIn("KEEPER_DEFAULT_BOT", config)
-        self.assertIn("codex is installed but not logged in: run codex login, then rerun install", r.stderr)
+        # a harness not logged in yet is taken too: the keeper holds the bot until it is (#283)
+        r, config = self.install(self.CLAUDE_OK, tty="codex\n", note="@ada (codex) in workspace admin, started")
+        self.assertIn('KEEPER_DEFAULT_BOT="codex"', config)
+        self.assertIn("codex is not logged in on this machine yet, so the keeper holds the bot until it is: "
+                      "run codex login. It starts by itself; no second install.", r.stderr)
 
-    def test_logged_out_or_missing_harness_starts_nothing_and_says_what_to_do(self):
+    def test_a_logged_out_harness_still_gets_the_first_bot_held_until_a_login(self):
+        # #283: a new machine needs no second install; the fleet's claude token, or a login, frees the bot
         r, config = self.install([("claude", "missing", "not logged in"), ("codex", "absent", ""),
-                                  ("copilot", "absent", ""), ("opencode", "absent", "")])
-        self.assertNotIn("KEEPER_DEFAULT_BOT", config)
-        self.assertIn("claude is installed but not logged in: run claude, then /login, then rerun install", r.stderr)
+                                  ("copilot", "absent", ""), ("opencode", "absent", "")],
+                                 note="@ada (claude) in workspace admin, started")
+        self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
+        self.assertIn("starting a default bot with claude (not logged in yet)", r.stderr)
+        self.assertIn(f"claude is not logged in on this machine yet, so the keeper holds the bot until it is: set "
+                      f"CLAUDE_CODE_OAUTH_TOKEN under Secrets on {BOARD}/fleet if it is not there yet (make it with claude setup-token on a "
+                      "machine with a browser), or run claude, then /login here. It starts by itself; no second install.",
+                      r.stderr)
+        self.assertNotIn("rerun install", r.stderr)
+        # a bot already on the box says so, and nothing about holding a new one
+        r, _ = self.install([("claude", "missing", "not logged in"), ("codex", "absent", ""),
+                             ("copilot", "absent", ""), ("opencode", "absent", "")], note="@ada already on this box")
+        self.assertIn("@ada is on this box already", r.stderr)
+        self.assertNotIn("holds the bot", r.stderr)
+
+    def test_no_harness_starts_nothing_and_says_what_to_do(self):
         r, config = self.install([(h, "absent", "") for h in ("claude", "codex", "copilot", "opencode")])
         self.assertIn("no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install"
                       f" or use + Add a bot on {BOARD}/fleet", r.stderr)
