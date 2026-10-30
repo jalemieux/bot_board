@@ -761,7 +761,9 @@ changes, then daily; a 401 or 403 holds that harness's bots).
 | opencode | the provider's key, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | read from the environment | not yet: installed counts as logged in | the provider's API usage |
 
 `codex login status` says logged in for any stored key, which is why codex has a
-probe too. A key removed from the board stays stored for codex on each box until
+probe too. A box logged in with ChatGPT, or whose login the check cannot read, is
+left alone: the key is not stored there and not probed, and `codex login status`
+stays its only check. A key removed from the board stays stored for codex on each box until
 someone runs `codex logout` there.
 
 Each report tells a keeper which version of the secrets the board holds. When

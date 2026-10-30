@@ -184,6 +184,7 @@ class Keeper(unittest.TestCase):
              f'A={auth}\n'
              'if [ "$1 $2" = "login status" ]; then\n'
              '  [ -s $A ] || { echo "Not logged in" >&2; exit 1; }\n'
+             '  [ "$(cat $A)" = unreadable ] && { echo "Error checking login status: bad auth.json" >&2; exit 1; }\n'
              '  [ "$(cat $A)" = chatgpt ] && echo "Logged in using ChatGPT" || echo "Logged in using an API key - x"; exit 0; fi\n'
              'if [ "$1 $2" = "login --with-api-key" ]; then cat > $A; echo "Successfully logged in"; exit 0; fi\n'
              'case $(cat $A 2>/dev/null) in good) echo \'{"type":"turn.completed"}\' ;;\n'
@@ -238,8 +239,20 @@ class Keeper(unittest.TestCase):
         c = self.codex_creds(None, self.secrets('v1', OPENAI_API_KEY='good'))
         self.assertEqual(open(auth).read(), 'chatgpt')
         self.assertEqual(self.codex_calls('login --with-api-key'), 0)
+        self.assertEqual(self.codex_calls('exec'), 0)       # nor is its usage spent trying a key it does not use
         self.assertEqual(c.state['codex'], ('ok', ''))
         self.assertEqual(c.blocked(), {})
+        # logged out later: nothing is in the way any more, and the key goes in
+        os.remove(auth)
+        self.codex_creds(c)
+        self.assertEqual(open(auth).read(), 'good')
+        self.assertEqual(self.codex_calls('exec'), 1)
+
+    def test_a_login_the_check_cannot_read_is_not_replaced(self):
+        auth = self.fleet_codex(login='unreadable')
+        self.codex_creds(None, self.secrets('v1', OPENAI_API_KEY='good'))
+        self.assertEqual(open(auth).read(), 'unreadable')
+        self.assertEqual((self.codex_calls('login --with-api-key'), self.codex_calls('exec')), (0, 0))
 
     def test_codex_login_does_not_hold_claude_bots(self):
         open(os.path.join(self.home, 'claude-login'), 'w').close()

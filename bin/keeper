@@ -563,7 +563,7 @@ CREDENTIALS = (
     # it, unchecked, and `codex login status` then says logged in whatever the key is
     Cred("codex", "login", "OPENAI_API_KEY", ("codex", "login", "status"), ("codex",),
          apply=("codex", "login", "--with-api-key"),
-         probe=("codex", "exec", "--skip-git-repo-check", "--json", "Reply with OK.")),
+         probe=("codex", "exec", "--ephemeral", "--skip-git-repo-check", "--json", "Reply with OK.")),
 )
 CHECK_EVERY = 300
 # A probe spends a few tokens of the fleet's account; one that cannot tell, or a rejected
@@ -637,6 +637,7 @@ class Credentials:
         self.sync_error = ""
         self.probes = {}        # name -> the last real try of its fleet secret: {fp, at, result}
         self.applied = {}       # name -> the fingerprint of the secret its apply step last stored
+        self.declined = {}      # name -> the fingerprint of the secret it last would not store
 
     def sync(self, version, token):
         """When the board's secrets changed (version, from the report), fetch them and write
@@ -709,15 +710,17 @@ class Credentials:
         if not force and time.time() - self.checked < CHECK_EVERY and all(c[0] in self.state for c in need):
             return
         env = self.env()
-        for c in need:
-            if c.apply:
-                self.apply(c, env)
+        # a secret this box does not use is not tried: that would spend its own login's usage,
+        # and blame the secret if that login fails
+        unused = {c.name for c in need if c.apply and not self.apply(c, env)}
         self.state = {c[0]: self.check(c, env) for c in need}
         # one probe per round at most: each can take its whole timeout, and the keeper does not
         # report while it waits; another one due waits for the next round
         ran = False
         for c in need:
-            if c.probe and self.state[c.name][0] == "ok":
+            if c.name in unused:
+                self.probes.pop(c.name, None)
+            elif c.probe and self.state[c.name][0] == "ok":
                 result, tried = self.try_token(c, env, may_run=not ran)
                 self.state[c.name] = result or self.state[c.name]
                 ran = ran or tried
@@ -725,28 +728,38 @@ class Credentials:
 
     def apply(self, cred, env):
         """Store the fleet's secret where a harness that does not read it from the environment
-        looks (codex: `codex login --with-api-key`), once per value. Never over a login of
-        another kind: a box logged in to a ChatGPT plan keeps it."""
+        looks (codex: `codex login --with-api-key`), once per value, and say whether that secret
+        is what the harness uses here. Only over nobody's login or a stored key: a box logged in
+        to a ChatGPT plan keeps it, and so does one whose login the check cannot read."""
         value = env.get(cred.var, "")
-        fp = value and hashlib.sha256(value.encode()).hexdigest()[:16]
-        if not value or self.applied.get(cred.name) == fp or not shutil.which(cred.apply[0], path=env.get("PATH")):
-            return
+        if not value or not shutil.which(cred.apply[0], path=env.get("PATH")):
+            return False
+        fp = hashlib.sha256(value.encode()).hexdigest()[:16]
         try:
             st = subprocess.run(cred.cmd, capture_output=True, text=True, timeout=30, env=env, stdin=subprocess.DEVNULL)
             said = st.stdout + st.stderr
-            if st.returncode == 0 and "API key" not in said:
-                self.applied[cred.name] = fp
-                return print(f"keeper: {cred.var} not applied to {cred.name}: it is logged in another way here", flush=True)
+            has_key = st.returncode == 0 and "API key" in said
+            if not has_key and not (st.returncode and "not logged in" in said.lower()):
+                if self.declined.get(cred.name) != fp:      # said once per value; asked again at every check
+                    self.declined[cred.name] = fp
+                    print(f"keeper: {cred.var} not applied to {cred.name}: it is logged in another way here,"
+                          " or its login cannot be read", flush=True)
+                return False
+            self.declined.pop(cred.name, None)
+            if has_key and self.applied.get(cred.name) == fp:
+                return True
             r = subprocess.run(cred.apply, input=value, capture_output=True, text=True, timeout=60, env=env)
         except (OSError, subprocess.SubprocessError) as e:
-            return print(f"keeper: could not apply {cred.var} to {cred.name}: {e}", file=sys.stderr, flush=True)
-        if r.returncode == 0:
-            self.applied[cred.name] = fp
-            self.probes.pop(cred.name, None)     # a new key: try it for real now
-            print(f"keeper: {cred.var} applied to {cred.name}", flush=True)
-        else:
+            print(f"keeper: could not apply {cred.var} to {cred.name}: {e}", file=sys.stderr, flush=True)
+            return False
+        if r.returncode:
             print(f"keeper: could not apply {cred.var} to {cred.name}: {(r.stderr or r.stdout).strip()[-200:]}",
                   file=sys.stderr, flush=True)
+            return False
+        self.applied[cred.name] = fp
+        self.probes.pop(cred.name, None)     # a new key: try it for real now
+        print(f"keeper: {cred.var} applied to {cred.name}", flush=True)
+        return True
 
     def try_token(self, cred, env, may_run=True):
         """((state, detail) or None, whether a request was made): the result of a real request
