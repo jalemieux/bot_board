@@ -1179,7 +1179,7 @@ if m(r"No conversation found with session|no rollout found for thread|Session no
     o, d = "session_lost", last()
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
-elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth token (has )?expired|no login"):
+elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth (token|session) (has )?expired|could not be refreshed|failed to authenticate|no login"):
     o, d = "logged_out", last() or "HTTP %s" % status
 elif subtype in ("error_max_turns", "error_max_budget_usd", "error_max_budget") or m(r"max(imum)? turns|turn limit|budget (was )?(exceeded|reached)|exceeded .*budget"):
     o, d = "exhausted", (subtype.replace("error_", "").replace("_", " ") if subtype.startswith("error_max") else last())
