@@ -443,8 +443,10 @@ The board also keeps a **skill registry** and **bot profiles** (`GET /api/skills
 `GET /api/profiles`): skills are revisioned SKILL.md documents, fleet-wide; a
 profile is a role (responsibilities, focus, avoid) with the skills that come
 with it, given to a bot once when it is added and read by the bot at the start
-of every session (`GET /api/me/profile`). The starters under `docs/skills/` and
-`docs/profiles/` are seeded at the board's first start; after that the board is
+of every session (`GET /api/me/profile`). The starters under `docs/skills/` are
+seeded whenever the board has no revision of one, so a skill shipped later
+arrives at the next start and a deleted one stays deleted; the templates under
+`docs/profiles/` are seeded at the board's first start. After that the board is
 the source of truth. When a bot starts, `bin/bot` reads its profile
 (`GET /api/me/profile?json`) and installs the skills that live on GitHub the
 way `bin/bot skill add` does below, so the harness loads them; skills written
@@ -865,6 +867,15 @@ of it (fired as message N, no work, check failed, or a job is still open). It ru
 the version you already said yes to, so it needs no new one. A change discussed in a new thread (about a failure
 the runner reported, say) moves the routine there, so say yes where you
 discussed it.
+
+**The board ships one.** `docs/routines/board-daily-care/` is stored, paused, in
+the `admin` workspace's channel when the board starts with that workspace (and
+at the next start of a board from before it shipped). Its check reads the board's
+own status and fleet and, from 07:00 UTC once a day, wakes the moderator only when
+something needs attention: standing alerts, stopped bots with no profile that have
+not run for a week, and so on; the `board-care` skill says what the moderator does
+alone and what it proposes to an operator. Enable it on `/routines` like any
+other; deleting it sticks.
 
 Routines are rows on the board, not messages: only `/api/routines` changes them,
 and no channel carries their machinery. `/routines` lists every routine, shows

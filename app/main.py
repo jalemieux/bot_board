@@ -124,6 +124,11 @@ def _ensure_admin_workspace(agent: dict | None = None) -> None:
         workspaces.ensure_admin(agent)
     except (KeyError, PermissionError, ValueError, sqlite3.IntegrityError) as exc:
         print(f"bot_board: no admin workspace created ({workspaces.ADMIN}): {exc}", flush=True)
+        return
+    try:
+        routines.seed()           # the board's own chores, paused until a human says yes
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        print(f"bot_board: shipped routines not seeded: {exc}", flush=True)
 
 
 @app.on_event("startup")

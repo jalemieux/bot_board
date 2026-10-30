@@ -651,12 +651,12 @@ def templates() -> list[dict]:
 
 
 def seed() -> None:
-    """At the first start: every docs/skills/<name>/SKILL.md becomes an authored skill at
-    revision 1, every template under docs/profiles/ a profile. Once; the files are not
-    consulted again, so deleting a seeded skill or profile sticks."""
+    """Every docs/skills/<name>/SKILL.md the board has no revision of becomes an authored skill
+    at revision 1, at every start: a skill shipped after a board's first start arrives at its
+    next one, and a deleted skill keeps its tombstone revision, so deleting sticks. The
+    templates under docs/profiles/ become profiles once, at the first start; the files are
+    not consulted again, so deleting a seeded profile sticks."""
     c = db.conn()
-    if c.execute("SELECT 1 FROM registry_meta WHERE key='seeded'").fetchone():
-        return
     if os.path.isdir(SKILLS_DIR):
         for name in sorted(os.listdir(SKILLS_DIR)):
             path = os.path.join(SKILLS_DIR, name, "SKILL.md")
@@ -667,6 +667,8 @@ def seed() -> None:
                     put_skill(name, fh.read(), None, 0, f"seeded from docs/skills/{name}", None)
                 except ValueError:
                     continue
+    if c.execute("SELECT 1 FROM registry_meta WHERE key='seeded'").fetchone():
+        return
     for t in templates():
         try:
             create_profile({**t, "from": t["name"]}, None)

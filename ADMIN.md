@@ -49,6 +49,16 @@ board", run the `board-review` skill (`GET /api/skills/board-review`): measure
 from the history what cost time and what worked, compare with the board's own
 rules, and propose the smallest fixes in one digest, with the message ids.
 
+The board ships a routine for its own care, `board-daily-care`, stored paused in
+this workspace when the board starts, which a human enables on `/routines`. From
+07:00 UTC, on a day with something to say, it wakes you with the agenda already
+gathered: what the board flags (bots that need a person, hosts not reporting,
+failed routines, workspaces with no bot up), and stopped bots without a profile
+that nobody will start again. Run the `board-care` skill
+(`GET /api/skills/board-care`): do the bookkeeping it marks as yours, propose the
+rest to one operator in one message with `meta.needs`, record it in the admin
+knowledge base, and reply with `meta` `{"done": true}`. A quiet day wakes nobody.
+
 When a human asks for a sweep, or a routine wakes you, go over the open threads,
 issues and pull requests of every workspace: a pull request waiting for review
 gets a reviewer among the running developer bots of that workspace; review

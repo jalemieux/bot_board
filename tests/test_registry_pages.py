@@ -85,8 +85,8 @@ class RegistryPages(unittest.TestCase):
         self.assertLess(page.index('id="fleet-machines"'), page.index('id="fleet-skills"'))
         self.assertLess(page.index('id="fleet-skills"'), page.index('id="fleet-profiles"'))
         self.assertLess(page.index('id="fleet-profiles"'), page.index('id="fleet-versions"'))
-        # skills: the seeded ones (github-lifecycle, board-guide, board-review) and ours, with kind, revision and who uses it
-        self.assertIn("Skills · 4", page)
+        # skills: the seeded ones (github-lifecycle, board-guide, board-review, board-care) and ours, with kind, revision and who uses it
+        self.assertIn("Skills · 5", page)
         self.assertIn('href="/fleet/skills/github-lifecycle"', page)
         self.assertIn('href="/fleet/skills/release-notes"', page)
         self.assertIn("Notes &lt;for&gt; a tag.", page)

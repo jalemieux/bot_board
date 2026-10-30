@@ -55,7 +55,10 @@ ITEMS_SHOWN = 30
 FIELDS = ("name", "channel", "check", "prompt", "every", "claim_timeout", "done_timeout", "resends",
           "about", "skill", "recipe")
 
+ROUTINES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "routines")
+
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS routines_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routines (
     id INTEGER PRIMARY KEY,
     definition TEXT NOT NULL,
@@ -126,6 +129,63 @@ def init():
 # ---------------------------------------------------------------- the admin workspace
 
 ensure_admin_project = workspaces.ensure_admin      # the admin workspace comes with the board
+
+
+# ---------------------------------------------------------------- shipped routines
+
+def shipped() -> list[tuple[str, dict]]:
+    """The routines the board ships, under docs/routines/<name>/: routine.json (the settings),
+    `check` (the script) and prompt.md. [(name, definition)], in name order."""
+    out = []
+    if not os.path.isdir(ROUTINES_DIR):
+        return out
+    for name in sorted(os.listdir(ROUTINES_DIR)):
+        d = os.path.join(ROUTINES_DIR, name)
+        try:
+            with open(os.path.join(d, "routine.json"), encoding="utf-8") as fh:
+                settings = json.load(fh)
+            with open(os.path.join(d, "check"), encoding="utf-8") as fh:
+                check = fh.read()
+            with open(os.path.join(d, "prompt.md"), encoding="utf-8") as fh:
+                prompt = fh.read()
+        except (OSError, ValueError):
+            continue
+        if not isinstance(settings, dict):
+            continue
+        out.append((name, {**settings, "name": settings.get("name") or name, "check": check, "prompt": prompt}))
+    return out
+
+
+def seed() -> list[str]:
+    """Store each shipped routine once, paused, in the admin workspace's channel: the board's
+    own chores (daily care) come with the board, and a human says yes before one runs. Once
+    per name, so deleting a seeded routine sticks; a board from before a routine was shipped
+    gets it at its next start. Nothing happens until the admin workspace exists; its owner,
+    the board's first human, is the author. Returns the names stored now."""
+    try:
+        ws = workspaces.find(ADMIN_PROJECT)
+    except KeyError:
+        return []
+    author = db.get_agent_by_id(ws["owner_id"])     # the admin workspace's owner: the board's first human
+    if not author:
+        return []
+    stored = []
+    c = db.conn()
+    for name, definition in shipped():
+        key = f"seeded:{name}"
+        if c.execute("SELECT 1 FROM routines_meta WHERE key=?", (key,)).fetchone():
+            continue
+        try:
+            r = _definition({**definition, "channel": definition.get("channel") or workspaces.home_slug(ws)})
+        except (ValueError, KeyError) as e:
+            print(f"bot_board: shipped routine {name} not stored: {e}", flush=True)
+            continue
+        with db._write_lock, db.conn() as w:
+            w.execute("INSERT INTO routines(definition,defined_at,created_by,updated_by,created_at,updated_at)"
+                      " VALUES (?,?,?,?,?,?)", (json.dumps(r), db.cursor(), author["id"], author["id"], db.now(), db.now()))
+            w.execute("INSERT OR REPLACE INTO routines_meta(key,value) VALUES (?,?)", (key, db.now()))
+        stored.append(name)
+    return stored
 
 
 def admins() -> list[str]:
