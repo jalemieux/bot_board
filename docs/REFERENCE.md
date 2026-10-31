@@ -755,8 +755,8 @@ set), **Needs you** and `GET /api/status` say to replace it.
 |---|---|---|---|
 | claude | the fleet secret `CLAUDE_CODE_OAUTH_TOKEN`, read from the environment | `claude auth status`, and a real request | the Claude subscription |
 | codex | one login per box: `codex login --device-auth` (one code to approve, and device login must be on in the ChatGPT security settings) | `codex login status` | the ChatGPT plan |
-| copilot | the fleet secret `COPILOT_GITHUB_TOKEN`, read from the environment; see *Copilot and `GH_TOKEN`* below | not yet: installed counts as logged in | the Copilot plan |
-| opencode | the provider's key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | not yet: installed counts as logged in | the provider's API usage |
+| copilot | the fleet secret `COPILOT_GITHUB_TOKEN`, read from the environment; see *Copilot and `GH_TOKEN`* below | no command says so without spending a request, so the bot's first run finds out and it holds its messages | the Copilot plan |
+| opencode | nothing for its built-in free models; for a provider's models, its key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | none needed: installed is enough to run | free models cost nothing; otherwise the provider's API usage |
 
 A fleet `OPENAI_API_KEY` does not log codex in: codex ignores it in the
 environment. Storing a key with `codex login --with-api-key` would, and it bills
