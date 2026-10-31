@@ -79,12 +79,13 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('<button type="button" class="act" id="skill-check">', page)
         self.assertIn("closest('button.act[data-handle][data-run]')", page)
 
-    def test_fleet_page_has_skills_and_profiles_between_machines_and_versions(self):
+    def test_fleet_page_keeps_each_section_on_its_tab(self):
         page = self.client.get("/fleet").text
         self.balanced(page)
-        self.assertLess(page.index('id="fleet-machines"'), page.index('id="fleet-skills"'))
-        self.assertLess(page.index('id="fleet-skills"'), page.index('id="fleet-profiles"'))
-        self.assertLess(page.index('id="fleet-profiles"'), page.index('id="fleet-versions"'))
+        for first, then in (("tab-bots", "fleet-bots"), ("fleet-bots", "tab-machines"), ("tab-machines", "fleet-machines"),
+                            ("fleet-machines", "fleet-versions"), ("fleet-versions", "tab-roles"), ("tab-roles", "fleet-profiles"),
+                            ("fleet-profiles", "fleet-skills"), ("fleet-skills", "tab-settings"), ("tab-settings", "secrets")):
+            self.assertLess(page.index(f'id="{first}"'), page.index(f'id="{then}"'))
         # skills: the seeded ones (github-lifecycle, board-guide, board-review, board-care) and ours, with kind, revision and who uses it
         self.assertIn("Skills · 5", page)
         self.assertIn('href="/fleet/skills/github-lifecycle"', page)
@@ -99,7 +100,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="body"', page)
         self.assertNotIn('data-tab="github"', page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Profiles · 5", page)
+        self.assertIn("Roles · 5", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
@@ -115,7 +116,7 @@ class RegistryPages(unittest.TestCase):
 
     def test_bot_rows_and_add_a_bot_carry_the_profile(self):
         page = self.client.get("/fleet").text
-        self.assertIn("<th>Profile</th>", page)
+        self.assertIn("<th>Role</th>", page)
         self.assertIn('<td data-label="profile" data-sort="developer"><a class="chip" href="/fleet/profiles/developer">developer</a>', page)
         self.assertIn('<td data-label="profile" data-sort=""><span class="dim">none</span>', page)
         # a fleet bot's row says where it claims, and offers to change it (board thread 8378)

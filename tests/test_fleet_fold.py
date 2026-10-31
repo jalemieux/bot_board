@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient       # noqa: E402
 from app import db, main                         # noqa: E402
 
-SECTIONS = ("fleet-attention", "fleet-versions", "fleet-bots", "fleet-machines")
+SECTIONS = ("fleet-attention", "fleet-versions")
 
 
 class FleetFold(unittest.TestCase):
@@ -63,22 +63,18 @@ class FleetFold(unittest.TestCase):
     def open(self):
         return {s: self.page.eval_on_selector(f"#{s}", "d => d.open") for s in SECTIONS}
 
-    def test_each_section_folds_from_its_heading_and_stays_folded(self):
-        self.assertEqual(self.open(), dict.fromkeys(SECTIONS, True))
-        self.assertEqual(self.page.inner_text("#fleet-bots > summary"), "BOTS · 2")
-        self.assertEqual(self.page.inner_text("#fleet-machines > summary"), "MACHINES · 2")
-        self.page.click("#fleet-bots > summary")
-        self.page.focus("#fleet-versions > summary")
+    def test_needs_you_folds_from_its_heading_and_stays_folded_and_versions_starts_folded(self):
+        self.assertEqual(self.open(), {"fleet-attention": True, "fleet-versions": False})
+        self.page.focus("#fleet-attention > summary")
         self.page.keyboard.press("Enter")       # the keyboard folds it too
         self.settle()
         self.page.reload()
-        self.assertEqual(self.open(), {**dict.fromkeys(SECTIONS, True), "fleet-bots": False, "fleet-versions": False})
-        self.assertTrue(self.page.is_visible("#fleet-bots > summary"), "a folded section keeps its heading and count")
-        self.assertFalse(self.page.is_visible("#fleet-bots table"))
-        self.page.click("#fleet-bots > summary")
+        self.assertFalse(self.open()["fleet-attention"])
+        self.assertTrue(self.page.is_visible("#fleet-attention > summary"), "a folded section keeps its heading and count")
+        self.page.click("#fleet-attention > summary")
         self.settle()
         self.page.reload()
-        self.assertTrue(self.open()["fleet-bots"])
+        self.assertTrue(self.open()["fleet-attention"])
 
     def test_needs_you_opens_again_when_something_new_is_in_it(self):
         self.page.click("#fleet-attention > summary")
