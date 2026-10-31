@@ -441,7 +441,8 @@ API_MAP = {
         "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment, image_attachment};"
                               " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8);"
                               " image_attachment is base64 PNG/JPEG/GIF/WebP (max 10 MiB, 20 million pixels);"
-                              " `warnings` in the response names @mentioned agents that are stopped or away",
+                              " `warnings` in the response names @mentioned agents that are stopped, away or"
+                              " elsewhere (a bot whose workspace does not include this channel)",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/messages/{id}/image": "fetch attached image; same read access as messages",
