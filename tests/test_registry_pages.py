@@ -72,11 +72,11 @@ class RegistryPages(unittest.TestCase):
         errors = Balance(page).errors
         self.assertEqual(errors, [], errors[:5])
 
-    def test_check_button_is_not_a_bot_action(self):
-        # The fleet page's click handler runs stop/start for every button.act; the Check button of
-        # + Add a skill is styled .act too, so a click also tried to add a bot and alerted "refused: 422".
+    def test_registry_buttons_are_not_bot_actions(self):
+        # The fleet page's click handler runs stop/start for every button.act; the registry's own
+        # .act buttons (once the Check button of + Add a skill) made a click also try to add a bot
+        # and alert "refused: 422". The handler takes only buttons that name a bot.
         page = self.client.get("/fleet").text
-        self.assertIn('<button type="button" class="act" id="skill-check">', page)
         self.assertIn("closest('button.act[data-handle][data-run]')", page)
 
     def test_fleet_page_has_skills_and_profiles_between_machines_and_versions(self):
@@ -95,9 +95,8 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("+ Add a skill", page)
         # one form (board thread 8119): a GitHub link, or the skill written there
         self.assertIn('id="skill-add"', page)
-        self.assertIn('name="source"', page)
+        self.assertNotIn('name="source"', page)       # #328: no GitHub form; the skill is written here
         self.assertIn('name="body"', page)
-        self.assertNotIn('data-tab="github"', page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
         self.assertIn("Profiles · 5", page)
         self.assertIn('href="/fleet/profiles/new"', page)
@@ -166,26 +165,6 @@ class RegistryPages(unittest.TestCase):
         self.assertNotIn('data-rev="2">restore', page)
         self.assertIn("shorter", page)
 
-    def test_a_github_skill_page_is_read_only_with_its_source(self):
-        real = registry_web.registry.fetch_skill
-        registry_web.registry.fetch_skill = lambda s, r: {"text": "---\nname: pony\ndescription: Lazy.\n---\n\nBody.\n", "commit": "abc"}
-        try:
-            self.client.put("/api/skills/pony", headers=self.human, json={
-                "fields": {"source": "https://github.com/acme/skills/tree/v1.2.0/pony"}, "base_revision": 0}).raise_for_status()
-        finally:
-            registry_web.registry.fetch_skill = real
-        page = self.client.get("/fleet/skills/pony").text
-        self.balanced(page)
-        self.assertIn("<h2>Source</h2>", page)
-        self.assertIn('href="https://github.com/acme/skills/tree/v1.2.0/pony"', page)
-        self.assertIn("pinned: never pulled again", page)
-        self.assertIn('<textarea name="body" rows="22" readonly>', page)
-        self.assertNotIn("Save as rev", page)
-        fleet = self.client.get("/fleet").text
-        self.assertIn('<span class="kind github">github</span>', fleet)
-        self.assertIn("v1.2.0 · pinned", fleet)
-        self.assertIn('href="/fleet/skills/pony">details</a>', fleet)
-
     def test_profile_page_is_read_only_and_shows_bots_text_and_lineage(self):
         r = self.client.get("/fleet/profiles/developer")
         self.assertEqual(r.status_code, 200)
@@ -240,6 +219,31 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "product-manager"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
+
+    def test_a_skills_bots_get_a_new_session_from_its_page(self):
+        self.client.put("/api/skills/notes", headers=self.human, json={
+            "body": "---\nname: notes\ndescription: Notes.\n---\n\nOne.\n", "base_revision": 0}).raise_for_status()
+        page = self.client.get("/fleet/skills/notes").text
+        self.balanced(page)
+        self.assertNotIn('id="src-check"', page)      # #328: nothing to refetch, the board is the source
+        self.assertNotIn("Refetch", page)
+        self.assertIn("Save as rev 2", page)
+        self.assertNotIn('id="reset-all"', page)       # no profile lists it yet
+        # a profile that lists it: its bots are the ones to reset
+        self.client.post("/api/profiles", headers=self.human, json={
+            "name": "scribe", "role": "Scribe", "skills": [{"name": "notes"}]}).raise_for_status()
+        self.client.put("/api/fleet/bots/ann", headers=self.human, json={
+            "host": "box", "run": True, "harness": "claude", "workspace": "proj", "profile": "scribe"}).raise_for_status()
+        self.assertIn('id="reset-all"', self.client.get("/fleet/skills/notes").text)
+        bot = self.register("wren", "claude-code", "proj")
+        self.assertEqual(self.client.post("/api/skills/notes/reset", headers=bot).status_code, 403)
+        self.assertEqual(self.client.post("/api/skills/nope/reset", headers=self.human).status_code, 404)
+        r = self.client.post("/api/skills/notes/reset", headers=self.human)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["ann"])
+        r = self.client.post("/api/profiles/developer/reset", headers=self.human)
+        self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["jane"])
+        self.assertIn('id="reset-all"', self.client.get("/fleet/profiles/developer").text)
 
 
 class Markdown(unittest.TestCase):

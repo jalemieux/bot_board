@@ -1993,31 +1993,6 @@ def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
             + (f'<div class="abtns">{buttons}</div>' if buttons else "") + '</div>')
 
 
-def _skills_alert(h: dict) -> str:
-    from . import registry as registry_mod
-    srcs = h["bot_skills"]
-    try:
-        missing = registry_mod.unregistered(srcs)
-    except Exception:       # a board without the registry tables yet
-        missing = []
-    n, name = len(srcs), e(h["name"])
-    text = (f'<code>BOT_SKILLS</code> in <code>~/.config/bot_board/config</code> on {name} still lists '
-            f'{_plural(n, "skill")}. The board\'s skill registry is the list now: a bot installs its profile\'s skills '
-            f'when it starts. ')
-    addable = [m["source"] for m in missing if m["addable"]]
-    local = [m["source"] for m in missing if not m["addable"]]
-    if not missing:
-        text += f'All {n} are on the board already: remove the line, and the links it made stay until <code>bin/bot skill remove</code>.'
-    else:
-        text += (f'{n - len(missing)} of {n} {"is" if n - len(missing) == 1 else "are"} on the board already. '
-                 f'Not yet: {", ".join(f"<code>{e(s)}</code>" for s in addable + local)}.')
-        if local:
-            text += ' A local directory cannot be added from here: write it on the board as a skill.'
-    button = (f'<button type="button" class="add-skills" data-sources="{e(json.dumps(addable))}">'
-              f'Add the {_plural(len(addable), "missing skill")} to the board</button>' if addable else "")
-    return _alert(f'{name} still lists skills in its config', text, (), button)
-
-
 # A machine with no claude login can take the fleet's (#283) instead of a login of its own.
 CLAUDE_TOKEN_HINT = (' Or log every machine in at once: run <code>claude setup-token</code> on a machine with a browser, '
                      'and set the token it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
@@ -2067,10 +2042,6 @@ def _alerts(hosts: list, claude_token: dict | None = None) -> list:
             title = f"{'Could not start' if asked_start and stopped else 'Trouble with'} {_plural(n, 'bot')}"
             buttons = (redo("Try again", 1) + redo("Leave stopped", 0, " quiet")) if asked_start and stopped else dismiss
             out.append(_alert(title, _fleet_detail(reason), bots, buttons))
-    # BOT_SKILLS in a box's config is deprecated: the registry is the list now (#258)
-    for h in hosts:
-        if h["reporting"] and h.get("bot_skills"):
-            out.append(_skills_alert(h))
     for h in hosts:
         if not h["reporting"]:
             out.append(_alert(f'{e(h["name"])} stopped reporting',
@@ -2258,26 +2229,6 @@ document.addEventListener('click', function (ev) {
     if (!r.ok) { alert(d.error || d.detail || ('refused: ' + r.status)); return; }
     location.reload(); }); })
   .catch(function () { alert('could not reach the board'); });
-});
-// A box's leftover BOT_SKILLS: each source is checked, then added as a github skill (#258).
-document.addEventListener('click', function (ev) {
-  var b = ev.target.closest('button.add-skills'); if (!b) return;
-  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
-  b.disabled = true;
-  var H = {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token};
-  var lines = [];
-  JSON.parse(b.dataset.sources).reduce(function (p, src) { return p.then(function () {
-    return fetch('/api/skills/check', {method: 'POST', headers: H, body: JSON.stringify({source: src})})
-      .then(function (r) { return r.json().then(function (d) {
-        if (!r.ok) { lines.push(src + ': ' + (d.error || r.status)); return; }
-        return fetch('/api/skills/' + encodeURIComponent(d.name), {method: 'PUT', headers: H,
-          body: JSON.stringify({fields: {source: d.source, ref: d.ref}, base_revision: d.exists ? d.exists.revision : 0,
-                                reason: 'added from BOT_SKILLS on the fleet page'})})
-          .then(function (r2) { return r2.json().then(function (d2) {
-            lines.push(d.name + ': ' + (r2.ok ? 'added' : (d2.error || r2.status))); }); });
-      }); });
-  }); }, Promise.resolve()).then(function () { alert(lines.join('\\n') || 'nothing to add'); location.reload(); })
-  .catch(function () { b.disabled = false; alert('could not reach the board'); });
 });
 // The top-of-page "Add a bot" form: machine, harness, workspace, optional name.
 document.addEventListener('submit', function (ev) {
