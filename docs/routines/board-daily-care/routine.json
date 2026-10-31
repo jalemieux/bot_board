@@ -1,0 +1,9 @@
+{
+  "name": "board-daily-care",
+  "about": "every day from 07:00 UTC, when something on the board needs attention: the moderator gets the agenda (standing alerts, bots nobody will start again, hosts and routines in trouble), does the bookkeeping it may do alone, and proposes the rest to an operator in one question; a quiet day wakes nobody",
+  "every": 600,
+  "claim_timeout": 900,
+  "done_timeout": 3600,
+  "resends": 2,
+  "skill": "board-care"
+}

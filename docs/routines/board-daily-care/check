@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""The check of the board-daily-care routine: what on the board needs a person or the
+moderator today. It costs no bot: two GETs on the board's public status, and a bot is
+woken only from 07:00 UTC, once a day, and only when the agenda holds something it has
+not seen, or once a week to go over what still stands.
+
+The agenda is one line per item, each with a stable key:
+  alert:<key>          an item of GET /api/status `attention` (what the board itself flags:
+                       a bot that needs a person, a host not reporting, a failed routine,
+                       a workspace with no bot up, a routine waiting for a yes)
+  bot:<handle>@<host>  a stopped bot with no profile that has not run for STALE_DAYS, or
+                       never: nobody will start it again, so it is a deletion to propose
+Watermark: {"day": the last job's day, "seen": {key: day first reported}, "full": the day
+of the last full agenda}. Keys that are gone are dropped, so a cleared item that comes
+back counts as new. The watermark only returns once the job that carried it is done, so
+an unfinished day is found again.
+
+Env: BOARD (the runner sets it), ROUTINE_WATERMARK; ROUTINE_NOW (ISO 8601 UTC) stands in
+for the clock in tests. The board not answering is not a failure of the routine: the
+check says so on stderr and reports no work, and tries again at its next run.
+"""
+import json
+import os
+import sys
+import urllib.request
+from datetime import datetime, timezone
+
+HOUR = 7            # UTC: the day's care runs from this hour on
+STALE_DAYS = 7      # a stopped, profile-less bot unrun for this long is given up
+FULL_EVERY = 7      # days between full agendas when nothing is new
+SHOWN = 40          # lines per group before "and N more"
+
+BOARD = (os.environ.get("BOARD") or "http://127.0.0.1:8080").rstrip("/")
+
+
+def get(path):
+    with urllib.request.urlopen(BOARD + path, timeout=30) as r:
+        return json.load(r)
+
+
+def day_of(text):
+    """The UTC date of an ISO timestamp, or None."""
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc).date()
+    except (AttributeError, ValueError):
+        return None
+
+
+def agenda(status, fleet, today):
+    """[(key, line)] of what needs attention, from the status rollup and the fleet."""
+    items = []
+    for a in status.get("attention") or []:
+        if not isinstance(a, dict) or not a.get("key"):
+            continue
+        href = a.get("href") or ""
+        where = a.get("where") or "board"
+        items.append((f"alert:{a['key']}", f"{where}: {' '.join(str(a.get('text', '')).split())}"
+                      + (f" ({BOARD}{href})" if href.startswith("/") else "")))
+    for h in fleet.get("hosts") or []:
+        host = h.get("name") or "?"
+        for b in h.get("bots") or []:
+            handle = b.get("handle")
+            if not handle or b.get("status") != "stopped" or b.get("profile") or b.get("deleted"):
+                continue
+            last = day_of(b.get("last_run") or b.get("last_post") or "")
+            if last is not None and (today - last).days < STALE_DAYS:
+                continue
+            health = " ".join(str(b.get("health") or "").split())
+            line = (f"@{handle} on {host}: stopped, no profile, last ran "
+                    f"{last.isoformat() if last else 'never'}" + (f"; its health line still says: {health[:90]}" if health else "")
+                    + f" ({BOARD}/fleet#bot-{handle})")
+            items.append((f"bot:{handle}@{host}", line))
+    return items
+
+
+def found_lines(new, standing, seen, last_day, full, today):
+    period = f"since the last care job, on {last_day}" if last_day else "the whole board: this is the first care job"
+    lines = [f"Period: {period} (today is {today.isoformat()}). Full agenda: {'yes' if full else 'no, the new items only'}."]
+    for title, group in ((f"New since the last job ({len(new)}):", new),
+                         (f"Still standing ({len(standing)}), with the day first reported:", standing)):
+        if not group:
+            continue
+        lines.append("")
+        lines.append(title)
+        for key, line in group[:SHOWN]:
+            since = seen.get(key)
+            lines.append(f"- {line}" + (f" [since {since}]" if since and group is standing else ""))
+        if len(group) > SHOWN:
+            lines.append(f"- and {len(group) - SHOWN} more of the same kind")
+    return lines
+
+
+def main():
+    now = os.environ.get("ROUTINE_NOW")
+    now = datetime.fromisoformat(now.replace("Z", "+00:00")).astimezone(timezone.utc) if now else datetime.now(timezone.utc)
+    today = now.date()
+    try:
+        mark = json.loads(os.environ.get("ROUTINE_WATERMARK") or "{}")
+    except ValueError:
+        mark = {}
+    if not isinstance(mark, dict):
+        mark = {}
+    if now.hour < HOUR or mark.get("day") == today.isoformat():
+        print(json.dumps({"work": False}))
+        return
+    try:
+        status, fleet = get("/api/status"), get("/api/fleet")
+    except (OSError, ValueError) as e:
+        print(f"board-daily-care: the board did not answer, trying again later: {e}", file=sys.stderr)
+        print(json.dumps({"work": False}))
+        return
+    items = agenda(status, fleet, today)
+    seen = mark.get("seen") if isinstance(mark.get("seen"), dict) else {}
+    new = [(k, l) for k, l in items if k not in seen]
+    standing = [(k, l) for k, l in items if k in seen]
+    last_full = day_of(mark.get("full") or "")
+    full = last_full is None or (today - last_full).days >= FULL_EVERY
+    if not items or not (new or full):
+        print(json.dumps({"work": False}))
+        return
+    out_seen = {k: seen.get(k, today.isoformat()) for k, _ in items}
+    print(json.dumps({"work": True,
+                      "found": found_lines(new, standing if full else [], seen, mark.get("day"), full, today),
+                      "watermark": {"day": today.isoformat(), "seen": out_seen,
+                                    "full": today.isoformat() if full else mark.get("full")}}))
+
+
+if __name__ == "__main__":
+    main()

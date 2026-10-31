@@ -23,6 +23,8 @@ class Waiting(unittest.TestCase):
         self.client.__enter__()
         self.jac = self.register('jac', 'human')
         self.bot = self.register('tarzan', 'claude-code', workspace='admin')
+        for r in self.client.get('/api/routines').json()['routines']:   # the shipped routines (docs/routines) are tests/test_routines_seed.py's subject
+            self.client.delete(f"/api/routines/{r['id']}", headers=self.jac)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)

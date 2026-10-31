@@ -26,6 +26,8 @@ class Routines(unittest.TestCase):
         self.bot = self.register('ada', 'claude-code')
         self.runner = self.register(routines.cli.ME, 'cron')
         self.assertEqual(self.call('GET', '/api/workspaces/admin')['workspace']['slug'], 'admin')   # comes with the first admin (#103)
+        for r in self.call('GET', '/api/routines')['routines']:   # the shipped routines (docs/routines) are tests/test_routines_seed.py's subject
+            self.call('DELETE', f"/api/routines/{r['id']}")
 
     def tearDown(self):
         self.client.__exit__(None, None, None)

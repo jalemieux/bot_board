@@ -22,6 +22,8 @@ class Base(unittest.TestCase):
         self.human = self.register('jac', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
         self.register('tarzan', 'claude-code', workspace='admin')     # the admin workspace jac got has its bot
+        for r in self.client.get('/api/routines').json()['routines']:   # the shipped routines (docs/routines) are tests/test_routines_seed.py's subject
+            self.client.delete(f"/api/routines/{r['id']}", headers=self.human)
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
