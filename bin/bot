@@ -77,13 +77,14 @@
 # A variable set in the environment wins over the file; a flag wins over both.
 #
 # Every harness run ends in one outcome (ok, retry, limited, capacity, logged_out,
-# session_lost, bad_invocation, exhausted, unknown), read off the exit status, the
+# session_lost, context_overflow, bad_invocation, exhausted, unknown), read off the exit status, the
 # harness's structured result (claude's --output-format json result object, codex's and
 # opencode's error events) and its error stream, never off the model's reply. Each
 # outcome has one policy: ok is done; limited, capacity, logged_out and bad_invocation
 # hold the batch and wait (BOT_LIMIT_WAIT, BOT_BAD_WAIT, or until the login is back);
 # retry holds and tries again after each of BOT_RETRY_WAITS; session_lost starts a new
-# session and runs the batch once more; unknown gets one more try after BOT_UNKNOWN_WAIT;
+# session and runs the batch once more; context_overflow retires the session, keeping it
+# in old-sessions/, and does the same; unknown gets one more try after BOT_UNKNOWN_WAIT;
 # exhausted, and anything given up, releases the threads the batch claimed so another bot
 # or a human can take them. $STATE/health says what is wrong in the words /fleet shows;
 # $STATE/last.json and runs.jsonl record each run; `bot ps` shows the last outcome.
@@ -924,6 +925,9 @@ for line in sys.stdin:
     bad_invocation) echo "cannot run $HARNESS since $now: $DETAIL; messages are kept, retried every $((BOT_BAD_WAIT / 60)) min" >"$STATE/health" ;;
     exhausted)      echo "last run exhausted its turn or budget limit at $now: $DETAIL" >"$STATE/health" ;;
     unknown)        echo "last run failed (exit $rc) at $now: $DETAIL" >"$STATE/health" ;;
+    context_overflow)
+                    if [ -s "$sfile" ]; then echo "last run overflowed its context at $now: starting a new session" >"$STATE/health"
+                    else echo "last run overflowed its context at $now, in a new session: $DETAIL" >"$STATE/health"; fi ;;
     retry|session_lost) ;;   # the caller tries again; the health line stays what it was
   esac
   [ "$OUTCOME" = ok ] || [ "$rc" -ne 0 ] || rc=1
@@ -959,6 +963,7 @@ run_copilot() {
 #   capacity        the model is overloaded or at capacity
 #   logged_out      the harness has no valid login
 #   session_lost    the session to resume no longer exists
+#   context_overflow the session has outgrown the model's context: only a new one can work
 #   bad_invocation  the harness rejected the command line, is missing, or died before a turn
 #   exhausted       the run hit its turn or budget limit before finishing
 #   unknown         a failure none of the above describes
@@ -975,7 +980,7 @@ with open(logp, "rb") as f:
 
 def error_text(v):
     if isinstance(v, str): return v
-    if isinstance(v, dict): return " ".join(error_text(v[k]) for k in ("message", "code", "error", "name") if k in v)
+    if isinstance(v, dict): return " ".join(error_text(v[k]) for k in ("message", "code", "error", "name", "data") if k in v)
     return ""
 
 result = None; reply = ""
@@ -1019,12 +1024,16 @@ text = "\n".join(e for e in errors if e)
 status = result.get("api_error_status") if result else None
 subtype = (result or {}).get("subtype") or ""
 LIMIT = os.environ.get("LIMIT_RE") or r"usage limit|rate.?limit|limit reached|too many requests|exceeded.*(quota|limit)"; CAP = r"at capacity|overloaded"
+CONTEXT = r"context (size|length|window) (has been )?exceeded|maximum context length|prompt is too long|input length .* exceeds|context_length_exceeded|exceeds? the context window|exceeds? the available context size|exceed_context_size_error|ran out of room in the model.s context window"
 def m(rx, s=None): return re.search(rx, text if s is None else s, re.I)
 def last(rx=None, s=None):
     ls = [l.strip() for l in (text if s is None else s).splitlines() if l.strip() and (rx is None or re.search(rx, l, re.I))]
     return re.sub(r"\x1b\[[0-9;]*m", "", ls[-1])[:200] if ls else ""
 if m(r"No conversation found with session|no rollout found for thread|Session not found|session \S+ (was )?not found"):
     o, d = "session_lost", last()
+elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error")) or (harness in ("codex", "opencode") and any(errors[1:]))):
+    # a failed run only: a short reply can quote the words. codex can report a failed turn and exit 0, in an error event
+    o, d = "context_overflow", last(CONTEXT)
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
 elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth (token|session) (has )?expired|could not be refreshed|failed to authenticate|no login|no authentication information found|failed to fetch pat user login \(40[13]\)"):
@@ -1429,6 +1438,11 @@ while :; do
       log "$HARNESS has lost the session $(cat "$STATE/session" 2>/dev/null || echo '?'): starting a new one and running the batch again"
       rm -f "$STATE/session"; ATTEMPT=2; continue
     fi
+    if [ "$OUTCOME" = context_overflow ] && [ "$ATTEMPT" -eq 1 ] && [ -s "$STATE/session" ]; then
+      # resuming would only overflow again: set this session aside and run the same batch once more in a new one
+      log "the session $(cat "$STATE/session") overflowed its context: starting a new one and running the batch again"
+      retire_session "$STATE"; ATTEMPT=2; continue
+    fi
     break
   done
   kill "$RECEIPT_PID" 2>/dev/null || true
@@ -1491,7 +1505,7 @@ while :; do
       release_claims
       tell "My harness ($HARNESS) stopped at its turn or budget limit before finishing this ($DETAIL). I have released the thread; the work is unfinished. Log on $(hostname): $LOG" ;;
     *)
-      # unknown, or a session lost twice over: one more try after a wait, then over
+      # unknown, a session lost twice over, or an overflow in a new session: one more try after a wait, then over
       if [ ! -e "$STATE/unknown" ] || [ "$(cat "$STATE/unknown")" != "$RUN_MESSAGES" ]; then
         hold_batch; echo "$RUN_MESSAGES" > "$STATE/unknown"; RETRY_UNTIL=$(( $(date +%s) + BOT_UNKNOWN_WAIT ))
         log "$HARNESS failed ($DETAIL); holding $N message(s) for one more try in ${BOT_UNKNOWN_WAIT}s"

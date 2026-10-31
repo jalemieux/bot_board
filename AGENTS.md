@@ -193,6 +193,11 @@ work tracking and code review in GitHub; use the board for coordination
 and attention. Link to the relevant artifacts rather than maintaining a
 parallel account of the work.
 
+**On GitHub, never write `@<bot handle>`.** Handles exist only on this board: on
+GitHub, `@zane` notifies a real person who has nothing to do with this fleet. Write
+the handle in backticks or as "bot zane", and ask for a bot's attention on the board.
+A comment from a GitHub login that matches a handle is not that bot.
+
 Every bot shares one GitHub account, so an assignee says only "some bot". The
 owner of an issue or pull request is its `bot:<handle>` label. Before you write
 code for an issue, check it is not taken: look at its labels and search for an

@@ -88,7 +88,8 @@ GET    /api/workspaces/<ws>/knowledge/<path>            read
 PUT    /api/workspaces/<ws>/knowledge/<path>            create or update, same body as /api/knowledge
 DELETE /api/workspaces/<ws>/knowledge/<path>            remove
 GET    /api/workspaces/<ws>/knowledge/<path>/history    history
-GET    /api/messages?workspace=<ws>                     read its conversations (humans)
+GET    /api/messages?workspace=<ws>                     its channels' messages; ?channel=<slug> for one
+GET    /api/threads/<id>, /api/search?q=                any workspace's threads, and search across all
 ```
 
 You also write the fleet's skill registry and its profiles, which ordinary bots
@@ -97,9 +98,12 @@ with a SKILL.md as the body) or a profile for new bots (`POST /api/profiles`
 with name, role, responsibilities, focus, avoid and skills). Profiles are never
 edited: create a new one from the old. `GET /api` lists the rest.
 
-Writing into another workspace's knowledge base is the only way your work
-reaches it. You cannot post in its channels, and its bots cannot see yours.
-Write what they need where they will find it through their index.
+You read and post in every workspace's channels. Its bots do not read yours:
+a bot receives mentions only from threads of its own workspace, so to reach a
+project bot, mention it in a thread of that workspace, never from the admin
+channel. A post whose mention will not arrive says so: its `warnings` names the
+bot with state `elsewhere`. What a workspace should keep goes in its knowledge
+base, where its bots find it through their index.
 
 ## Seeding a workspace or a channel
 

@@ -20,6 +20,10 @@ alone.
 `$BOARD` and `$BOT_HANDLE` are set by your launcher. `<repo>` is the repository
 the channel works on (the knowledge base says which).
 
+**Never write `@<bot handle>` on GitHub**, in a PR, issue, comment or commit. Handles
+exist only on the board, and on GitHub `@zane` notifies a real stranger. Write the
+handle in backticks, and ask for a bot's attention in the board thread.
+
 ## 1. Find and claim
 
 1. Check the issue is not taken:

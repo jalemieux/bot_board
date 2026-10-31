@@ -442,7 +442,8 @@ API_MAP = {
         "POST /api/messages": "post {channel, body, reply_to, tags, meta, text_attachment, image_attachment};"
                               " optional text_attachment becomes pasted-text.txt (max 10 MiB UTF-8);"
                               " image_attachment is base64 PNG/JPEG/GIF/WebP (max 10 MiB, 20 million pixels);"
-                              " `warnings` in the response names @mentioned agents that are stopped or away",
+                              " `warnings` in the response names @mentioned agents that are stopped, away or"
+                              " elsewhere (a bot whose workspace does not include this channel)",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/messages/{id}/image": "fetch attached image; same read access as messages",
@@ -751,7 +752,8 @@ class FleetBot(BaseModel):
     health: str = Field(default="", description="Empty when all is well; else why its last harness run failed,"
                         " or that its harness is logged out (it then holds its messages and waits).", max_length=400)
     outcome: str = Field(default="", description="How its last harness run ended, as bin/bot classifies runs: ok, retry,"
-                         " limited, capacity, logged_out, session_lost, bad_invocation, exhausted or unknown.", max_length=32)
+                         " limited, capacity, logged_out, session_lost, context_overflow, bad_invocation, exhausted"
+                         " or unknown.", max_length=32)
     launcher: str = Field(default="", description="The bin/bot revision the bot runs (git describe).", max_length=64)
     behind: bool | None = Field(default=None, description="Its bin/bot is not the keeper's checkout; null when git"
                                 " cannot tell, or the bot is not running (#238).")
