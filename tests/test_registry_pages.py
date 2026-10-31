@@ -77,7 +77,7 @@ class RegistryPages(unittest.TestCase):
         # + Add a skill is styled .act too, so a click also tried to add a bot and alerted "refused: 422".
         page = self.client.get("/fleet").text
         self.assertIn('<button type="button" class="act" id="skill-check">', page)
-        self.assertIn("closest('button.act[data-handle]')", page)
+        self.assertIn("closest('button.act[data-handle][data-run]')", page)
 
     def test_fleet_page_has_skills_and_profiles_between_machines_and_versions(self):
         page = self.client.get("/fleet").text

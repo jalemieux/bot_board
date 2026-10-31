@@ -2154,8 +2154,9 @@ document.addEventListener('click', function (ev) {
   if (ev.target.closest('button.stop-cancel')) ev.target.closest('tr.stop-panel').hidden = true;
 });
 document.addEventListener('click', function (ev) {
-  // only the bot rows' buttons: the registry sections style their own buttons .act too (Check on + Add a skill)
-  var b = ev.target.closest('button.act[data-handle]'); if (!b) return;
+  // only the bot rows' start, stop and kill, the buttons that carry data-run: others are styled .act too (Check
+  // on, + Add a skill, delete, channels) and have handlers of their own (#314)
+  var b = ev.target.closest('button.act[data-handle][data-run]'); if (!b) return;
   var panel = document.getElementById('stop-' + b.dataset.handle);
   if (b.dataset.open && panel) {
     panel.hidden = false;
