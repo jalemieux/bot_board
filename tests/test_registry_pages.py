@@ -72,11 +72,11 @@ class RegistryPages(unittest.TestCase):
         errors = Balance(page).errors
         self.assertEqual(errors, [], errors[:5])
 
-    def test_check_button_is_not_a_bot_action(self):
-        # The fleet page's click handler runs stop/start for every button.act; the Check button of
-        # + Add a skill is styled .act too, so a click also tried to add a bot and alerted "refused: 422".
+    def test_registry_buttons_are_not_bot_actions(self):
+        # The fleet page's click handler runs stop/start for every button.act; the registry's own
+        # .act buttons (once the Check button of + Add a skill) made a click also try to add a bot
+        # and alert "refused: 422". The handler takes only buttons that name a bot.
         page = self.client.get("/fleet").text
-        self.assertIn('<button type="button" class="act" id="skill-check">', page)
         self.assertIn("closest('button.act[data-handle]')", page)
 
     def test_fleet_page_has_skills_and_profiles_between_machines_and_versions(self):
@@ -95,9 +95,8 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("+ Add a skill", page)
         # one form (board thread 8119): a GitHub link, or the skill written there
         self.assertIn('id="skill-add"', page)
-        self.assertIn('name="source"', page)
+        self.assertNotIn('name="source"', page)       # #328: no GitHub form; the skill is written here
         self.assertIn('name="body"', page)
-        self.assertNotIn('data-tab="github"', page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
         self.assertIn("Profiles · 5", page)
         self.assertIn('href="/fleet/profiles/new"', page)
@@ -166,26 +165,6 @@ class RegistryPages(unittest.TestCase):
         self.assertNotIn('data-rev="2">restore', page)
         self.assertIn("shorter", page)
 
-    def test_a_github_skill_page_is_read_only_with_its_source(self):
-        real = registry_web.registry.fetch_skill
-        registry_web.registry.fetch_skill = lambda s, r: {"text": "---\nname: pony\ndescription: Lazy.\n---\n\nBody.\n", "commit": "abc"}
-        try:
-            self.client.put("/api/skills/pony", headers=self.human, json={
-                "fields": {"source": "https://github.com/acme/skills/tree/v1.2.0/pony"}, "base_revision": 0}).raise_for_status()
-        finally:
-            registry_web.registry.fetch_skill = real
-        page = self.client.get("/fleet/skills/pony").text
-        self.balanced(page)
-        self.assertIn("<h2>Source</h2>", page)
-        self.assertIn('href="https://github.com/acme/skills/tree/v1.2.0/pony"', page)
-        self.assertIn("pinned: never pulled again", page)
-        self.assertIn('<textarea name="body" rows="22" readonly>', page)
-        self.assertNotIn("Save as rev", page)
-        fleet = self.client.get("/fleet").text
-        self.assertIn('<span class="kind github">github</span>', fleet)
-        self.assertIn("v1.2.0 · pinned", fleet)
-        self.assertIn('href="/fleet/skills/pony">details</a>', fleet)
-
     def test_profile_page_is_read_only_and_shows_bots_text_and_lineage(self):
         r = self.client.get("/fleet/profiles/developer")
         self.assertEqual(r.status_code, 200)
@@ -241,43 +220,14 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
-    def test_a_github_skill_is_refetched_without_fields_and_its_bots_get_a_new_session(self):
-        src = "https://github.com/acme/skills/tree/main/notes"
-        text = {"v": "---\nname: notes\ndescription: Notes.\n---\n\nOne.\n"}
-        real = registry_web.registry.fetch_skill
-        registry_web.registry.fetch_skill = lambda source, ref: {"text": text["v"], "commit": "abc123"}
-        try:
-            put = lambda body: self.client.put("/api/skills/notes", headers=self.human, json=body)
-            self.assertEqual(put({"fields": {"source": src}, "base_revision": 0}).status_code, 200)
-            # the source has not moved
-            r = self.client.post("/api/skills/check", headers=self.human, json={"source": src, "ref": "main"})
-            self.assertFalse(r.json()["exists"]["changed"])
-            text["v"] = text["v"].replace("One.", "Two.")
-            r = self.client.post("/api/skills/check", headers=self.human, json={"source": src, "ref": "main"})
-            self.assertTrue(r.json()["exists"]["changed"])
-            # a changed description alone counts as moved; a source that now names another skill is refused
-            text["v"] = text["v"].replace("Notes.", "Other notes.")
-            self.assertTrue(self.client.post("/api/skills/check", headers=self.human,
-                                             json={"source": src, "ref": "main"}).json()["exists"]["changed"])
-            text["v"] = text["v"].replace("name: notes", "name: renamed")
-            r = put({"base_revision": 1})
-            self.assertEqual(r.status_code, 422, r.text)
-            self.assertIn("names renamed, not notes", r.json()["error"])
-            text["v"] = text["v"].replace("name: renamed", "name: notes").replace("Other notes.", "Notes.")
-            # a refetch names no source: the stored one is used, the revision bumps
-            r = put({"base_revision": 1, "reason": "refetched main"})
-            self.assertEqual(r.status_code, 200, r.text)
-            self.assertEqual((r.json()["skill"]["revision"], r.json()["skill"]["source"]), (2, src))
-            self.assertIn("Two.", r.json()["skill"]["body"])
-            # not for an authored skill, which has nothing to refetch
-            self.assertEqual(self.client.put("/api/skills/release-notes", headers=self.human,
-                                             json={"base_revision": 1}).status_code, 422)
-        finally:
-            registry_web.registry.fetch_skill = real
+    def test_a_skills_bots_get_a_new_session_from_its_page(self):
+        self.client.put("/api/skills/notes", headers=self.human, json={
+            "body": "---\nname: notes\ndescription: Notes.\n---\n\nOne.\n", "base_revision": 0}).raise_for_status()
         page = self.client.get("/fleet/skills/notes").text
         self.balanced(page)
-        self.assertIn('id="src-check"', page)
-        self.assertIn("Refetch as rev 3", page)
+        self.assertNotIn('id="src-check"', page)      # #328: nothing to refetch, the board is the source
+        self.assertNotIn("Refetch", page)
+        self.assertIn("Save as rev 2", page)
         self.assertNotIn('id="reset-all"', page)       # no profile lists it yet
         # a profile that lists it: its bots are the ones to reset
         self.client.post("/api/profiles", headers=self.human, json={
