@@ -287,8 +287,8 @@ class KeepingWorkMoving(Base):
         self.assertIsNone(progress.sweep()["attention"])                   # not again for the same state
         # still unclaimed hours later: that is a new state, reported once
         age(); done = progress.sweep()
-        second = post(done["attention"])
-        self.assertNotEqual(done["attention"], first["id"])
+        self.assertEqual(done["attention"], first["id"])                   # the open report takes it (#313)
+        second = self.client.get(f"/api/threads/{first['id']}").json()["messages"][-1]
         self.assertIn("no bot picked it up", second["body"])
         self.assertIsNone(progress.sweep()["attention"])
         # the moderator, a bot of the admin workspace, is woken by it like any new thread
@@ -326,7 +326,66 @@ class KeepingWorkMoving(Base):
         self.assertIsNone(progress.sweep()["attention"])                   # the spell starts now
         aged()
         done = progress.sweep()
-        self.assertIn("has been out of usage since", self.client.get(f"/api/threads/{done['attention']}").json()["messages"][0]["body"])
+        self.assertIn("has been out of usage since", self.client.get(f"/api/threads/{done['attention']}").json()["messages"][-1]["body"])
+
+    def report_health(self, health):
+        r = self.client.put("/api/fleet/hosts/box", headers=self.keeper, json={"bots": [
+            {"handle": "edie", "harness": "claude", "status": "waiting", "serves": "/pool", "pool": True, "health": health}]})
+        self.assertEqual(r.status_code, 200, r.text)
+
+    def test_one_outage_that_flaps_is_one_report(self):
+        # #313: a bot in and out of a login outage opened a thread for every spell
+        def spell(day):
+            self.report_health("logged out of claude: run claude login on the box")
+            progress.sweep()
+            db.conn().execute("UPDATE progress_health SET since=?", (f"2026-01-0{day}T00:00:00+00:00",)); db.conn().commit()
+            return progress.sweep()["attention"]
+        first = spell(1)
+        self.assertIsNotNone(first)
+        self.report_health(""); progress.sweep()
+        self.assertIsNone(spell(2))                                        # back within a day: quiet
+        # a day on it is news again, in a new thread if the old one was dealt with
+        last = self.client.get(f"/api/threads/{first}").json()["messages"][-1]["id"]
+        mod = self.register("ada", "claude-code", "admin")
+        self.claim(first, mod).raise_for_status()
+        self.client.post(f"/api/threads/{first}/complete", headers=mod, json={"through": last}).raise_for_status()
+        db.conn().execute("UPDATE progress_attention SET at=?", (LONG_AGO,)); db.conn().commit()
+        self.report_health(""); progress.sweep()
+        again = spell(3)
+        self.assertIsNotNone(again)
+        self.assertNotEqual(again, first)
+
+    def test_an_old_open_report_does_not_take_new_items(self):
+        self.report_health("logged out of claude: run claude login on the box")
+        progress.sweep()
+        db.conn().execute("UPDATE progress_health SET since=?", (LONG_AGO,)); db.conn().commit()
+        first = progress.sweep()["attention"]
+        db.conn().execute("UPDATE messages SET created_at=? WHERE id=?", (LONG_AGO, first)); db.conn().commit()
+        self.report_health("out of usage until 18:00")
+        progress.sweep()
+        db.conn().execute("UPDATE progress_health SET since=?", (LONG_AGO,)); db.conn().commit()
+        self.assertNotEqual(progress.sweep()["attention"], first)
+
+    def test_the_moderators_own_report_is_not_reported_as_unclaimed(self):
+        self.report_health("logged out of claude: run claude login on the box")
+        progress.sweep()
+        db.conn().execute("UPDATE progress_health SET since=?", (LONG_AGO,)); db.conn().commit()
+        tid = progress.sweep()["attention"]
+        mod = self.register("ada", "claude-code", "admin")
+        self.claim(tid, mod).raise_for_status()
+        self.assertTrue(progress.release(tid, "ada", "away"))
+        db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, tid)); db.conn().commit()
+        self.assertNotIn(tid, [t for t, _, _ in progress.unclaimed()])
+
+    def test_a_completed_released_thread_is_not_reported_as_unclaimed(self):
+        self.assertTrue(progress.release(self.tid, "edie", "away"))
+        last = self.messages(self.tid)[-1]["id"]
+        db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid)); db.conn().commit()
+        self.assertIn(self.tid, [t for t, _, _ in progress.unclaimed()])
+        self.claim(self.tid).raise_for_status()
+        self.client.post(f"/api/threads/{self.tid}/complete", headers=self.bot, json={"through": last}).raise_for_status()
+        progress.release(self.tid, "edie", "away")
+        self.assertNotIn(self.tid, [t for t, _, _ in progress.unclaimed()])
 
     def test_completed_threads_are_not_touched(self):
         last = self.messages(self.tid)[-1]["id"]
