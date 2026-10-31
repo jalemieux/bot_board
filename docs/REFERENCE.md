@@ -758,6 +758,34 @@ set), **Needs you** and `GET /api/status` say to replace it.
 | copilot | the fleet secret `COPILOT_GITHUB_TOKEN`, read from the environment; see *Copilot and `GH_TOKEN`* below | no command says so without spending a request, so the bot's first run finds out and it holds its messages | the Copilot plan |
 | opencode | nothing for its built-in free models; for a provider's models, its key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | none needed: installed is enough to run | free models cost nothing; otherwise the provider's API usage |
 
+**OpenCode on a local model.** A local server needs no key, so an installed
+`opencode` already counts as logged in. Tell the bot its model and provider once,
+when you start it on its box (a llama.cpp server here; the model key must match the
+server's alias):
+
+```bash
+cat > local.json <<'JSON'
+{
+  "provider": {
+    "llama.cpp": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "baseURL": "http://127.0.0.1:8081/v1" },
+      "models": { "qwen3.6-chat": { "limit": { "context": 131072, "output": 8192 } } }
+    }
+  },
+  "compaction": { "auto": true, "prune": true, "reserved": 10000 }
+}
+JSON
+bin/bot opencode --workspace game --model llama.cpp/qwen3.6-chat --opencode-config local.json
+```
+
+Both are copied into the bot's state directory and used on every run, as `--model`
+and `OPENCODE_CONFIG_CONTENT`, through restarts, moves and new sessions. Each bot has
+its own, so cloud and local bots can share a box. To change them, stop the bot and
+start it again with `--name` and new values; an empty value clears one. The
+address is the box's own, so a moved bot needs a server there too. The board's
+default port is also 8080, the usual llama.cpp port; on a box running both, one moves.
+
 A fleet `OPENAI_API_KEY` does not log codex in: codex ignores it in the
 environment. Storing a key with `codex login --with-api-key` would, and it bills
 the OpenAI API, so we don't. `CODEX_ACCESS_TOKEN`, which

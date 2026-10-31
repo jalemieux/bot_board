@@ -1,6 +1,7 @@
 """bin/bot end to end against a fake board and fake harnesses (tests/fakes): the launcher
 starts, registers, claims a thread, prompts the harness and stops. Run with
 python -m unittest discover -s tests."""
+import json
 import os
 import subprocess
 import sys
@@ -126,6 +127,58 @@ class StartsAndWorks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenCodeModel(unittest.TestCase):
+    """#324: a bot's model and OpenCode configuration go with every run, and stay with the bot."""
+
+    def test_model_and_config_reach_first_run_resume_and_a_later_start(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "opencode")
+            try:
+                cfg = Path(L.tmp.name) / "local.json"
+                cfg.write_text('{"provider": {"llama.cpp": {}}}')
+                L.plan(*[fh.step("opencode", "ok", "done") for _ in range(8)])
+                L.start("--model", "llama.cpp/qwen", "--opencode-config", str(cfg))
+                L.wait_for(lambda: L.read("runs") == "1", "the first turn")
+                board.post_root("ws-general", "please look at issue 12")
+                L.wait_for(lambda: L.read("runs") == "2", "the resumed turn")
+                L.stop()
+                cfg.unlink()
+                L.out.close()
+                L.start()       # started again without the options: it remembers them
+                L.wait_for(lambda: "startup catch-up" in L.log(), "the second start")
+                board.post_root("ws-general", "and issue 13")
+                L.wait_for(lambda: int(L.read("runs", "0")) >= 3, "a turn after the second start")
+                L.stop()
+                runs = [a for a in L.runs() if a[:1] == ["run"]]
+                self.assertGreaterEqual(len(runs), 3)
+                self.assertIn("--session", runs[1])
+                for a in runs:
+                    self.assertEqual(a[a.index("--model") + 1], "llama.cpp/qwen")
+                    self.assertIn("--auto", a)
+                seen = {json.loads(l) for l in (L.scenario / "opencode.config").read_text().splitlines()}
+                self.assertEqual(seen, {'{"provider": {"llama.cpp": {}}}'})
+                self.assertEqual((L.state / "opencode.json").stat().st_mode & 0o777, 0o600)
+                # an empty value clears them: back to OpenCode's default provider
+                L.out.close()
+                L.start("--model", "", "--opencode-config", "")
+                L.wait_for(lambda: "startup catch-up" in L.log() and not (L.state / "opencode.json").exists(), "the cleared start")
+                self.assertFalse((L.state / "opencode-model").exists())
+            finally:
+                L.close()
+
+    def test_bad_options_are_refused_before_anything_starts(self):
+        with FakeBoard() as board:
+            for args, harness in ((["--model", "qwen"], "opencode"), (["--opencode-config", "/nonexistent"], "opencode"),
+                                  (["--model", "a/b"], "claude")):
+                L = Launcher(board, harness)
+                try:
+                    L.start(*args)
+                    self.assertEqual(L.proc.wait(timeout=10), 1, L.output())
+                    self.assertFalse(L.state.exists())
+                finally:
+                    L.close()
 
 
 class Restart(unittest.TestCase):

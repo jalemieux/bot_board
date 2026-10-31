@@ -3,6 +3,8 @@
 #
 #   bot <claude|codex|opencode|copilot> --workspace <slug> [--name <handle>]
 #   bot <claude|codex|opencode|copilot> --name <handle>      start a bot again: it remembers its workspace
+#   bot opencode ... [--model <provider/model>] [--opencode-config <file>]
+#       this bot's model and OpenCode configuration, e.g. a local server's provider block; kept with the bot, an empty value clears
 #   bot skill add <dir|github-url>... | remove <source|name>... | list | update
 #       the skills in BOT_SKILLS in the config, linked where every harness on this box loads skills from
 #       (deprecated: the board's skill registry and the bot's profile are the list now)
@@ -845,15 +847,24 @@ esac
 
 HARNESS=${1:-}; shift || usage
 [[ $HARNESS == claude || $HARNESS == codex || $HARNESS == opencode || $HARNESS == copilot ]] || usage
-NAME=""; WORKSPACE=""
+NAME=""; WORKSPACE=""; unset OC_MODEL OC_CONFIG
 while [ $# -gt 0 ]; do
   case $1 in
     --name) NAME=$2; shift 2 ;;
     --workspace) WORKSPACE=$2; shift 2 ;;
+    --model) OC_MODEL=$2; shift 2 ;;
+    --opencode-config) OC_CONFIG=$2; shift 2 ;;
     -h|--help) usage ;;
     *) usage ;;
   esac
 done
+if [ -n "${OC_MODEL+x}${OC_CONFIG+x}" ]; then
+  [ "$HARNESS" = opencode ] || die "--model and --opencode-config are for an opencode bot"
+  [[ -z ${OC_MODEL:-} || ${OC_MODEL:-} =~ ^[^[:space:]/]+/[^[:space:]]+$ ]] || die "--model: provider/model, e.g. llama.cpp/qwen3.6-chat"
+  if [ -n "${OC_CONFIG:-}" ]; then
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$OC_CONFIG" 2>/dev/null || die "--opencode-config: $OC_CONFIG is not a readable JSON file"
+  fi
+fi
 command -v "$HARNESS" >/dev/null || { echo "bot: $HARNESS is not installed" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "bot: needs python3" >&2; exit 1; }
 POOL=${BOT_POOL:-$HOME/.bot_board/workspace}; mkdir -p "$POOL"; POOL=$(cd "$POOL" && pwd)
@@ -901,6 +912,18 @@ if [ -s "$STATE/session" ] && { [ -e "$STATE/reset" ] || [ "$(cat "$STATE/sessio
   printf '%s %s\n' "$(date -u +%FT%TZ)" "new session: the last one was $WHY; it is kept in old-sessions/" >> "$STATE/log"
 fi
 rm -f "$STATE/reset"
+# This bot's OpenCode model and configuration (#324), in $STATE so they stay through
+# restarts, moves and new sessions; applied to the first run and to resumes alike.
+if [ -n "${OC_MODEL+x}" ]; then
+  if [ -n "$OC_MODEL" ]; then echo "$OC_MODEL" > "$STATE/opencode-model"; else rm -f "$STATE/opencode-model"; fi
+fi
+if [ -n "${OC_CONFIG+x}" ]; then
+  if [ -n "$OC_CONFIG" ]; then (umask 077; cat "$OC_CONFIG" > "$STATE/opencode.json"); else rm -f "$STATE/opencode.json"; fi
+fi
+if [ "$HARNESS" = opencode ]; then
+  if [ -s "$STATE/opencode-model" ]; then BOT_OPENCODE_FLAGS="$BOT_OPENCODE_FLAGS --model $(cat "$STATE/opencode-model")"; fi
+  if [ -s "$STATE/opencode.json" ]; then OPENCODE_CONFIG_CONTENT=$(cat "$STATE/opencode.json"); export OPENCODE_CONFIG_CONTENT; fi
+fi
 if [ -z "$WORKSPACE" ] && [ -s "$STATE/workspace" ]; then WORKSPACE=$(cat "$STATE/workspace"); fi
 SEEN=$(cat "$STATE/seen" 2>/dev/null || echo 0)
 
