@@ -58,7 +58,7 @@ class Definitions(unittest.TestCase):
         self.assertEqual(cli.problem_with(old), "")
 
     # What recipe_check and recipe_prompt write for one fixed recipe, per RECIPE_VERSION (#242).
-    WRITER = {5: "46116bc096184ed51d70c9a0b0c91eac71dbbda783eec9a57b87513b85f182d0"}
+    WRITER = {5: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0"}
 
     def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
         cli = load_cli()
@@ -376,9 +376,13 @@ class Recipes(unittest.TestCase):
                 got = json.loads(out.stdout)
                 self.assertFalse(got["work"])
                 self.assertNotIn("watermark", got)      # a pass with no work leaves the runner's as it is
-        out = self.run_with_failing_gh("HTTP 401: Bad credentials")
-        self.assertEqual(out.returncode, 1)
-        self.assertIn("Bad credentials", out.stderr)
+        # not a passing trouble: a missing repo also says "could not resolve", and must stop the routine
+        for said, shown in (("HTTP 401: Bad credentials", "Bad credentials"),
+                            ("GraphQL: Could not resolve to a Repository with the name o/game. (repository)", "Could not resolve")):
+            with self.subTest(said=said):
+                out = self.run_with_failing_gh(said)
+                self.assertEqual(out.returncode, 1, out.stdout)
+                self.assertIn(shown, out.stderr)
 
     def test_a_workspace_that_goes_away_stops_the_routine_with_the_reason(self):
         self.api("POST", "/api/workspaces", {"slug": "gone", "name": "Gone", "purpose": "soon archived"}, self.human)

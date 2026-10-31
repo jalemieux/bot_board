@@ -270,7 +270,7 @@ def recipe_check(rc):
 set -e
 gh issue list -R {rc['repo']} --state open --limit 1000 \\
   --json number,title,url,labels,assignees,createdAt,closedByPullRequestsReferences > issues.json 2> gh.err || {{
-  if grep -qiE 'error connecting|dial tcp|connection reset|timed out|TLS handshake|no such host|could not resolve|unexpected EOF|502 |503 |504 ' gh.err; then
+  if grep -qiE 'error connecting|dial tcp|connection reset|timed out|TLS handshake|no such host|could not resolve host|unexpected EOF|502 |503 |504 ' gh.err; then
     echo '{{"work": false, "note": "GitHub unreachable, retrying next pass"}}'
     exit 0
   fi
