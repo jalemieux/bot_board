@@ -463,6 +463,7 @@ SKILL_PAGE_JS = r"""
       state.textContent = 'checking…';
       call('POST', '/api/skills/check', {source: S.source, ref: S.ref}).then(function (d) {
         var moved = d.exists && d.exists.changed;
+        if (d.name !== S.name) { state.textContent = 'the source now names ' + d.name + ', not ' + S.name + '; refetch will be refused'; return; }
         state.textContent = (moved ? 'moved since rev ' + S.revision : 'same as rev ' + S.revision) + (d.commit ? ' · ' + d.ref + ' is at ' + d.commit : '');
       }, function (e) { state.textContent = e.message; });
     });
@@ -609,7 +610,7 @@ def profile_page(board_name: str, profile: dict, bots: list, base: str) -> str:
 <p class="sub" style="margin:8px 0 0">This list does not change. Skill text does: a skill's edits reach these bots at their next new session.</p></div>
 <div class="card" id="bots"><h2>Bots with this profile · {n}</h2>
 <p class="sub">A bot reads this profile and its skills when its session starts. New session makes one read them again.</p>{bots_html}
-{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all ' + str(n) + ' bots</button><p class="status-line" id="reset-note" role="status" aria-live="polite"></p>' if n else ''}</div>
+{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all ' + str(n) + ' bot' + 's' * (n != 1) + '</button><p class="status-line" id="reset-note" role="status" aria-live="polite"></p>' if n else ''}</div>
 </div><div>
 <div class="card" id="gets"><h2>What a bot gets</h2><p class="sub">The text <code>GET /api/me/profile</code> returns to a bot of this profile.</p>
 <pre class="what">{e(registry.profile_text(profile, base))}</pre></div>

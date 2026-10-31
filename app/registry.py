@@ -253,6 +253,8 @@ def put_skill(name: str, body: str, fields: dict | None, base_revision: int, rea
         if not body.strip():
             fetched = (fetch or fetch_skill)(source, ref)
             front, body = parse_front(fetched["text"])
+            if front.get("name") and str(front["name"]).strip().lower() != name:
+                raise ValueError(f"the SKILL.md at {source} names {front['name']}, not {name}: add it as its own skill")
             if not fields.get("description"):
                 fields["description"] = front.get("description", "")
     if not body.strip():
@@ -388,7 +390,7 @@ def check_source(source: str, ref: str | None = None, fetch=None) -> dict:
     if existing:
         out["exists"] = {"revision": existing["revision"], **{k: v for k, v in _skill(existing, body=False).items()
                                                                if k in ("kind", "source", "ref")},
-                         "changed": existing["body"] != body.strip() + "\n"}
+                         "changed": (existing["body"], _skill(existing, body=False)["description"]) != (body.strip() + "\n", out["description"][:500].strip())}
     return out
 
 

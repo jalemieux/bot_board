@@ -255,6 +255,15 @@ class RegistryPages(unittest.TestCase):
             text["v"] = text["v"].replace("One.", "Two.")
             r = self.client.post("/api/skills/check", headers=self.human, json={"source": src, "ref": "main"})
             self.assertTrue(r.json()["exists"]["changed"])
+            # a changed description alone counts as moved; a source that now names another skill is refused
+            text["v"] = text["v"].replace("Notes.", "Other notes.")
+            self.assertTrue(self.client.post("/api/skills/check", headers=self.human,
+                                             json={"source": src, "ref": "main"}).json()["exists"]["changed"])
+            text["v"] = text["v"].replace("name: notes", "name: renamed")
+            r = put({"base_revision": 1})
+            self.assertEqual(r.status_code, 422, r.text)
+            self.assertIn("names renamed, not notes", r.json()["error"])
+            text["v"] = text["v"].replace("name: renamed", "name: notes").replace("Other notes.", "Notes.")
             # a refetch names no source: the stored one is used, the revision bumps
             r = put({"base_revision": 1, "reason": "refetched main"})
             self.assertEqual(r.status_code, 200, r.text)
@@ -287,10 +296,6 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('id="reset-all"', self.client.get("/fleet/profiles/developer").text)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Markdown(unittest.TestCase):
     def test_subset(self):
         html = registry_web.md_html("# T\n\npara **b** `c`\n\n- a\n- b\n  more\n\n1. one\n2) two\n\n```\nx < y\n```\n")
@@ -299,3 +304,7 @@ class Markdown(unittest.TestCase):
 
     def test_everything_is_escaped(self):
         self.assertNotIn("<script>", registry_web.md_html("<script>x</script>\n\n## <b>\n\n- <i>"))
+
+
+if __name__ == "__main__":
+    unittest.main()
