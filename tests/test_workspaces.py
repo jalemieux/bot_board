@@ -151,6 +151,36 @@ class Workspaces(Base):
         seed = self.call('GET', f"/api/messages/{seeded['seed_thread_id']}", auth=self.root)['message']
         self.assertEqual((seed['meta']['workspace'], seed['meta']['channel']), ('game', 'game.economy'))
 
+    def test_the_moderator_reads_posts_and_mentions_everywhere_but_claims_only_in_admin(self):
+        # #319: a game thread is invisible to another workspace's bot, and the moderator's to read
+        tid = self.post(self.ada, 'economy question', channel='game')['message']['id']
+        self.call('GET', f'/api/messages/{tid}', auth=self.milo, expected=404)
+        self.assertEqual(self.call('GET', f'/api/threads/{tid}', auth=self.root)['messages'][0]['id'], tid)
+        ids = lambda r: [m['id'] for m in r['messages']]
+        self.assertIn(tid, ids(self.call('GET', '/api/messages', auth=self.root)))
+        self.assertIn(tid, ids(self.call('GET', '/api/messages?workspace=game', auth=self.root)))
+        self.assertNotIn(tid, ids(self.call('GET', '/api/messages?workspace=other', auth=self.root)))
+        self.assertIn(tid, ids(self.call('GET', '/api/search?q=economy', auth=self.root)))
+        self.assertIn('game', {c['slug'] for c in self.call('GET', '/api/channels', auth=self.root)['channels']})
+        # it replies in the game channel, and the game bot is reached there
+        reply = self.post(self.root, '@ada milo can review this', channel='game', reply_to=tid)
+        self.assertNotIn('warnings', reply)
+        self.assertIn(reply['message']['id'], ids(self.call('GET', '/api/inbox', auth=self.ada)))
+        # a mention from the admin channel does not reach a game bot, and the sender is told
+        warned = self.post(self.root, '@ada please look at the admin thread', channel='admin')
+        self.assertEqual([(w['mention'], w['state']) for w in warned['warnings']], [('ada', 'elsewhere')])
+        self.assertNotIn(warned['message']['id'], ids(self.call('GET', '/api/inbox', auth=self.ada)))
+        self.assertNotIn('warnings', self.post(self.human, '@root a sweep please', channel='game'))
+        # it claims nothing outside admin; the thread stays for the workspace's bots
+        self.call('POST', f'/api/threads/{tid}/worker', auth=self.root, expected=403)
+        self.call('POST', f'/api/threads/{tid}/worker', auth=self.ada)
+        admin_tid = self.post(self.human, 'moderator, a sweep please', channel='admin')['message']['id']
+        self.call('POST', f'/api/threads/{admin_tid}/worker', auth=self.root)
+        # an ordinary bot is as scoped as before
+        self.post(self.milo, 'hi', channel='game', expected=403)
+        self.assertFalse(self.call('GET', '/api/me', auth=self.milo)['admin_bot'])
+        self.assertTrue(self.call('GET', '/api/me', auth=self.root)['admin_bot'])
+
     def test_knowledge_is_revisioned_scoped_and_shared_with_admin_bots(self):
         doc = self.call('PUT', '/api/knowledge/INDEX.md', {'body': '# Game\n\n- lore/factions.md', 'base_revision': 0,
                         'reason': 'first index', 'sources': ['12']}, auth=self.ada)['document']

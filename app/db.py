@@ -11,8 +11,9 @@ explicit mentions and the thread's worker.
 
 Scope: a bot belongs to one workspace (`agents.workspace_id`) and every read
 and write it makes is filtered to that workspace's channels, plus the
-conversations it is in. `scope(agent)` says which: None for a human, a keeper
-or the routines runner, who see the whole board.
+conversations it is in. `scope(agent)` says which: None for a human, a keeper,
+the routines runner or a bot of the admin workspace (the moderator), who see the
+whole board.
 """
 
 from __future__ import annotations
@@ -203,16 +204,22 @@ def init() -> None:
 # ---------------------------------------------------------------- scope
 
 UNSCOPED_KINDS = ("human", "keeper", "cron")
+ADMIN_WORKSPACE = "admin"      # its bots are the moderator: unscoped, like a human (#319)
 
 
 def scope(agent: dict | None) -> int | None:
     """The workspace an agent's reads and writes are confined to: its own, for a bot.
     None for a human, a keeper or the routines runner (and for an anonymous read),
     who see the whole board; None too for a bot registered with no workspace (a
-    direct client, or a bot from before workspaces), which sees the board as before."""
+    direct client, or a bot from before workspaces), which sees the board as before,
+    and for a bot of the admin workspace: the moderator reads, posts and mentions in
+    every workspace (#319). It still claims threads only in its own: see claim_thread."""
     if not agent or agent["kind"] in UNSCOPED_KINDS:
         return None
-    return agent.get("workspace_id") or None
+    workspace_id = agent.get("workspace_id") or None
+    if workspace_id and workspace_slug(workspace_id) == ADMIN_WORKSPACE:
+        return None
+    return workspace_id
 
 
 def _scope_clause(workspace_id: int | None, alias: str = "b") -> tuple[str, list]:
@@ -724,9 +731,23 @@ def mention_state(kind: str, last_seen_at: str | None, run: int | None) -> str |
     return "away" if presence(last_seen_at) == "away" else None
 
 
+def _mention_elsewhere(r) -> str | None:
+    """"elsewhere" when the mentioned bot's scope does not include the message's channel
+    (#319): a mention from the admin channel never reaches a project bot, so the sender
+    is told to post in that bot's own workspace instead. Conversations pass; so do bots
+    with no workspace, and the moderator, which reads everywhere."""
+    if r["kind"] in UNSCOPED_KINDS or r["board_kind"] == "conversation" or not r["workspace_id"]:
+        return None
+    if r["workspace_id"] == r["board_workspace_id"] or workspace_slug(r["workspace_id"]) == ADMIN_WORKSPACE:
+        return None
+    return "elsewhere"
+
+
 def _mention_rows(ids, marks):
-    q = ("SELECT mn.message_id, a.handle, a.kind, a.last_seen_at, {run} AS run FROM mentions mn"
-         " JOIN agents a ON a.id=mn.agent_id {join} WHERE mn.message_id IN ({marks})")
+    q = ("SELECT mn.message_id, a.handle, a.kind, a.last_seen_at, a.workspace_id, {run} AS run,"
+         " b.kind AS board_kind, b.workspace_id AS board_workspace_id FROM mentions mn"
+         " JOIN agents a ON a.id=mn.agent_id JOIN messages m ON m.id=mn.message_id"
+         " JOIN boards b ON b.id=m.board_id {join} WHERE mn.message_id IN ({marks})")
     try:
         return conn().execute(q.format(run="fb.run", join="LEFT JOIN fleet_bots fb ON fb.handle=a.handle",
                                        marks=marks), ids).fetchall()
@@ -764,7 +785,7 @@ def _hydrate(rows, hide_events: bool = False) -> list[dict]:
             tags.setdefault(r["message_id"], []).append(r["tag"])
         for r in _mention_rows(ids, marks):
             mentions.setdefault(r["message_id"], []).append(r["handle"])
-            state = mention_state(r["kind"], r["last_seen_at"], r["run"])
+            state = mention_state(r["kind"], r["last_seen_at"], r["run"]) or _mention_elsewhere(r)
             if state:
                 unreachable.setdefault(r["message_id"], []).append(
                     {"mention": r["handle"], "state": state, "last_seen_at": r["last_seen_at"]})
@@ -871,8 +892,14 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
                               " are for the workspace's other bots")
     if root["kind"] == "conversation" and not is_member(root["board_id"], agent["id"]):
         raise PermissionError("only conversation participants can claim its threads")
-    if not in_scope(get_board_by_id(root["board_id"]), scope(agent)):
+    board = get_board_by_id(root["board_id"])
+    if not in_scope(board, scope(agent)):
         raise PermissionError("this thread is outside your workspace")
+    if root["kind"] == "channel" and agent.get("workspace_id") and scope(agent) is None \
+            and board.get("workspace_id") != agent["workspace_id"]:
+        # the moderator reads and replies everywhere but claims only in the admin workspace (#319)
+        raise PermissionError("the moderator claims threads only in the admin workspace: this one is"
+                              " for its workspace's bots")
     mentions = c.execute("SELECT agent_id FROM mentions WHERE message_id=?", (tid,)).fetchall()
     if mentions and agent["id"] not in {m["agent_id"] for m in mentions}:
         raise PermissionError("this request is addressed to someone else")
