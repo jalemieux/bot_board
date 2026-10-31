@@ -1948,7 +1948,8 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
                 '<option value="">move…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
     srt = _sort_value
-    return (f'<tr id="bot-{e(b["handle"])}" class="bot-row" data-state="{e(st["state"])}" data-group="{e(b.get("workspace") or "")}"><td class="who"{srt(b["handle"])}><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
+    return (f'<tr id="bot-{e(b["handle"])}" class="bot-row" data-state="{e(st["state"])}" data-group="{e(b.get("workspace") or "")}"><td class="who"{srt(b["handle"])}><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a>'
+            f'<button type="button" class="open-bot" aria-label="Actions for @{e(b["handle"])}" title="its actions"></button></td>'
             f'<td class="doing"{srt(DOING_ORDER.get(st["state"], len(DOING_ORDER)))}><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
             f'<td data-label="group"{srt(b.get("workspace") or b.get("serves") or "")}>{group}</td>'
             f'<td data-label="profile"{srt(b.get("profile") or "")}>{profile}</td>'
@@ -2133,6 +2134,7 @@ document.addEventListener('click', function (ev) {
     panel.hidden = false;
     if (b.dataset.kill) panel.dataset.kill = '1'; else delete panel.dataset.kill;
     stopLabel(panel);
+    panel.scrollIntoView({block: 'nearest'});
     return;
   }
   if (b.classList.contains('stop-go')) {
@@ -2373,10 +2375,13 @@ function alertsNow() {
   document.querySelectorAll('details.fleet-section').forEach(function (d) {
     var was = folded[d.id];
     if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
+    // Versions is served open when a person must act; folding it holds until what it asks changes
+    if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
     if (was) d.open = false;
     d.addEventListener('toggle', function () {
       var f = loadFolded();
-      if (d.open) delete f[d.id]; else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : 1;
+      if (d.open) delete f[d.id];
+      else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : {title: d.querySelector('summary').textContent};
       saveFolded(f);
     });
   });
@@ -2409,6 +2414,8 @@ function closeBotPanel() {
   if (panelRow) {
     var acts = panelRow.querySelector('td.acts');
     panel.querySelectorAll('[data-act]').forEach(function (x) { acts.appendChild(x); });
+    var question = panel.querySelector('tr.stop-panel');
+    if (question) { question.hidden = true; panelRow.after(question); }
     panelRow.classList.remove('sel');
   }
   panelRow = null; panel.hidden = true; panel.textContent = '';
@@ -2416,11 +2423,10 @@ function closeBotPanel() {
 }
 function openBotPanel(row) {
   closeBotPanel(); panelRow = row; row.classList.add('sel');
-  if (row.closest('.stopped')) botFilter = 'stopped';
   var panel = document.getElementById('bot-panel'), cell = function (l) { var c = row.querySelector('td[data-label="' + l + '"]'); return c ? c.innerHTML : ''; };
-  panel.innerHTML = '<div class="row"><b>' + row.querySelector('td.who').innerHTML + '</b>'
+  panel.innerHTML = '<div class="row"><b>' + row.querySelector('td.who a').outerHTML + '</b>'
     + '<button type="button" class="panel-close" aria-label="close">×</button></div>'
-    + '<div class="doing">' + row.querySelector('td.doing').innerHTML + '</div><div class="p-acts"></div><dl>'
+    + '<div class="doing">' + row.querySelector('td.doing').innerHTML + '</div><div class="p-acts"></div><table class="p-stop"><tbody></tbody></table><dl>'
     + '<dt>Machine</dt><dd>' + cell('machine') + '</dd><dt>Harness</dt><dd>' + cell('harness') + '</dd>'
     + '<dt>Group</dt><dd>' + cell('group') + '</dd><dt>Role</dt><dd>' + cell('profile') + '</dd>'
     + '<dt>Active</dt><dd>' + cell('active') + '</dd></dl>'
@@ -2431,14 +2437,27 @@ function openBotPanel(row) {
     (x.matches('.kill, .delete-bot') ? danger : acts).appendChild(x);
   });
   if (!danger.children.length) panel.querySelector('.p-more').remove();
+  // the question stop asks of a bot with open threads comes along, so a filter cannot hide it
+  var question = document.getElementById('stop-' + row.id.slice(4));
+  if (question) panel.querySelector('.p-stop tbody').appendChild(question);
   panel.hidden = false; document.getElementById('bots-split').classList.add('open');
 }
 document.addEventListener('click', function (ev) {
   // replaceState and not location.hash: the browser would jump to the row
   if (ev.target.closest('button.panel-close')) { history.replaceState(null, '', '#tab-bots'); showTarget(); return; }
-  var row = ev.target.closest('tr.bot-row'); if (!row || ev.target.closest('a,button,select,input')) return;
+  var opener = ev.target.closest('button.open-bot'), row = ev.target.closest('tr.bot-row');
+  if (!row || (!opener && ev.target.closest('a,button,select,input'))) return;
   history.replaceState(null, '', '#' + row.id); showTarget();
+  if (opener) document.querySelector('#bot-panel button, #bot-panel select').focus();   // from the keyboard: on to its actions
 });
+// A link to something the filters hide changes them, for this visit, so it lands on what it names.
+function revealInLists(t) {
+  var row = t.closest('tr.bot-row');
+  if (t.closest('.stopped')) botFilter = 'stopped';
+  else if (t.closest('#fleet-bots') && (botFilter === 'stopped' || (row && botFilter !== 'running' && row.dataset.state !== botFilter))) botFilter = 'running';
+  var group = document.getElementById('bot-group');
+  if (row && group.value && row.dataset.group !== group.value) group.value = '';
+}
 // The hash says which tab: a tab's own name, or anything inside one, so older links such as
 // #bot-ada, #box-m1 and #secrets still land where they point, with its folded list opened.
 function showTarget() {
@@ -2451,6 +2470,7 @@ function showTarget() {
     a.classList.toggle('on', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
+  if (t) revealInLists(t);
   if (t && t.matches('tr.bot-row')) openBotPanel(t); else closeBotPanel();
   applyBotFilter();
   for (var d = t && t.closest('details'); d; d = d.parentElement.closest('details')) d.open = true;
@@ -2510,6 +2530,8 @@ FLEET_CSS = """
 .fleet-page table.bots tr.bot-row td.acts,.fleet-page table.bots tr.bot-row td[data-label="harness"],.fleet-page tr.bot-row td .chan-edit,.fleet-page #tab-bots table.bots th:nth-child(5),.fleet-page #tab-bots table.bots th:last-child{display:none}
 .fleet-page .bot-panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;position:sticky;top:10px}
 .fleet-page .bot-panel .row{display:flex;justify-content:space-between;align-items:center;font-size:16px}.fleet-page .panel-close{border:0;background:none;font-size:18px;cursor:pointer;color:var(--dim)}
+.fleet-page .open-bot{margin-left:6px;padding:0 5px;border:1px solid var(--line);border-radius:4px;background:none;color:var(--dim);cursor:pointer;line-height:1.2}.fleet-page .open-bot::before{content:"⋯"}
+.fleet-page .p-stop{width:100%;border:0;background:none}.fleet-page .p-stop td{display:block;padding:8px 0;border:0}
 .fleet-page .p-acts,.fleet-page .p-danger{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.fleet-page .p-more summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 .fleet-page .bot-panel dl{display:grid;grid-template-columns:70px 1fr;gap:5px 8px;margin:12px 0;font-size:13px}.fleet-page .bot-panel dt{color:var(--dim)}.fleet-page .bot-panel dd{margin:0}
 body.out .fleet-page .p-acts,body.out .fleet-page .p-more,body.out .fleet-page .bot-panel .chan-edit{display:none}
@@ -2627,9 +2649,9 @@ def _versions_section(rows: list) -> str:
     summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
                if bots else "")
     behind = sum(not r["current"] for r in shown)
-    # keepers and launchers catch up on their own; an older routine recipe waits for a person
-    ask = sum(r["what"] == "routine" and not r["current"] for r in shown)
-    title = (f'Versions · {ask} to approve' if ask else f'Versions · {behind} behind' if behind else "Versions · current")
+    # most catch up on their own; a bell row (#239) or an older routine recipe waits for a person
+    ask = sum(r["bell"] or (r["what"] == "routine" and not r["current"]) for r in shown)
+    title = (f'Versions · {ask} need{"s" * (ask == 1)} you' if ask else f'Versions · {behind} behind' if behind else "Versions · current")
     return _fleet_section("fleet-versions", title, summary +
                           f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
                           f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>', is_open=bool(ask))
