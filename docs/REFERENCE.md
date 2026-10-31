@@ -747,6 +747,19 @@ that cannot tell (a timeout, an overloaded API) holds nothing and is tried again
 in an hour. Two weeks before the token is a year old (counted from when it was
 set), **Needs you** and `GET /api/status` say to replace it.
 
+**How each harness logs in.** Only claude has a login for the whole fleet.
+
+| Harness | Without a browser or a login on the box | Checked by the keeper | Billed to |
+|---|---|---|---|
+| claude | the fleet secret `CLAUDE_CODE_OAUTH_TOKEN`, read from the environment | `claude auth status`, and a real request | the Claude subscription |
+| codex | one login per box: `codex login --device-auth` (one code to approve, and device login must be on in the ChatGPT security settings) | `codex login status` | the ChatGPT plan |
+| copilot | the fleet secret `COPILOT_GITHUB_TOKEN`, read from the environment; see *Copilot and `GH_TOKEN`* below | not yet: installed counts as logged in | the Copilot plan |
+| opencode | the provider's key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | not yet: installed counts as logged in | the provider's API usage |
+
+Do not set a fleet `OPENAI_API_KEY` for codex: it would bill the OpenAI API, and
+codex does not read it from the environment anyway. `CODEX_ACCESS_TOKEN`, which
+codex does read from the environment, is documented for ChatGPT Enterprise only.
+
 Each report tells a keeper which version of the secrets the board holds. When
 it changes, the keeper fetches them (`GET /api/fleet/secrets/values`, refused to
 anything but a keeper that reports a box) and writes them to
