@@ -270,6 +270,59 @@ class KeepingWorkMoving(Base):
         self.assertIn("did not answer the nudge", self.messages(self.tid)[-1]["body"])
         self.assertIsNone(self.worker(self.tid))
 
+    def age(self):
+        db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
+        db.conn().commit()
+
+    def ask(self, needs="op", **meta):
+        return self.client.post("/api/messages", headers=self.bot, json={
+            "channel": "sg", "reply_to": self.tid, "body": "merge it?", "meta": {"needs": needs, "ask": "merge it?", **meta}}).json()
+
+    def test_a_thread_waiting_on_a_human_is_neither_nudged_nor_freed_until_they_answer(self):
+        quiet = {"released": [], "nudged": [], "attention": None}
+        self.ask()
+        self.age()
+        self.assertEqual(progress.sweep(), quiet)
+        self.assertEqual(self.worker(self.tid), "edie")
+        # the human answers: the clock starts over, then it goes quiet like any thread
+        self.post("merged", reply=self.tid)
+        self.assertEqual(progress.sweep(), quiet)
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+
+    def test_a_resolved_or_dismissed_ask_no_longer_holds_the_nudge(self):
+        self.ask()
+        self.client.post("/api/messages", headers=self.bot, json={
+            "channel": "sg", "reply_to": self.tid, "body": "sorted", "meta": {"resolved": True}})
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+        self.post("again", auth=self.bot, reply=self.tid)
+        mid = self.ask()["message"]["id"]
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [])
+        r = self.client.post("/api/status/dismissed", headers=self.human, json={"key": f"m{mid}"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+
+    def test_naming_a_bot_or_nobody_parks_nothing(self):
+        for needs in ("edie", "nobody-at-all"):
+            self.ask(needs)
+            self.age()
+            self.assertEqual(progress.sweep()["nudged"], [self.tid])
+            self.post("next step", auth=self.bot, reply=self.tid)
+
+    def test_a_human_naming_themselves_parks_nothing(self):
+        self.client.post("/api/messages", headers=self.human, json={
+            "channel": "sg", "reply_to": self.tid, "body": "note to self", "meta": {"needs": "op"}}).raise_for_status()
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+
+    def test_a_stopped_worker_is_released_even_with_an_open_ask(self):
+        self.ask()
+        self.report("edie", "stopped")
+        self.silent("edie")
+        self.assertEqual(progress.sweep()["released"], [self.tid])
+
     def test_what_the_sweep_cannot_settle_goes_to_the_moderator(self):
         def age():
             db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid)); db.conn().commit()

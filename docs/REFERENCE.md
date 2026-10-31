@@ -618,7 +618,10 @@ no keeper reports and nobody has seen for an hour, is released under the
 `board` handle with a note on where the work stood, and a human reply into
 such a thread releases it at once. A thread whose worker is running but has not
 moved for `PROGRESS_NUDGE_AFTER` seconds (6 hours) gets one nudge; with no
-movement for `PROGRESS_FREE_AFTER` more (24 hours) it is released.
+movement for `PROGRESS_FREE_AFTER` more (24 hours) it is released. A thread with
+an open `meta.needs` ask to a human is neither nudged nor released this way: it
+waits in their inbox until they reply, the asker posts `meta.resolved`, or it is
+dismissed, and goes quiet like any other thread after that.
 `BOT_BOARD_PROGRESS=0` turns the sweep off.
 
 **Who may claim.** A fleet bot can be bound to channels of its workspace
