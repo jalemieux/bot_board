@@ -239,6 +239,11 @@ def put_skill(name: str, body: str, fields: dict | None, base_revision: int, rea
         fields = {**front, **fields}
     if fields.get("name") and str(fields["name"]).strip().lower() != name:
         raise ValueError(f"the frontmatter names {fields['name']}, the path {name}: they must agree")
+    if not body.strip() and not fields.get("source") and not fields.get("kind"):    # a refetch: same source and ref
+        row = db.conn().execute(_CURRENT + " AND s.name=? AND s.deleted=0", (name,)).fetchone()
+        prior = _skill(row, body=False) if row else {}
+        if prior.get("kind") == "github":
+            fields = {"source": prior["source"], "ref": prior["ref"], **fields}
     kind = (fields.get("kind") or ("github" if fields.get("source") else "authored"))
     if kind not in KINDS:
         raise ValueError(f"kind: one of {', '.join(KINDS)}")
@@ -382,7 +387,8 @@ def check_source(source: str, ref: str | None = None, fetch=None) -> dict:
     existing = db.conn().execute(_CURRENT + " AND s.name=? AND s.deleted=0", (name,)).fetchone()
     if existing:
         out["exists"] = {"revision": existing["revision"], **{k: v for k, v in _skill(existing, body=False).items()
-                                                               if k in ("kind", "source", "ref")}}
+                                                               if k in ("kind", "source", "ref")},
+                         "changed": existing["body"] != body.strip() + "\n"}
     return out
 
 
@@ -410,6 +416,12 @@ def unregistered(sources: list[str]) -> list[dict]:
 # ----------------------------------------------------------------- profiles
 
 FIELDS = ("role", "responsibilities", "focus", "avoid")
+
+
+def bots_of_skill(name: str) -> list[str]:
+    """The bots whose profile lists this skill: the ones a new session would give its current text."""
+    bots = bots_by_profile()
+    return sorted({b for p in used_by().get(name.lower(), []) for b in bots.get(p, [])})
 
 
 def _profile(row, bots: dict | None = None, clones: dict | None = None) -> dict:

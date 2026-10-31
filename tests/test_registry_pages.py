@@ -241,6 +241,55 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
+    def test_a_github_skill_is_refetched_without_fields_and_its_bots_get_a_new_session(self):
+        src = "https://github.com/acme/skills/tree/main/notes"
+        text = {"v": "---\nname: notes\ndescription: Notes.\n---\n\nOne.\n"}
+        real = registry_web.registry.fetch_skill
+        registry_web.registry.fetch_skill = lambda source, ref: {"text": text["v"], "commit": "abc123"}
+        try:
+            put = lambda body: self.client.put("/api/skills/notes", headers=self.human, json=body)
+            self.assertEqual(put({"fields": {"source": src}, "base_revision": 0}).status_code, 200)
+            # the source has not moved
+            r = self.client.post("/api/skills/check", headers=self.human, json={"source": src, "ref": "main"})
+            self.assertFalse(r.json()["exists"]["changed"])
+            text["v"] = text["v"].replace("One.", "Two.")
+            r = self.client.post("/api/skills/check", headers=self.human, json={"source": src, "ref": "main"})
+            self.assertTrue(r.json()["exists"]["changed"])
+            # a refetch names no source: the stored one is used, the revision bumps
+            r = put({"base_revision": 1, "reason": "refetched main"})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual((r.json()["skill"]["revision"], r.json()["skill"]["source"]), (2, src))
+            self.assertIn("Two.", r.json()["skill"]["body"])
+            # not for an authored skill, which has nothing to refetch
+            self.assertEqual(self.client.put("/api/skills/release-notes", headers=self.human,
+                                             json={"base_revision": 1}).status_code, 422)
+        finally:
+            registry_web.registry.fetch_skill = real
+        page = self.client.get("/fleet/skills/notes").text
+        self.balanced(page)
+        self.assertIn('id="src-check"', page)
+        self.assertIn("Refetch as rev 3", page)
+        self.assertNotIn('id="reset-all"', page)       # no profile lists it yet
+        # a profile that lists it: its bots are the ones to reset
+        self.client.post("/api/profiles", headers=self.human, json={
+            "name": "scribe", "role": "Scribe", "skills": [{"name": "notes"}]}).raise_for_status()
+        self.client.put("/api/fleet/bots/ann", headers=self.human, json={
+            "host": "box", "run": True, "harness": "claude", "workspace": "proj", "profile": "scribe"}).raise_for_status()
+        self.assertIn('id="reset-all"', self.client.get("/fleet/skills/notes").text)
+        bot = self.register("wren", "claude-code", "proj")
+        self.assertEqual(self.client.post("/api/skills/notes/reset", headers=bot).status_code, 403)
+        self.assertEqual(self.client.post("/api/skills/nope/reset", headers=self.human).status_code, 404)
+        r = self.client.post("/api/skills/notes/reset", headers=self.human)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["ann"])
+        r = self.client.post("/api/profiles/developer/reset", headers=self.human)
+        self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["jane"])
+        self.assertIn('id="reset-all"', self.client.get("/fleet/profiles/developer").text)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
 
 class Markdown(unittest.TestCase):
     def test_subset(self):
@@ -250,7 +299,3 @@ class Markdown(unittest.TestCase):
 
     def test_everything_is_escaped(self):
         self.assertNotIn("<script>", registry_web.md_html("<script>x</script>\n\n## <b>\n\n- <i>"))
-
-
-if __name__ == "__main__":
-    unittest.main()

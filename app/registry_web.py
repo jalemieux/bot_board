@@ -366,9 +366,15 @@ def skill_page(board_name: str, skill: dict, history: list, profiles: list) -> s
         ref = skill.get("ref") or "main"
         source_card = (f'<div class="card"><h2>Source</h2><dl><dt>folder</dt><dd><a href="{e(skill["source"])}">{e(skill["source"])}</a></dd>'
                        f'<dt>ref</dt><dd>{e(ref)} · {"pinned: never pulled again" if registry.ref_kind(ref) == "pinned" else "a branch: pulled when a bot starts a session"}</dd>'
-                       '<dt>copy</dt><dd>The board keeps the SKILL.md it fetched when the skill was added; the body below is that copy.</dd></dl></div>')
+                       f'<dt>copy</dt><dd>rev {skill["revision"]}, fetched {e(ago(skill["updated_at"]))}. The body is that copy.</dd>'
+                       '<dt>source</dt><dd id="src-state" class="dim">not checked</dd></dl>'
+                       '<div class="row needs-me"><button type="button" class="act" id="src-check">Check source</button></div>'
+                       '<div class="reg-form needs-me" id="src-refetch" style="padding:0">'
+                       f'<label class="fld"><span>Reason</span><input id="src-reason" maxlength="500" value="refetched {e(ref)}" autocomplete="off"></label>'
+                       f'<div class="row"><button type="button" class="addbot-go" id="src-go">Refetch as rev {skill["revision"] + 1}</button></div></div></div>')
     data = _json({"name": skill["name"], "revision": skill["revision"], "description": skill["description"],
-                  "body": skill["body"], "kind": skill["kind"], "bots": sum(len(bots_of.get(p, [])) for p in used)})
+                  "body": skill["body"], "kind": skill["kind"], "source": skill.get("source", ""), "ref": skill.get("ref", ""),
+                  "bots": sorted({b for p in used for b in bots_of.get(p, [])})})
     danger = (f'<button type="button" class="act del-skill" data-name="{name}" data-rev="{skill["revision"]}"'
               + (" disabled" if used else "") + '>Delete this skill</button>'
               + (f'<p>Refused while {len(used)} profile{"s" * (len(used) != 1)} list{"" if len(used) != 1 else "s"} it: '
@@ -411,7 +417,9 @@ def skill_page(board_name: str, skill: dict, history: list, profiles: list) -> s
 <dt>read at</dt><dd><code>GET /api/skills/{name}</code></dd>
 <dt>revision</dt><dd>{skill["revision"]} · {e(ago(skill["updated_at"]))} · {e(skill["author"])}</dd></dl></div>
 <div class="card"><h2>Used by · {len(used)}</h2><ul class="hist">{used_html}</ul>
-<p class="sub" style="margin:8px 0 0">Read-only here: a profile's skill list is fixed when the profile is created.</p></div>
+<p class="sub" style="margin:8px 0 0">Read-only here: a profile's skill list is fixed when the profile is created.</p>
+{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all bots on it</button>' if any(bots_of.get(p) for p in used) else ''}
+<p class="status-line" id="reset-note" role="status" aria-live="polite"></p></div>
 <div class="card" id="history"><h2>History · {len(history)}</h2><ul class="hist">{hist_html}</ul>
 {'<p class="sub" style="margin:8px 0 0">Restore writes a new revision with the old body; nothing is rewritten in place.</p>' if authored else ''}</div>
 <div class="card danger"><h2>Danger</h2>{danger}</div>
@@ -434,6 +442,37 @@ SKILL_PAGE_JS = r"""
         if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
   }
   var S = JSON.parse(document.getElementById('skill-data').textContent);
+  function resetAll(path, bots, note) {
+    if (!need()) return;
+    if (!confirm('Give ' + bots.map(function (h) { return '@' + h; }).join(', ') + ' a new session? Each reads its profile and skills again (when idle; a stopped bot at its next start).')) return;
+    call('POST', path).then(function (d) {
+      var n = Object.keys(d.skipped);
+      note.className = 'status-line ok';
+      note.textContent = d.reset.length + ' asked' + (n.length ? '; skipped: ' + n.map(function (h) { return '@' + h + ' (' + d.skipped[h] + ')'; }).join(', ') : '') + '.';
+    }, function (e) { note.className = 'status-line'; note.textContent = e.message; });
+  }
+  var all = document.getElementById('reset-all');
+  if (all) all.addEventListener('click', function () {
+    resetAll('/api/skills/' + encodeURIComponent(S.name) + '/reset', S.bots, document.getElementById('reset-note'));
+  });
+  var chk = document.getElementById('src-check');
+  if (chk) {
+    var state = document.getElementById('src-state');
+    chk.addEventListener('click', function () {
+      if (!need()) return;
+      state.textContent = 'checking…';
+      call('POST', '/api/skills/check', {source: S.source, ref: S.ref}).then(function (d) {
+        var moved = d.exists && d.exists.changed;
+        state.textContent = (moved ? 'moved since rev ' + S.revision : 'same as rev ' + S.revision) + (d.commit ? ' · ' + d.ref + ' is at ' + d.commit : '');
+      }, function (e) { state.textContent = e.message; });
+    });
+    document.getElementById('src-go').addEventListener('click', function () {
+      if (!need()) return;
+      call('PUT', '/api/skills/' + encodeURIComponent(S.name),
+           {base_revision: S.revision, reason: document.getElementById('src-reason').value.trim()})
+        .then(function () { location.reload(); }, function (e) { state.textContent = e.message; });
+    });
+  }
   var form = document.getElementById('skill-edit');
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
   function inline(s) { return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
@@ -478,7 +517,7 @@ SKILL_PAGE_JS = r"""
           base_revision: S.revision, reason: form.elements.reason.value.trim()})
     .then(function (d) {
       msg.className = 'status-line ok';
-      msg.textContent = 'Saved as rev ' + d.skill.revision + '. ' + (S.bots ? S.bots + ' bot' + (S.bots === 1 ? '' : 's') + ' get it at their next new session.' : 'No bot has a profile that lists it yet.');
+      msg.textContent = 'Saved as rev ' + d.skill.revision + '. ' + (S.bots.length ? S.bots.length + ' bot' + (S.bots.length === 1 ? '' : 's') + ' get it at their next new session.' : 'No bot has a profile that lists it yet.');
       setTimeout(function () { location.reload(); }, 1200);
     }, function (e) { msg.textContent = e.message; });
   });
@@ -569,7 +608,8 @@ def profile_page(board_name: str, profile: dict, bots: list, base: str) -> str:
 <div class="card" id="skills"><h2>Skills · {len(skills)}</h2>{skills_html}
 <p class="sub" style="margin:8px 0 0">This list does not change. Skill text does: a skill's edits reach these bots at their next new session.</p></div>
 <div class="card" id="bots"><h2>Bots with this profile · {n}</h2>
-<p class="sub">A bot reads this profile and its skills when its session starts. New session makes one read them again.</p>{bots_html}</div>
+<p class="sub">A bot reads this profile and its skills when its session starts. New session makes one read them again.</p>{bots_html}
+{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all ' + str(n) + ' bots</button><p class="status-line" id="reset-note" role="status" aria-live="polite"></p>' if n else ''}</div>
 </div><div>
 <div class="card" id="gets"><h2>What a bot gets</h2><p class="sub">The text <code>GET /api/me/profile</code> returns to a bot of this profile.</p>
 <pre class="what">{e(registry.profile_text(profile, base))}</pre></div>
@@ -592,6 +632,16 @@ PROFILE_PAGE_JS = r"""
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
         if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
   }
+  var all = document.getElementById('reset-all');
+  if (all) all.addEventListener('click', function () {
+    var bots = Array.prototype.map.call(document.querySelectorAll('button.reset'), function (b) { return b.dataset.handle; }), note = document.getElementById('reset-note');
+    if (!need() || !confirm('Give ' + bots.map(function (h) { return '@' + h; }).join(', ') + ' a new session? Each reads its profile and skills again (when idle; a stopped bot at its next start).')) return;
+    call('POST', '/api/profiles/' + encodeURIComponent(location.pathname.split('/').pop()) + '/reset').then(function (d) {
+      var n = Object.keys(d.skipped);
+      note.className = 'status-line ok';
+      note.textContent = d.reset.length + ' asked' + (n.length ? '; skipped: ' + n.map(function (h) { return '@' + h + ' (' + d.skipped[h] + ')'; }).join(', ') : '') + '.';
+    }, function (e) { note.className = 'status-line'; note.textContent = e.message; });
+  });
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest('button.reset'); if (!b || !need()) return;
     if (!confirm('Give @' + b.dataset.handle + ' a new session? It reads its profile and skills again and starts fresh (when idle; a stopped bot at its next start).')) return;

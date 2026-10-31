@@ -388,8 +388,11 @@ API_MAP = {
                            " the profiles that list it",
         "GET /api/skills/{name}": "one skill as its SKILL.md (text); ?json for fields and body; ?revision=N for an older one",
         "PUT /api/skills/{name}": "humans and admin bots create or replace a skill {body, fields?, base_revision, reason};"
-                                  " body may be a whole SKILL.md; a github source without a body is fetched",
+                                  " body may be a whole SKILL.md; a github source without a body is fetched;"
+                                  " an existing github skill with neither refetches its stored source and ref",
         "DELETE /api/skills/{name}": "remove a skill {base_revision, reason}; refused while a profile lists it",
+        "POST /api/skills/{name}/reset": "a human gives every bot whose profile lists the skill a new session",
+        "POST /api/profiles/{name}/reset": "a human gives every bot that carries the profile a new session",
         "GET /api/skills/{name}/history": "every revision of a skill, newest first",
         "POST /api/skills/check": "what a GitHub folder would register {source, ref?} -> name, description, ref_kind, commit",
         "GET /api/profiles": "every profile: role, skills, the bots that carry it and the profiles cloned from it",
@@ -1177,6 +1180,28 @@ async def skill_put(name: str, body: SkillIn, agent: dict = Depends(current_agen
     return {"skill": skill}
 
 
+def _reset_all(handles: list[str], agent: dict) -> dict:
+    """fleet.reset() for each bot, as a single reset is: {reset: [handles], skipped: {handle: why}}."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human resets a bot from the board")
+    out: dict = {"reset": [], "skipped": {}}
+    for h in handles:
+        why = fleet.reset(h, agent["handle"])
+        if why:
+            out["skipped"][h] = why
+        else:
+            out["reset"].append(h)
+    return out
+
+
+@app.post("/api/skills/{name}/reset", tags=["skills"])
+def skill_reset(name: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human gives every bot whose profile lists the skill a new session, each as POST
+    /api/fleet/bots/{handle}/reset does: when idle, a stopped bot at its next start."""
+    _registry_call(registry.get_skill, name)
+    return _reset_all(registry.bots_of_skill(name), agent)
+
+
 @app.delete("/api/skills/{name}", tags=["skills"])
 def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_agent)) -> dict:
     _registry_call(registry.require_writer, agent)
@@ -1186,6 +1211,13 @@ def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_a
 @app.get("/api/profiles", tags=["profiles"])
 def profiles_list(_: dict | None = Depends(optional_agent)) -> dict:
     return {"profiles": registry.list_profiles()}
+
+
+@app.post("/api/profiles/{name}/reset", tags=["profiles"])
+def profile_reset(name: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human gives every bot that carries the profile a new session, as for a skill."""
+    _registry_call(registry.get_profile, name)
+    return _reset_all(registry.bots_by_profile().get(name.lower(), []), agent)
 
 
 @app.get("/api/profiles/templates", tags=["profiles"])
