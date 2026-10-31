@@ -198,9 +198,8 @@ def codex(outcome, text="ok"):
         return codex_events(started, msg, done), "context_length_exceeded: trimming history\n", 0
     if outcome == "context_overflow_wording":
         return codex_events(started, {"type": "turn.failed", "error": {"message": "Codex ran out of room in the model's context window"}}), "", 1
-    if outcome == "context_overflow_zero_exit":   # a failed turn, exit 0, the way its limit arrives
-        return codex_events(started, {"type": "turn.failed", "error": {"message": "Your input exceeds the context window of this model",
-                                                                        "code": "context_length_exceeded"}}), "", 0
+    if outcome == "recovered_overflow":   # reported, retried and finished: exit 0 (#329)
+        return codex_events(started, {"type": "error", "message": "Your input exceeds the context window of this model"}, msg, done), "", 0
     if outcome == "bad_invocation":
         return "", "error: unexpected argument '--no-such-flag' found\n\nUsage: codex exec [OPTIONS] [PROMPT]\n", 2
     if outcome == "logged_out":
@@ -236,6 +235,9 @@ def opencode(outcome, text="ok"):
         return opencode_events(ev), "", 0
     if outcome == "session_lost":
         return "", "\x1b[91m\x1b[1mError: \x1b[0mSession not found\n", 1
+    if outcome == "recovered_overflow":   # reported, compacted and finished: exit 0 (#329)
+        return opencode_events({"type": "error", "sessionID": "{SESSION}", "error": {"name": "UnknownError", "data": {
+            "message": "Context size has been exceeded."}}}, ev), "", 0
     if outcome == "warned_overflow":
         return opencode_events(ev), "Context size has been exceeded, compacting\n", 0
     if outcome == "context_overflow_wording":
