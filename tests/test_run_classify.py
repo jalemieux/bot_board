@@ -66,7 +66,7 @@ class Classify(unittest.TestCase):
         "opencode": [("ok", "ok"), ("session_lost", "session_lost"), ("bad_invocation", "bad_invocation"),
                      ("limited", "limited"), ("retry", "retry"), ("unknown", "unknown")],
         "copilot": [("ok", "ok"), ("session_lost", "session_lost"), ("bad_invocation", "bad_invocation"),
-                    ("logged_out", "logged_out"), ("limited", "limited"), ("retry", "retry"), ("unknown", "unknown")],
+                    ("logged_out", "logged_out"), ("logged_out_token", "logged_out"), ("limited", "limited"), ("retry", "retry"), ("unknown", "unknown")],
     }
 
     def test_every_outcome_for_every_harness(self):

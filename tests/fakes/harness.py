@@ -243,7 +243,13 @@ def copilot(outcome, text="ok"):
     if outcome == "bad_invocation":
         return "", "error: unknown option '--no-such-flag'\n", 1
     if outcome == "logged_out":
-        return "", "Error: Not logged in. Run `copilot login` first.\n", 1
+        return "", ("Error: No authentication information found.\n\nCopilot can be authenticated with GitHub using an OAuth "
+                    "Token or a Fine-Grained Personal Access Token.\n\nTo authenticate, you can use any of the following "
+                    "methods:\n  • Start 'copilot' and run the '/login' command\n"), 1      # copilot 1.0.105, no login (#285)
+    if outcome == "logged_out_token":     # a token GitHub refuses
+        return "", ("Error: Authentication token found but could not be validated.\n\n  Failed to fetch PAT user login "
+                    "(401): GitHub returned: Bad credentials\n\nYour token may still be valid. Check your network "
+                    "connection and try again.\n"), 1
     if outcome == "limited":
         return "", "Error: rate limit exceeded, too many requests\n", 1
     if outcome == "retry":
