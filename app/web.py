@@ -2375,7 +2375,7 @@ function alertsNow() {
   document.querySelectorAll('details.fleet-section').forEach(function (d) {
     var was = folded[d.id];
     if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
-    // Versions is served open when a person must act; folding it holds until what it asks changes
+    // Versions is served open when a person must act; folding it holds until its title changes
     if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
     if (was) d.open = false;
     d.addEventListener('toggle', function () {
@@ -2444,7 +2444,12 @@ function openBotPanel(row) {
 }
 document.addEventListener('click', function (ev) {
   // replaceState and not location.hash: the browser would jump to the row
-  if (ev.target.closest('button.panel-close')) { history.replaceState(null, '', '#tab-bots'); showTarget(); return; }
+  if (ev.target.closest('button.panel-close')) {
+    var was = panelRow;
+    history.replaceState(null, '', '#tab-bots'); showTarget();
+    if (was) was.querySelector('button.open-bot').focus();      // back where the keyboard came from
+    return;
+  }
   var opener = ev.target.closest('button.open-bot'), row = ev.target.closest('tr.bot-row');
   if (!row || (!opener && ev.target.closest('a,button,select,input'))) return;
   history.replaceState(null, '', '#' + row.id); showTarget();

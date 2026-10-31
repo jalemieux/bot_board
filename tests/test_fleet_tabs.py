@@ -144,6 +144,8 @@ class FleetTabs(unittest.TestCase):
         self.page.wait_for_selector("#bot-panel button[data-handle='bob']")
         self.assertTrue(self.page.evaluate("document.activeElement.closest('#bot-panel') !== null"), "focus goes to the panel")
         self.assertEqual(self.page.locator("#bot-panel .open-bot").count(), 0)
+        self.page.click("#bot-panel .panel-close")
+        self.assertEqual(self.page.evaluate("document.activeElement.getAttribute('aria-label')"), "Actions for @bob", "focus comes back")
         self.assertEqual(self.errors, [])
 
     def test_a_link_changes_the_filters_that_would_hide_what_it_names(self):
