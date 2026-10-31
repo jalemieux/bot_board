@@ -56,17 +56,17 @@ class Classify(unittest.TestCase):
         "exhausted": "last run exhausted its turn or budget limit at", "unknown": "last run failed (exit",
     }
     CASES = {
-        "claude": [("ok", "ok"), ("text_ok", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
+        "claude": [("ok", "ok"), ("text_ok", "ok"), ("warned_overflow", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
                    ("logged_out", "logged_out"), ("logged_out_refresh", "logged_out"), ("limited", "limited"), ("limited_zero_exit", "limited"),
                    ("capacity", "capacity"), ("retry", "retry"), ("retry_network", "retry"),
                    ("exhausted", "exhausted"), ("exhausted_budget", "exhausted"), ("unknown", "unknown"),
                    ("unknown_no_result", "unknown")],
-        "codex": [("ok", "ok"), ("quoted_limit", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
+        "codex": [("ok", "ok"), ("quoted_limit", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("context_overflow_zero_exit", "context_overflow"), ("context_overflow_wording", "context_overflow"), ("warned_overflow", "ok"), ("bad_invocation", "bad_invocation"),
                   ("logged_out", "logged_out"), ("limited", "limited"), ("capacity", "capacity"), ("retry", "retry"),
                   ("exhausted", "exhausted"), ("unknown", "unknown")],
-        "opencode": [("ok", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
+        "opencode": [("ok", "ok"), ("warned_overflow", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("context_overflow_wording", "context_overflow"), ("bad_invocation", "bad_invocation"),
                      ("limited", "limited"), ("retry", "retry"), ("unknown", "unknown")],
-        "copilot": [("ok", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
+        "copilot": [("ok", "ok"), ("quoted_overflow", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("bad_invocation", "bad_invocation"),
                     ("logged_out", "logged_out"), ("logged_out_token", "logged_out"), ("limited", "limited"), ("retry", "retry"), ("unknown", "unknown")],
     }
 

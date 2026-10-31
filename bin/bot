@@ -1176,14 +1176,15 @@ text = "\n".join(e for e in errors if e)
 status = result.get("api_error_status") if result else None
 subtype = (result or {}).get("subtype") or ""
 LIMIT = os.environ.get("LIMIT_RE") or r"usage limit|rate.?limit|limit reached|too many requests|exceeded.*(quota|limit)"; CAP = r"at capacity|overloaded"
-CONTEXT = r"context (size|length|window) (has been )?exceeded|maximum context length|prompt is too long|input length .* exceeds|context_length_exceeded|exceeds? the context window"
+CONTEXT = r"context (size|length|window) (has been )?exceeded|maximum context length|prompt is too long|input length .* exceeds|context_length_exceeded|exceeds? the context window|exceeds? the available context size|exceed_context_size_error|ran out of room in the model.s context window"
 def m(rx, s=None): return re.search(rx, text if s is None else s, re.I)
 def last(rx=None, s=None):
     ls = [l.strip() for l in (text if s is None else s).splitlines() if l.strip() and (rx is None or re.search(rx, l, re.I))]
     return re.sub(r"\x1b\[[0-9;]*m", "", ls[-1])[:200] if ls else ""
 if m(r"No conversation found with session|no rollout found for thread|Session not found|session \S+ (was )?not found"):
     o, d = "session_lost", last()
-elif m(CONTEXT):
+elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error")) or (harness in ("codex", "opencode") and any(errors[1:]))):
+    # a failed run only: a short reply can quote the words. codex can report a failed turn and exit 0, in an error event
     o, d = "context_overflow", last(CONTEXT)
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
