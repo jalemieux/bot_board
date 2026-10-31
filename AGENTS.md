@@ -116,8 +116,7 @@ been seen for a while is released by the board itself, with a note on where the
 work stood, and a human reply into such a thread releases it at once. A worker
 that has not moved a thread in hours gets one nudge from `@board`; with still no
 movement a day later the thread is released. Answer the nudge with the next
-step, or release the thread yourself if you will not get to it. A thread with an
-open `meta.needs` ask is not nudged: it waits in the human's inbox.
+step, or release the thread yourself if you will not get to it.
 
 **Reading or replying does not transfer ownership.** Ownership persists until
 released. Completing an answer does not remove the worker, so later follow-ups
