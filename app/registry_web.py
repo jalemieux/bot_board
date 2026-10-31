@@ -164,7 +164,14 @@ def profiles_section(profiles: list, orphans: list) -> str:
     for p in profiles:
         page = f'/fleet/profiles/{e(p["name"])}'
         bots = p.get("bots") or []
-        chips = " ".join(_skill_chip(s) for s in p.get("skills") or []) or '<span class="dim">none</span>'
+        # the mandatory skills and one more name it; the page lists them all
+        all_skills = p.get("skills") or []
+        shown = [s for s in all_skills if s.get("mandatory")] or all_skills[:1]
+        shown += [s for s in all_skills if s not in shown][:1]
+        left = len(all_skills) - len(shown)
+        chips = " ".join(_skill_chip(s) for s in shown) or '<span class="dim">none</span>'
+        if left > 0:
+            chips += f' <a class="dim" href="{page}">+ {left} more</a>'
         who = (f'{len(bots)} · ' + ", ".join(f'<a href="/a/{e(b)}">{e(b)}</a>' for b in bots)) if bots else '0 · no bot yet'
         origin = (f'<div class="by">cloned from <a href="/fleet/profiles/{e(p["from"])}">{e(p["from"])}</a></div>'
                   if p.get("from") and p["from"].lower() != p["name"].lower() else "")
@@ -177,17 +184,17 @@ def profiles_section(profiles: list, orphans: list) -> str:
                     f'<td data-label="bots">{who}</td><td class="acts">{acts}</td></tr>')
     if orphans:
         who = ", ".join(f'<a href="/a/{e(b)}">{e(b)}</a>' for b in orphans)
-        rows.append(f'<tr id="profile-none"><td class="who"><span class="dim">no profile</span>'
-                    '<div class="by desc">Bots added before profiles. To give one a profile, retire it and add a new bot.</div></td>'
+        rows.append(f'<tr id="profile-none"><td class="who"><span class="dim">no role</span>'
+                    '<div class="by desc">Bots added before roles. To give one a role, retire it and add a new bot.</div></td>'
                     f'<td data-label="skills"><span class="dim">—</span></td><td data-label="bots">{len(orphans)} · {who}</td>'
                     '<td class="acts"></td></tr>')
-    table = (('<table class="bots profiles"><thead><tr><th>Profile</th><th>Skills</th><th>Bots</th>'
+    table = (('<table class="bots profiles"><thead><tr><th>Role</th><th>Skills</th><th>Bots</th>'
               '<th><span class="sr-only">Actions</span></th></tr></thead><tbody>' + "".join(rows) + '</tbody></table>')
              if rows else '<div class="empty">No profile yet.</div>')
-    return (f'<section class="fleet-section reg" id="fleet-profiles"><div class="sec-head"><h2>Profiles · {len(profiles)}</h2>'
-            '<a class="addbot-btn needs-me" href="/fleet/profiles/new">+ Create a profile</a></div>'
-            '<p class="sub">A profile is a role and the skills that go with it. A bot is given one when you add it and keeps it. '
-            'A profile never changes: clone it to make a different one.</p>'
+    return (f'<section class="fleet-section reg" id="fleet-profiles"><div class="sec-head"><h2>Roles · {len(profiles)}</h2>'
+            '<a class="addbot-btn needs-me" href="/fleet/profiles/new">+ Create a role</a></div>'
+            '<p class="sub">A role is a profile: what a bot is for, and the skills that go with it. A bot is given one when you add it '
+            'and keeps it. A role never changes: clone it to make a different one.</p>'
             f'{table}</section>')
 
 

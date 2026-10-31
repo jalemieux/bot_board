@@ -1948,7 +1948,7 @@ def _bot_row(b: dict, host: str, others: list) -> str:
         btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
                 '<option value="">move…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
     srt = _sort_value
-    return (f'<tr id="bot-{e(b["handle"])}"><td class="who"{srt(b["handle"])}><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
+    return (f'<tr id="bot-{e(b["handle"])}" class="bot-row" data-state="{e(st["state"])}" data-group="{e(b.get("workspace") or "")}"><td class="who"{srt(b["handle"])}><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
             f'<td class="doing"{srt(DOING_ORDER.get(st["state"], len(DOING_ORDER)))}><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
             f'<td data-label="group"{srt(b.get("workspace") or b.get("serves") or "")}>{group}</td>'
             f'<td data-label="profile"{srt(b.get("profile") or "")}>{profile}</td>'
@@ -1980,7 +1980,7 @@ def _stop_panel(b: dict, host: str) -> str:
 
 
 def _bot_table(entries: list, others_of) -> str:
-    head = f'<thead><tr>{_sortable("Bot", "Doing", "Group", "Profile", "Harness", "Machine", "Active", None)}</tr></thead>'
+    head = f'<thead><tr>{_sortable("Bot", "Doing", "Group", "Role", "Harness", "Machine", "Active", None)}</tr></thead>'
     rows = "".join(_bot_row(b, h["name"], others_of(h)) for h, b in entries)
     return f'<table class="bots">{head}<tbody>{rows}</tbody></table>'
 
@@ -2381,11 +2381,81 @@ function alertsNow() {
     });
   });
 })();
-// A link to a bot in a folded list (an alert's chip, a status item) opens the list first.
+// The filters above the bot lists; kept through the page's own reloads.
+var botFilter = 'running';
+try { botFilter = localStorage.getItem('bb.fleetFilter') || 'running'; } catch (err) {}
+function applyBotFilter() {
+  var group = document.getElementById('bot-group').value, stopped = document.querySelector('#tab-bots .stopped');
+  if (botFilter === 'stopped' && !stopped) botFilter = 'running';
+  document.querySelectorAll('.bot-filter').forEach(function (b) { b.classList.toggle('on', b.dataset.filter === botFilter); });
+  document.getElementById('fleet-bots').hidden = botFilter === 'stopped';
+  if (stopped) stopped.hidden = botFilter !== 'stopped';
+  document.querySelectorAll('#tab-bots tr.bot-row').forEach(function (r) {
+    r.hidden = (group && r.dataset.group !== group) || (['working', 'waiting'].indexOf(botFilter) >= 0 && r.dataset.state !== botFilter);
+  });
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.bot-filter'); if (!b) return;
+  botFilter = b.dataset.filter;
+  try { localStorage.setItem('bb.fleetFilter', botFilter); } catch (err) {}
+  applyBotFilter();
+});
+document.getElementById('bot-group').addEventListener('change', applyBotFilter);
+// The side panel of the bot named in the hash. A row's actions move into it and go back
+// when another is picked: their handlers listen on the document, so they work in either place.
+var panelRow = null;
+function closeBotPanel() {
+  var panel = document.getElementById('bot-panel');
+  if (panelRow) {
+    var acts = panelRow.querySelector('td.acts');
+    panel.querySelectorAll('[data-act]').forEach(function (x) { acts.appendChild(x); });
+    panelRow.classList.remove('sel');
+  }
+  panelRow = null; panel.hidden = true; panel.textContent = '';
+  document.getElementById('bots-split').classList.remove('open');
+}
+function openBotPanel(row) {
+  closeBotPanel(); panelRow = row; row.classList.add('sel');
+  if (row.closest('.stopped')) botFilter = 'stopped';
+  var panel = document.getElementById('bot-panel'), cell = function (l) { var c = row.querySelector('td[data-label="' + l + '"]'); return c ? c.innerHTML : ''; };
+  panel.innerHTML = '<div class="row"><b>' + row.querySelector('td.who').innerHTML + '</b>'
+    + '<button type="button" class="panel-close" aria-label="close">×</button></div>'
+    + '<div class="doing">' + row.querySelector('td.doing').innerHTML + '</div><div class="p-acts"></div><dl>'
+    + '<dt>Machine</dt><dd>' + cell('machine') + '</dd><dt>Harness</dt><dd>' + cell('harness') + '</dd>'
+    + '<dt>Group</dt><dd>' + cell('group') + '</dd><dt>Role</dt><dd>' + cell('profile') + '</dd>'
+    + '<dt>Active</dt><dd>' + cell('active') + '</dd></dl>'
+    + '<details class="p-more"><summary>Stop it now, or delete it</summary><div class="p-danger"></div></details>';
+  var acts = panel.querySelector('.p-acts'), danger = panel.querySelector('.p-danger');
+  Array.from(row.querySelector('td.acts').children).forEach(function (x) {
+    x.setAttribute('data-act', '1');
+    (x.matches('.kill, .delete-bot') ? danger : acts).appendChild(x);
+  });
+  if (!danger.children.length) panel.querySelector('.p-more').remove();
+  panel.hidden = false; document.getElementById('bots-split').classList.add('open');
+}
+document.addEventListener('click', function (ev) {
+  // replaceState and not location.hash: the browser would jump to the row
+  if (ev.target.closest('button.panel-close')) { history.replaceState(null, '', '#tab-bots'); showTarget(); return; }
+  var row = ev.target.closest('tr.bot-row'); if (!row || ev.target.closest('a,button,select,input')) return;
+  history.replaceState(null, '', '#' + row.id); showTarget();
+});
+// The hash says which tab: a tab's own name, or anything inside one, so older links such as
+// #bot-ada, #box-m1 and #secrets still land where they point, with its folded list opened.
 function showTarget() {
-  var t = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  var name = decodeURIComponent(location.hash.slice(1)), t = name && document.getElementById(name);
+  var pane = t && t.closest('.tab-pane');
+  if (!pane) pane = document.querySelector('.tab-pane.on') || document.getElementById('tab-bots');
+  document.querySelectorAll('.tab-pane').forEach(function (p) { p.classList.toggle('on', p === pane); });
+  document.querySelectorAll('.fleet-tabs a').forEach(function (a) {
+    var on = a.getAttribute('href') === '#' + pane.id;
+    a.classList.toggle('on', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  if (t && t.matches('tr.bot-row')) openBotPanel(t); else closeBotPanel();
+  applyBotFilter();
   for (var d = t && t.closest('details'); d; d = d.parentElement.closest('details')) d.open = true;
-  if (t) t.scrollIntoView({block: 'center'});
+  if (t && !t.classList.contains('tab-pane')) t.scrollIntoView({block: 'nearest'});
+  if (t && t.matches('tr.bot-row')) document.getElementById('bot-panel').scrollIntoView({block: 'nearest'});
 }
 window.addEventListener('hashchange', showTarget); showTarget();
 // Preserve expanded worker details while refreshing recovered failures off the page.
@@ -2426,11 +2496,27 @@ FLEET_CSS = """
 .fleet-page h3{font-size:14px;margin:0}
 .fleet-page .sub{color:var(--dim);margin:2px 0 12px;font-size:13px}
 .fleet-page .dim{color:var(--dim)}.fleet-page .nw{white-space:nowrap}
-.fleet-page .statstrip{display:flex;flex-wrap:wrap;gap:8px 10px;margin:0 0 22px}
-.fleet-page .statstrip .stat{font:12.5px var(--mono);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:4px 11px}
-.fleet-page .statstrip .stat b{color:var(--ink);font-weight:600}
-.fleet-page .statstrip .stat.run b{color:var(--good)}
-.fleet-page .statstrip .stat.warn{border-color:var(--accent)}.fleet-page .statstrip .stat.warn b{color:var(--accent)}
+.fleet-page .tab-pane{display:none;scroll-margin-top:400px}/* a link to a tab scrolls to it: this keeps the tabs in view */
+.fleet-page .tab-pane.on{display:block}.fleet-page tr[id]{scroll-margin-top:220px}
+.fleet-page .fleet-tabs{display:flex;flex-wrap:wrap;gap:4px 22px;border-bottom:1px solid var(--line);margin:14px 0 16px}
+.fleet-page .fleet-tabs a{padding:8px 2px;color:var(--ink);border-bottom:2px solid transparent;text-decoration:none}
+.fleet-page .fleet-tabs a.on{border-color:var(--accent);font-weight:600}.fleet-page .fleet-tabs b{color:var(--dim);font-weight:600}
+.fleet-page .warn-text{color:var(--accent)}.fleet-page .right-link{text-align:right;margin:0 0 10px}
+.fleet-page .bot-filters{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;align-items:center}
+.fleet-page .bot-filter{font-size:13px;padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);cursor:pointer}
+.fleet-page .bot-filter b{font-weight:600;color:var(--dim)}.fleet-page .bot-filter.on{background:var(--ink);border-color:var(--ink);color:var(--panel)}.fleet-page .bot-filter.on b{color:inherit}
+.fleet-page .bots-split{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:start}.fleet-page .bots-split.open{grid-template-columns:minmax(0,1fr) 300px}
+.fleet-page tr.bot-row{cursor:pointer}.fleet-page tr.bot-row:hover,.fleet-page tr.bot-row.sel{background:var(--hover,rgba(181,84,28,.06))}
+.fleet-page table.bots tr.bot-row td.acts,.fleet-page table.bots tr.bot-row td[data-label="harness"],.fleet-page tr.bot-row td .chan-edit,.fleet-page #tab-bots table.bots th:nth-child(5),.fleet-page #tab-bots table.bots th:last-child{display:none}
+.fleet-page .bot-panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;position:sticky;top:10px}
+.fleet-page .bot-panel .row{display:flex;justify-content:space-between;align-items:center;font-size:16px}.fleet-page .panel-close{border:0;background:none;font-size:18px;cursor:pointer;color:var(--dim)}
+.fleet-page .p-acts,.fleet-page .p-danger{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.fleet-page .p-more summary{cursor:pointer;color:var(--dim);font-size:12.5px}
+.fleet-page .bot-panel dl{display:grid;grid-template-columns:70px 1fr;gap:5px 8px;margin:12px 0;font-size:13px}.fleet-page .bot-panel dt{color:var(--dim)}.fleet-page .bot-panel dd{margin:0}
+body.out .fleet-page .p-acts,body.out .fleet-page .p-more,body.out .fleet-page .bot-panel .chan-edit{display:none}
+.fleet-page #fleet-skills .desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fleet-page .bots-note{margin-top:12px}
+@media (max-width:900px){.fleet-page .bots-split.open{grid-template-columns:minmax(0,1fr)}.fleet-page .bot-panel{position:static;order:-1}}
+.fleet-page table.profiles .chip{white-space:nowrap}
 .fleet-page .fleet-section{margin:0 0 28px}
 .fleet-page th button.sort{all:unset;cursor:pointer}
 .fleet-page th button.sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -2541,14 +2627,17 @@ def _versions_section(rows: list) -> str:
     summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
                if bots else "")
     behind = sum(not r["current"] for r in shown)
-    return _fleet_section("fleet-versions", f"Versions · {behind} behind" if behind else "Versions · current", summary +
+    # keepers and launchers catch up on their own; an older routine recipe waits for a person
+    ask = sum(r["what"] == "routine" and not r["current"] for r in shown)
+    title = (f'Versions · {ask} to approve' if ask else f'Versions · {behind} behind' if behind else "Versions · current")
+    return _fleet_section("fleet-versions", title, summary +
                           f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
-                          f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>')
+                          f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>', is_open=bool(ask))
 
 
-def _fleet_section(id_: str, title: str, body: str) -> str:
+def _fleet_section(id_: str, title: str, body: str, is_open: bool = True) -> str:
     """A /fleet section that folds from its heading (#281); FLEET_JS remembers which are folded."""
-    return (f'<details class="fleet-section" id="{id_}" open><summary><h2>{title}</h2></summary>'
+    return (f'<details class="fleet-section" id="{id_}"{" open" if is_open else ""}><summary><h2>{title}</h2></summary>'
             f'{body}</details>')
 
 
@@ -2579,9 +2668,17 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 
     attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
     bots_html = (_bot_table(active, others_of) if active else
-                 '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from the stopped list below.</p>')
-    stopped_html = (f'<details class="stopped" id="fleet-stopped"><summary>Stopped · {len(stopped)}</summary>'
-                    f'{_bot_table(stopped, others_of)}</details>') if stopped else ""
+                 '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from Stopped.</p>')
+    stopped_html = (f'<div class="stopped" id="fleet-stopped">{_bot_table(stopped, others_of)}</div>') if stopped else ""
+    groups = sorted({b.get("workspace") for _, b in active + stopped if b.get("workspace")}, key=str.lower)
+    chip = lambda key, label, n=None: (f'<button type="button" class="bot-filter" data-filter="{key}">{label}'
+                                       + (f' <b>{n}</b>' if n is not None else "") + '</button>')
+    state_of = lambda st: sum(b["state"]["state"] == st for _, b in active)
+    filters = ('<div class="bot-filters" role="group" aria-label="which bots">' + chip("running", "All running", len(active))
+               + chip("working", "Working", state_of("working")) + chip("waiting", "Waiting", state_of("waiting"))
+               + (chip("stopped", "Stopped", len(stopped)) if stopped else "")
+               + '<select id="bot-group" aria-label="group"><option value="">Any group</option>'
+               + "".join(f'<option>{e(g)}</option>' for g in groups) + '</select></div>')
 
     machines = []
     for h in hosts:
@@ -2623,7 +2720,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     machines_html = (('<table class="bots machines"><thead><tr>'
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
-                     '<div class="empty">No box has reported yet. Add a machine below.</div>')
+                     '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>')
     # which workspace each bot serves is on its row; the form below puts a new one in a workspace
     pooled = ""
     # The obvious way to add a bot: one form, where the box, harness and the workspace
@@ -2652,7 +2749,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <label class="fld"><span>Machine</span><select name="host" aria-label="machine">{host_opts}</select></label>
 <label class="fld"><span>Harness</span><select name="harness" aria-label="harness">{harness_opts}</select></label>
 <label class="fld"><span>Workspace</span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
-<label class="fld"><span>Profile <small>(set once)</small></span><select name="profile" aria-label="the profile the bot is added with, for life">{profile_opts}</select></label>
+<label class="fld"><span>Role <small>(its profile, set once)</small></span><select name="profile" aria-label="the profile the bot is added with, for life">{profile_opts}</select></label>
 <label class="fld"><span>Channels <small>(where it picks up threads; a specialized profile needs one)</small></span><select name="channels" multiple size="4" aria-label="channels of the workspace the bot claims new threads in"></select></label>
 <label class="fld"><span>Name <small>(optional)</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
 <div class="revive" id="revive" hidden></div>
@@ -2665,25 +2762,33 @@ It reads the profile you pick, and its skills, when its session starts, and keep
 Pick channels to have it claim new threads only there (it still answers mentions anywhere); leave them empty for a developer, which drives anything.</p>
 </details>"""
     else:
-        add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: add one below.</p>'
+        add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: <a href="#fleet-add-machine">add one</a>.</p>'
     return shell(board_name, "fleet", here="/fleet", content=f"""
 <style>{FLEET_CSS}{registry_web.REG_CSS}</style>
 <div class="fleet-page">
 <div class="fleet-head"><h1>Fleet</h1>{add_bot}</div>
-<div class="statstrip" role="status">
-<span class="stat run"><b>{working}</b> working</span>
-<span class="stat idle"><b>{waiting}</b> waiting for work</span>
-<span class="stat{" warn" if alerts else ""}"><b>{len(alerts)}</b> need{"s" if len(alerts) == 1 else ""} you</span>
-<span class="stat"><b>{len(stopped)}</b> stopped</span>
-<span class="stat"><b>{len(reporting)} of {_plural(len(hosts), "machine")}</b> reporting</span>
-</div>
 {attention}
-{_fleet_section("fleet-bots", f"Bots · {len(active)}", bots_html + stopped_html)}
-{_fleet_section("fleet-machines", f"Machines · {len(hosts)}", machines_html)}
-{registry_web.skills_section(list(skills), list(profiles))}
-{registry_web.profiles_section(list(profiles), orphans)}
-{versions_html}
-<details class="fleet-settings" id="fleet-add-machine"><summary>Add a machine</summary>
+<nav class="fleet-tabs" aria-label="Fleet">
+<a href="#tab-bots">Bots <b>{len(active)}</b>{f' <span class="dim">· {len(stopped)} stopped</span>' if stopped else ""}</a>
+<a href="#tab-machines">Machines <b>{len(hosts)}</b>{f' <span class="warn-text">· {len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""}</a>
+<a href="#tab-roles">Roles <b>{len(profiles)}</b></a>
+<a href="#tab-settings">Settings</a>
+</nav>
+<noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
+<div class="tab-pane" id="tab-bots">{filters}
+<div class="bots-split" id="bots-split"><div class="bots-lists">
+<section class="fleet-section" id="fleet-bots">{bots_html}</section>{stopped_html}</div>
+<aside class="bot-panel" id="bot-panel" hidden aria-label="Selected bot"></aside></div>
+<p class="sub bots-note">Pick a bot to see what you can do with it. Stop finishes the run a bot is in; kill cuts it short. The keeper on each
+machine carries out requests within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p></div>
+<div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
+<section class="fleet-section" id="fleet-machines">{machines_html}</section>
+{versions_html}</div>
+<div class="tab-pane" id="tab-roles">{registry_web.profiles_section(list(profiles), orphans)}
+<details class="fleet-settings" id="fleet-all-skills"><summary>All {len(skills)} skills</summary>
+{registry_web.skills_section(list(skills), list(profiles))}</details></div>
+<div class="tab-pane" id="tab-settings">
+<details class="fleet-settings" id="fleet-add-machine" open><summary>Add a machine</summary>
 <p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
 <h3>1. Before you start</h3>
 <p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
@@ -2700,9 +2805,7 @@ If this board requires an invite code, configure it on the machine before instal
 <h3>3. Your machine appears here</h3>
 <p class="sub">Once the keeper reports in, add a bot on it.</p>
 </details>
-<details class="fleet-settings" id="secrets"><summary>Settings: shared secrets and project pools</summary>
-<p class="sub">Stop finishes the run a bot is in; kill cuts it short. The keeper on each machine carries out requests
-within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p>{pooled}
+<details class="fleet-settings" id="secrets" open><summary>Shared secrets and project pools</summary>{pooled}
 <p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
 on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
 shown again. To log Claude Code in on every machine at once, run <code>claude setup-token</code> on a machine with a
@@ -2712,7 +2815,7 @@ subscription's usage limits.</p>
 <form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
  autocomplete="off" required> <button type="submit">save</button></form></details>
-</div>
+</div></div>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 
 
