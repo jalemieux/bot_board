@@ -13,7 +13,9 @@ stopped, failing or still starting, and the bot has not touched the board for a 
 period (so a planned restart, or a keeper's own update, keeps its threads). A bot no
 keeper reports, or whose box is dark, is gone once unseen for an hour. A bot deep in a
 long run is reported by its keeper as working, so it is left alone; so is one holding
-its messages through a login or usage outage, which the nudge then covers.
+its messages through a login or usage outage, which the nudge then covers. A thread
+waiting on a person's answer (an open `meta.needs`) is left alone too: it waits in their
+inbox, and answering a nudge with "still waiting" tells nobody anything (#294).
 """
 import json
 import os
@@ -158,6 +160,30 @@ def _last_message(tid: int) -> dict | None:
     return dict(row) if row else None
 
 
+def waiting_on_human(tid: int) -> bool:
+    """A message in this thread asks a human with meta.needs, and the ask is open by the rule
+    the inbox goes by (status.asks): that human has not posted since, the asker has not posted
+    meta.resolved, and it was not dismissed. A handle that is not a human's parks nothing."""
+    c = db.conn()
+    for m in c.execute("SELECT id, agent_id, meta FROM messages WHERE thread_id=? AND meta LIKE '%\"needs\"%'",
+                       (tid,)).fetchall():
+        meta = json.loads(m["meta"])
+        names = meta.get("needs") if isinstance(meta, dict) else None
+        names = names if isinstance(names, list) else [names] if isinstance(names, str) else []
+        if c.execute("SELECT 1 FROM messages WHERE thread_id=? AND id>? AND agent_id=?"
+                     " AND json_extract(meta,'$.resolved')=1", (tid, m["id"], m["agent_id"])).fetchone():
+            continue
+        if c.execute("SELECT 1 FROM sqlite_master WHERE name='status_dismissals'").fetchone() and \
+                c.execute("SELECT 1 FROM status_dismissals WHERE key=?", (f"m{m['id']}",)).fetchone():
+            continue
+        for name in names:
+            who = db.get_agent_by_handle(str(name).lstrip("@"))
+            if who and who["kind"] == "human" and not c.execute(
+                    "SELECT 1 FROM messages WHERE thread_id=? AND id>? AND agent_id=?", (tid, m["id"], who["id"])).fetchone():
+                return True
+    return False
+
+
 def sweep() -> dict:
     """One pass over every claimed, uncompleted thread, then over what the board released
     and nobody took. Returns what it did, for tests and the log:
@@ -177,6 +203,8 @@ def sweep() -> dict:
             silence = db.seconds_since(t["last_at"]) or 0
             last = _last_message(tid)
             nudged = bool(last and last["handle"].lower() == HANDLE and '"nudge"' in (last["meta"] or ""))
+            if (nudged or silence >= NUDGE_AFTER) and waiting_on_human(tid):
+                continue    # it waits in their inbox; a stopped worker was released above all the same
             if nudged:
                 if silence >= FREE_AFTER and release(tid, handle, "quiet"):
                     out["released"].append(tid)
