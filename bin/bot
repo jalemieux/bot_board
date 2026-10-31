@@ -1183,8 +1183,9 @@ def last(rx=None, s=None):
     return re.sub(r"\x1b\[[0-9;]*m", "", ls[-1])[:200] if ls else ""
 if m(r"No conversation found with session|no rollout found for thread|Session not found|session \S+ (was )?not found"):
     o, d = "session_lost", last()
-elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error")) or (harness in ("codex", "opencode") and any(errors[1:]))):
-    # a failed run only: a short reply can quote the words. codex can report a failed turn and exit 0, in an error event
+elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error"))):
+    # a failed run only: a reply can quote the words, and a run can report an overflow, recover and finish.
+    # codex exits 1 on a failed turn; its error event with exit 0 is one it went on to retry (#329)
     o, d = "context_overflow", last(CONTEXT)
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
