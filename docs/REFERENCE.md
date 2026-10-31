@@ -756,8 +756,9 @@ set), **Needs you** and `GET /api/status` say to replace it.
 | copilot | the fleet secret `COPILOT_GITHUB_TOKEN`, read from the environment; see *Copilot and `GH_TOKEN`* below | not yet: installed counts as logged in | the Copilot plan |
 | opencode | the provider's key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | not yet: installed counts as logged in | the provider's API usage |
 
-Do not set a fleet `OPENAI_API_KEY` for codex: it would bill the OpenAI API, and
-codex does not read it from the environment anyway. `CODEX_ACCESS_TOKEN`, which
+A fleet `OPENAI_API_KEY` does not log codex in: codex ignores it in the
+environment. Storing a key with `codex login --with-api-key` would, and it bills
+the OpenAI API, so we don't. `CODEX_ACCESS_TOKEN`, which
 codex does read from the environment, is documented for ChatGPT Enterprise only.
 
 Each report tells a keeper which version of the secrets the board holds. When
