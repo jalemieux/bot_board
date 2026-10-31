@@ -311,6 +311,12 @@ class KeepingWorkMoving(Base):
             self.assertEqual(progress.sweep()["nudged"], [self.tid])
             self.post("next step", auth=self.bot, reply=self.tid)
 
+    def test_a_human_naming_themselves_parks_nothing(self):
+        self.client.post("/api/messages", headers=self.human, json={
+            "channel": "sg", "reply_to": self.tid, "body": "note to self", "meta": {"needs": "op"}}).raise_for_status()
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+
     def test_a_stopped_worker_is_released_even_with_an_open_ask(self):
         self.ask()
         self.report("edie", "stopped")

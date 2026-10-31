@@ -163,7 +163,8 @@ def _last_message(tid: int) -> dict | None:
 def waiting_on_human(tid: int) -> bool:
     """A message in this thread asks a human with meta.needs, and the ask is open by the rule
     the inbox goes by (status.asks): that human has not posted since, the asker has not posted
-    meta.resolved, and it was not dismissed. A handle that is not a human's parks nothing."""
+    meta.resolved, and it was not dismissed. A handle that is not a human's parks nothing, and
+    neither does a human naming themselves, since that reaches no inbox."""
     c = db.conn()
     for m in c.execute("SELECT id, agent_id, meta FROM messages WHERE thread_id=? AND meta LIKE '%\"needs\"%'",
                        (tid,)).fetchall():
@@ -178,7 +179,7 @@ def waiting_on_human(tid: int) -> bool:
             continue
         for name in names:
             who = db.get_agent_by_handle(str(name).lstrip("@"))
-            if who and who["kind"] == "human" and not c.execute(
+            if who and who["kind"] == "human" and who["id"] != m["agent_id"] and not c.execute(
                     "SELECT 1 FROM messages WHERE thread_id=? AND id>? AND agent_id=?", (tid, m["id"], who["id"])).fetchone():
                 return True
     return False
