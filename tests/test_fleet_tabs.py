@@ -130,6 +130,59 @@ class FleetTabs(unittest.TestCase):
                         self.page.eval_on_selector("#fleet-bots", "t => t.getBoundingClientRect().top"), "the panel comes first")
         self.assertEqual(self.errors, [])
 
+    def hold_a_thread(self, handle="ann"):
+        """Report the bot as holding an open thread, so stop asks about it."""
+        b = self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code"}).json()
+        h = {"Authorization": "Bearer " + b["token"]}
+        tid = self.client.post("/api/messages", headers=h, json={"channel": "general", "body": "work"}).json()["message"]["id"]
+        self.client.post(f"/api/threads/{tid}/worker", headers=h).raise_for_status()
+
+    def test_the_keyboard_reaches_a_bots_actions(self):
+        self.go()
+        self.page.focus("#bot-bob button.open-bot")
+        self.page.keyboard.press("Enter")
+        self.page.wait_for_selector("#bot-panel button[data-handle='bob']")
+        self.assertTrue(self.page.evaluate("document.activeElement.closest('#bot-panel') !== null"), "focus goes to the panel")
+        self.assertEqual(self.page.locator("#bot-panel .open-bot").count(), 0)
+        self.page.click("#bot-panel .panel-close")
+        self.assertEqual(self.page.evaluate("document.activeElement.getAttribute('aria-label')"), "Actions for @bob", "focus comes back")
+        self.assertEqual(self.errors, [])
+
+    def test_a_link_changes_the_filters_that_would_hide_what_it_names(self):
+        self.go()
+        for stored in ("stopped", "working"):
+            with self.subTest(stored):
+                self.page.evaluate(f"localStorage.setItem('bb.fleetFilter', '{stored}')")
+                self.go("#bot-bob")
+                self.page.reload()
+                self.assertIn("bot-bob", self.rows())
+                self.assertEqual(self.page.eval_on_selector("#bot-bob", "r => r.classList.contains('sel')"), True)
+        self.page.evaluate("localStorage.setItem('bb.fleetFilter', 'running')")
+        self.go("#fleet-stopped")
+        self.page.reload()
+        self.assertEqual(self.rows(), ["bot-cat"])
+        self.assertEqual(self.errors, [])
+
+    def test_the_stop_question_stays_in_view_whatever_the_filter(self):
+        self.hold_a_thread()
+        for size in ({"width": 1280, "height": 760}, {"width": 420, "height": 800}):
+            with self.subTest(size):
+                self.page.set_viewport_size(size)
+                self.go("#bot-ann")
+                self.page.reload()
+                self.page.click("button.bot-filter[data-filter='stopped']")      # the row goes, the panel stays
+                self.page.click("#bot-panel button[data-handle='ann'][data-run='0'][data-open]")
+                self.assertTrue(self.page.is_visible("#bot-panel #stop-ann input[value='handoff']"))
+                box = self.page.locator("#stop-ann .stop-go").bounding_box()
+                self.assertLess(box["y"] + box["height"], size["height"], "the question is on screen")
+                self.page.click("#stop-ann .stop-cancel")
+                self.assertFalse(self.page.is_visible("#stop-ann"))
+                self.page.click("button.bot-filter[data-filter='running']")
+                self.page.click("#bot-bob td.doing")
+                self.page.wait_for_selector("#bot-panel button[data-handle='bob']")
+                self.assertEqual(self.page.eval_on_selector("#bot-ann + tr.stop-panel", "r => r.id"), "stop-ann", "it goes back after its row")
+        self.assertEqual(self.errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()
