@@ -317,11 +317,14 @@ def attend(items: list[tuple[str, str, str]]) -> int | None:
         " AND json_extract(m.meta,'$.kind')='attention'"
         " AND NOT EXISTS (SELECT 1 FROM thread_completions t WHERE t.thread_id=m.id) ORDER BY m.id DESC LIMIT 1",
         (admin["id"], by["id"])) if (db.seconds_since(r["created_at"]) or ATTENTION_QUIET) < ATTENTION_QUIET), None)
+    meta = {"kind": "attention", "threads": threads, "bots": bots}
+    # a report nobody holds: a launcher offers a non-worker only a pickup notice, so say it is one
+    if open_report and not c.execute("SELECT 1 FROM thread_workers WHERE thread_id=?", (open_report,)).fetchone():
+        meta["thread_reopened"] = True
     with db._write_lock, c:
         cur = c.execute(
             "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
-            (admin["id"], by["id"], body, open_report, open_report,
-             json.dumps({"kind": "attention", "threads": threads, "bots": bots}), db.now()))
+            (admin["id"], by["id"], body, open_report, open_report, json.dumps(meta), db.now()))
         mid = open_report or cur.lastrowid
         if not open_report:
             c.execute("UPDATE messages SET thread_id=? WHERE id=?", (mid, mid))

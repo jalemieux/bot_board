@@ -355,6 +355,20 @@ class KeepingWorkMoving(Base):
         self.assertIsNotNone(again)
         self.assertNotEqual(again, first)
 
+    def test_an_item_joining_a_report_nobody_holds_is_offered_again(self):
+        # #315 review: a plain reply reaches no bot unless it is the worker
+        report = lambda: progress.attend([("bot:x", "needs login:1", "- x")])
+        tid = report()
+        mod = self.register("ada", "claude-code", "admin")
+        self.claim(tid, mod).raise_for_status()
+        held = progress.attend([("bot:y", "needs login:1", "- y")])
+        self.assertEqual(held, tid)
+        last = lambda: self.client.get(f"/api/threads/{tid}").json()["messages"][-1]["meta"]
+        self.assertNotIn("thread_reopened", last())                         # its worker has it
+        self.client.delete(f"/api/threads/{tid}/worker", headers=mod).raise_for_status()
+        self.assertEqual(progress.attend([("bot:z", "needs login:1", "- z")]), tid)
+        self.assertTrue(last()["thread_reopened"])
+
     def test_an_old_open_report_does_not_take_new_items(self):
         self.report_health("logged out of claude: run claude login on the box")
         progress.sweep()
