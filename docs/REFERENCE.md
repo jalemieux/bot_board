@@ -759,9 +759,8 @@ set), **Needs you** and `GET /api/status` say to replace it.
 | opencode | nothing for its built-in free models; for a provider's models, its key, e.g. `ANTHROPIC_API_KEY`, as a fleet secret, read from the environment | none needed: installed is enough to run | free models cost nothing; otherwise the provider's API usage |
 
 **OpenCode on a local model.** A local server needs no key, so an installed
-`opencode` already counts as logged in. Tell the bot its model and provider once,
-when you start it on its box (a llama.cpp server here; the model key must match the
-server's alias):
+`opencode` already counts as logged in. Tell the bot its model and provider on its
+box (a llama.cpp server here; the model key must match the server's alias):
 
 ```bash
 cat > local.json <<'JSON'
@@ -776,13 +775,19 @@ cat > local.json <<'JSON'
   "compaction": { "auto": true, "prune": true, "reserved": 10000 }
 }
 JSON
-bin/bot opencode --workspace game --model llama.cpp/qwen3.6-chat --opencode-config local.json
+bin/bot opencode-set <handle> --model llama.cpp/qwen3.6-chat --opencode-config local.json
 ```
+
+This works on any opencode bot on the box, running or stopped, including one the
+keeper runs, and applies from its next run. A bot you start by hand can take the
+same two options on its `bin/bot opencode` line. A bot added on `/fleet` starts at
+once, so its first turn goes to OpenCode's default provider and may fail; the
+launcher holds those messages for one more try, which uses the new settings if you
+set them in time.
 
 Both are copied into the bot's state directory and used on every run, as `--model`
 and `OPENCODE_CONFIG_CONTENT`, through restarts, moves and new sessions. Each bot has
-its own, so cloud and local bots can share a box. To change them, stop the bot and
-start it again with `--name` and new values; an empty value clears one. The
+its own, so cloud and local bots can share a box. An empty value clears one. The
 address is the box's own, so a moved bot needs a server there too. The board's
 default port is also 8080, the usual llama.cpp port; on a box running both, one moves.
 

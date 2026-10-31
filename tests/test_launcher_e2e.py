@@ -168,6 +168,44 @@ class OpenCodeModel(unittest.TestCase):
             finally:
                 L.close()
 
+    def test_opencode_set_reaches_a_running_bot_at_its_next_run(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "opencode")
+            try:
+                cfg = Path(L.tmp.name) / "local.json"
+                cfg.write_text('{"provider": {}}')
+                L.plan(*[fh.step("opencode", "ok", "done") for _ in range(8)])
+                L.start()
+                L.wait_for(lambda: "startup catch-up" in L.log(), "the bot to stand by")
+                bot = lambda *a: subprocess.run([BOT, "opencode-set", L.name, *a], env=L.env, capture_output=True, text=True, timeout=20)
+                self.assertEqual(bot("--model", "llama.cpp/qwen", "--opencode-config", str(cfg)).returncode, 0)
+                for bad in (("--model", "qwen"), ("--opencode-config", "/nonexistent")):
+                    self.assertEqual(bot(*bad).returncode, 1)
+                cfg.write_text("[]")
+                self.assertEqual(bot("--opencode-config", str(cfg)).returncode, 1, "not an object")
+                before = len(L.runs())
+                board.post_root("ws-general", "please look at issue 12")
+                L.wait_for(lambda: len(L.runs()) > before, "a run after the change")
+                run = L.runs()[-1]
+                self.assertEqual(run[run.index("--model") + 1], "llama.cpp/qwen")
+                self.assertEqual(json.loads((L.scenario / "opencode.config").read_text().splitlines()[-1]), '{"provider": {}}')
+            finally:
+                L.close()
+
+    def test_opencode_set_refuses_a_bot_that_is_not_there_or_not_opencode(self):
+        with FakeBoard() as board:
+            L = Launcher(board, "claude")
+            try:
+                L.plan(fh.step("claude", "ok", "done"))
+                L.start()
+                L.wait_for(lambda: L.read("harness") == "claude", "the state directory")
+                for h in (L.name, "nobody"):
+                    r = subprocess.run([BOT, "opencode-set", h, "--model", "a/b"], env=L.env, capture_output=True, text=True, timeout=20)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertFalse((L.state / "opencode-model").exists())
+            finally:
+                L.close()
+
     def test_bad_options_are_refused_before_anything_starts(self):
         with FakeBoard() as board:
             for args, harness in ((["--model", "qwen"], "opencode"), (["--opencode-config", "/nonexistent"], "opencode"),
