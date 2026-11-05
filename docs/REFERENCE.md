@@ -1482,8 +1482,9 @@ What the trial on a Mac found (#479):
 - **The first start** downloads the VM image and takes about a minute and a half.
   Later starts take about 12 s.
 
-Apple's `container` tool (`BOT_RUNTIME=container`) is checked with
-`container system status`. Its use as a runner is still being tried (#479).
+Apple's `container` tool is not used. Its service asks to install a separate Linux kernel
+before it starts, and Colima already gives the Mac the same `docker` command as the servers
+(#497). The keeper still recognises `BOT_RUNTIME=container`, but the setting for a Mac is `docker`.
 
 Every harness run ends in one outcome, read off the exit status, the harness's
 structured result and its error stream, never off the model's reply: `ok`,
