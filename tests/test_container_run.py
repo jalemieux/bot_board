@@ -173,6 +173,31 @@ class ContainerRun(unittest.TestCase):
         self.assertFalse(any(a.endswith(":/work") for a in c), "box mode mounts no checkout: %s" % c)
         self.assertNotIn("BOARD", c, "box mode does not pass the board vars: %s" % c)
 
+    def test_claude_token_from_env_is_forwarded_to_the_bot_container(self):
+        # claude's token often lives in the launcher env (claude setup-token), not fleet.env, so it
+        # is not in $_FLEET_SET; container_run must forward it or claude is logged out inside (#306)
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "CLAUDE_CODE_OAUTH_TOKEN": "dummy-oauth-token"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, "claude token forwarded by name: %s" % run)
+        self.assertNotIn("dummy-oauth-token", " ".join(run), "passed by name, not value")
+
+    def test_claude_token_from_env_is_forwarded_in_box_mode(self):
+        # the keeper's login check runs in box mode and needs the token the same way
+        self.log.write_text("")
+        env = self.sub_env({"CLAUDE_CODE_OAUTH_TOKEN": "dummy-oauth-token"})
+        r = self.run_sub(["--box", "claude", "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, run)
+
     def test_empty_checkout_fails_loud_with_exit_97(self):
         self.log.write_text("")
         empty = tempfile.mkdtemp()
