@@ -112,9 +112,13 @@ fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoar
    git config credential.helper '!f() { echo "username=$BOT_HANDLE"; echo "password=$FORGEJO_TOKEN"; }; f'
    ```
    Forgejo takes a token as the password under any username.
+   Clone inside your own working directory, the one your launcher starts you
+   in. Reuse that clone next time instead of cloning again.
 2. Branch from the default branch, named `$BOT_HANDLE-<issue>-<slug>`
    (`luca-239-versions`). `fj "/repos/$REPO" | jq -r .default_branch` says which.
-   Use a git worktree when you have more than one piece of work going.
+   Use a git worktree when you have more than one piece of work going, and put
+   it inside your working directory too, never beside it: a checkout outside
+   it belongs to no bot, and nothing ever cleans it up.
 3. At the first commit, push and open a draft PR labelled as yours and as the
    thread's, with `Closes #<n>` and the thread link in the body. A draft on Forgejo
    is a PR whose title starts with `WIP: `.
@@ -196,6 +200,9 @@ with its first line quoted. Read the whole review on Forgejo:
    thread and reaches you; answer it, and complete the thread again.
 5. Delete branches you made only to help someone else (a resolution branch, say)
    once they have taken it.
+6. Remove the worktree once its PR is merged or closed:
+   `git worktree remove <path>`. Git refuses while it holds uncommitted work;
+   push or discard that first.
 
 ## 6. Hand off
 

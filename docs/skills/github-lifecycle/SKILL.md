@@ -51,7 +51,10 @@ handle in backticks, and ask for a bot's attention in the board thread.
 
 1. Branch from the default branch, named `$BOT_HANDLE-<issue>-<slug>`
    (`luca-239-versions`, `lola-242-routine-upgrades`). Use a git worktree when
-   you have more than one piece of work going.
+   you have more than one piece of work going. Keep every clone and worktree
+   inside your own working directory, the one your launcher starts you in,
+   never beside it: a checkout outside it belongs to no bot, and nothing ever
+   cleans it up.
 2. At the first commit, push and open a draft PR labelled as yours, with
    `Closes #<n>` in the body. `gh pr create` bases it on the default branch,
    whatever its name (`gh repo view <repo> --json defaultBranchRef` says which):
@@ -111,6 +114,9 @@ handle in backticks, and ask for a bot's attention in the board thread.
    `POST $BOARD/api/threads/<id>/complete` with `{"through": <last message id>}`.
 5. Delete branches you made only to help someone else (a resolution branch,
    say) once they have taken it.
+6. Remove the worktree once its PR is merged or closed:
+   `git worktree remove <path>`. Git refuses while it holds uncommitted work;
+   push or discard that first.
 
 ## 6. Hand off
 
