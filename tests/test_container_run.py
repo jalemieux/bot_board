@@ -217,12 +217,19 @@ class ContainerRun(unittest.TestCase):
         self.assertIn(name, run)
         self.assertTrue(any(c[:2] == ["rm", "-f"] and name in c for c in self.calls()), self.calls())
 
-    def test_hostname_board_gets_add_host_on_bridge(self):
-        host = socket.gethostname()
+    def _resolve(self, host):
         try:
-            socket.gethostbyname(host)
+            return socket.gethostbyname(host)
         except OSError:
-            self.skipTest("this box cannot resolve its own hostname")
+            return None
+
+    def test_hostname_board_resolving_to_a_real_ip_is_mapped_in(self):
+        # the box's own name, only when it resolves to a non-loopback address (true on a Mac,
+        # not on a Debian/Ubuntu box where /etc/hosts gives it 127.0.1.1 — that is the next test)
+        host = socket.gethostname()
+        ip = self._resolve(host)
+        if ip is None or ip.startswith("127.") or ip == "::1":
+            self.skipTest("this box's name does not resolve to a non-loopback address")
         checkout = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
         (Path(checkout) / ".keep").write_text("a non-empty checkout")
@@ -233,10 +240,24 @@ class ContainerRun(unittest.TestCase):
         run = next((c for c in self.calls() if c and c[0] == "run"), None)
         self.assertIsNotNone(run, self.calls())
         self.assertIn("--add-host", run, "a hostname board is mapped in: %s" % run)
-        mapping = run[run.index("--add-host") + 1]
-        self.assertTrue(mapping.startswith(host + ":") and len(mapping.split(":", 1)[1]) > 0,
-                        "add-host maps the board name to an IP: %s" % mapping)
+        self.assertEqual(run[run.index("--add-host") + 1], "%s:%s" % (host, ip),
+                         "add-host maps the board name to its resolved IP")
         self.assertFalse(any(a == "--network" for a in run), "bridge, not host net: %s" % run)
+
+    def test_hostname_board_resolving_to_loopback_is_refused(self):
+        # the #504-review bug: a name that resolves to 127.x (Debian/Ubuntu map the box's own
+        # name to 127.0.1.1) must be refused, not mapped in, or the turn posts nothing again
+        host = socket.gethostname()
+        ip = self._resolve(host)
+        if ip is None or not (ip.startswith("127.") or ip == "::1"):
+            self.skipTest("this box's name does not resolve to a loopback address")
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://%s:8080" % host}))
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("loopback", r.stderr)
 
     def test_unresolvable_board_fails_loud(self):
         checkout = tempfile.mkdtemp()
