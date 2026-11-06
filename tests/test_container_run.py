@@ -7,6 +7,7 @@ Nothing here needs docker. Run with python -m unittest discover -s tests."""
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -34,7 +35,7 @@ if log:
         fh.write(json.dumps(argv) + "\n")
 if not argv or argv[0] != "run":
     sys.exit(0)   # e.g. `rm -f <name>` from bot kill: recorded above, nothing to simulate
-takes_value = {"-e", "--user", "-w", "-v", "--env-file", "--name"}
+takes_value = {"-e", "--user", "-w", "-v", "--env-file", "--name", "--network", "--add-host"}
 i, mounts, workdir, image, cmd = 1, [], None, None, None
 while i < len(argv):
     a = argv[i]
@@ -187,29 +188,77 @@ class ContainerRun(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("needs --dir", r.stderr)
 
-    def test_loopback_board_is_refused_in_a_bot_container(self):
+    def test_loopback_board_is_refused_on_bridge(self):
         checkout = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
         (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        # a loopback board the container cannot reach is refused, naming the setting
+        # a loopback board the bridge container cannot reach is refused, naming the setting
         r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
                          self.sub_env({"BOARD": "http://127.0.0.1:8080"}))
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("could not reach the board", r.stderr)
-        # the host-network opt-out allows it, and the run carries the kill name --name ...-run
+        self.assertIn("cannot reach", r.stderr)
+
+    def test_host_network_opt_out_adds_network_host(self):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
         self.log.write_text("")
-        r2 = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
-                          self.sub_env({"BOARD": "http://127.0.0.1:8080", "BOT_CONTAINER_HOST_NETWORK": "1"}))
-        self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
-        calls = self.calls()
+        # with the opt-out a loopback board is allowed and the run gets --network host
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://127.0.0.1:8080", "BOT_CONTAINER_HOST_NETWORK": "1"}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("--network", run, run)
+        self.assertEqual(run[run.index("--network") + 1], "host", run)
+        self.assertFalse(any(a == "--add-host" for a in run), "host net needs no add-host: %s" % run)
+        # the kill name and the stale-leftover cleanup still hold
         name = "bot_board-tbot-run"
-        self.assertTrue(any(call and call[0] == "run" and name in call for call in calls),
-                        "bot mode names the container for kill: %s" % calls)
-        # a stale leftover of that name is cleared before the run (a crashed launcher leaves one)
-        rm_i = next((i for i, c in enumerate(calls) if c[:2] == ["rm", "-f"] and name in c), None)
-        run_i = next((i for i, c in enumerate(calls) if c and c[0] == "run" and name in c), None)
-        self.assertIsNotNone(rm_i, "a leftover-container cleanup ran: %s" % calls)
-        self.assertLess(rm_i, run_i, "cleanup runs before the container: %s" % calls)
+        self.assertIn(name, run)
+        self.assertTrue(any(c[:2] == ["rm", "-f"] and name in c for c in self.calls()), self.calls())
+
+    def test_hostname_board_gets_add_host_on_bridge(self):
+        host = socket.gethostname()
+        try:
+            socket.gethostbyname(host)
+        except OSError:
+            self.skipTest("this box cannot resolve its own hostname")
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://%s:8080" % host}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("--add-host", run, "a hostname board is mapped in: %s" % run)
+        mapping = run[run.index("--add-host") + 1]
+        self.assertTrue(mapping.startswith(host + ":") and len(mapping.split(":", 1)[1]) > 0,
+                        "add-host maps the board name to an IP: %s" % mapping)
+        self.assertFalse(any(a == "--network" for a in run), "bridge, not host net: %s" % run)
+
+    def test_unresolvable_board_fails_loud(self):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://no-such-host.invalid:8080"}))
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("cannot resolve", r.stderr)
+
+    def test_bare_ip_board_needs_no_mapping(self):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://93.184.216.34:8080"}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertFalse(any(a in ("--add-host", "--network") for a in run),
+                         "a bare IP board needs neither mapping nor host net: %s" % run)
 
     def test_kill_removes_the_named_container(self):
         with FakeBoard() as board:

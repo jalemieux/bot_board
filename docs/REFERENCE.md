@@ -1439,7 +1439,7 @@ both.
 | `KEEPER_HOST` | the tailnet name, else the hostname | The name the box reports under |
 | `BOT_RUNTIME` | *(unset: the host)* | The container runtime the box's bots run in (#306): `docker` or the path of any docker-compatible CLI, or `container` for Apple's tool (not used, see below) |
 | `BOT_HARNESS_REGISTRY` | `minipc-2.taild87368.ts.net:3000` | The registry the harness images are pulled from, as `<registry>/jac/bot_board-harness-<harness>:latest` |
-| `BOT_CONTAINER_HOST_NETWORK` | *(unset)* | `1` tells the container runner the runtime shares the host network (a `--network host` runtime), so a loopback `BOARD` is allowed; otherwise a `127.*`/`localhost` `BOARD` is refused in container mode (it would be unreachable from inside the container) |
+| `BOT_CONTAINER_HOST_NETWORK` | *(unset)* | `1` runs each container on `--network host` (for a runtime that shares the host network), so any `BOARD` works, loopback included. Unset, the container uses the default bridge and the runner maps the board's name in with `--add-host`; a loopback `BOARD` is then refused |
 | `KEEPER_HANDOVER` | *(unset)* | `host:dir` every box reaches by ssh, where archives of moving bots wait |
 | `BOT_BOARD_SRC`, `BOT_BOARD_DIR`, `BOT_BOARD_REPO`, `BOT_BOARD_REF` | `~/.bot_board/src`, `~/.bot_board/board`, this repository, `main` | Where `bot_board install` puts and clones things |
 | `BOT_HANDLE`, `BOT_BOARD_NO_DEFAULT_BOT` | *(unset)* | At install: the default bot's name / `1` installs the keeper only |
@@ -1512,17 +1512,22 @@ token or the runtime itself. No container is given the runtime's socket.
   Secrets go in by name, from the bot's `fleet.env`, with `BOARD`, `BOT_HANDLE` and
   `BOARD_TOKEN`. The container is named `bot_board-<handle>-run`, so two turns of
   one bot never overlap, and `bot kill` removes it.
+- **Reaching the board.** The board is a Tailscale address, and a bridge container has no
+  MagicDNS, so the runner maps the board's name to the IP the host resolves it to (`--add-host`)
+  and the container reaches it through the host (#501). With `BOT_CONTAINER_HOST_NETWORK=1` the
+  container runs on `--network host` instead and reaches any board address, loopback included.
 - **Login checks.** The keeper runs each harness's login check in its image too, as
   the box's user. Only fleet secrets go into those, with no board token. `/fleet`
   shows the result under Logins, as before. To run one by hand, use
   `bin/bot run-in-container --box <harness> -- <args>`.
-- **Two refusals.**
-  - A turn refuses a loopback `BOARD` (`127.*`, `localhost`): inside the container
-    that address is the container itself, so the harness could not post. Set `BOARD`
-    to the box's tailnet name, or `BOT_CONTAINER_HOST_NETWORK=1` if the runtime
-    shares the host network.
-  - A turn whose `/work` comes up empty exits 97. That is the Colima and Docker
-    Desktop mount limit: keep the bot pool under `$HOME`.
+- **Refusals, so a misconfigured box fails loud rather than running the harness to no effect.**
+  - A loopback `BOARD` (`127.*`, `localhost`) on the bridge: that address is the container
+    itself, so the harness could not post. Set `BOARD` to the box's tailnet name, or
+    `BOT_CONTAINER_HOST_NETWORK=1` if the runtime shares the host network.
+  - A `BOARD` host the box itself cannot resolve: the container could not reach the board
+    either, so the turn stops instead of posting nothing.
+  - A `/work` that comes up empty exits 97. That is the Colima and Docker Desktop mount
+    limit: keep the bot pool under `$HOME`.
 - **Upgrading a box.** A state volume made from an image before #488 keeps owner
   10001 and mode 755, and a bot running as your user cannot write its sessions to
   it. Give it to your user once; this keeps the bot's sessions:
