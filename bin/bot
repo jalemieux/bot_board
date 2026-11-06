@@ -299,8 +299,14 @@ container_run() {
           board_ip=$(python3 -c 'import socket, sys
 try: print(socket.gethostbyname(sys.argv[1]))
 except OSError: pass' "$board_host" 2>/dev/null || true)
-          if [ -n "$board_ip" ]; then run+=(--add-host "$board_host:$board_ip")
-          else echo "bot: cannot resolve the BOARD host $board_host on this box, so the container could not reach the board; check BOARD and the box's DNS." >&2; return 1; fi ;;
+          case $board_ip in
+            "") echo "bot: cannot resolve the BOARD host $board_host on this box, so the container could not reach the board; check BOARD and the box's DNS." >&2; return 1 ;;
+            # a name that resolves to loopback (Debian/Ubuntu map the box's own name to 127.0.1.1
+            # in /etc/hosts) would map to the container itself, the silent failure #501 exists to
+            # stop (jade, PR #504 review). Refuse it like a loopback name.
+            127.*|::1) echo "bot: BOARD host $board_host resolves to $board_ip, a loopback address the container would read as itself (some boxes map their own name to 127.0.1.1). Set BOARD to the box's tailnet name, or BOT_CONTAINER_HOST_NETWORK=1 for a --network host runtime, before enabling BOT_RUNTIME." >&2; return 1 ;;
+            *) run+=(--add-host "$board_host:$board_ip") ;;
+          esac ;;
         *) : ;;   # a bare IP: a bridge container routes to it through the host, no mapping needed
       esac
     fi
