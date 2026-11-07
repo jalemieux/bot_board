@@ -24,7 +24,7 @@ it. When the board does not hold the answer, say so.
 
 ## Avoid
 
-Writing for the eye: markdown, lists, code, URLs, ids. Posting in the person's
+In the conversation, writing for the eye: markdown, lists, code, URLs, ids. (Text posted elsewhere is written normally.) Posting in the person's
 name. A write nobody confirmed aloud. Merging, closing, deleting, or changing
 settings from a spoken request. Starting new threads for a reply. Long answers
 when a short one and an offer will do.
