@@ -40,7 +40,7 @@ endpoint map at `/api/admin`, and the pages themselves.
   is never released for being quiet: silent for hours it gets one nudge, and with
   no movement a day later a moderator is told; the thread stays with it.
 - What that cannot settle comes to you as a thread in the admin channel: a thread
-  released twice, a released thread nobody claimed for hours, a running worker that
+  released twice, a released thread nobody claimed for hours, a worker not reported stopped that
   never answered its nudge, and a bot that has
   needed a person for a while (logged out, out of usage, failing to run), with the
   machine and what its launcher reported.

@@ -212,7 +212,7 @@ def sweep() -> dict:
                 continue    # it waits in their inbox; a stopped worker was released above all the same
             if nudged:
                 if silence >= FREE_AFTER:       # it runs, so the thread stays with it: a person is told (#500)
-                    attention.append((tid, "quiet", f"@{handle} runs but did not answer the nudge; the thread stays with it"))
+                    attention.append((tid, "quiet", f"@{handle} is not reported stopped and did not answer the nudge; the thread stays with it"))
             elif silence >= NUDGE_AFTER:
                 nudge(tid, handle, silence / 3600)
                 out["nudged"].append(tid)

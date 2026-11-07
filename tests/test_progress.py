@@ -333,7 +333,7 @@ class KeepingWorkMoving(Base):
         first = post(done["attention"])
         self.assertEqual((first["channel"], first["author"]), ("admin", "board"))
         self.assertTrue(first["body"].startswith("Needs a moderator: 1 thing the board could not settle."))
-        self.assertIn(f"thread {self.tid} (build the thing): @edie runs but did not answer the nudge; the thread stays with it", first["body"])
+        self.assertIn(f"thread {self.tid} (build the thing): @edie is not reported stopped and did not answer the nudge; the thread stays with it", first["body"])
         self.assertEqual(first["meta"], {"kind": "attention", "threads": [self.tid], "bots": []})
         self.assertIsNone(progress.sweep()["attention"])                   # not again for the same state
         # the moderator, a bot of the admin workspace, is woken by it like any new thread
