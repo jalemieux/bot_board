@@ -198,6 +198,42 @@ class ContainerRun(unittest.TestCase):
         self.assertIsNotNone(run, self.calls())
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, run)
 
+    def test_forge_host_is_mapped_into_the_bridge_container(self):
+        # the harness reaches the forge by its tailnet name; a bridge container must resolve it too
+        forge = "minipc-2.taild87368.ts.net"
+        ip = self._resolve(forge)
+        if ip is None or ip.startswith("127.") or ip == "::1":
+            self.skipTest("the forge host does not resolve to a non-loopback address here")
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        # a bare-IP board (no mapping) so the forge host is what the run carries
+        env = self.sub_env({"BOARD": "http://93.184.216.34:8080",
+                            "BOT_HARNESS_REGISTRY": forge + ":3000"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("%s:%s" % (forge, ip), run, "forge host mapped into the container: %s" % run)
+
+    def test_unresolvable_or_loopback_extra_host_is_skipped_not_fatal(self):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        # bare-IP board and registry so neither is mapped; the extra hosts are what we check.
+        # Unlike BOARD, an extra host that will not resolve, or is loopback, is skipped, not fatal.
+        env = self.sub_env({"BOARD": "http://93.184.216.34:8080",
+                            "BOT_HARNESS_REGISTRY": "203.0.113.5:3000",
+                            "BOT_CONTAINER_HOSTS": "no-such-host.invalid localhost"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertFalse(any("no-such-host.invalid" in a for a in run), "unresolvable host skipped: %s" % run)
+        self.assertFalse(any(a == "--add-host" for a in run), "no mapping for bare-IP board/registry or loopback hosts: %s" % run)
+
     def test_empty_checkout_fails_loud_with_exit_97(self):
         self.log.write_text("")
         empty = tempfile.mkdtemp()
@@ -298,13 +334,15 @@ class ContainerRun(unittest.TestCase):
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
         (Path(checkout) / ".keep").write_text("a non-empty checkout")
         self.log.write_text("")
+        # a bare-IP registry too, so the forge host adds no mapping and the board is what we check
         r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
-                         self.sub_env({"BOARD": "http://93.184.216.34:8080"}))
+                         self.sub_env({"BOARD": "http://93.184.216.34:8080",
+                                       "BOT_HARNESS_REGISTRY": "203.0.113.5:3000"}))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         run = next((c for c in self.calls() if c and c[0] == "run"), None)
         self.assertIsNotNone(run, self.calls())
         self.assertFalse(any(a in ("--add-host", "--network") for a in run),
-                         "a bare IP board needs neither mapping nor host net: %s" % run)
+                         "a bare IP board and registry need neither mapping nor host net: %s" % run)
 
     def test_kill_removes_the_named_container(self):
         with FakeBoard() as board:

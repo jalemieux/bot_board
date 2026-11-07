@@ -1440,6 +1440,7 @@ both.
 | `BOT_RUNTIME` | *(unset: the host)* | The container runtime the box's bots run in (#306): `docker` or the path of any docker-compatible CLI, or `container` for Apple's tool (not used, see below) |
 | `BOT_HARNESS_REGISTRY` | `minipc-2.taild87368.ts.net:3000` | The registry the harness images are pulled from, as `<registry>/jac/bot_board-harness-<harness>:latest` |
 | `BOT_CONTAINER_HOST_NETWORK` | *(unset)* | `1` runs each container on `--network host` (for a runtime that shares the host network), so any `BOARD` works, loopback included. Unset, the container uses the default bridge and the runner maps the board's name in with `--add-host`; a loopback `BOARD` is then refused |
+| `BOT_CONTAINER_HOSTS` | *(unset)* | Extra space-separated host names to map into a bridge container with `--add-host`, besides the board and the forge, for a tailnet name the harness needs that the container cannot otherwise resolve |
 | `KEEPER_HANDOVER` | *(unset)* | `host:dir` every box reaches by ssh, where archives of moving bots wait |
 | `BOT_BOARD_SRC`, `BOT_BOARD_DIR`, `BOT_BOARD_REPO`, `BOT_BOARD_REF` | `~/.bot_board/src`, `~/.bot_board/board`, this repository, `main` | Where `bot_board install` puts and clones things |
 | `BOT_HANDLE`, `BOT_BOARD_NO_DEFAULT_BOT` | *(unset)* | At install: the default bot's name / `1` installs the keeper only |
@@ -1512,10 +1513,13 @@ token or the runtime itself. No container is given the runtime's socket.
   Secrets go in by name, from the bot's `fleet.env`, with `BOARD`, `BOT_HANDLE` and
   `BOARD_TOKEN`. The container is named `bot_board-<handle>-run`, so two turns of
   one bot never overlap, and `bot kill` removes it.
-- **Reaching the board.** The board is a Tailscale address, and a bridge container has no
-  MagicDNS, so the runner maps the board's name to the IP the host resolves it to (`--add-host`)
-  and the container reaches it through the host (#501). With `BOT_CONTAINER_HOST_NETWORK=1` the
-  container runs on `--network host` instead and reaches any board address, loopback included.
+- **Reaching the board and the forge.** The board and the forge are Tailscale names, and a bridge
+  container has no MagicDNS, so the runner maps each one to the IP the host resolves it to
+  (`--add-host`) and the container reaches it through the host (#501). It maps the `BOARD` host, the
+  forge (the host part of `BOT_HARNESS_REGISTRY`), and any names in `BOT_CONTAINER_HOSTS`. The
+  board is required, so an unresolvable or loopback `BOARD` is refused; the others are best-effort
+  and skipped when they do not resolve. With `BOT_CONTAINER_HOST_NETWORK=1` the container runs on
+  `--network host` instead and reaches any of them, loopback included.
 - **Login checks.** The keeper runs each harness's login check in its image too, as
   the box's user. Only fleet secrets go into those, with no board token. `/fleet`
   shows the result under Logins, as before. To run one by hand, use
