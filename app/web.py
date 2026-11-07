@@ -608,6 +608,12 @@ color:var(--dim);font-size:13.5px;line-height:1.3}
 font:600 11px/1 var(--mono);padding:3px 6px;min-width:20px;text-align:center}
 .rail ul.views{margin-top:10px}
 .rail li .sigil.u{opacity:1;color:var(--accent)}
+.wshead{display:flex;align-items:center;gap:10px;margin:18px 0 4px;padding:6px 22px;font:600 12px var(--mono);
+text-transform:uppercase;letter-spacing:.04em;background:var(--panel);border-bottom:1px solid var(--line)}
+.wshead .n{background:var(--accent);color:#fff;border-radius:10px;padding:2px 7px;font-size:11px;letter-spacing:0}
+.wshead button{margin-left:auto;text-transform:none;letter-spacing:0;background:none;border:1px solid var(--line);border-radius:6px;
+color:var(--dim);font:11.5px var(--mono);padding:2px 8px;cursor:pointer}
+.wshead button:hover{color:var(--ink);background:var(--bg)}
 .ugroup{margin:6px 0 18px}
 .ugroup h3{display:flex;align-items:center;gap:10px;margin:0;padding:6px 22px;font:600 13px var(--mono);
 position:sticky;top:-14px;background:var(--bg);z-index:1;border-bottom:1px solid var(--line)}
@@ -976,6 +982,22 @@ function findEntry(slug){
   for (var j = 0; j < S.convs.length; j++) if (S.convs[j].slug === slug) return S.convs[j];
   return null;
 }
+// Unread and Mentions list what they hold under a heading per workspace (a conversation or a channel
+// outside any workspace goes last, with no heading when nothing else has one). `slugOf(x)` names the channel of an item.
+function wsOf(slug){ var e = findEntry(slug); return (e && e.workspace) || ''; }
+function byWorkspace(items, slugOf){
+  var order = [], by = {};
+  items.forEach(function(x){
+    var w = wsOf(slugOf(x));
+    if (!(w in by)) { by[w] = []; order.push(w); }
+    by[w].push(x);
+  });
+  order.sort(function(a, b){ return (a === '') - (b === ''); });      // stable: newest first stays, loose last
+  return order.map(function(w){ return {ws: w, items: by[w]}; });
+}
+function wsHead(ws, n, label, button){
+  return '<h2 class="wshead"><span>' + esc(ws || 'other') + '</span><span class="n">' + n + (label ? ' ' + label : '') + '</span>' + (button || '') + '</h2>';
+}
 function sortLists(){
   var by = function(a, b){ return (b.last_message_id || 0) - (a.last_message_id || 0); };
   S.channels.sort(by); S.convs.sort(by);
@@ -1288,6 +1310,9 @@ stream.addEventListener('click', function(ev){
   if (older) { loadOlder(); return; }
   var mr = ev.target.closest('[data-markread]');
   if (mr) { markRead(mr.dataset.markread ? [mr.dataset.markread] : null); return; }
+  var mw = ev.target.closest('[data-markws]');
+  if (mw) { markRead(S.channels.concat(S.convs).filter(function(b){ return S.umsgs[b.slug] && wsOf(b.slug) === mw.dataset.markws; })
+    .map(function(b){ return b.slug; })); return; }
   var dn = ev.target.closest('[data-done]');
   if (dn) { mentionDone(dn.dataset.done, dn); return; }
   var ad = ev.target.closest('[data-alldone]');
@@ -1374,7 +1399,18 @@ function renderUnread(){
   var groups = S.channels.concat(S.convs).filter(function(b){ return (S.umsgs[b.slug] || []).length; });
   groups.sort(function(a, b){ return (b.last_message_id || 0) - (a.last_message_id || 0); });
   if (!groups.length) { stream.innerHTML = '<div class="empty">You are all caught up.</div>'; renderUnreadHead(); return; }
-  stream.innerHTML = groups.map(function(b){
+  var sections = byWorkspace(groups, function(b){ return b.slug; });
+  var heads = sections.length > 1 || sections[0].ws !== '';
+  stream.innerHTML = sections.map(function(sec){
+    var total = sec.items.reduce(function(t, b){ return t + (S.unread[b.slug] || S.umsgs[b.slug].length); }, 0);
+    return '<div class="wsgroup">' + (heads ? wsHead(sec.ws, total, 'new',
+        '<button type="button" data-markws="' + esc(sec.ws) + '">mark workspace read</button>') : '') +
+      sec.items.map(unreadGroup).join('') + '</div>';
+  }).join('');
+  stream.scrollTop = keep;
+  renderUnreadHead();
+}
+function unreadGroup(b){
     var ms = S.umsgs[b.slug], n = S.unread[b.slug] || ms.length;
     return '<section class="ugroup"><h3><a href="/c/' + esc(b.slug) + '" data-open="' + esc(b.slug) + '">' + boardLabel(b) + '</a>' +
       '<span class="n">' + n + ' new</span>' +
@@ -1387,9 +1423,6 @@ function renderUnread(){
       }).join('') +
       (S.umore[b.slug] ? '<div class="more">and more — <a href="/c/' + esc(b.slug) + '">open the channel</a></div>' : '') +
       '</section>';
-  }).join('');
-  stream.scrollTop = keep;
-  renderUnreadHead();
 }
 // ---------------------------------------------------------------- mentions (#445)
 // What names this human, from GET /api/status (the bell's fetch shares it with a bb:status event):
@@ -1420,7 +1453,8 @@ function openMentions(push){
 function renderMentionsHead(){
   var n = mentionCount();
   head.innerHTML = '<h1>mentions</h1><div class="topic">' + (n ? n + ' message' + (n === 1 ? '' : 's') +
-    ' that name you and that you have not answered in their thread' : 'nothing names you that you have not answered') + '</div>';
+    ' that name you and that you have not answered in their thread' : 'nothing names you that you have not answered') + '</div>' +
+    ((S.status && (S.status.mentions || []).length) ? '<div class="ubar"><button type="button" data-alldone="" title="clear every mention without replying; what waits on you stays">all done</button></div>' : '');
   head.appendChild(live);
   document.title = (n ? '(' + n + ') ' : '') + 'mentions · ' + INIT.name;
 }
@@ -1441,10 +1475,8 @@ function renderMentions(){
   }
   var keep = stream.scrollTop;
   var group = function(title, items, needs){
-    items = items.filter(function(x){ return S.mmsgs[+x.key.slice(1)]; });
     if (!items.length) return '';
-    return '<section class="ugroup"><h3><span>' + title + '</span><span class="n">' + items.length + '</span>' +
-      (needs ? '' : '<button type="button" data-alldone="" title="clear every mention without replying; what waits on you stays">all done</button>') + '</h3>' +
+    return '<section class="ugroup"><h3><span>' + title + '</span><span class="n">' + items.length + '</span></h3>' +
       items.map(function(x){
         var m = S.mmsgs[+x.key.slice(1)]; if (!m) return '';
         var tid = m.thread_id || m.id, h = messageHtml(m, true);
@@ -1454,8 +1486,18 @@ function renderMentions(){
           '<button type="button" class="mdone" data-done="' + esc(x.key) + '" title="clear it without replying">done</button></div>';
       }).join('') + '</section>';
   };
-  stream.innerHTML = group('Waiting on you', waiting, true) + group('Mentions', mentions, false) ||
-    '<div class="empty">Nothing waits on you. You are all caught up.</div>';
+  var readable = function(x){ return S.mmsgs[+x.key.slice(1)]; };
+  var slugOf = function(x){ return S.mmsgs[+x.key.slice(1)].channel; };
+  var w = byWorkspace(waiting.filter(readable), slugOf), m = byWorkspace(mentions.filter(readable), slugOf);
+  var names = []; w.concat(m).forEach(function(sec){ if (names.indexOf(sec.ws) < 0) names.push(sec.ws); });
+  names.sort(function(a, b){ return (a === '') - (b === ''); });
+  var pick = function(list, ws){ var f = list.filter(function(sec){ return sec.ws === ws; })[0]; return f ? f.items : []; };
+  var heads = names.length > 1 || (names.length && names[0] !== '');
+  stream.innerHTML = names.map(function(ws){
+    var a = pick(w, ws), b = pick(m, ws);
+    return '<div class="wsgroup">' + (heads ? wsHead(ws, a.length + b.length, '') : '') +
+      group('Waiting on you', a, true) + group('Mentions', b, false) + '</div>';
+  }).join('') || '<div class="empty">Nothing waits on you. You are all caught up.</div>';
   stream.scrollTop = keep;
 }
 function mentionDone(key, b){
