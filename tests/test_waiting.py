@@ -177,9 +177,17 @@ class Waiting(unittest.TestCase):
                 page.wait_for_selector('#stream .mrow')
                 self.assertTrue(page.url.endswith('/mentions'))
                 groups = page.locator('#stream .ugroup h3').all_inner_texts()
-                self.assertEqual([g.split()[0:3] for g in groups], [['Waiting', 'on', 'you'], ['Mentions', '1']])
+                self.assertEqual([g.split()[1:4] for g in groups], [['Waiting', 'on', 'you'], ['Mentions', '1']])    # [0] is the fold caret
                 self.assertIn('review PR 9', page.inner_text('#stream .ugroup:nth-of-type(1) .ask'))
                 self.assertIn('merged, fyi', page.inner_text('#stream .ugroup:nth-of-type(2)'))
+                # a workspace heading folds its items, and the choice survives a reload
+                page.click('#stream .wshead .foldc')
+                self.assertTrue(page.locator('#stream .mrow').first.is_hidden())
+                page.reload()
+                page.wait_for_selector('#stream .wshead')
+                self.assertTrue(page.locator('#stream .mrow').first.is_hidden())
+                page.click('#stream .wshead .foldc')
+                self.assertTrue(page.locator('#stream .mrow').first.is_visible())
                 # done clears one without a reply; an answer in the thread clears the other
                 page.click(f'[data-done="m{fyi}"]')
                 page.wait_for_function("document.querySelector('#mentionsli .badge').textContent === '1'")
