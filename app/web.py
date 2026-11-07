@@ -614,6 +614,8 @@ text-transform:uppercase;letter-spacing:.04em;background:var(--panel);border-bot
 .wshead button{margin-left:auto;text-transform:none;letter-spacing:0;background:none;border:1px solid var(--line);border-radius:6px;
 color:var(--dim);font:11.5px var(--mono);padding:2px 8px;cursor:pointer}
 .wshead button:hover{color:var(--ink);background:var(--bg)}
+.wshead button.foldc,.ugroup h3 button.foldc{margin-left:0;border:0;padding:0 4px 0 0;background:none;color:var(--dim);font:12px var(--mono);cursor:pointer}
+.wsgroup.fold-shut>:not(.wshead),.ugroup.fold-shut>:not(h3){display:none}
 .ugroup{margin:6px 0 18px}
 .ugroup h3{display:flex;align-items:center;gap:10px;margin:0;padding:6px 22px;font:600 13px var(--mono);
 position:sticky;top:-14px;background:var(--bg);z-index:1;border-bottom:1px solid var(--line)}
@@ -857,7 +859,7 @@ function pageCookie(m){
 }
 var S = {
   channels: INIT.channels, convs: INIT.conversations, agents: {},
-  unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}),
+  unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}), fold: load('bb.fold', {}),
   cur: null, thread: null, cursor: INIT.stats.cursor,
   roots: [], newSince: 0, olderBefore: null, ctrl: null,
   view: null, umsgs: {}, umore: {}, tmsgs: null
@@ -867,6 +869,16 @@ INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
     panel = $('#thread'), plist = $('#tlist'), tin = $('#tin'), live = $('#live');
+// Keep the open thread pinned to its last message while its content grows after the scroll to the
+// bottom. Two things grow it with no scroll event, so the view slides up to the middle (jac): a
+// lazy image that had no height until it loads, and the receipt and worker chips the 5s refreshes
+// rewrite. threadStick, set by the reader's own scrolls, says whether they are at the bottom; an
+// image load, or any change to the list, re-pins to the bottom only while it is.
+var threadStick = true;
+plist.addEventListener('scroll', function(){ threadStick = plist.scrollHeight - plist.scrollTop - plist.clientHeight < 40; });
+function pinThread(){ if (threadStick) plist.scrollTop = plist.scrollHeight; }
+plist.addEventListener('load', pinThread, true);
+new MutationObserver(pinThread).observe(plist, {childList: true, subtree: true});
 // ?solo: this window shows one thread and nothing else (opened by the ↗ button).
 var SOLO = new URLSearchParams(location.search).has('solo');
 if (SOLO) app.classList.add('solo');
@@ -995,8 +1007,14 @@ function byWorkspace(items, slugOf){
   order.sort(function(a, b){ return (a === '') - (b === ''); });      // stable: newest first stays, loose last
   return order.map(function(w){ return {ws: w, items: by[w]}; });
 }
-function wsHead(ws, n, label, button){
-  return '<h2 class="wshead"><span>' + esc(ws || 'other') + '</span><span class="n">' + n + (label ? ' ' + label : '') + '</span>' + (button || '') + '</h2>';
+// A workspace section or a group under it folds to its heading; the choice stays in this browser (bb.fold).
+function foldKey(){ return Array.prototype.join.call(arguments, '\u0001'); }
+function foldCls(key){ return S.fold[key] ? ' fold-shut' : ''; }
+function foldBtn(key){
+  return '<button type="button" class="foldc" data-fold="' + esc(key) + '" aria-expanded="' + !S.fold[key] + '" title="collapse or expand">' + (S.fold[key] ? '▸' : '▾') + '</button>';
+}
+function wsHead(ws, n, label, button, key){
+  return '<h2 class="wshead">' + foldBtn(key) + '<span>' + esc(ws || 'other') + '</span><span class="n">' + n + (label ? ' ' + label : '') + '</span>' + (button || '') + '</h2>';
 }
 function sortLists(){
   var by = function(a, b){ return (b.last_message_id || 0) - (a.last_message_id || 0); };
@@ -1310,6 +1328,15 @@ stream.addEventListener('click', function(ev){
   if (older) { loadOlder(); return; }
   var mr = ev.target.closest('[data-markread]');
   if (mr) { markRead(mr.dataset.markread ? [mr.dataset.markread] : null); return; }
+  var fb = ev.target.closest('[data-fold]');
+  if (fb) {
+    var k = fb.dataset.fold, box = fb.closest('.wsgroup,.ugroup'), folded = !S.fold[k];
+    if (folded) S.fold[k] = 1; else delete S.fold[k];
+    save('bb.fold', S.fold);
+    if (box) box.classList.toggle('fold-shut', folded);
+    fb.setAttribute('aria-expanded', String(!folded)); fb.textContent = folded ? '▸' : '▾';
+    return;
+  }
   var mw = ev.target.closest('[data-markws]');
   if (mw) { markRead(S.channels.concat(S.convs).filter(function(b){ return S.umsgs[b.slug] && wsOf(b.slug) === mw.dataset.markws; })
     .map(function(b){ return b.slug; })); return; }
@@ -1403,8 +1430,9 @@ function renderUnread(){
   var heads = sections.length > 1 || sections[0].ws !== '';
   stream.innerHTML = sections.map(function(sec){
     var total = sec.items.reduce(function(t, b){ return t + (S.unread[b.slug] || S.umsgs[b.slug].length); }, 0);
-    return '<div class="wsgroup">' + (heads ? wsHead(sec.ws, total, 'new',
-        '<button type="button" data-markws="' + esc(sec.ws) + '">mark workspace read</button>') : '') +
+    var wk = foldKey('unread', sec.ws);
+    return '<div class="wsgroup' + (heads ? foldCls(wk) : '') + '">' + (heads ? wsHead(sec.ws, total, 'new',
+        '<button type="button" data-markws="' + esc(sec.ws) + '">mark workspace read</button>', wk) : '') +
       sec.items.map(unreadGroup).join('') + '</div>';
   }).join('');
   stream.scrollTop = keep;
@@ -1412,7 +1440,8 @@ function renderUnread(){
 }
 function unreadGroup(b){
     var ms = S.umsgs[b.slug], n = S.unread[b.slug] || ms.length;
-    return '<section class="ugroup"><h3><a href="/c/' + esc(b.slug) + '" data-open="' + esc(b.slug) + '">' + boardLabel(b) + '</a>' +
+    var gk = foldKey('unread', wsOf(b.slug), b.slug);
+    return '<section class="ugroup' + foldCls(gk) + '"><h3>' + foldBtn(gk) + '<a href="/c/' + esc(b.slug) + '" data-open="' + esc(b.slug) + '">' + boardLabel(b) + '</a>' +
       '<span class="n">' + n + ' new</span>' +
       '<button type="button" data-markread="' + esc(b.slug) + '">mark read</button></h3>' +
       ms.map(function(m){
@@ -1474,9 +1503,10 @@ function renderMentions(){
     if (!stream.querySelector('.mrow')) return;     // keep "loading…" until the messages are in
   }
   var keep = stream.scrollTop;
-  var group = function(title, items, needs){
+  var group = function(title, items, needs, ws){
     if (!items.length) return '';
-    return '<section class="ugroup"><h3><span>' + title + '</span><span class="n">' + items.length + '</span></h3>' +
+    var gk = foldKey('mentions', ws, title);
+    return '<section class="ugroup' + foldCls(gk) + '"><h3>' + foldBtn(gk) + '<span>' + title + '</span><span class="n">' + items.length + '</span></h3>' +
       items.map(function(x){
         var m = S.mmsgs[+x.key.slice(1)]; if (!m) return '';
         var tid = m.thread_id || m.id, h = messageHtml(m, true);
@@ -1495,8 +1525,9 @@ function renderMentions(){
   var heads = names.length > 1 || (names.length && names[0] !== '');
   stream.innerHTML = names.map(function(ws){
     var a = pick(w, ws), b = pick(m, ws);
-    return '<div class="wsgroup">' + (heads ? wsHead(ws, a.length + b.length, '') : '') +
-      group('Waiting on you', a, true) + group('Mentions', b, false) + '</div>';
+    var wk = foldKey('mentions', ws);
+    return '<div class="wsgroup' + (heads ? foldCls(wk) : '') + '">' + (heads ? wsHead(ws, a.length + b.length, '', '', wk) : '') +
+      group('Waiting on you', a, true, ws) + group('Mentions', b, false, ws) + '</div>';
   }).join('') || '<div class="empty">Nothing waits on you. You are all caught up.</div>';
   stream.scrollTop = keep;
 }
@@ -1583,7 +1614,7 @@ function renderThreadList(){
   plist.innerHTML = messageHtml(ms[0], true) +
     '<div class="count" id="tcount">' + replies.length + (replies.length === 1 ? ' reply' : ' replies') + '</div>' +
     foldRuns(replies, boardPref(), me).map(function(seg){ return seg.fold ? foldHtml(seg.fold, false) : messageHtml(seg.msg, true); }).join('');
-  plist.scrollTop = plist.scrollHeight;
+  plist.scrollTop = plist.scrollHeight; threadStick = true;
 }
 // A reply arriving in the open thread: a card, or the next message of an open or new @board strip.
 function appendToThread(m){

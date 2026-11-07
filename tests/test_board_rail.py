@@ -81,6 +81,54 @@ class BoardRail(unittest.TestCase):
         self.assertEqual(self.page.locator(f"#t{self.root} button.replies").count(), 0, "no button inside the thread itself")
         self.assertEqual(self.errors, [])
 
+    def test_a_thread_stays_at_its_last_message_while_images_load(self):
+        import base64
+        import io
+        from PIL import Image
+        # a thread taller than the viewport, with a tall image as its last reply. The image has no
+        # size until it loads, so scrolling to the bottom first, then loading it, used to slide the
+        # view up to the middle (jac). The thread must stay on the last message.
+        for i in range(8):
+            self.client.post("/api/messages", headers=self.human,
+                             json={"channel": "bbb", "reply_to": self.root, "body": "reply %d" % i}).raise_for_status()
+        buf = io.BytesIO(); Image.new("RGB", (10, 400), "red").save(buf, "PNG")
+        self.client.post("/api/messages", headers=self.human,
+                         json={"channel": "bbb", "reply_to": self.root, "body": "the picture",
+                               "image_attachment": base64.b64encode(buf.getvalue()).decode("ascii")}).raise_for_status()
+        self.page.set_viewport_size({"width": 560, "height": 420})
+        self.page.goto("http://board.test/#bbb")
+        self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
+        self.page.hover("#m%d" % self.root)
+        self.page.click("#m%d button.replies" % self.root)
+        self.page.wait_for_selector("#t%d" % self.root)
+        self.page.wait_for_function("() => { var i = document.querySelector('#tlist img.attached-image');"
+                                    " return i && i.complete && i.naturalHeight > 0; }")
+        gap = self.page.evaluate("() => { var p = document.querySelector('#tlist');"
+                                 " return p.scrollHeight - p.scrollTop - p.clientHeight; }")
+        self.assertLess(gap, 40, "the thread stays pinned to its last message after the image loads")
+        self.assertEqual(self.errors, [])
+
+    def test_a_thread_stays_at_its_last_message_when_a_message_grows(self):
+        # a text thread taller than the viewport; the receipt and worker chips the refreshes rewrite
+        # grow a message after the scroll to the bottom. The thread must follow, not slide up (jac, 8971).
+        for i in range(12):
+            self.client.post("/api/messages", headers=self.human,
+                             json={"channel": "bbb", "reply_to": self.root, "body": "reply number %d" % i}).raise_for_status()
+        self.page.set_viewport_size({"width": 560, "height": 360})
+        self.page.goto("http://board.test/#bbb")
+        self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
+        self.page.hover("#m%d" % self.root)
+        self.page.click("#m%d button.replies" % self.root)
+        self.page.wait_for_selector("#t%d" % self.root)
+        # a chip rewrite that grows the last message, the way refreshReceipts/refreshWorkers do; this
+        # grows the content below the viewport anchor, where the browser does not keep the bottom
+        self.page.evaluate("() => { var ms = document.querySelectorAll('#tlist .msg'); var m = ms[ms.length - 1];"
+                           " m.insertAdjacentHTML('beforeend', '<div style=\"height:300px\"></div>'); }")
+        gap = self.page.evaluate("() => { var p = document.querySelector('#tlist');"
+                                 " return p.scrollHeight - p.scrollTop - p.clientHeight; }")
+        self.assertLess(gap, 40, "the thread stays pinned to its last message after a message grows")
+        self.assertEqual(self.errors, [])
+
     def test_hovering_a_channel_lists_its_bots_with_their_profiles(self):
         for handle in ("tarzan", "jane", "bound", "session"):
             self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code", "workspace": "aaa"}).raise_for_status()
