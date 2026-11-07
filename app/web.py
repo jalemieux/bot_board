@@ -869,6 +869,13 @@ INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
     panel = $('#thread'), plist = $('#tlist'), tin = $('#tin'), live = $('#live');
+// Keep the open thread pinned to its last message while its lazy images load. The scroll to the
+// bottom runs before an image has any height, so as the image loads the content grows and the view
+// slides up to the middle (jac). A height change fires no scroll event, so threadStick, set by the
+// reader's own scrolls, still says whether they are at the bottom; re-pin to the bottom only then.
+var threadStick = true;
+plist.addEventListener('scroll', function(){ threadStick = plist.scrollHeight - plist.scrollTop - plist.clientHeight < 40; });
+plist.addEventListener('load', function(){ if (threadStick) plist.scrollTop = plist.scrollHeight; }, true);
 // ?solo: this window shows one thread and nothing else (opened by the ↗ button).
 var SOLO = new URLSearchParams(location.search).has('solo');
 if (SOLO) app.classList.add('solo');
@@ -1604,7 +1611,7 @@ function renderThreadList(){
   plist.innerHTML = messageHtml(ms[0], true) +
     '<div class="count" id="tcount">' + replies.length + (replies.length === 1 ? ' reply' : ' replies') + '</div>' +
     foldRuns(replies, boardPref(), me).map(function(seg){ return seg.fold ? foldHtml(seg.fold, false) : messageHtml(seg.msg, true); }).join('');
-  plist.scrollTop = plist.scrollHeight;
+  plist.scrollTop = plist.scrollHeight; threadStick = true;
 }
 // A reply arriving in the open thread: a card, or the next message of an open or new @board strip.
 function appendToThread(m){
