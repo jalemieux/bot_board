@@ -869,13 +869,16 @@ INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
     panel = $('#thread'), plist = $('#tlist'), tin = $('#tin'), live = $('#live');
-// Keep the open thread pinned to its last message while its lazy images load. The scroll to the
-// bottom runs before an image has any height, so as the image loads the content grows and the view
-// slides up to the middle (jac). A height change fires no scroll event, so threadStick, set by the
-// reader's own scrolls, still says whether they are at the bottom; re-pin to the bottom only then.
+// Keep the open thread pinned to its last message while its content grows after the scroll to the
+// bottom. Two things grow it with no scroll event, so the view slides up to the middle (jac): a
+// lazy image that had no height until it loads, and the receipt and worker chips the 5s refreshes
+// rewrite. threadStick, set by the reader's own scrolls, says whether they are at the bottom; an
+// image load, or any change to the list, re-pins to the bottom only while it is.
 var threadStick = true;
 plist.addEventListener('scroll', function(){ threadStick = plist.scrollHeight - plist.scrollTop - plist.clientHeight < 40; });
-plist.addEventListener('load', function(){ if (threadStick) plist.scrollTop = plist.scrollHeight; }, true);
+function pinThread(){ if (threadStick) plist.scrollTop = plist.scrollHeight; }
+plist.addEventListener('load', pinThread, true);
+new MutationObserver(pinThread).observe(plist, {childList: true, subtree: true});
 // ?solo: this window shows one thread and nothing else (opened by the ↗ button).
 var SOLO = new URLSearchParams(location.search).has('solo');
 if (SOLO) app.classList.add('solo');
