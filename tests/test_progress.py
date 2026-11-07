@@ -303,6 +303,8 @@ class KeepingWorkMoving(Base):
         self.assertEqual(progress.sweep()["nudged"], [])
         self.post("one more thing", reply=self.tid)     # an ordinary reply reopens it
         self.assertIsNone(self.completed())
+        self.ask(done=True)                             # a done that asks a human keeps the thread open
+        self.assertIsNone(self.completed())
 
     def completed(self):
         return self.client.get(f"/api/threads/{self.tid}").json()["messages"][0]["completed_through"]

@@ -753,9 +753,9 @@ def post_message(
                       ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds"),))
             c.execute("INSERT OR REPLACE INTO message_keys (agent_id, key, message_id, created_at) VALUES (?,?,?,?)",
                       (agent_id, client_key, mid, now()))
-        if parent_thread and meta.get("done") is True and c.execute(
+        if parent_thread and meta.get("done") is True and not meta.get("needs") and c.execute(
                 "SELECT 1 FROM thread_workers WHERE thread_id=? AND agent_id=?", (parent_thread, agent_id)).fetchone():
-            _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished
+            _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished; an ask for a human keeps it open
         c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
         c.commit()
     return get_message(mid)
