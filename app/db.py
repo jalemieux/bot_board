@@ -753,6 +753,9 @@ def post_message(
                       ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds"),))
             c.execute("INSERT OR REPLACE INTO message_keys (agent_id, key, message_id, created_at) VALUES (?,?,?,?)",
                       (agent_id, client_key, mid, now()))
+        if parent_thread and meta.get("done") is True and c.execute(
+                "SELECT 1 FROM thread_workers WHERE thread_id=? AND agent_id=?", (parent_thread, agent_id)).fetchone():
+            _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished
         c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
         c.commit()
     return get_message(mid)
@@ -1127,6 +1130,20 @@ def hand_off_threads(handle: str, by: dict) -> int:
     return n
 
 
+def _record_completion(c, tid: int, through: int, agent_id: int) -> None:
+    """Mark thread `tid` complete through message `through`, inside a write on connection `c`."""
+    c.execute("INSERT INTO thread_completions VALUES (?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET "
+              "through_id=excluded.through_id, completed_by=excluded.completed_by, completed_at=excluded.completed_at",
+              (tid, through, agent_id, now()))
+    # what the thread asked of a human through here is settled, and stays so if a reply reopens it:
+    # a completed thread blocks on nobody (#448). w<id> ends the ask; the message stays a mention.
+    from .status import DISMISS_SCHEMA
+    c.execute(DISMISS_SCHEMA.strip().rstrip(";"))     # CREATE TABLE IF NOT EXISTS
+    c.execute("INSERT OR IGNORE INTO status_dismissals(key,text,by_agent,at) SELECT 'w' || id, substr(body,1,200), ?, ?"
+              " FROM messages WHERE thread_id=? AND id<=? AND (meta LIKE '%\"needs\"%'"
+              " OR id IN (SELECT message_id FROM tags WHERE tag='needs-human'))", (agent_id, now(), tid, through))
+
+
 def complete_thread(tid: int, through: int, agent: dict) -> dict:
     """Record no remaining work through a reviewed cursor, never a pickup notice."""
     from . import workspaces
@@ -1146,16 +1163,7 @@ def complete_thread(tid: int, through: int, agent: dict) -> dict:
         if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
                      (tid, through)).fetchone():
             raise ValueError("thread has newer messages; review them before completing it")
-        c.execute("INSERT INTO thread_completions VALUES (?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET "
-                  "through_id=excluded.through_id, completed_by=excluded.completed_by, completed_at=excluded.completed_at",
-                  (tid, through, agent["id"], now()))
-        # what the thread asked of a human through here is settled, and stays so if a reply reopens it:
-        # a completed thread blocks on nobody (#448). w<id> ends the ask; the message stays a mention.
-        from .status import DISMISS_SCHEMA
-        c.execute(DISMISS_SCHEMA.strip().rstrip(";"))     # CREATE TABLE IF NOT EXISTS
-        c.execute("INSERT OR IGNORE INTO status_dismissals(key,text,by_agent,at) SELECT 'w' || id, substr(body,1,200), ?, ?"
-                  " FROM messages WHERE thread_id=? AND id<=? AND (meta LIKE '%\"needs\"%'"
-                  " OR id IN (SELECT message_id FROM tags WHERE tag='needs-human'))", (agent["id"], now(), tid, through))
+        _record_completion(c, tid, through, agent["id"])
     return {"thread_id": tid, "completed_through": through}
 
 

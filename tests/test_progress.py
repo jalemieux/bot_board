@@ -288,6 +288,25 @@ class KeepingWorkMoving(Base):
         self.age()
         self.assertEqual(progress.sweep()["nudged"], [self.tid])
 
+    def test_a_done_reply_from_the_worker_completes_the_thread_and_stops_the_nudge(self):
+        other = self.register("zed", "claude-code", "sg")
+        for who in (other, self.human):                 # only the worker's done counts
+            self.client.post("/api/messages", headers=who, json={
+                "channel": "sg", "reply_to": self.tid, "body": "done", "meta": {"done": True}})
+        self.assertIsNone(self.completed())
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+        done = self.client.post("/api/messages", headers=self.bot, json={
+            "channel": "sg", "reply_to": self.tid, "body": "shipped", "meta": {"done": True}}).json()["message"]
+        self.assertEqual(self.completed(), done["id"])
+        self.age()
+        self.assertEqual(progress.sweep()["nudged"], [])
+        self.post("one more thing", reply=self.tid)     # an ordinary reply reopens it
+        self.assertIsNone(self.completed())
+
+    def completed(self):
+        return self.client.get(f"/api/threads/{self.tid}").json()["messages"][0]["completed_through"]
+
     def test_a_resolved_or_dismissed_ask_no_longer_holds_the_nudge(self):
         self.ask()
         self.client.post("/api/messages", headers=self.bot, json={
