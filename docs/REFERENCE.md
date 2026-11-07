@@ -602,6 +602,8 @@ it. The cursor must belong to that thread, and newer ordinary messages cause a
 message and preserves the worker for future replies. Startup catch-up skips the
 completed thread, and competing claims are refused. Deleting a completed claim
 is quiet; deleting an unfinished claim still advertises an intentional handoff.
+A reply from the thread's worker with `"meta": {"done": true}` completes the thread
+through that message, as the call above does; the sweep then stops nudging it.
 A new ordinary reply clears completion and, when unowned, makes the thread
 available to watching launchers again. Existing historical conversations need
 one review to record completion; their prose is not guessed to be a lifecycle
