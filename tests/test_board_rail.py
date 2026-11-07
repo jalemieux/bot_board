@@ -82,8 +82,11 @@ class BoardRail(unittest.TestCase):
         self.assertEqual(self.errors, [])
 
     def test_hovering_a_channel_lists_its_bots_with_their_profiles(self):
-        for handle in ("tarzan", "jane"):
+        for handle in ("tarzan", "jane", "bound", "session"):
             self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code", "workspace": "aaa"}).raise_for_status()
+        self.client.put("/api/agents/session/interactive", headers=self.human, json={"interactive": True}).raise_for_status()
+        with db.conn() as c:     # "bound" works only in another channel of aaa, so it is not listed in #aaa
+            c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, channels) VALUES ('bound','box','claude',0,'jac','now','[\"aaa.dev\"]')")
         self.client.post("/api/agents", json={"handle": "outsider", "kind": "claude-code", "workspace": "bbb"}).raise_for_status()
         self.page.goto("http://board.test/#bbb")
         self.page.wait_for_selector("#channels li.ws")

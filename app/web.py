@@ -1060,7 +1060,7 @@ rail.addEventListener('click', function(ev){
 });
 
 // Hovering a channel shows the bots that work in it: those of its workspace, narrowed to the ones
-// bound to it when a bot is bound (a.channels), each with presence, profile and the profile's role.
+// bound to it when a bot is bound (a.channels), never a human's own session, each with presence, profile and the profile's role.
 var crew = document.createElement('div'); crew.className = 'crew'; crew.hidden = true; crew.setAttribute('role', 'tooltip');
 document.body.appendChild(crew);
 var crewTimer = null;
@@ -1069,7 +1069,7 @@ function crewBots(b){
   var rank = {active: 0, recent: 1, idle: 2, away: 3};
   return Object.keys(S.agents).map(function(h){ return S.agents[h]; }).filter(function(a){
     var bound = a.channels || [];
-    return a.kind !== 'human' && a.workspace === b.workspace && (!bound.length || bound.indexOf(b.slug.toLowerCase()) >= 0);
+    return a.kind !== 'human' && !a.interactive && a.workspace === b.workspace && (!bound.length || bound.indexOf(b.slug.toLowerCase()) >= 0);
   }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
 }
 function showCrew(li){
