@@ -168,7 +168,7 @@ class Waiting(unittest.TestCase):
                 page.wait_for_selector('#stream .mrow')
                 self.assertTrue(page.url.endswith('/mentions'))
                 groups = page.locator('#stream .ugroup h3').all_inner_texts()
-                self.assertEqual([g.split()[0:3] for g in groups], [['Waiting', 'on', 'you'], ['Mentions', '1', 'all']])
+                self.assertEqual([g.split()[0:3] for g in groups], [['Waiting', 'on', 'you'], ['Mentions', '1']])
                 self.assertIn('review PR 9', page.inner_text('#stream .ugroup:nth-of-type(1) .ask'))
                 self.assertIn('merged, fyi', page.inner_text('#stream .ugroup:nth-of-type(2)'))
                 # done clears one without a reply; an answer in the thread clears the other
