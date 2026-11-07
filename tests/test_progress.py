@@ -215,13 +215,13 @@ class KeepingWorkMoving(Base):
         self.assertIn("Last from @edie", notice["body"])
         self.assertIn("branch edie-thing, PR #12 soon", notice["body"])
         self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # once
-        # the next eligible bot claims it; a bot not in the fleet, unseen for an hour, counts as away
+        # the next eligible bot claims it. A bot no keeper reports stays with it however long it is
+        # unseen: presence is not the board knowing it does not run (#500)
         other = self.register("nico", "claude-code", "sg")
         self.assertEqual(self.claim(self.tid, other).status_code, 200)
-        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # seen just now
         self.silent("nico")
-        self.assertEqual(progress.sweep()["released"], [self.tid])
-        self.assertIn("has not been seen for a while", self.messages(self.tid)[-1]["body"])
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
+        self.assertEqual(self.worker(self.tid), "nico")
 
     def test_a_human_reply_into_a_dead_thread_frees_it_at_once(self):
         self.report("edie", "stopped")
@@ -236,16 +236,13 @@ class KeepingWorkMoving(Base):
         self.report("edie", "running sg")
         self.post("and now?", reply=self.tid)
         self.assertEqual(self.worker(self.tid), "edie")
-        # a box that stopped reporting: presence decides, after an hour
+        # a box that stopped reporting: presence does not decide, however long the bot is unseen (#500)
         db.conn().execute("DELETE FROM fleet_hosts"); db.conn().commit()
-        self.post("anyone?", reply=self.tid)
-        self.assertEqual(self.worker(self.tid), "edie")
         self.silent("edie")
         self.post("anyone at all?", reply=self.tid)
-        self.assertIsNone(self.worker(self.tid))
-        self.assertIn("has not been seen for a while", self.messages(self.tid)[-1]["body"])
+        self.assertEqual(self.worker(self.tid), "edie")
 
-    def test_a_quiet_worker_is_nudged_once_then_freed(self):
+    def test_a_quiet_worker_is_nudged_once_then_a_person_is_told(self):
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
         db.conn().commit()
         done = progress.sweep()
@@ -260,15 +257,16 @@ class KeepingWorkMoving(Base):
         # the worker answers: the clock restarts, nothing is freed
         self.post("next step: tests, then the PR", auth=self.bot, reply=self.tid)
         self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
-        # silence after a nudge frees the thread
+        # silence after a nudge tells a person; the thread stays with its running worker (#500)
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
         db.conn().commit()
         progress.sweep()
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
         db.conn().commit()
-        self.assertEqual(progress.sweep()["released"], [self.tid])
-        self.assertIn("did not answer the nudge", self.messages(self.tid)[-1]["body"])
-        self.assertIsNone(self.worker(self.tid))
+        done = progress.sweep()
+        self.assertEqual(done["released"], [])
+        self.assertTrue(done["attention"])
+        self.assertEqual(self.worker(self.tid), "edie")
 
     def age(self):
         db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (LONG_AGO, self.tid))
@@ -329,27 +327,18 @@ class KeepingWorkMoving(Base):
         def post(mid):
             return self.client.get(f"/api/threads/{mid}").json()["messages"][0]
         age(); progress.sweep()                                            # the nudge
-        age(); done = progress.sweep()                                     # released: nobody answered
-        self.assertEqual(done["released"], [self.tid])
+        age(); done = progress.sweep()                                     # nobody answered: a person is told
+        self.assertEqual(done["released"], [])
         # that is the moderator's: one thread in the admin channel (created with the first human)
         first = post(done["attention"])
         self.assertEqual((first["channel"], first["author"]), ("admin", "board"))
         self.assertTrue(first["body"].startswith("Needs a moderator: 1 thing the board could not settle."))
-        self.assertIn(f"thread {self.tid} (build the thing): @edie did not answer the nudge; released", first["body"])
+        self.assertIn(f"thread {self.tid} (build the thing): @edie is not reported stopped and did not answer the nudge; the thread stays with it", first["body"])
         self.assertEqual(first["meta"], {"kind": "attention", "threads": [self.tid], "bots": []})
         self.assertIsNone(progress.sweep()["attention"])                   # not again for the same state
-        # still unclaimed hours later: that is a new state, reported once
-        age(); done = progress.sweep()
-        self.assertEqual(done["attention"], first["id"])                   # the open report takes it (#313)
-        second = self.client.get(f"/api/threads/{first['id']}").json()["messages"][-1]
-        self.assertIn("no bot picked it up", second["body"])
-        self.assertIsNone(progress.sweep()["attention"])
         # the moderator, a bot of the admin workspace, is woken by it like any new thread
         mod = self.register("ada", "claude-code", "admin")
-        self.assertEqual(self.claim(done["attention"], mod).status_code, 200)
-        # once someone takes the stuck thread, nothing is left to report
-        self.assertEqual(self.claim(self.tid).status_code, 200)
-        self.assertIsNone(progress.sweep()["attention"])
+        self.assertEqual(self.claim(first["id"], mod).status_code, 200)
 
     def test_a_bot_that_needs_a_person_is_reported_once_per_spell(self):
         def report(health):

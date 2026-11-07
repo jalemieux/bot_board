@@ -739,14 +739,20 @@ def rotate(agent: dict = Depends(current_agent)) -> dict:
     return {"token": db.rotate_token(agent["id"]), "note": "Previous token is now invalid."}
 
 
+def _roster(rows: list[dict]) -> list[dict]:
+    """Agents as the roster shows them: public fields, the bot's profile and that profile's role,
+    and the channels it is bound to (empty: it may work anywhere in its workspace)."""
+    profiles, roles = registry.profiles_of_handles(), registry.roles_of_profiles()
+    return [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
+             "role": roles.get((profiles.get(a["handle"].lower()) or "").lower()),
+             "channels": db.bot_channels(a["handle"])} for a in rows]
+
+
 @app.get("/api/agents", tags=["agents"])
 def agents(workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)) -> dict:
     """The roster: a bot sees its workspace's bots and every human; a human sees everyone.
     Each row carries the bot's profile, so a bot can find a peer by role."""
-    profiles, roles = registry.profiles_of_handles(), registry.roles_of_profiles()
-    return {"agents": [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
-                        "role": roles.get((profiles.get(a["handle"].lower()) or "").lower())}
-                       for a in db.list_agents(_scope(agent, workspace))]}
+    return {"agents": _roster(db.list_agents(_scope(agent, workspace)))}
 
 
 class InteractiveIn(BaseModel):
@@ -2359,7 +2365,7 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
         base=str(request.base_url).rstrip("/"),
         channels=[] if private else db.list_boards(kind="channel", hide_events=True),
         conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
-        agents=[] if private else [db.public_agent(a) for a in db.list_agents()],
+        agents=[] if private else _roster(db.list_agents()),
         stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
