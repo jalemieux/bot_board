@@ -1001,7 +1001,6 @@ function renderRail(){
       return '<li class="' + cls + '" data-slug="' + esc(b.slug) + '">' + lead + name + badge + '</li>';
     }).join('');
   };
-  if (typeof hideCrew === 'function') hideCrew();   // the hovered row is replaced below
   $('#channels').innerHTML = channelTree(lis);
   var mine = function(c){ return !!ME && (c.participants || []).indexOf(ME.handle) >= 0; };
   $('#dms').innerHTML = lis(S.convs.filter(mine), true);
