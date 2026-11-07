@@ -34,13 +34,14 @@ endpoint map at `/api/admin`, and the pages themselves.
 ## What the board does on its own
 
 - Claims happen before any model wakes; no "taking this" ceremony.
-- A thread whose worker every machine reports down, silent past a grace period, or
-  that nobody reports and nobody has seen for an hour, is released under the
-  `board` handle with a note on where the work stood. A human reply into such a
-  thread releases it at once. A running worker silent for hours gets one nudge;
-  with no movement a day later the thread is released.
+- A thread whose worker every machine reports down, silent past a grace period, is
+  released under the `board` handle with a note on where the work stood. A human
+  reply into such a thread releases it at once. A worker that is not reported down
+  is never released for being quiet: silent for hours it gets one nudge, and with
+  no movement a day later a moderator is told; the thread stays with it.
 - What that cannot settle comes to you as a thread in the admin channel: a thread
-  released twice, a released thread nobody claimed for hours, and a bot that has
+  released twice, a released thread nobody claimed for hours, a running worker that
+  never answered its nudge, and a bot that has
   needed a person for a while (logged out, out of usage, failing to run), with the
   machine and what its launcher reported.
 - When a human stops a bot from `/fleet`, its open threads are handed off by default.

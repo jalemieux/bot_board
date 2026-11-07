@@ -5,13 +5,15 @@ hand-run session simply ended. The claim never expires on its own (#167), so the
 itself sweeps: a thread whose worker is not running is released with a notice saying
 where the work stood, so the next eligible bot of the channel picks it up; a human
 reply into such a thread releases it at once; and a thread whose worker is running
-but has not moved in hours gets one nudge, then is released if nothing happens after
-that either. No routine to set up, no bot to run, every workspace alike.
+but has not moved in hours gets one nudge, and a moderator is told if nothing happens
+after that either: the thread stays with it. No routine to set up, no bot to run, every
+workspace alike.
 
-What counts as gone is the fleet's word first: every box that knows the bot reports it
-stopped, failing or still starting, and the bot has not touched the board for a grace
-period (so a planned restart, or a keeper's own update, keeps its threads). A bot no
-keeper reports, or whose box is dark, is gone once unseen for an hour. A bot deep in a
+What counts as gone is the fleet's word, and only that: every box that knows the bot
+reports it stopped, failing or still starting, and the bot has not touched the board for a
+grace period (so a planned restart, or a keeper's own update, keeps its threads). Presence
+never frees a thread (#500): a bot in a long harness turn does not poll and looks away. A
+bot no keeper reports is left to the nudge. A bot deep in a
 long run is reported by its keeper as working, so it is left alone; so is one holding
 its messages through a login or usage outage, which the nudge then covers. A thread
 waiting on a person's answer (an open `meta.needs`) is left alone too: it waits in their
@@ -27,12 +29,10 @@ from . import db, fleet
 HANDLE = "board"
 # seconds of silence in a claimed thread before its running worker is nudged once
 NUDGE_AFTER = int(os.environ.get("PROGRESS_NUDGE_AFTER", 6 * 3600))
-# seconds after that nudge, still with no movement, before the thread is released
+# seconds after that nudge, still with no movement, before a moderator is told (the thread stays with its worker)
 FREE_AFTER = int(os.environ.get("PROGRESS_FREE_AFTER", 24 * 3600))
 # a bot its keeper reports down must also have been silent this long before it counts as gone
 GRACE = int(os.environ.get("PROGRESS_GRACE", 15 * 60))
-# a bot no keeper reports (or on a box that stopped reporting) is gone once unseen this long
-UNSEEN = 3600
 # a thread the board released and nobody claimed for this long needs the moderator
 UNCLAIMED = int(os.environ.get("PROGRESS_UNCLAIMED", 3 * 3600))
 # one outage can flap a bot in and out of a state many times: the same subject in the same state
@@ -66,7 +66,8 @@ def init() -> None:
 
 def gone(handles) -> dict[str, str]:
     """Of these thread workers, the ones that are gone: 'stopped' on the fleet's word, with
-    the grace period over; 'away' for a bot nobody reports, unseen for an hour."""
+    the grace period over. A bot nobody reports is never gone: presence is not the board
+    knowing it does not run (#500)."""
     handles = {h.lower(): h for h in handles if h}
     if not handles:
         return {}
@@ -86,12 +87,8 @@ def gone(handles) -> dict[str, str]:
         silent = db.seconds_since(a["last_seen_at"])
         silent = float("inf") if silent is None else silent
         seen = states.get(low, set())
-        if seen and seen <= {"stopped", "failing", "starting"}:
-            if silent >= GRACE:
-                out[handles[low]] = "stopped"
-        elif not seen or seen <= {"unknown"}:
-            if silent >= UNSEEN:
-                out[handles[low]] = "away"
+        if seen and seen <= {"stopped", "failing", "starting"} and silent >= GRACE:
+            out[handles[low]] = "stopped"
     return out
 
 
@@ -204,7 +201,7 @@ def sweep() -> dict:
         state = down.get(handle)
         for t in threads:
             tid = t["thread_id"]
-            if state in ("stopped", "away"):
+            if state == "stopped":
                 if release(tid, handle, state):
                     out["released"].append(tid)
                 continue
@@ -214,9 +211,8 @@ def sweep() -> dict:
             if (nudged or silence >= NUDGE_AFTER) and waiting_on_human(tid):
                 continue    # it waits in their inbox; a stopped worker was released above all the same
             if nudged:
-                if silence >= FREE_AFTER and release(tid, handle, "quiet"):
-                    out["released"].append(tid)
-                    attention.append((tid, "quiet", f"@{handle} did not answer the nudge; released"))
+                if silence >= FREE_AFTER:       # it runs, so the thread stays with it: a person is told (#500)
+                    attention.append((tid, "quiet", f"@{handle} runs but did not answer the nudge; the thread stays with it"))
             elif silence >= NUDGE_AFTER:
                 nudge(tid, handle, silence / 3600)
                 out["nudged"].append(tid)
@@ -373,7 +369,7 @@ def rescue(tid: int) -> bool:
     if not handle:
         return False
     state = gone([handle]).get(handle)
-    if state not in ("stopped", "away"):
+    if state != "stopped":
         return False
     return release(w["thread_id"], handle, state)
 
