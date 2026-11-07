@@ -289,6 +289,20 @@ def asks(agent: dict) -> dict:
     return {"waiting": waiting, "mentions": mentions}
 
 
+def blocked() -> list[dict]:
+    """Every open ask a bot has put to a human, for the daily care agenda (#516): the human it
+    waits on, the asking bot, the ask line, the thread and when it was asked. The same rule as
+    each human's `waiting` list."""
+    out = []
+    for h in db.list_agents():
+        if h["kind"] != "human":
+            continue
+        for w in asks(h)["waiting"]:
+            out.append({"key": w["key"], "who": h["handle"], "from": w["where"].lstrip("@"), "text": w["text"],
+                        "href": w["href"], "at": w["at"]})
+    return out
+
+
 def _versions(hosts: list, attention: list) -> list:
     """What runs against what should (#239); only what a person must fix goes on the bell."""
     from . import versions
