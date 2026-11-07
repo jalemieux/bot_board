@@ -1531,7 +1531,10 @@ function markRead(slugs){
   });
   save('bb.seen', S.seen); renderRail(); renderUnread();
 }
-head.addEventListener('click', function(ev){ if (ev.target.closest('#markall')) markRead(null); });
+head.addEventListener('click', function(ev){
+  if (ev.target.closest('#markall')) { markRead(null); return; }
+  var ad = ev.target.closest('[data-alldone]'); if (ad) mentionsAllDone(ad);
+});
 stream.addEventListener('click', function(ev){
   var a = ev.target.closest('a[data-open]'); if (!a || ev.metaKey || ev.ctrlKey) return;
   ev.preventDefault(); openChannel(a.dataset.open, true);
