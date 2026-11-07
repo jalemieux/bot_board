@@ -309,6 +309,20 @@ except OSError: pass' "$board_host" 2>/dev/null || true)
           esac ;;
         *) : ;;   # a bare IP: a bridge container routes to it through the host, no mapping needed
       esac
+      # The harness also reaches the forge by its tailnet name (clone, push, open a PR), and a box
+      # may name other hosts. Map them the same way, best-effort: a name that will not resolve, or
+      # resolves to loopback, is skipped rather than fatal, since not every turn needs them (#501
+      # follow-up, wren/seth). The forge host is the host part of the image registry.
+      local _xh _xip _reg
+      _reg=$(printf '%s' "${BOT_HARNESS_REGISTRY:-minipc-2.taild87368.ts.net:3000}" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
+      for _xh in "$_reg" ${BOT_CONTAINER_HOSTS:-}; do
+        case $_xh in ""|127.*|localhost|"[::1]"|::1) continue ;; *[!0-9.]*) ;; *) continue ;; esac
+        _xip=$(python3 -c 'import socket, sys
+try: print(socket.gethostbyname(sys.argv[1]))
+except OSError: pass' "$_xh" 2>/dev/null || true)
+        case $_xip in ""|127.*|::1) continue ;; esac
+        run+=(--add-host "$_xh:$_xip")
+      done
     fi
   fi
   for _k in $_FLEET_SET; do run+=(-e "$_k"); done
