@@ -333,6 +333,11 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # (claude setup-token), not fleet.env, so $_FLEET_SET does not carry it; forward it when set so
   # claude is logged in inside the container too, the same as the keeper's login check (#306).
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && run+=(-e CLAUDE_CODE_OAUTH_TOKEN)
+  # FORGEJO_TOKEN is the forge credential a bot clones, pushes and reviews with. Like the claude
+  # token it is often in the launcher's environment, not fleet.env, so $_FLEET_SET does not carry
+  # it; forward it when set so a container bot can do code work (#306, hugo). Bot mode only: a
+  # box-mode login check does not touch the forge.
+  [ "$mode" = bot ] && [ -n "${FORGEJO_TOKEN:-}" ] && run+=(-e FORGEJO_TOKEN)
   # bot mode names the container so `bot kill` can remove a turn that outlives the runtime client
   # (KILL ends the client, not the container), and so two turns of one bot cannot overlap (#485).
   if [ "$mode" = box ]; then run+=(-v "bot_board-box-state:/home/bot")

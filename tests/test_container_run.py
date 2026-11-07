@@ -198,6 +198,31 @@ class ContainerRun(unittest.TestCase):
         self.assertIsNotNone(run, self.calls())
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, run)
 
+    def test_forgejo_token_from_env_is_forwarded_to_the_bot_container(self):
+        # the forge credential often lives in the launcher env, not fleet.env; a container bot needs
+        # it to clone, push and review, so container_run must forward it (#306, hugo)
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "FORGEJO_TOKEN": "dummy-forge-token"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("FORGEJO_TOKEN", run, "forge token forwarded by name: %s" % run)
+        self.assertNotIn("dummy-forge-token", " ".join(run), "passed by name, not value")
+
+    def test_forgejo_token_not_forwarded_in_box_mode(self):
+        # a box-mode login check does not touch the forge, so it does not carry the forge token
+        self.log.write_text("")
+        env = self.sub_env({"FORGEJO_TOKEN": "dummy-forge-token"})
+        r = self.run_sub(["--box", "claude", "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertNotIn("FORGEJO_TOKEN", run, "box mode does not need the forge token: %s" % run)
+
     def test_forge_host_is_mapped_into_the_bridge_container(self):
         # the harness reaches the forge by its tailnet name; a bridge container must resolve it too
         forge = "minipc-2.taild87368.ts.net"
