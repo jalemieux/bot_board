@@ -626,6 +626,17 @@ border-radius:6px;padding:2px 9px;font:12px var(--mono);color:var(--dim);cursor:
 .ugroup .more{margin:2px 22px 0 70px;font:12px var(--mono);color:var(--dim)}
 .ubar{display:flex;align-items:center;gap:10px;margin-left:auto}
 .rail .empty{padding:4px 16px;font:12px var(--mono);color:var(--dim)}
+.crew{position:fixed;z-index:40;width:290px;max-width:calc(100vw - 24px);max-height:70vh;overflow-y:auto;padding:10px 12px;background:var(--panel);color:var(--ink);
+border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);font:13px/1.4 var(--sans);pointer-events:none}
+.crew[hidden]{display:none}
+.crew h3{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}
+.crew .bot{display:grid;grid-template-columns:8px 1fr;column-gap:8px;padding:5px 0;border-top:1px solid var(--line)}
+.crew h3+.bot{border-top:0}
+.crew .bot .dot{margin-top:6px}
+.crew .who{font:600 13px var(--mono)}
+.crew .prof{margin-left:6px;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
+.crew .role{grid-column:2;color:var(--dim);font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.crew .none{color:var(--dim);font-size:12px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;flex:none;
 border:1.5px solid var(--dim);background:transparent}
 .dot.active{background:var(--good);border-color:var(--good)}
@@ -990,6 +1001,7 @@ function renderRail(){
       return '<li class="' + cls + '" data-slug="' + esc(b.slug) + '">' + lead + name + badge + '</li>';
     }).join('');
   };
+  if (typeof hideCrew === 'function') hideCrew();   // the hovered row is replaced below
   $('#channels').innerHTML = channelTree(lis);
   var mine = function(c){ return !!ME && (c.participants || []).indexOf(ME.handle) >= 0; };
   $('#dms').innerHTML = lis(S.convs.filter(mine), true);
@@ -1046,6 +1058,46 @@ rail.addEventListener('click', function(ev){
   var li = ev.target.closest('li[data-slug]'); if (!li) return;
   openChannel(li.dataset.slug, true);
 });
+
+// Hovering a channel shows the bots that work in it: those of its workspace, narrowed to the ones
+// bound to it when a bot is bound (a.channels), each with presence, profile and the profile's role.
+var crew = document.createElement('div'); crew.className = 'crew'; crew.hidden = true; crew.setAttribute('role', 'tooltip');
+document.body.appendChild(crew);
+var crewTimer = null;
+function crewBots(b){
+  if (!b.workspace) return null;
+  var rank = {active: 0, recent: 1, idle: 2, away: 3};
+  return Object.keys(S.agents).map(function(h){ return S.agents[h]; }).filter(function(a){
+    var bound = a.channels || [];
+    return a.kind !== 'human' && a.workspace === b.workspace && (!bound.length || bound.indexOf(b.slug.toLowerCase()) >= 0);
+  }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
+}
+function showCrew(li){
+  var b = findEntry(li.dataset.slug), bots = b && crewBots(b);
+  if (!bots) return;
+  crew.innerHTML = '<h3>#' + esc(b.slug) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
+    return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
+      '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
+      (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
+  }).join('') : '<div class="none">No bots work here yet.</div>');
+  var r = li.getBoundingClientRect();
+  crew.hidden = false;
+  crew.style.left = (r.right + 8) + 'px';
+  crew.style.top = Math.max(8, Math.min(r.top - 6, window.innerHeight - crew.offsetHeight - 8)) + 'px';
+}
+function hideCrew(){ clearTimeout(crewTimer); crew.hidden = true; }
+rail.addEventListener('mouseover', function(ev){
+  var li = ev.target.closest('#channels li[data-slug]');
+  if (!li || li.contains(ev.relatedTarget)) return;
+  clearTimeout(crewTimer);
+  crewTimer = setTimeout(function(){ showCrew(li); }, crew.hidden ? 300 : 80);   // a pause to open, quick to move on to the next one
+});
+rail.addEventListener('mouseout', function(ev){
+  var li = ev.target.closest('#channels li[data-slug]');
+  if (li && !li.contains(ev.relatedTarget)) hideCrew();
+});
+rail.addEventListener('scroll', hideCrew);
+document.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') hideCrew(); });
 
 function refreshLists(){
   var q1 = '/api/channels?hide_events=true&seen=' + encodeURIComponent(seenParam(S.channels));

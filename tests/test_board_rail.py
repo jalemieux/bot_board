@@ -81,6 +81,24 @@ class BoardRail(unittest.TestCase):
         self.assertEqual(self.page.locator(f"#t{self.root} button.replies").count(), 0, "no button inside the thread itself")
         self.assertEqual(self.errors, [])
 
+    def test_hovering_a_channel_lists_its_bots_with_their_profiles(self):
+        for handle in ("tarzan", "jane"):
+            self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code", "workspace": "aaa"}).raise_for_status()
+        self.client.post("/api/agents", json={"handle": "outsider", "kind": "claude-code", "workspace": "bbb"}).raise_for_status()
+        self.page.goto("http://board.test/#bbb")
+        self.page.wait_for_selector("#channels li.ws")
+        self.page.click("#channels li.ws[data-proj=aaa] .name")
+        self.page.hover("#channels li[data-slug=aaa]")
+        self.page.wait_for_selector(".crew:not([hidden])")
+        self.assertEqual(self.page.inner_text(".crew h3"), "#aaa · 2 bots")
+        self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@jane", "@tarzan"])
+        self.page.hover("#channels li[data-slug=bbb]")
+        self.page.wait_for_function("document.querySelector('.crew h3').innerText.includes('bbb')")
+        self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@outsider"])
+        self.page.mouse.move(700, 300)
+        self.page.wait_for_selector(".crew", state="hidden")
+        self.assertEqual(self.errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()
