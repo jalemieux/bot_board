@@ -10,7 +10,6 @@ import hashlib
 import json
 import random
 import re
-import uuid
 from datetime import datetime, timezone
 
 from . import db
@@ -80,10 +79,36 @@ UP = ("waiting", "running")     # how bin/bot ps describes a bot whose launcher 
 NAMES = ("ada", "alma", "amos", "anya", "arlo", "basil", "bea", "bruno", "cleo", "cora", "dara", "dex",
          "edie", "eli", "elsa", "enzo", "esme", "ezra", "faye", "finn", "flora", "gus", "hana", "hugo",
          "ida", "igor", "ines", "iris", "ivo", "jade", "jonas", "juno", "kai", "kira", "lars", "lena",
-         "leo", "lila", "linus", "lola", "luca", "mabel", "mara", "milo", "mina", "nell", "nico", "nina",
-         "noor", "olga", "omar", "opal", "otis", "otto", "pia", "quinn", "rafa", "remy", "rosa", "rufus",
-         "sana", "seth", "sven", "tess", "theo", "tilda", "uma", "vera", "wes", "willa", "yara", "zane",
-         "zoe",)
+         "leo", "lila", "linus", "lola", "luca", "mabel", "mara", "milo", "mina", "nell", "nico",
+         "nina", "noor", "olga", "omar", "opal", "otis", "otto", "pia", "quinn", "rafa", "remy", "rosa",
+         "rufus", "sana", "seth", "sven", "tess", "theo", "tilda", "uma", "vera", "wes", "willa",
+         "yara", "zane", "zoe", "abby", "ace", "adam", "adele", "aimee", "aldo", "alec", "alex",
+         "alice", "alina", "alva", "amara", "amber", "andre", "andy", "angus", "anika", "anton",
+         "april", "ariel", "asa", "ash", "aspen", "astrid", "atlas", "aurora", "ava", "axel", "basia",
+         "beau", "bella", "ben", "bert", "beth", "bianca", "billie", "bjorn", "blair", "blake", "bo",
+         "bonnie", "brad", "brady", "brea", "bree", "brett", "brie", "brook", "bryn", "cal", "cali",
+         "callum", "cam", "carl", "carla", "carmen", "cary", "cass", "cato", "cedric", "celia", "chad",
+         "chase", "chloe", "chris", "clara", "clay", "cliff", "clive", "cole", "colm", "cruz", "cyrus",
+         "dale", "dana", "dane", "danny", "dario", "dean", "delia", "denny", "derek", "dina", "dion",
+         "dora", "drew", "duke", "dylan", "earl", "eden", "edda", "eddy", "edgar", "edna", "egan",
+         "elena", "ella", "ellis", "elmo", "elton", "elvis", "emil", "emma", "erin", "eris", "ethan",
+         "etta", "eva", "evan", "eve", "fae", "fern", "fiona", "flynn", "fran", "fritz", "gabe", "gail",
+         "gale", "gary", "gemma", "gene", "gia", "gil", "gina", "gino", "glen", "greta", "gwen", "hal",
+         "hank", "hans", "hazel", "heidi", "hero", "hope", "hugh", "ian", "ilsa", "ira", "isla", "ivy",
+         "jack", "jake", "jana", "jane", "jared", "jay", "jean", "jed", "jem", "jess", "joan", "joel",
+         "joey", "jon", "jory", "josie", "jude", "judy", "june", "kane", "kara", "karl", "kate", "kay",
+         "keir", "kelly", "ken", "kent", "kit", "kyle", "lana", "lance", "lane", "lara", "laura", "lee",
+         "leif", "levi", "lily", "lin", "lisa", "liv", "liz", "lou", "luke", "lulu", "lux", "lyle",
+         "lyra", "mace", "maddy", "mae", "maeve", "mal", "mani", "marc", "maya", "mick", "mila",
+         "miles", "mira", "moe", "mona", "mort", "myra", "nadia", "nash", "nat", "ned", "neil", "nora",
+         "nova", "odin", "olive", "oren", "orla", "oz", "page", "pat", "paul", "pearl", "pedro", "penn",
+         "perry", "pete", "petra", "phil", "pip", "polly", "pru", "quin", "raina", "ralph", "ravi",
+         "ray", "reed", "reid", "rex", "rhea", "rhys", "rick", "rita", "rob", "rory", "ross", "rudy",
+         "ruth", "ryan", "sage", "sal", "sam", "sara", "saul", "scout", "sean", "sid", "silas", "sky",
+         "sol", "sonia", "stan", "stella", "sue", "sully", "tara", "ted", "thea", "tim", "tina", "tito",
+         "toby", "tom", "tony", "tori", "trent", "trey", "troy", "tyra", "una", "val", "vic", "vida",
+         "vince", "viola", "walt", "ward", "wendy", "wilf", "will", "wynn", "xena", "yael", "yuri",
+         "zack", "zara", "zed", "zena", "ziggy", "zora",)
 
 
 def init() -> None:
@@ -603,13 +628,13 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
 
 def free_name() -> str:
     """A first name for a new bot that no agent on the board, no request and no box
-    has used; once those run out, a name with four hex characters, as bin/bot does."""
+    has used; once those run out, a first name with a number, as bin/bot does."""
     c = db.conn()
     taken = {r[0].lower() for r in c.execute("SELECT handle FROM agents")}
     taken |= {r[0].lower() for r in c.execute("SELECT handle FROM fleet_bots")}
     taken |= {b["handle"].lower() for h in hosts() for b in h["bots"]}
     free = [n for n in NAMES if n not in taken]
-    return random.choice(free) if free else f"{random.choice(NAMES)}-{uuid.uuid4().hex[:4]}"
+    return random.choice(free) if free else f"{random.choice(NAMES)}{random.randint(2, 99)}"
 
 
 def move(handle: str, to: str, by: str, start: bool = False) -> str | None:

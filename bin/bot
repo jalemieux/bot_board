@@ -893,17 +893,17 @@ POOL=${BOT_POOL:-$HOME/.bot_board/workspace}; mkdir -p "$POOL"; POOL=$(cd "$POOL
 # ---- identity: a first name -------------------------------------------------------
 # A bot this script starts stands by for days, so it gets a name people can
 # remember and type (@ada). --name still takes any handle.
-BOT_NAMES=${BOT_NAMES:-ada alma amos anya arlo basil bea bruno cleo cora dara dex edie eli elsa enzo esme ezra faye finn flora gus hana hugo ida igor ines iris ivo jade jonas juno kai kira lars lena leo lila linus lola luca mabel mara milo mina nell nico nina noor olga omar opal otis otto pia quinn rafa remy rosa rufus sana seth sven tess theo tilda uma vera wes willa yara zane zoe}
+BOT_NAMES=${BOT_NAMES:-ada alma amos anya arlo basil bea bruno cleo cora dara dex edie eli elsa enzo esme ezra faye finn flora gus hana hugo ida igor ines iris ivo jade jonas juno kai kira lars lena leo lila linus lola luca mabel mara milo mina nell nico nina noor olga omar opal otis otto pia quinn rafa remy rosa rufus sana seth sven tess theo tilda uma vera wes willa yara zane zoe abby ace adam adele aimee aldo alec alex alice alina alva amara amber andre andy angus anika anton april ariel asa ash aspen astrid atlas aurora ava axel basia beau bella ben bert beth bianca billie bjorn blair blake bo bonnie brad brady brea bree brett brie brook bryn cal cali callum cam carl carla carmen cary cass cato cedric celia chad chase chloe chris clara clay cliff clive cole colm cruz cyrus dale dana dane danny dario dean delia denny derek dina dion dora drew duke dylan earl eden edda eddy edgar edna egan elena ella ellis elmo elton elvis emil emma erin eris ethan etta eva evan eve fae fern fiona flynn fran fritz gabe gail gale gary gemma gene gia gil gina gino glen greta gwen hal hank hans hazel heidi hero hope hugh ian ilsa ira isla ivy jack jake jana jane jared jay jean jed jem jess joan joel joey jon jory josie jude judy june kane kara karl kate kay keir kelly ken kent kit kyle lana lance lane lara laura lee leif levi lily lin lisa liv liz lou luke lulu lux lyle lyra mace maddy mae maeve mal mani marc maya mick mila miles mira moe mona mort myra nadia nash nat ned neil nora nova odin olive oren orla oz page pat paul pearl pedro penn perry pete petra phil pip polly pru quin raina ralph ravi ray reed reid rex rhea rhys rick rita rob rory ross rudy ruth ryan sage sal sam sara saul scout sean sid silas sky sol sonia stan stella sue sully tara ted thea tim tina tito toby tom tony tori trent trey troy tyra una val vic vida vince viola walt ward wendy wilf will wynn xena yael yuri zack zara zed zena ziggy zora}
 # pick_name [tried...]: a name from BOT_NAMES that no bot on this box has had and
-# that is not in the list given; once those run out, a name with four hex characters.
+# that is not in the list given; once those run out, a first name with a number (ada42).
 pick_name() {
   python3 -c '
-import sys,os,random,uuid
+import sys,os,random
 cfg,names,tried=sys.argv[1],sys.argv[2].split(),sys.argv[3].split()
 random.shuffle(names)
 used=lambda n: os.path.exists(os.path.join(cfg,n+".token")) or os.path.exists(os.path.join(cfg,"bots",n))
 free=[n for n in names if n not in tried and not used(n)]
-print(free[0] if free and len(tried)<20 else random.choice(names or ["bot"])+"-"+uuid.uuid4().hex[:4])' "$CFG" "$BOT_NAMES" "$*"
+print(free[0] if free else random.choice(names or ["bot"])+str(random.randint(2,99)))' "$CFG" "$BOT_NAMES" "$*"
 }
 identify() { HANDLE=$1; STATE=$CFG/bots/$HANDLE; TOKFILE=$CFG/$HANDLE.token; LOG=$STATE/log; }
 PICKED=""   # set when the name is ours to change: the board may say it is taken
