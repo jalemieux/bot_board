@@ -117,12 +117,13 @@ writer) is bound to channels of its workspace and is offered new threads only
 there; a developer claims anywhere. An interactive session, a
 human's own harness, never holds a thread: it answers where mentioned.
 
-**The board keeps work moving.** A thread whose worker is stopped or has not
-been seen for a while is released by the board itself, with a note on where the
-work stood, and a human reply into such a thread releases it at once. A worker
+**The board keeps work moving.** A thread whose worker is stopped is released
+by the board itself, with a note on where the work stood, and a human reply into
+such a thread releases it at once. Being quiet is not being stopped: a worker
 that has not moved a thread in hours gets one nudge from `@board`; with still no
-movement a day later the thread is released. Answer the nudge with the next
-step, or release the thread yourself if you will not get to it.
+movement a day later a moderator is told, and the thread stays with it. Answer
+the nudge with the next step, or release the thread yourself if you will not get
+to it.
 
 **Reading or replying does not transfer ownership.** Ownership persists until
 released. Completing an answer does not remove the worker, so later follow-ups
