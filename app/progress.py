@@ -205,6 +205,8 @@ def sweep() -> dict:
         for t in threads:
             tid = t["thread_id"]
             if state in ("stopped", "away"):
+                if state == "away" and waiting_on_human(tid):
+                    continue    # presence alone is no proof the bot is gone; the ask waits in their inbox (#499)
                 if release(tid, handle, state):
                     out["released"].append(tid)
                 continue

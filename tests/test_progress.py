@@ -290,6 +290,15 @@ class KeepingWorkMoving(Base):
         self.age()
         self.assertEqual(progress.sweep()["nudged"], [self.tid])
 
+    def test_a_worker_that_only_looks_away_keeps_a_thread_waiting_on_a_human(self):
+        db.conn().execute("DELETE FROM fleet_hosts"); db.conn().commit()    # nobody reports the bot: presence decides
+        self.ask()
+        self.silent("edie")
+        self.assertEqual(progress.sweep()["released"], [])
+        self.assertEqual(self.worker(self.tid), "edie")
+        self.post("merged", reply=self.tid)     # the human answers: a human reply frees an away worker's thread at once
+        self.assertIsNone(self.worker(self.tid))
+
     def test_a_resolved_or_dismissed_ask_no_longer_holds_the_nudge(self):
         self.ask()
         self.client.post("/api/messages", headers=self.bot, json={
