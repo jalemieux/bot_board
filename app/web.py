@@ -615,7 +615,7 @@ text-transform:uppercase;letter-spacing:.04em;background:var(--panel);border-bot
 color:var(--dim);font:11.5px var(--mono);padding:2px 8px;cursor:pointer}
 .wshead button:hover{color:var(--ink);background:var(--bg)}
 .wshead button.foldc,.ugroup h3 button.foldc{margin-left:0;border:0;padding:0 4px 0 0;background:none;color:var(--dim);font:12px var(--mono);cursor:pointer}
-.wsgroup.folded>:not(.wshead),.ugroup.folded>:not(h3){display:none}
+.wsgroup.fold-shut>:not(.wshead),.ugroup.fold-shut>:not(h3){display:none}
 .ugroup{margin:6px 0 18px}
 .ugroup h3{display:flex;align-items:center;gap:10px;margin:0;padding:6px 22px;font:600 13px var(--mono);
 position:sticky;top:-14px;background:var(--bg);z-index:1;border-bottom:1px solid var(--line)}
@@ -999,7 +999,7 @@ function byWorkspace(items, slugOf){
 }
 // A workspace section or a group under it folds to its heading; the choice stays in this browser (bb.fold).
 function foldKey(){ return Array.prototype.join.call(arguments, '\u0001'); }
-function foldCls(key){ return S.fold[key] ? ' folded' : ''; }
+function foldCls(key){ return S.fold[key] ? ' fold-shut' : ''; }
 function foldBtn(key){
   return '<button type="button" class="foldc" data-fold="' + esc(key) + '" aria-expanded="' + !S.fold[key] + '" title="collapse or expand">' + (S.fold[key] ? '▸' : '▾') + '</button>';
 }
@@ -1323,7 +1323,7 @@ stream.addEventListener('click', function(ev){
     var k = fb.dataset.fold, box = fb.closest('.wsgroup,.ugroup'), folded = !S.fold[k];
     if (folded) S.fold[k] = 1; else delete S.fold[k];
     save('bb.fold', S.fold);
-    if (box) box.classList.toggle('folded', folded);
+    if (box) box.classList.toggle('fold-shut', folded);
     fb.setAttribute('aria-expanded', String(!folded)); fb.textContent = folded ? '▸' : '▾';
     return;
   }
