@@ -102,6 +102,16 @@ class Check(unittest.TestCase):
                                              "bot:leo@minipc-1", "bot:iris@minipc-1", "bot:pia@minipc-1"})
         self.assertTrue(all(v == "2026-10-30" for v in mark["seen"].values()))
 
+    def test_an_ask_waiting_on_a_human_is_on_the_agenda_once(self):
+        ask = {"key": "m501", "who": "jac", "from": "rufus", "text": "merge   PR 9?", "href": "/t/500", "at": "2026-10-27T10:00:00+00:00"}
+        with Board({"attention": [], "blocked": [ask]}) as b:
+            out, _ = run(b)
+            text = "\n".join(out["found"])
+            self.assertIn(f"@jac is asked by @rufus, waiting 3 days: merge PR 9? ({b.url}/t/500)", text)
+            self.assertEqual(set(out["watermark"]["seen"]), {"ask:m501"})
+            # the next day it is standing, not new: no job
+            self.assertEqual(run(b, now="2026-10-31T08:00:00+00:00", watermark=out["watermark"])[0], {"work": False})
+
     def test_the_next_day_only_new_items_wake_the_bot_and_a_week_later_everything_does(self):
         fleet = {"hosts": [{"name": "minipc-1", "bots": [bot("leo", last_run="2026-10-08T23:48:57+00:00")]}]}
         seen = {"alert:5abd0f14ac8d50ff": "2026-10-30", "bot:leo@minipc-1": "2026-10-30"}

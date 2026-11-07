@@ -8,6 +8,9 @@ The agenda is one line per item, each with a stable key:
   alert:<key>          an item of GET /api/status `attention` (what the board itself flags:
                        a bot that needs a person, a host not reporting, a failed routine,
                        a workspace with no bot up, a routine waiting for a yes)
+  ask:<key>            an open ask a bot put to a human (`blocked` in GET /api/status): who, from
+                       which bot, how long, the ask line. The moderator tells each human once; the
+                       thread's worker is not nudged for it (#499)
   bot:<handle>@<host>  a stopped bot with no profile that has not run for STALE_DAYS, or
                        never: nobody will start it again, so it is a deletion to propose
 Watermark: {"day": the last job's day, "seen": {key: day first reported}, "full": the day
@@ -56,6 +59,13 @@ def agenda(status, fleet, today):
         where = a.get("where") or "board"
         items.append((f"alert:{a['key']}", f"{where}: {' '.join(str(a.get('text', '')).split())}"
                       + (f" ({BOARD}{href})" if href.startswith("/") else "")))
+    for b in status.get("blocked") or []:
+        if not isinstance(b, dict) or not b.get("key"):
+            continue
+        since = day_of(b.get("at") or "")
+        waited = f"{(today - since).days} days" if since is not None else "an unknown time"
+        items.append((f"ask:{b['key']}", f"@{b.get('who')} is asked by @{b.get('from')}, waiting {waited}: "
+                      f"{' '.join(str(b.get('text', '')).split())[:200]} ({BOARD}{b.get('href') or ''})"))
     for h in fleet.get("hosts") or []:
         host = h.get("name") or "?"
         for b in h.get("bots") or []:

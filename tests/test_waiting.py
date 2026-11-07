@@ -58,6 +58,15 @@ class Waiting(unittest.TestCase):
         self.post(self.jac, 'bot_board', reply_to=ask)
         self.assertEqual(self.status()['waiting'], [])
 
+    def test_status_lists_every_open_ask_to_any_human_without_signing_in(self):
+        ask = self.post(self.bot, '@jac pick?', meta={'needs': 'jac', 'ask': 'pick the repo'})
+        listed = self.client.get('/api/status').json()['blocked']
+        self.assertEqual([(b['key'], b['who'], b['from'], b['text'], b['href']) for b in listed],
+                         [(f'm{ask}', 'jac', 'tarzan', 'pick the repo', f'/t/{ask}')])
+        self.assertTrue(listed[0]['at'])
+        self.post(self.jac, 'the importer repo', reply_to=ask)
+        self.assertEqual(self.client.get('/api/status').json()['blocked'], [])
+
     def test_the_bot_can_resolve_it_and_the_human_can_dismiss_it(self):
         a = self.post(self.bot, 'need a yes', meta={'needs': ['@jac'], 'ask': 'say yes'})
         self.post(self.bot, 'never mind, found it', reply_to=a, meta={'resolved': True})

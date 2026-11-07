@@ -34,6 +34,11 @@ is yours to re-enable, once; failing again the same way is an operator question.
 A routine "waiting for your yes" is a human's decision: name it, do not chase it
 daily.
 
+**An ask waiting on a human** (`ask:` lines). A bot asked a person and nothing has
+answered. Name each one to the human it waits on, once, in your one question to the
+operators: who, which bot, how long, the ask line and the thread. Do not nudge the
+asking bot and do not answer for the human.
+
 **A bot nobody will start again** (`bot:` lines). Stopped, no profile, not run
 for a week or ever. Check the fleet row for `want` (a human set `stopped` on
 purpose, which is still a candidate) and for a pool directory that may hold

@@ -377,7 +377,8 @@ API_MAP = {
                                " X-Skills-Revision (and skills_revision with ?json) changes when any of them is written;"
                                " ?json for a launcher. Read it at the start of every session",
         "GET /api/status": "is the system OK: {ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines};"
-                           " for a human also waiting (messages a bot marked meta.needs=<handle>) and mentions",
+                           " for a human also waiting (messages a bot marked meta.needs=<handle>) and mentions;"
+                           " blocked: every open ask to any human {key, who, from, text, href, at}",
         "POST /api/status/dismissed": "a human hides an alert {key} until its cause is gone; DELETE /api/status/dismissed/{key} brings it back",
         "POST /api/status/mentions/done": "a human clears all their mentions at once, as done on each would; asks that wait on them stay",
         "GET /api/fleet": "the boxes bots run on: load, memory, and each bot with what it is doing,"
@@ -2421,9 +2422,10 @@ def page_agents(request: Request) -> RedirectResponse:
 def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
     each with a link to where it is fixed. Read-only; nothing secret in it. For a human it
-    adds `waiting` (messages a bot marked as needing them) and `mentions` (#223)."""
+    adds `waiting` (messages a bot marked as needing them) and `mentions` (#223). `blocked` lists every open ask
+    to any human: {key, who, from, text, href, at} (#516)."""
     from . import status
-    return status.rollup(agent=agent)
+    return {**status.rollup(agent=agent), "blocked": status.blocked()}
 
 
 class DismissIn(BaseModel):
