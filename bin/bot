@@ -353,12 +353,16 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
     # The launcher is the only owner of the name and turns are serialised, so a live turn never
     # collides here; removing a leftover is always right (#485 review).
     $BOT_RUNTIME rm -f "bot_board-${HANDLE:-bot}-run" >/dev/null 2>&1 || true
-    # Refuse an empty /work: on Colima or Docker Desktop only paths under $HOME bind-mount, so a
-    # checkout elsewhere mounts as an empty /work with no error (seth, #485). Fail loud instead of
-    # running the harness on nothing. The check runs then exec's the harness, so no extra container.
+    # Refuse an empty /work only when the host checkout has files: on Colima or Docker Desktop only
+    # paths under $HOME bind-mount, so a checkout elsewhere mounts as an empty /work with no error
+    # (seth, #485). Fail loud instead of running the harness on nothing. A host directory that is
+    # itself empty (a new bot, nothing cloned yet) is not a failed mount and runs. The check runs
+    # then exec's the harness, so no extra container.
+    local _host_files=0
+    if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then _host_files=1; fi
     $BOT_RUNTIME "${run[@]}" "$image" sh -c \
-      'test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }; exec "$@"' \
-      sh "$@"
+      'has=$1; shift; [ "$has" = 0 ] || test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }; exec "$@"' \
+      sh "$_host_files" "$@"
   fi
 }
 

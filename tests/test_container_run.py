@@ -53,6 +53,8 @@ while i < len(argv):
 if image is None:
     sys.stderr.write("fake runtime: no image in %r\n" % (argv,)); sys.exit(2)
 work_src = next((s for s, d in mounts if d == "/work"), None)
+if os.environ.get("FAKE_RUNTIME_NO_MOUNT"):    # a failed bind-mount: the container sees an empty /work
+    work_src = os.environ["FAKE_RUNTIME_NO_MOUNT"]
 cwd = work_src if workdir == "/work" and work_src else None
 # bot mode wraps the command as: sh -c '<guard>' sh <harness> <args>
 if len(cmd) >= 4 and cmd[0] == "sh" and cmd[1] == "-c" and cmd[3] == "sh":
@@ -259,15 +261,26 @@ class ContainerRun(unittest.TestCase):
         self.assertFalse(any("no-such-host.invalid" in a for a in run), "unresolvable host skipped: %s" % run)
         self.assertFalse(any(a == "--add-host" for a in run), "no mapping for bare-IP board/registry or loopback hosts: %s" % run)
 
-    def test_empty_checkout_fails_loud_with_exit_97(self):
+    def test_a_failed_mount_of_a_checkout_with_files_fails_loud_with_exit_97(self):
         self.log.write_text("")
-        empty = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        host = tempfile.mkdtemp()
+        unmounted = tempfile.mkdtemp()       # what the container sees instead of the host directory
+        self.addCleanup(shutil.rmtree, host, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, unmounted, ignore_errors=True)
+        (Path(host) / ".keep").write_text("files on the host")
         # opt out of the loopback-board guard so it cannot preempt the /work guard under test
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", empty, "--", "--version"],
-                         self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1"}))
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", host, "--", "--version"],
+                         self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "FAKE_RUNTIME_NO_MOUNT": unmounted}))
         self.assertEqual(r.returncode, 97, r.stdout + r.stderr)
         self.assertIn("did not bind-mount", r.stderr)
+
+    def test_an_empty_host_checkout_is_not_a_failed_mount_and_runs(self):
+        self.log.write_text("")
+        empty = tempfile.mkdtemp()           # a new bot that has cloned nothing yet
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", empty, "--", "--version"],
+                         self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1"}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_bot_mode_needs_a_checkout_dir(self):
         r = self.run_sub(["claude", "--handle", "tbot", "--", "--version"], self.sub_env())
