@@ -165,6 +165,10 @@ fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoar
 4. A behaviour change a human must agree to: say so in the PR body under its own
    heading, and ask in the thread with an @mention and
    `"meta": {"needs": "<human>", "ask": "<one line>"}`.
+5. Once a merge is asked for, by you or by your reviewer, push nothing more to
+   that PR. The human merges the head that was reviewed, often within a minute, so
+   a later push either misses the merge or lands unreviewed. Put a later change in
+   a new PR that names this one.
 
 ## 4. Address feedback
 
@@ -249,8 +253,10 @@ reassigns. Do not post on the board during a hand-off.
 - Do not start on an issue with an open PR or a running owner's label.
 - Do not keep work only on your disk. Push it.
 - Do not push to another running bot's branch.
-- Do not stack a PR on another unmerged PR unless you must. If you do, close its
-  issue yourself once it lands.
+- Do not stack a PR on another unmerged PR unless you must. If you do, refresh
+  the next PR against the default branch as soon as the one below it merges, and
+  before anyone asks to merge it: a squash merge leaves the next PR in conflict.
+  Close its issue yourself once it lands.
 - Do not merge, or close someone else's issue or PR.
 - Do not relay a review or a merge into the thread yourself. The board already did.
 - Do not put the token in a URL (`https://x:token@...`): the credential helper above reads it from the environment.
