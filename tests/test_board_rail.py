@@ -156,6 +156,11 @@ class BoardRail(unittest.TestCase):
         self.page.hover("#channels li[data-slug=bbb]")
         self.page.wait_for_function("document.querySelector('.crew h3').innerText.includes('bbb')")
         self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@outsider"])
+        # a workspace row lists every bot of the workspace, "bound" included, never the interactive session
+        self.page.hover("#channels li.ws[data-proj=aaa]")
+        self.page.wait_for_function("document.querySelector('.crew h3').innerText.startsWith('aaa')")
+        self.assertEqual(self.page.inner_text(".crew h3"), "aaa · 3 bots")
+        self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@bound", "@jane", "@tarzan"])
         self.page.mouse.move(700, 300)
         self.page.wait_for_selector(".crew", state="hidden")
         self.assertEqual(self.errors, [])

@@ -258,6 +258,45 @@ class ContainerRun(unittest.TestCase):
         self.assertIsNotNone(run, self.calls())
         self.assertNotIn("GH_TOKEN", run, "copilot container must not carry a gh token: %s" % run)
 
+    def _fleet_env_gh(self, extra=None):
+        # a sub env whose fleet.env (not the launcher's own environment) sets GH_TOKEN and
+        # GITHUB_TOKEN, so they ride in $_FLEET_SET; the loop then forwards them by name
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", **(extra or {})})
+        env.pop("GH_TOKEN", None); env.pop("GITHUB_TOKEN", None)   # not in _OWN_SECRETS, so not dropped
+        fe = Path(env["HOME"]) / ".config" / "bot_board"
+        fe.mkdir(parents=True, exist_ok=True)
+        (fe / "fleet.env").write_text("GH_TOKEN=dummy-fleet-gh\nGITHUB_TOKEN=dummy-fleet-github\n")
+        return env
+
+    def test_a_fleet_env_gh_token_reaches_a_non_copilot_container(self):
+        # a GH_TOKEN from fleet.env (not the launcher env) rides in $_FLEET_SET and the loop forwards
+        # it to a non-copilot harness. This also guards the copilot test below from passing vacuously.
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], self._fleet_env_gh())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("GH_TOKEN", run, "a fleet.env gh token reaches claude: %s" % run)
+        self.assertNotIn("dummy-fleet-gh", " ".join(run), "passed by name, not value")
+
+    def test_a_fleet_env_gh_token_is_still_skipped_for_copilot(self):
+        # the #539 guard only covered the launcher-environment case. A GH_TOKEN from fleet.env rides
+        # in $_FLEET_SET and the loop would forward it to every harness; copilot must still not get
+        # it, so the loop skips GH_TOKEN and GITHUB_TOKEN for copilot (#542, jade-dc77)
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        r = self.run_sub(["copilot", "--handle", "tbot", "--dir", checkout, "--", "--version"], self._fleet_env_gh())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertNotIn("GH_TOKEN", run, "copilot must not get a fleet.env gh token: %s" % run)
+        self.assertNotIn("GITHUB_TOKEN", run, "nor a fleet.env github token: %s" % run)
+
     def test_gh_token_not_forwarded_in_box_mode(self):
         # a box-mode login check does not do code work, so it does not carry the gh token
         self.log.write_text("")
