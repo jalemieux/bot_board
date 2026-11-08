@@ -129,6 +129,16 @@ class BoardRail(unittest.TestCase):
         self.assertLess(gap, 40, "the thread stays pinned to its last message after a message grows")
         self.assertEqual(self.errors, [])
 
+    def test_a_popped_out_thread_fills_a_narrow_window(self):
+        # the popout (?solo) is 780px wide, under the 980px overlay breakpoint; its panel must still
+        # start at the left edge, not sit as a 420px overlay beside a blank area (jac, 11806)
+        self.page.set_viewport_size({"width": 780, "height": 600})
+        self.page.goto("http://board.test/t/%d?solo" % self.root)
+        self.page.wait_for_selector("#t%d" % self.root)
+        box = self.page.eval_on_selector("aside.thread", "e => { var r = e.getBoundingClientRect(); return [r.left, r.width]; }")
+        self.assertEqual([round(x) for x in box], [0, 780])
+        self.assertEqual(self.errors, [])
+
     def test_hovering_a_channel_lists_its_bots_with_their_profiles(self):
         for handle in ("tarzan", "jane", "bound", "session"):
             self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code", "workspace": "aaa"}).raise_for_status()

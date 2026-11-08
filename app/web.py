@@ -830,7 +830,8 @@ dialog .or{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);fon
 @media (prefers-reduced-motion:no-preference){.rail li,.replies{transition:background .12s}}
 @media (max-width:980px){.app,.app.thread-closed{grid-template-columns:200px minmax(0,1fr)}
 aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;box-shadow:-6px 0 20px rgba(0,0,0,.15)}
-.app.thread-closed aside.thread{display:none}}
+.app.thread-closed aside.thread{display:none}
+.app.solo aside.thread{position:relative;inset:auto;width:auto;box-shadow:none}}   /* the popout has no main area to overlay: it fills the window */
 """ + TOPNAV_RESPONSIVE_CSS + """
 @media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
 """
