@@ -166,7 +166,8 @@ class Waiting(unittest.TestCase):
                 page.route('**/*', serve)
                 page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))" % token)
                 page.goto('http://board.test/c/admin')
-                page.wait_for_function("document.querySelector('#mentionsli .badge').textContent === '2'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.w').textContent === '1'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').textContent === '1'")
                 self.assertEqual(page.inner_text('#bell-count'), str(alerts or ''), 'asks and mentions do not count on the bell')
                 page.click('#bell')
                 inbox = page.inner_text('#inbox')
@@ -176,6 +177,7 @@ class Waiting(unittest.TestCase):
                 page.click('#mentionsli')
                 page.wait_for_selector('#stream .mrow')
                 self.assertTrue(page.url.endswith('/mentions'))
+                self.assertIn('1 waiting on you · 1 mention,', page.inner_text('#head'))
                 groups = page.locator('#stream .ugroup h3').all_inner_texts()
                 self.assertEqual([g.split()[1:4] for g in groups], [['Waiting', 'on', 'you'], ['Mentions', '1']])    # [0] is the fold caret
                 self.assertIn('review PR 9', page.inner_text('#stream .ugroup:nth-of-type(1) .ask'))
@@ -190,11 +192,13 @@ class Waiting(unittest.TestCase):
                 self.assertTrue(page.locator('#stream .mrow').first.is_visible())
                 # done clears one without a reply; an answer in the thread clears the other
                 page.click(f'[data-done="m{fyi}"]')
-                page.wait_for_function("document.querySelector('#mentionsli .badge').textContent === '1'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.w').textContent === '1'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').hidden")
                 self.assertNotIn('merged, fyi', page.inner_text('#stream'))
                 self.post(self.jac, 'looking now', reply_to=ask)
                 page.evaluate('window.bbStatusRefresh()')
-                page.wait_for_function("document.querySelector('#mentionsli .badge').hidden")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.w').hidden")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').hidden")
                 self.assertIn('You are all caught up', page.inner_text('#stream'))
                 # the address opens it directly too
                 self.post(self.bot, '@jac one more')
@@ -204,10 +208,11 @@ class Waiting(unittest.TestCase):
                 # all done clears every plain mention in one go (thread 10067)
                 self.post(self.bot, '@jac and another')
                 page.evaluate('window.bbStatusRefresh()')
-                page.wait_for_function("document.querySelector('#mentionsli .badge').textContent === '2'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').textContent === '2'")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.w').hidden")
                 page.wait_for_function("document.querySelectorAll('#stream .mrow').length === 2")
                 page.click('[data-alldone]')
-                page.wait_for_function("document.querySelector('#mentionsli .badge').hidden")
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').hidden")
                 self.assertIn('You are all caught up', page.inner_text('#stream'))
                 self.assertEqual(errors, [])
             finally:
@@ -248,8 +253,8 @@ class Waiting(unittest.TestCase):
                 self.assertIn('this one reads fine', page.inner_text('#stream'))
                 self.assertNotIn('refused', page.inner_text('#stream'))
                 # the counts match what the view shows
-                page.wait_for_function("document.querySelector('#mentionsli .badge').textContent === '1'")
-                self.assertIn('1 message that name', page.inner_text('#head'))
+                page.wait_for_function("document.querySelector('#mentionsli .badge.m').textContent === '1'")
+                self.assertIn('1 mention,', page.inner_text('#head'))
                 self.assertEqual(errors, [])
             finally:
                 browser.close()

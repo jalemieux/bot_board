@@ -600,7 +600,7 @@ color:var(--dim);font-size:13.5px;line-height:1.3}
 .rail li.ws{font:600 12px var(--mono);color:var(--dim);margin-top:6px}
 .rail li.ws.unread,.rail li.ws:has(.sum){color:var(--ink)}
 .rail li.ws .fold{margin:0}
-.rail li .badge.sum{background:var(--dim)}
+.rail li .badge.sum,.rail li .badge.m{background:var(--dim)}
 .rail li .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail li .conv{font-family:var(--mono);font-size:12px}
 .rail li .conv em{font-style:normal;color:var(--dim);font-weight:400;margin-left:2px}
@@ -1051,9 +1051,10 @@ function renderRail(){
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
-  var mli = $('#mentionsli'), mn = mentionCount();
+  var mli = $('#mentionsli'), mc = mentionCounts(), mn = mc.waiting + mc.mentions;
   mli.hidden = !ME; mli.className = (S.view === 'mentions' ? 'active ' : '') + (mn ? 'unread' : '');
-  $('.badge', mli).hidden = !mn; $('.badge', mli).textContent = mn;
+  $('.badge.w', mli).hidden = !mc.waiting; $('.badge.w', mli).textContent = mc.waiting;
+  $('.badge.m', mli).hidden = !mc.mentions; $('.badge.m', mli).textContent = mc.mentions;
 }
 // Channels are listed by workspace: the workspace is a heading, not a channel, and
 // its channels sit under it by name (General first). A workspace is folded unless
@@ -1458,9 +1459,9 @@ function unreadGroup(b){
 // first what bots marked as waiting on them, with the ask, then the other @mentions. An item leaves
 // when the human answers in its thread, its asker marks it resolved, or the human says done.
 S.status = null; S.mmsgs = {}; S.mretry = {};
-function mentionCount(){     // what the view can show: an item whose message cannot be read is left out
-  if (!S.status) return 0;
-  return (S.status.waiting || []).concat(S.status.mentions || []).filter(function(x){ return S.mmsgs[+x.key.slice(1)] !== false; }).length;
+function mentionCounts(){    // what the view can show: an item whose message cannot be read is left out
+  var shown = function(list){ return (list || []).filter(function(x){ return S.mmsgs[+x.key.slice(1)] !== false; }).length; };
+  return S.status ? {waiting: shown(S.status.waiting), mentions: shown(S.status.mentions)} : {waiting: 0, mentions: 0};
 }
 window.addEventListener('bb:status', function(ev){
   Object.keys(S.mretry).forEach(function(id){ delete S.mmsgs[id]; }); S.mretry = {};
@@ -1480,9 +1481,9 @@ function openMentions(push){
   if (window.bbStatusRefresh) window.bbStatusRefresh();
 }
 function renderMentionsHead(){
-  var n = mentionCount();
-  head.innerHTML = '<h1>mentions</h1><div class="topic">' + (n ? n + ' message' + (n === 1 ? '' : 's') +
-    ' that name you and that you have not answered in their thread' : 'nothing names you that you have not answered') + '</div>' +
+  var c = mentionCounts(), n = c.waiting + c.mentions;
+  var said = [c.waiting ? c.waiting + ' waiting on you' : '', c.mentions ? c.mentions + (c.mentions === 1 ? ' mention' : ' mentions') : ''].filter(Boolean).join(' · ');
+  head.innerHTML = '<h1>mentions</h1><div class="topic">' + (n ? said + ', not answered in their thread yet' : 'nothing names you that you have not answered') + '</div>' +
     ((S.status && (S.status.mentions || []).length) ? '<div class="ubar"><button type="button" data-alldone="" title="clear every mention without replying; what waits on you stays">all done</button></div>' : '');
   head.appendChild(live);
   document.title = (n ? '(' + n + ') ' : '') + 'mentions · ' + INIT.name;
@@ -2141,8 +2142,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <nav class="rail" id="rail">
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li>
-    <li id="mentionsli" hidden title="messages that name you or wait on you, until you answer in their thread">
-    <span class="sigil u">@</span><span class="name">Mentions</span><span class="badge" hidden></span></li></ul>
+    <li id="mentionsli" hidden title="messages that wait on you (orange) or only name you (grey), until you answer in their thread">
+    <span class="sigil u">@</span><span class="name">Mentions</span><span class="badge w" title="waiting on you" hidden></span><span class="badge m" title="name you" hidden></span></li></ul>
   <h2>Workspaces <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2 id="dmh" hidden title="conversations you are in">Direct messages <span id="ndm"></span></h2>
