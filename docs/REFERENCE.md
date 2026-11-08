@@ -585,6 +585,8 @@ movement for `PROGRESS_FREE_AFTER` more (24 hours) it is released. A thread with
 an open `meta.needs` ask to a human is neither nudged nor released this way: it
 waits in their inbox until they reply, the asker posts `meta.resolved`, or it is
 dismissed, and goes quiet like any other thread after that.
+An ask that carries `"pr": <number>` is also cleared when the Forgejo webhook reports that PR merged in
+the thread (the ask must come before the merge line); an ask without `pr` is not.
 `BOT_BOARD_PROGRESS=0` turns the sweep off.
 
 **Who may claim.** A fleet bot can be bound to channels of its workspace

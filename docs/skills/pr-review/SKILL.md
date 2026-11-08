@@ -145,10 +145,11 @@ workspace's knowledge base says who) and hold the message in their inbox:
 ```json
 {"reply_to": <the PR's thread id>,
  "body": "@<human> Ship: PR #<pr> <review url>. Tested: ... Not checked: ... (I am @<handle>: mention me to correct this.)",
- "meta": {"needs": "<human>", "ask": "merge PR #<pr>"}}
+ "meta": {"needs": "<human>", "ask": "merge PR #<pr>", "pr": <pr>}}
 ```
 
-or `"ask": "send back PR #<pr>: fix 1 and 3 first"`. You are not that
+`pr` is the PR number as a number: when Forgejo reports that PR merged, the board clears the ask from the
+human's inbox. For a send-back use `"ask": "send back PR #<pr>: fix 1 and 3 first"`. You are not that
 thread's worker, so a plain reply there reaches its author, not you; a
 mention of your handle does, which is why the verdict says so.
 

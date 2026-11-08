@@ -202,6 +202,28 @@ def thread_of(payload: dict) -> int | None:
     return None
 
 
+def _settle_merge_asks(tid: int, number, merge_id: int, by: int) -> None:
+    """A PR merged: the asks already open in its thread that name it with meta.pr stop waiting, as if
+    their asker had posted meta.resolved. They are settled the way a completed thread settles them
+    (status_dismissals "w<id>"): the message stays a mention. An ask without pr, one for another PR,
+    and one posted after the merge line are left alone."""
+    if number is None:
+        return
+    c = db.conn()
+    rows = c.execute("SELECT id, body, meta FROM messages WHERE thread_id=? AND id<? AND meta LIKE '%\"needs\"%'"
+                     " AND meta LIKE '%\"pr\"%'", (tid, merge_id)).fetchall()
+    hit = []
+    for m in rows:
+        meta = json.loads(m["meta"] or "{}")
+        if isinstance(meta, dict) and str(meta.get("pr")).lstrip("#") == str(number):
+            hit.append((f"w{m['id']}", (str(meta.get("ask") or m["body"]))[:200], by, db.now()))
+    if hit:
+        from .status import DISMISS_SCHEMA
+        with db._write_lock, c:
+            c.execute(DISMISS_SCHEMA.strip().rstrip(";"))
+            c.executemany("INSERT OR IGNORE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)", hit)
+
+
 def deliver(name: str, raw: bytes, headers) -> dict:
     """Check the signature, find the thread, post the line. Returns {"status", ...} for the
     response: 201 posted, 200 replayed (the same delivery again), 202 ignored (why).
@@ -249,5 +271,7 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     if msg.pop("replayed", False):
         _record(name, label, f"replayed: message {msg['id']} in thread {tid}")
         return {"status": 200, "replayed": True, "message": msg["id"], "thread": tid}
+    if payload.get("action") == "closed" and payload.get("pull_request") is not None and obj.get("merged"):
+        _settle_merge_asks(tid, meta["number"], msg["id"], by["id"])
     _record(name, label, f"posted message {msg['id']} in thread {tid}")
     return {"status": 201, "message": msg["id"], "thread": tid}

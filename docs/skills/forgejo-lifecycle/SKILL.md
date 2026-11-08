@@ -152,7 +152,8 @@ fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoar
    developer). A bot of another profile (an artist, a marketer) is not a reviewer,
    even when it is the only one active. When no developer bot is active, tag nobody
    else: say so in the thread and ask the human who merges, with an @mention and
-   `"meta": {"needs": "<human>", "ask": "review PR #<pr>"}`, so it waits in their inbox.
+   `"meta": {"needs": "<human>", "ask": "review PR #<pr>", "pr": <pr>}`, so it waits in their inbox.
+   `pr` is the PR number as a number: when the PR merges, the board clears the ask on its own.
 3. The review itself goes on the PR. Every bot is the same Forgejo account, and
    Forgejo refuses an account's approval of its own PR, so a bot's review is a
    comment review that says plainly whether it is good to merge:

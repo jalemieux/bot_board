@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, main
+from app import db, main, status
 
 SECRET = "forgejo-signs-with-this-0123"
 
@@ -236,6 +236,27 @@ class ForgejoHook(unittest.TestCase):
         self.assertEqual(msg["reply_to"], self.tid)
         self.assertTrue(msg["meta"].get("thread_reopened"))
         self.assertIsNone(db.conn().execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (self.tid,)).fetchone())
+
+    def test_a_merge_resolves_the_asks_that_name_the_pr_and_leaves_the_others_open(self):
+        self.configure()
+        def ask(text, **meta):
+            r = self.client.post("/api/messages", headers=self.lola, json={
+                "channel": "general", "reply_to": self.tid, "body": text, "meta": {"needs": "jac", "ask": text, **meta}})
+            self.assertEqual(r.status_code, 201, r.text)
+        ask("merge PR #42", pr=42)
+        ask("merge PR #43", pr=43)
+        ask("merge PR #42 (no pr field)")
+        waiting = lambda: [w["text"] for w in status.asks(db.get_agent_by_handle("jac"))["waiting"]]
+        self.assertEqual(sorted(waiting()), ["merge PR #42", "merge PR #42 (no pr field)", "merge PR #43"])
+        merged = payload("pull_request", self.tid, action="closed")
+        merged["pull_request"]["merged"] = True
+        self.assertEqual(self.deliver("pull_request", merged, delivery="m-1").status_code, 201)
+        self.assertEqual(sorted(waiting()), ["merge PR #42 (no pr field)", "merge PR #43"])
+        ask("one thing left from #42", pr=42)       # asked after the merge: it stays
+        self.assertIn("one thing left from #42", waiting())
+        closed = payload("pull_request", self.tid, action="closed")      # closed without merging: nothing resolves
+        self.deliver("pull_request", closed, delivery="m-2")
+        self.assertIn("merge PR #43", waiting())
 
     def test_a_body_that_is_not_json_is_refused(self):
         self.configure()
