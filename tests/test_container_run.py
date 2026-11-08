@@ -225,6 +225,49 @@ class ContainerRun(unittest.TestCase):
         self.assertIsNotNone(run, self.calls())
         self.assertNotIn("FORGEJO_TOKEN", run, "box mode does not need the forge token: %s" % run)
 
+    def test_gh_token_from_env_is_forwarded_to_the_bot_container(self):
+        # GH_TOKEN is the keeper's GitHub credential for gh. It usually also sits in the launcher's
+        # own environment, so _OWN_SECRETS drops the fleet.env copy and $_FLEET_SET does not carry
+        # it; container_run must forward it in bot mode or a container bot's gh is logged out (#538)
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1",
+                            "GH_TOKEN": "dummy-gh-token", "GITHUB_TOKEN": "dummy-github-token"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("GH_TOKEN", run, "gh token forwarded by name: %s" % run)
+        self.assertIn("GITHUB_TOKEN", run, "github token forwarded by name: %s" % run)
+        self.assertNotIn("dummy-gh-token", " ".join(run), "passed by name, not value")
+
+    def test_gh_token_is_not_forwarded_to_a_copilot_container(self):
+        # copilot refuses a gh token in its own environment without Copilot Requests permission; it
+        # takes one through COPILOT_GITHUB_TOKEN. Forwarding GH_TOKEN would hide copilot's own login,
+        # so the copilot container must not get it (#538)
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "GH_TOKEN": "dummy-gh-token"})
+        r = self.run_sub(["copilot", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertNotIn("GH_TOKEN", run, "copilot container must not carry a gh token: %s" % run)
+
+    def test_gh_token_not_forwarded_in_box_mode(self):
+        # a box-mode login check does not do code work, so it does not carry the gh token
+        self.log.write_text("")
+        env = self.sub_env({"GH_TOKEN": "dummy-gh-token"})
+        r = self.run_sub(["--box", "claude", "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertNotIn("GH_TOKEN", run, "box mode does not need the gh token: %s" % run)
+
     def test_forge_host_is_mapped_into_the_bridge_container(self):
         # the harness reaches the forge by its tailnet name; a bridge container must resolve it too
         forge = "minipc-2.taild87368.ts.net"

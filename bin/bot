@@ -338,6 +338,16 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # it; forward it when set so a container bot can do code work (#306, hugo). Bot mode only: a
   # box-mode login check does not touch the forge.
   [ "$mode" = bot ] && [ -n "${FORGEJO_TOKEN:-}" ] && run+=(-e FORGEJO_TOKEN)
+  # GH_TOKEN (and GITHUB_TOKEN) is the GitHub credential the keeper writes under Secrets, so a bot's
+  # gh acts as the fleet account. Like the two above it usually also sits in the launcher's own
+  # environment, so _OWN_SECRETS drops the fleet.env copy from $_FLEET_SET and nothing reaches the
+  # container (milo, #538). Forward it in bot mode. Not for copilot: copilot refuses a gh token in
+  # its own environment without Copilot Requests permission (see run_copilot), and takes one through
+  # COPILOT_GITHUB_TOKEN instead, so a gh token in its env would hide copilot's own login.
+  if [ "$mode" = bot ] && [ "$harness" != copilot ]; then
+    [ -n "${GH_TOKEN:-}" ] && run+=(-e GH_TOKEN)
+    [ -n "${GITHUB_TOKEN:-}" ] && run+=(-e GITHUB_TOKEN)
+  fi
   # bot mode names the container so `bot kill` can remove a turn that outlives the runtime client
   # (KILL ends the client, not the container), and so two turns of one bot cannot overlap (#485).
   if [ "$mode" = box ]; then run+=(-v "bot_board-box-state:/home/bot")
