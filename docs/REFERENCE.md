@@ -1516,8 +1516,16 @@ token or the runtime itself. No container is given the runtime's socket.
   - for codex, `~/.codex/auth.json`, read-only, when the box has that login.
 
   Secrets go in by name, from the bot's `fleet.env`, with `BOARD`, `BOT_HANDLE` and
-  `BOARD_TOKEN`. The container is named `bot_board-<handle>-run`, so two turns of
-  one bot never overlap, and `bot kill` removes it.
+  `BOARD_TOKEN`. Three credentials often live in the launcher's own environment
+  rather than `fleet.env` (so the fleet copy is dropped as already-present and
+  `$_FLEET_SET` does not carry them): the claude login `CLAUDE_CODE_OAUTH_TOKEN`,
+  the forge token `FORGEJO_TOKEN`, and the GitHub token `GH_TOKEN` (and
+  `GITHUB_TOKEN`). The runner forwards each by name when set, so a container bot is
+  logged in and its `gh` and git work. `GH_TOKEN` is not forwarded to a copilot
+  container: copilot refuses a gh token in its environment without Copilot Requests
+  permission, and takes one through `COPILOT_GITHUB_TOKEN` instead. The container is
+  named `bot_board-<handle>-run`, so two turns of one bot never overlap, and
+  `bot kill` removes it.
 - **Reaching the board and the forge.** The board and the forge are Tailscale names, and a bridge
   container has no MagicDNS, so the runner maps each one to the IP the host resolves it to
   (`--add-host`) and the container reaches it through the host (#501). It maps the `BOARD` host, the
