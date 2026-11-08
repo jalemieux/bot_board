@@ -830,7 +830,8 @@ dialog .or{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);fon
 @media (prefers-reduced-motion:no-preference){.rail li,.replies{transition:background .12s}}
 @media (max-width:980px){.app,.app.thread-closed{grid-template-columns:200px minmax(0,1fr)}
 aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;box-shadow:-6px 0 20px rgba(0,0,0,.15)}
-.app.thread-closed aside.thread{display:none}}
+.app.thread-closed aside.thread{display:none}
+.app.solo aside.thread{position:relative;inset:auto;width:auto;box-shadow:none}}   /* the popout has no main area to overlay: it fills the window */
 """ + TOPNAV_RESPONSIVE_CSS + """
 @media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
 """
@@ -1076,8 +1077,7 @@ function channelTree(lis){
       if (!keep) hidden += S.unread[c.slug] || 0;
       return keep;
     });
-    var head = '<li class="ws" data-proj="' + esc(w) + '" title="workspace ' + esc(w) + ': ' + chans.length + ' channel' +
-      (chans.length === 1 ? '' : 's') + '"><button type="button" class="fold" data-proj="' + esc(w) + '" aria-expanded="' + open +
+    var head = '<li class="ws" data-proj="' + esc(w) + '"><button type="button" class="fold" data-proj="' + esc(w) + '" aria-expanded="' + open +
       '">' + (open ? '▾' : '▸') + '</button><span class="name">' + esc(w) + '</span>' +
       (!open && hidden ? '<span class="badge sum" title="unread in this workspace">' + (hidden > 99 ? '99+' : hidden) + '</span>' : '') + '</li>';
     return head + shown.map(function(c){
@@ -1101,21 +1101,23 @@ rail.addEventListener('click', function(ev){
 
 // Hovering a channel shows the bots that work in it: those of its workspace, narrowed to the ones
 // bound to it when a bot is bound (a.channels), never a human's own session, each with presence, profile and the profile's role.
+// Hovering a workspace shows all the bots of that workspace, bound or not.
 var crew = document.createElement('div'); crew.className = 'crew'; crew.hidden = true; crew.setAttribute('role', 'tooltip');
 document.body.appendChild(crew);
 var crewTimer = null;
-function crewBots(b){
-  if (!b.workspace) return null;
+function crewBots(ws, slug){      // slug: the channel, or null for the whole workspace
+  if (!ws) return null;
   var rank = {active: 0, recent: 1, idle: 2, away: 3};
   return Object.keys(S.agents).map(function(h){ return S.agents[h]; }).filter(function(a){
     var bound = a.channels || [];
-    return a.kind !== 'human' && !a.interactive && a.workspace === b.workspace && (!bound.length || bound.indexOf(b.slug.toLowerCase()) >= 0);
+    return a.kind !== 'human' && !a.interactive && a.workspace === ws && (!slug || !bound.length || bound.indexOf(slug.toLowerCase()) >= 0);
   }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
 }
 function showCrew(li){
-  var b = findEntry(li.dataset.slug), bots = b && crewBots(b);
+  var b = li.dataset.slug ? findEntry(li.dataset.slug) : null, ws = b ? b.workspace : li.dataset.proj;
+  var bots = (b || !li.dataset.slug) && crewBots(ws, b && b.slug);
   if (!bots) return;
-  crew.innerHTML = '<h3>#' + esc(b.slug) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
+  crew.innerHTML = '<h3>' + (b ? '#' + esc(b.slug) : esc(ws)) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
     return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
       '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
       (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
@@ -1127,13 +1129,13 @@ function showCrew(li){
 }
 function hideCrew(){ clearTimeout(crewTimer); crew.hidden = true; }
 rail.addEventListener('mouseover', function(ev){
-  var li = ev.target.closest('#channels li[data-slug]');
+  var li = ev.target.closest('#channels li[data-slug], #channels li.ws');
   if (!li || li.contains(ev.relatedTarget)) return;
   clearTimeout(crewTimer);
   crewTimer = setTimeout(function(){ showCrew(li); }, crew.hidden ? 300 : 80);   // a pause to open, quick to move on to the next one
 });
 rail.addEventListener('mouseout', function(ev){
-  var li = ev.target.closest('#channels li[data-slug]');
+  var li = ev.target.closest('#channels li[data-slug], #channels li.ws');
   if (li && !li.contains(ev.relatedTarget)) hideCrew();
 });
 rail.addEventListener('scroll', hideCrew);
