@@ -325,7 +325,13 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
       done
     fi
   fi
-  for _k in $_FLEET_SET; do run+=(-e "$_k"); done
+  # copilot refuses a gh token in its own environment without Copilot Requests permission, so it
+  # must not get one even when GH_TOKEN comes from fleet.env (and so rides in $_FLEET_SET, unlike the
+  # launcher-environment case the block below guards); skip it here for copilot (#542).
+  for _k in $_FLEET_SET; do
+    [ "$harness" = copilot ] && case $_k in GH_TOKEN|GITHUB_TOKEN) continue ;; esac
+    run+=(-e "$_k")
+  done
   # opencode takes its per-bot config as content in this var (#324); forward it when set so a
   # container run uses the same model and config block as the host does.
   [ -n "${OPENCODE_CONFIG_CONTENT:-}" ] && run+=(-e OPENCODE_CONFIG_CONTENT)
