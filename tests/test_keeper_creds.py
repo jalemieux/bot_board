@@ -452,7 +452,7 @@ class BotReloadsFleetEnv(unittest.TestCase):
         # the load_fleet_env family from bin/bot: _OWN_SECRETS, _FLEET_SET, load_fleet_env and the
         # scrub helper, enough to drive them in a bash subprocess without the rest of the launcher
         src = (ROOT / 'bin' / 'bot').read_text()
-        head = src[src.index('_OWN_SECRETS='):src.index('\nload_fleet_env\n')]
+        head = src[src.index('if [ -n "${BOT_OWN_SECRETS+x}"'):src.index('\nload_fleet_env\n')]
         scrub = src[src.index('scrub_box_only_secrets() {'):]
         scrub = scrub[:scrub.index('\n}\n') + 2]
         return head + '\n' + scrub

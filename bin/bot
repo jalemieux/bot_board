@@ -232,8 +232,12 @@ fi
 # environment also holds, the fleet.env value wins and is exported over it (#555, replacing #297,
 # where the box environment shadowed fleet.env instead). _OWN_SECRETS keeps the box's own secret
 # names, so a bot turn can drop the ones /fleet does not have (scrub_box_only_secrets) and the
-# launcher can report the collisions.
-_OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"
+# launcher can report the collisions. A bot the keeper starts inherits the keeper's environment,
+# which already holds every /fleet secret, so it cannot read its own box names from there; the
+# keeper was handed them in BOT_OWN_SECRETS (from the first bin/bot, before any load_fleet_env), so
+# use that when it is set, and this process's environment otherwise (#572).
+if [ -n "${BOT_OWN_SECRETS+x}" ]; then _OWN_SECRETS="$BOT_OWN_SECRETS"
+else _OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"; fi
 _FLEET_SET=" "
 load_fleet_env() {
   local _kv _k now=" "
