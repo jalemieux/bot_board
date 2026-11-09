@@ -418,13 +418,22 @@ class Page(unittest.TestCase):
 
 
 class BotReloadsFleetEnv(unittest.TestCase):
-    def test_rotated_and_removed_secrets_reach_the_next_run(self):
-        import subprocess
+    def _block(self):
+        # the load_fleet_env family from bin/bot: _OWN_SECRETS, _FLEET_SET, load_fleet_env and the
+        # scrub helper, enough to drive them in a bash subprocess without the rest of the launcher
         src = (ROOT / 'bin' / 'bot').read_text()
-        fn = src[src.index('_OWN_SECRETS='):src.index('\nload_fleet_env\n')]
+        head = src[src.index('_OWN_SECRETS='):src.index('\nload_fleet_env\n')]
+        scrub = src[src.index('scrub_box_only_secrets() {'):]
+        scrub = scrub[:scrub.index('\n}\n') + 2]
+        return head + '\n' + scrub
+
+    def test_rotated_and_removed_secrets_reach_the_next_run(self):
+        # and /fleet wins a name collision (#555): MY_KEY is in the box environment (mine), but once
+        # fleet.env sets it (theirs) the fleet value wins. The box value no longer shadows it (#297).
+        import subprocess
         with tempfile.TemporaryDirectory() as home:
             env_file = os.path.join(home, '.config', 'bot_board', 'fleet.env'); os.makedirs(os.path.dirname(env_file))
-            script = fn + f'''
+            script = self._block() + f'''
 w() {{ printf '%s\\n' "$1" > {env_file}; }}
 w GH_TOKEN=one; load_fleet_env; echo "gh=$GH_TOKEN own=$MY_KEY"
 w GH_TOKEN=two; load_fleet_env; echo "gh=$GH_TOKEN"
@@ -432,7 +441,27 @@ w MY_KEY=theirs; load_fleet_env; echo "gh=${{GH_TOKEN:-gone}} own=$MY_KEY"
 '''
             r = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True,
                                env={'PATH': os.environ['PATH'], 'HOME': home, 'MY_KEY': 'mine'})
-            self.assertEqual(r.stdout.split('\n')[:3], ['gh=one own=mine', 'gh=two', 'gh=gone own=mine'], r.stderr)
+            self.assertEqual(r.stdout.split('\n')[:3], ['gh=one own=mine', 'gh=two', 'gh=gone own=theirs'], r.stderr)
+
+    def test_a_bot_turn_drops_a_box_only_secret_and_keeps_a_fleet_one(self):
+        # scrub_box_only_secrets is what a bot turn runs: a secret-named variable only the box
+        # environment has (the operator's own login) is dropped; one on /fleet stays, with its value.
+        # BOARD_TOKEN is secret-named and never on /fleet, but it is the bot's own board credential
+        # (set per turn), so the scrub must keep it or the bot cannot post (jade, #555).
+        import subprocess
+        with tempfile.TemporaryDirectory() as home:
+            env_file = os.path.join(home, '.config', 'bot_board', 'fleet.env'); os.makedirs(os.path.dirname(env_file))
+            script = self._block() + f'''
+printf '%s\\n' "FLEET_TOKEN=from_fleet" "COLLIDE_TOKEN=from_fleet" > {env_file}
+load_fleet_env
+scrub_box_only_secrets
+echo "fleet=${{FLEET_TOKEN:-gone}} own=${{OWN_TOKEN:-gone}} collide=${{COLLIDE_TOKEN:-gone}} board=${{BOARD_TOKEN:-gone}}"
+'''
+            r = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True,
+                               env={'PATH': os.environ['PATH'], 'HOME': home, 'BOARD_TOKEN': 'board-tok',
+                                    'OWN_TOKEN': 'from_box', 'COLLIDE_TOKEN': 'from_box'})
+            self.assertEqual(r.stdout.split('\n')[0],
+                             'fleet=from_fleet own=gone collide=from_fleet board=board-tok', r.stderr)
 
 if __name__ == '__main__':
     unittest.main()
