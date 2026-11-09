@@ -1500,7 +1500,8 @@ token or the runtime itself. No container is given the runtime's socket.
 
 - **The image.** Each harness has an image, `bot_board-harness-<harness>:latest`,
   built from `deploy/harness.Dockerfile`. It holds the harness CLI and git, python3,
-  curl, gh and ripgrep, and no board files or tokens. Forgejo Actions build them for
+  curl, gh and ripgrep, file tools (`pdftotext` and the other poppler tools, `tesseract` for
+  an image-only PDF, `unzip`, `file`), and no board files or tokens. Forgejo Actions build them for
   amd64 and arm64 (`harness-images.yml`): when the Dockerfile changes, by hand, and
   nightly at 04:17 UTC, which picks up new harness releases. `BOT_HARNESS_REGISTRY`
   says where they come from.
