@@ -10,6 +10,9 @@
 # --pubkey FILE   the jump key's public half (default ~/.ssh/ux_jump.pub)
 # --force         rebuild an image that exists; without it an existing image is left alone
 #
+# An image is built under a temporary name (ux-base-<os>-building) and renamed at the end, so a build
+# that fails leaves no half-made `ux-base-<os>` for the next run to take as finished.
+#
 # NOT TESTED on a real Mac when this was written. It assumes the Cirrus Labs images, whose guest
 # agent lets `tart exec` run commands in a booted VM, and whose user is `admin` with passwordless
 # sudo. If an image changes, this script is the place to fix it. Needs ~60 GB of disk and a good
@@ -44,6 +47,21 @@ in_vm() {   # in_vm NAME COMMAND...: run a command in the booted VM
   "$TART" exec "$name" "$@"
 }
 
+in_vm_stdin() {   # like in_vm, with this script's stdin forwarded into the command (tart exec needs -i for that)
+  local name=$1; shift
+  "$TART" exec -i "$name" "$@"
+}
+
+BUILDING=""   # the temporary image being built, so a failure can remove it
+cleanup() {
+  if [ -n "$BUILDING" ]; then
+    say "build failed: removing the unfinished $BUILDING"
+    "$TART" stop "$BUILDING" >/dev/null 2>&1 || true
+    "$TART" delete "$BUILDING" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
 wait_for_vm() {
   local name=$1 waited=0
   while [ "$waited" -lt "$WAIT" ]; do
@@ -55,12 +73,15 @@ wait_for_vm() {
 }
 
 build() {   # build linux|mac
-  local os=$1 name="ux-base-$1" src
+  local os=$1 final="ux-base-$1" src
   if [ "$os" = linux ]; then src=$LINUX_SRC; else src=$MAC_SRC; fi
-  if "$TART" get "$name" >/dev/null 2>&1; then
-    if [ -z "$FORCE" ]; then say "$name exists: left alone (--force rebuilds it)"; return 0; fi
-    "$TART" delete "$name"
+  local name="$final-building"
+  if "$TART" get "$final" >/dev/null 2>&1 && [ -z "$FORCE" ]; then
+    say "$final exists: left alone (--force rebuilds it)"
+    return 0
   fi
+  if "$TART" get "$name" >/dev/null 2>&1; then "$TART" stop "$name" >/dev/null 2>&1 || true; "$TART" delete "$name"; fi
+  BUILDING=$name
   say "cloning $src into $name (the first time this downloads several GB)"
   "$TART" clone "$src" "$name"
   say "booting $name"
@@ -69,7 +90,11 @@ build() {   # build linux|mac
   say "adding the jump key to the admin user"
   in_vm "$name" sh -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh'
   # the key text goes in as an argument, never through a shell string of ours
-  in_vm "$name" sh -c 'cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' < "$PUBKEY"
+  in_vm_stdin "$name" sh -c 'cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' < "$PUBKEY"
+  # check the key landed: a stdin that was not forwarded would leave the file empty and the bot locked out
+  local key
+  key=$(head -n 1 "$PUBKEY")
+  in_vm "$name" sh -c 'grep -qF -- "$1" ~/.ssh/authorized_keys' sh "$key" || die "the jump key did not reach $name"
   if [ "$os" = linux ]; then
     say "installing node and Playwright with Chromium"
     in_vm "$name" sudo sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm openssh-server'
@@ -82,7 +107,10 @@ build() {   # build linux|mac
   fi
   say "stopping $name"
   "$TART" stop "$name"
-  say "$name is ready"
+  if "$TART" get "$final" >/dev/null 2>&1; then "$TART" delete "$final"; fi     # --force: the old image goes only now
+  "$TART" rename "$name" "$final"
+  BUILDING=""
+  say "$final is ready"
 }
 
 case $WHAT in

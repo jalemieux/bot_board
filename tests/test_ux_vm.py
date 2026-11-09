@@ -17,13 +17,21 @@ FAKE_TART = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE/calls"
 case "$1" in
   get)    [ -e "$FAKE/vm/$2" ] ;;
-  clone)  [ -e "$FAKE/vm/$2" ] || { echo "no such image $2" >&2; exit 1; }; echo "$2" > "$FAKE/vm/$3" ;;
+  clone)  case "$2" in ghcr.io/*) ;; *) [ -e "$FAKE/vm/$2" ] || { echo "no such image $2" >&2; exit 1; } ;; esac
+          echo "$2" > "$FAKE/vm/$3" ;;
+  rename) mv "$FAKE/vm/$2" "$FAKE/vm/$3" ;;
   run)    [ -n "$FAKE_RUN_FAILS" ] && { echo "Virtualization.Error: limit of 2 macOS VMs" >&2; exit 1; }
           touch "$FAKE/running/$3"; sleep "${FAKE_RUN_SECONDS:-30}" ;;
   ip)     [ -e "$FAKE/running/$2" ] && [ -z "$FAKE_NO_IP" ] && echo 192.168.64.7 ;;
   stop)   rm -f "$FAKE/running/$2" ;;
   delete) rm -f "$FAKE/vm/$2" ;;
-  exec)   exit 0 ;;
+  exec)   shift; flag=""; [ "$1" = "-i" ] && { flag=i; shift; }; vm=$1; shift
+          if [ -n "$FAKE_EXEC_FAILS" ] && [[ "$*" == *"$FAKE_EXEC_FAILS"* ]]; then echo "exec failed: $*" >&2; exit 1; fi
+          case "$*" in
+            *"cat >> ~/.ssh/authorized_keys"*)   # stdin arrives only with -i, as with the real tart exec
+              if [ -n "$flag" ] && [ -z "$FAKE_NO_STDIN" ]; then cat >> "$FAKE/keys-$vm"; else cat >/dev/null; fi ;;
+            *"grep -qF"*) grep -qF -- "${@: -1}" "$FAKE/keys-$vm" 2>/dev/null ;;
+          esac ;;
 esac
 """
 
@@ -139,6 +147,49 @@ class UxVm(unittest.TestCase):
         r = subprocess.run([str(BUILD), "bogus"], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
         self.assertIn("usage", r.stderr)
+
+    def build(self, *extra, **env):
+        key = Path(self.tmp.name) / "k.pub"
+        key.write_text("ssh-ed25519 AAAAkey jump\n")
+        e = {**self.env, "HOME": self.tmp.name, "FAKE_RUN_SECONDS": "2", **env}
+        return subprocess.run([str(BUILD), "linux", "--pubkey", str(key), *extra], env=e, capture_output=True,
+                              text=True, timeout=60)
+
+    def images(self):
+        return sorted(p.name for p in (self.fake / "vm").iterdir())
+
+    def test_a_build_makes_the_image_under_a_temporary_name_and_renames_it_at_the_end(self):
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.images(), ["ux-base-linux", "ux-base-mac"])      # no -building left
+        self.assertIn("rename ux-base-linux-building ux-base-linux", self.calls())
+        self.assertIn("exec -i ux-base-linux-building sh -c cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys",
+                      self.calls(), "the key goes in over stdin, which tart exec forwards only with -i")
+        self.assertIn("ssh-ed25519 AAAAkey jump", (self.fake / "keys-ux-base-linux-building").read_text())
+
+    def test_a_failed_build_leaves_no_image_for_the_next_run_to_skip(self):
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build(FAKE_EXEC_FAILS="apt-get")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(self.images(), ["ux-base-mac"], "neither a half-built image nor a -building one remains")
+        self.assertIn("removing the unfinished ux-base-linux-building", r.stderr)
+        r = self.build()                                            # the next run builds it, not skips it
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("left alone", r.stderr)
+        self.assertEqual(self.images(), ["ux-base-linux", "ux-base-mac"])
+
+    def test_a_key_that_did_not_land_stops_the_build(self):
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build(FAKE_NO_STDIN="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("jump key did not reach", r.stderr)
+        self.assertEqual(self.images(), ["ux-base-mac"])
+
+    def test_a_forced_rebuild_that_fails_keeps_the_old_image(self):
+        r = self.build("--force", FAKE_EXEC_FAILS="apt-get")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(self.images(), ["ux-base-linux", "ux-base-mac"])
 
 
 if __name__ == "__main__":

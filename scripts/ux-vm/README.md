@@ -39,11 +39,11 @@ scripts/ux-vm/build-base mac --pubkey ~/.ssh/ux_jump.pub --force
 
 Builds `ux-base-linux` (from the Cirrus Labs Ubuntu image) and `ux-base-mac` (from their macOS Sequoia image). Each gets
 the bot's jump key on the `admin` user, Node, Playwright and Chromium, and nothing from bot_board: installing bot_board
-is what the journeys test. An image that exists is left alone unless `--force`. The first build downloads several GB.
+is what the journeys test. An image that exists is left alone unless `--force`. An image is built under a temporary name (`ux-base-<os>-building`) and renamed at the end, so a failed build leaves nothing for the next run to take as finished; a failed `--force` build keeps the old image. The key goes in over stdin with `tart exec -i`, and the build checks that it landed. The first build downloads several GB.
 
 ## What was tested
 
 `tests/test_ux_vm.py` runs `ux-vm` against a stand-in for `tart`: the action parsing and refusals, reset, a second
-reset starting from a fresh clone, stop, status, a missing base image, a VM that dies or never answers, and `build-base`
-leaving existing images alone. It does **not** run Tart. `build-base` and a real reset have not been run on a Mac, and
+reset starting from a fresh clone, stop, status, a missing base image, a VM that dies or never answers, and `build-base`:
+building under a temporary name and renaming, a failed build leaving no image, the key check, a failed `--force` build keeping the old image, and existing images left alone. It does **not** run Tart. `build-base` and a real reset have not been run on a Mac, and
 `build-base` assumes the Cirrus images' guest agent (`tart exec`) and their `admin` user.
