@@ -679,6 +679,7 @@ border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0
 .crew .bot .dot{margin-top:6px}
 .crew .who{font:600 13px var(--mono)}
 .crew .prof{margin-left:6px;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
+.crew .mach{grid-column:2;color:var(--dim);font:11.5px var(--mono)}
 .crew .role{grid-column:2;color:var(--dim);font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .crew .none{color:var(--dim);font-size:12px}
 .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;flex:none;
@@ -1156,6 +1157,7 @@ function showCrew(li){
   crew.innerHTML = '<h3>' + (b ? '#' + esc(b.slug) : esc(ws)) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
     return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
       '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
+      (a.machine ? '<div class="mach">on ' + esc(a.machine) + '</div>' : '') +
       (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
   }).join('') : '<div class="none">No bots work here yet.</div>');
   var r = li.getBoundingClientRect();
