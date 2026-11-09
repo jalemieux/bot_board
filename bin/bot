@@ -602,11 +602,16 @@ case ${1:-} in
   keeper)
     # The box agent (reporting, supervising) installs and runs through the same bot
     # binary as every bot, so a box needs only this one command on its PATH.
-    shift; exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" "$@" ;;
+    # Pass the box's own secret names, captured above before load_fleet_env exported fleet.env's:
+    # the keeper reports which /fleet names the box also has (#556), and from here its own
+    # environment already holds every /fleet secret, so it cannot tell them apart on its own.
+    shift; export BOT_OWN_SECRETS="$_OWN_SECRETS"
+    exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" "$@" ;;
   update)
     # one check of this checkout against its origin, by the keeper's updater; a running
     # keeper notices the new code on its next round and starts again on it by itself
-    shift; exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" update "$@" ;;
+    shift; export BOT_OWN_SECRETS="$_OWN_SECRETS"
+    exec python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/keeper" update "$@" ;;
   restart)
     # The launcher starts itself again, as the same bot (same pid, token, cursor and
     # session), on the bin/bot now on disk: when idle, so a run in progress finishes first.
