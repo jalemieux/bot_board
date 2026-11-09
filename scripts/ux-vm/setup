@@ -56,7 +56,7 @@ while [ $# -gt 0 ]; do
 done
 # the path goes into command="..." and is run through a shell by sshd: keep it plain
 case $UXVM in *[!A-Za-z0-9._/~-]*) die "the path of ux-vm has a character this script will not put into authorized_keys (only letters, digits and . _ / ~ - are allowed): $UXVM" ;; esac
-case $FROM in *[!A-Za-z0-9.,:*?!_-]*) die "--from may hold only letters, digits and . , : * ? ! _ - (no quote, space or newline)" ;; esac
+case $FROM in *[!A-Za-z0-9.,:*?!/_-]*) die "--from may hold only letters, digits and . , : * ? ! / _ - (no quote, space or newline); a CIDR such as 100.64.0.0/10 is fine" ;; esac
 
 platform=${UX_SETUP_PLATFORM:-$(uname -sm)}
 [ "$platform" = "Darwin arm64" ] || die "this is for an Apple Silicon Mac (Tart needs one); this machine is: $platform"
@@ -179,7 +179,7 @@ else
     else failed=1; warn "the jump key was not refused a forward to $target"; fi
   done
   out=$(ssh_check jump -W "$NET.2:22" 127.0.0.1 </dev/null 2>&1 | head -c 300 || true)
-  if refused "$out"; then failed=1; warn "the jump key was refused a forward to $NET.2, a VM address: the permitopen entries do not work on this sshd"
+  if refused "$out"; then failed=1; warn "the jump key was refused a forward to $NET.2, a VM address: the permitopen entries do not work on this sshd, or sshd does not allow TCP forwarding (AllowTcpForwarding must not be 'no' in /etc/ssh/sshd_config)"
   else say "check ok: the jump key may forward to a VM address (no VM needs to be there)"; fi
   [ -z "$failed" ] || die "a check failed. authorized_keys now holds lines limited to 127.0.0.1 or unchecked: fix the cause and run this again before the bot gets these keys"
   if [ -n "$FROM" ]; then make_lines "$FROM"; install_lines; fi

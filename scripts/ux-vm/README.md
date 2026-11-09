@@ -64,3 +64,43 @@ test it once and write the answer here.
 reset starting from a fresh clone, stop, status, a missing base image, a VM that dies or never answers, and `build-base`:
 building under a temporary name and renaming, a failed build leaving no image, the key check, a failed `--force` build keeping the old image, and existing images left alone. It does **not** run Tart. `build-base` and a real reset have not been run on a Mac, and
 `build-base` assumes the Cirrus images' guest agent (`tart exec`) and their `admin` user.
+
+## setup: prepare the Mac once
+
+```sh
+scripts/ux-vm/setup --from <the bot box's tailnet address or CIDR>
+```
+
+Run it on the Mac that will host the VMs. It installs Tart with Homebrew if missing, makes two ed25519 keys under
+`~/.ux-vm/keys`, builds the base images if they are missing (the images hold the jump key, so the keys come first),
+checks that Remote Login is on, writes two restricted lines to `~/.ssh/authorized_keys`, checks them, and prints what to
+do next. A second run changes nothing and says so. `--from` limits both keys to the bot box (a single address, a list, or
+a CIDR such as `100.64.0.0/10`) and is recommended; without it the script warns. `--no-verify` skips the checks.
+
+The two lines:
+
+| Key | Line options | What it can do |
+|---|---|---|
+| control | `command="<path>/ux-vm",restrict` | Run `ux-vm` and nothing else. |
+| jump | `restrict,port-forwarding,permitopen="192.168.64.2:22",…,permitopen="192.168.64.254:22",command="/usr/bin/false"` | Forward to a VM's ssh port and nothing else. |
+
+Two things about the jump line that are easy to get wrong:
+
+- **One `permitopen` per address.** OpenSSH matches the host of `permitopen` literally, with no wildcard, so
+  `192.168.64.*:22` forwards nothing. The script lists .2 to .254 (about 7.5 KB). The Mac itself is .1 and stays out of
+  reach. If Tart's network on your Mac is not 192.168.64.x, run with `UX_VM_NET` set to its first three numbers.
+- **The forced `command`.** `restrict` alone still lets a key run commands on the Mac. The forced `/usr/bin/false` stops
+  that and leaves forwarding (which `ProxyJump` uses) working.
+
+**The checks** run when Remote Login is on. With `--from`, they run first on lines limited to 127.0.0.1 and the real lines
+replace them afterwards, so the lines that get used have been checked. They confirm that the control key runs `ux-vm` and
+nothing else; that the jump key runs no command; that a forward to the Mac (127.0.0.1 and 192.168.64.1) is answered
+`administratively prohibited`; and that a forward to 192.168.64.2 is not, which needs no VM. After the first
+`ux-vm reset`, `ssh <that IP>` through the jump key is the real test of the allowed case. The checks were designed and
+exercised against OpenSSH 9.2 on Linux and a stand-in `ssh`; that Apple's sshd matches `permitopen` the same way is to
+be confirmed on the first run on the Mac.
+
+**The keys as fleet secrets.** The private keys stay in files. `control.b64` and `jump.b64` hold them base64-encoded on one
+line, because a multi-line value does not survive `fleet.env`. Paste each into /fleet as `UX_SSH_CONTROL_KEY` and
+`UX_SSH_JUMP_KEY`. The bot decodes them with `base64 -d` into `~/.ssh` with mode 600, and uses the ssh config the script
+prints.

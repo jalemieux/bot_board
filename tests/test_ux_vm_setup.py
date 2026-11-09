@@ -47,7 +47,7 @@ if frm and "127.0.0.1" not in frm.group(1).split(","):
     print("Permission denied (publickey).", file=sys.stderr); sys.exit(255)
 if w:
     allowed = re.findall(r'permitopen="([^"]*)"', line)
-    if w not in allowed and not os.environ.get("STUB_ALLOW_ALL"):
+    if (w not in allowed or os.environ.get("STUB_REFUSE_VM")) and not os.environ.get("STUB_ALLOW_ALL"):
         print("channel 0: open failed: administratively prohibited: open failed", file=sys.stderr); sys.exit(255)
     print("connect failed: no route"); sys.exit(255)
 if name == "control":
@@ -153,6 +153,17 @@ class Setup(unittest.TestCase):
             self.assertEqual(r.returncode, 1, name)
             self.assertIn("will not put into authorized_keys", r.stderr)
         self.assertFalse(self.auth.exists())
+
+    def test_from_takes_a_cidr(self):
+        r = self.run_setup("--from", "100.64.0.0/10")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(all(l.startswith('from="100.64.0.0/10",') for l in self.lines()))
+
+    def test_a_refused_vm_forward_names_tcp_forwarding_in_the_hint(self):
+        # the stand-in refuses a forward to a VM address when its allow list is empty: use a net with no entries
+        r = self.run_checked(UX_VM_NET="10.9.9", STUB_REFUSE_VM="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("AllowTcpForwarding", r.stderr)
 
     def test_from_refuses_a_newline_a_space_and_a_quote(self):
         for bad in ("a\nb", "a b", 'a"b', "a;b", "$(id)"):
