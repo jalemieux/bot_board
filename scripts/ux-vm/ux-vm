@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# ux-vm: one throwaway Tart VM for the UX bot's journeys (issue #564).
+#
+#   ux-vm reset linux|mac   delete the run VM, clone a fresh one from the base image, boot it, print its IP
+#   ux-vm stop              stop and delete the run VM
+#   ux-vm status            say what is running
+#
+# The UX bot reaches this over ssh with a forced command, so the action comes from
+# $SSH_ORIGINAL_COMMAND; run by hand, it comes from the arguments. The whole string must be exactly
+# one of the three actions above. It is compared, never passed to a shell.
+#
+# Output: `reset` prints only the VM's IP on stdout; everything else goes to stderr.
+# Env (for tests and unusual hosts): TART (the tart command), UX_VM_STATE (where it keeps its
+# log and a note of the base image), UX_VM_PROBE (the command that checks ssh answers, given the
+# IP), UX_VM_WAIT (seconds to wait for the VM, default 300).
+# Written for bash 3.2, the one macOS ships.
+set -euo pipefail
+
+# a forced ssh command gets only /usr/bin:/bin:...; Homebrew's tart is in /opt/homebrew/bin
+PATH=/opt/homebrew/bin:/usr/local/bin:$PATH
+VM=ux-run
+TART=${TART:-tart}
+STATE=${UX_VM_STATE:-$HOME/.ux-vm}
+WAIT=${UX_VM_WAIT:-300}
+
+say() { echo "ux-vm: $*" >&2; }
+die() { say "$*"; exit 1; }
+usage() { say "usage: ux-vm reset linux | reset mac | stop | status"; exit 2; }
+
+# the action: the forced command's text if there is one, else the arguments
+action=${SSH_ORIGINAL_COMMAND:-}
+[ -n "$action" ] || action="$*"
+
+# every tart call below is silenced, so a missing tart would read as "no VM" or "image missing": say it first
+need_tart() { command -v "$TART" >/dev/null 2>&1 || die "tart not found on PATH ($PATH): install it with brew install cirruslabs/cli/tart"; }
+
+vm_exists() { "$TART" get "$VM" >/dev/null 2>&1; }
+
+probe() {   # does ssh answer on $1?
+  if [ -n "${UX_VM_PROBE:-}" ]; then $UX_VM_PROBE "$1"; else nc -z -w 2 "$1" 22 >/dev/null 2>&1; fi
+}
+
+remove_vm() {
+  if vm_exists; then
+    "$TART" stop "$VM" >/dev/null 2>&1 || true
+    "$TART" delete "$VM" >/dev/null 2>&1 || true
+  fi
+  rm -f "$STATE/base"
+  if vm_exists; then die "could not delete $VM: stop it by hand with: tart stop $VM && tart delete $VM"; fi
+}
+
+reset() {
+  local base="ux-base-$1"
+  "$TART" get "$base" >/dev/null 2>&1 || die "the base image $base is missing: run scripts/ux-vm/build-base $1"
+  remove_vm
+  mkdir -p "$STATE"
+  say "cloning $base into $VM"
+  "$TART" clone "$base" "$VM" >&2
+  echo "$base" > "$STATE/base"
+  say "booting $VM (log: $STATE/run.log)"
+  nohup "$TART" run --no-graphics "$VM" </dev/null >"$STATE/run.log" 2>&1 &
+  local pid=$! ip="" waited=0
+  while [ "$waited" -lt "$WAIT" ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      die "tart run stopped early: $(tail -n 3 "$STATE/run.log" | tr '\n' ' ')"
+    fi
+    ip=$("$TART" ip "$VM" 2>/dev/null || true)
+    if [ -n "$ip" ] && probe "$ip"; then
+      echo "$ip"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  "$TART" stop "$VM" >/dev/null 2>&1 || true
+  die "$VM did not answer ssh within ${WAIT} seconds"
+}
+
+status() {
+  if ! vm_exists; then
+    echo "no run VM"
+    return 0
+  fi
+  local base ip
+  base=$(cat "$STATE/base" 2>/dev/null || echo "unknown")
+  ip=$("$TART" ip "$VM" 2>/dev/null || true)
+  if [ -n "$ip" ]; then echo "$VM: running, base $base, ip $ip"; else echo "$VM: exists but is not running, base $base"; fi
+}
+
+case "$action" in
+  "reset linux") need_tart; reset linux ;;
+  "reset mac")   need_tart; reset mac ;;
+  "stop")        need_tart; remove_vm; say "stopped" ;;
+  "status")      need_tart; status ;;
+  *)             usage ;;
+esac
