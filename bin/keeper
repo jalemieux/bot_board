@@ -703,6 +703,10 @@ FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits h
 
 
 SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")   # what fleet.env may set; bin/bot reads the same
+# The box's own secret-named variables, captured at keeper start (as bin/bot's _OWN_SECRETS is): a
+# /fleet secret whose name is also here collides, and /fleet wins inside a bot (#555). secret_collisions
+# reports which, names only, for /fleet (#556).
+_OWN_SECRETS = frozenset(n for n in os.environ if SECRET_NAME.fullmatch(n))
 
 
 def read_env(path):
@@ -723,6 +727,12 @@ def read_env(path):
             except ValueError:
                 pass
     return env
+
+
+def secret_collisions():
+    """The /fleet secret names this box's own environment also holds, names only, never a value.
+    On such a name /fleet wins inside a bot (#555); this says where that happens, for /fleet (#556)."""
+    return sorted(n for n in read_env(FLEET_ENV) if n in _OWN_SECRETS)
 
 
 class Credentials:
@@ -1310,7 +1320,7 @@ def main():
         creds = Credentials(host)
         creds.refresh({b["harness"] for b in snapshot()["bots"] if b.get("harness")}, force=True)
         return _print(json.dumps({"host": host, "board": BOARD, **snapshot(), "credentials": creds.report({}),
-                                  "update": Updater().state}, indent=1))
+                                  "secret_collisions": secret_collisions(), "update": Updater().state}, indent=1))
     try:
         token = token_for(host)
     except ConnectionError as e:
@@ -1342,6 +1352,7 @@ def main():
             creds.refresh(harnesses)
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
+            snap["secret_collisions"] = secret_collisions()
             snap["harness_images"] = images.report()
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             ask = setting("KEEPER_DEFAULT_BOT")     # set by a fresh `bot install`; dropped once the board starts it

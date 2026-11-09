@@ -69,6 +69,16 @@ class Keeper(unittest.TestCase):
     def tearDown(self):
         os.environ['PATH'] = self.path
 
+    def test_secret_collisions_lists_fleet_names_also_in_the_box_env(self):
+        # the keeper reports, names only, which /fleet secrets the box environment also holds, so
+        # /fleet shows where /fleet wins inside a bot (#556). COLLIDE_TOKEN is on /fleet and in the
+        # box env (listed); FLEETONLY_TOKEN is only on /fleet (not listed); OWNONLY_TOKEN is only in
+        # the box env (not listed). _OWN_SECRETS is captured at keeper start, so load with them set.
+        with open(self.local, 'w') as f:
+            f.write('COLLIDE_TOKEN=from_fleet\nFLEETONLY_TOKEN=from_fleet\n')
+        k = load_keeper(self.home, COLLIDE_TOKEN='from_box', OWNONLY_TOKEN='from_box')
+        self.assertEqual(k.secret_collisions(), ['COLLIDE_TOKEN'])
+
     def test_out_returns_a_commands_stdout(self):
         # the host name, memory and bot list all read through out(); it must give text, "" on failure
         self.assertEqual(self.k.out('echo', 'hi'), 'hi\n')
