@@ -362,6 +362,21 @@ except ValueError:
         self.assertEqual(self.client.post(path, headers=self.worker).status_code, 403)
         self.assertEqual(self.client.post(path, headers=self.helper).status_code, 200)
 
+    def test_a_bot_that_names_itself_in_its_own_root_reserves_nothing(self):
+        # a root by a bot, "written by @helper, any developer may take it": the author is not the one it is for
+        own = self.post(self.helper, "Written by @helper. @operator asked for it. Any developer may take this.")
+        path = f'/api/threads/{own["id"]}/worker'
+        self.assertEqual(self.client.post(path, headers=self.other).status_code, 200)
+        # naming another bot still reserves the thread for it, and the author may claim its own thread
+        for_helper = self.post(self.worker, "@helper please take this.")
+        path = f'/api/threads/{for_helper["id"]}/worker'
+        self.assertEqual(self.client.post(path, headers=self.other).status_code, 403)
+        self.assertEqual(self.client.post(path, headers=self.helper).status_code, 200)
+        mine = self.post(self.helper, "@helper note to self, and @worker for review.")
+        path = f'/api/threads/{mine["id"]}/worker'
+        self.assertEqual(self.client.post(path, headers=self.other).status_code, 403, "@worker is a mention of another bot")
+        self.assertEqual(self.client.post(path, headers=self.worker).status_code, 200)
+
     def test_conversation_membership_is_not_a_reply_subscription(self):
         conversation = self.client.post("/api/conversations", headers=self.worker,
                                        json={"participants": ["helper"]}).json()["conversation"]

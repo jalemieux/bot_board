@@ -59,11 +59,30 @@ def dismiss(key: str, agent: dict) -> dict:
         item = next((a for a in rollup()["attention"] if a["key"] == key), None)
     if item is None:
         raise KeyError("no current alert has that key")
+    rows = [(key, item["text"], agent["id"], db.now())]
+    if key.startswith("m") and key[1:].isdigit():
+        rows += [(k, t, agent["id"], db.now()) for k, t in _folded_with(int(key[1:]), agent)]
     with db._write_lock, db.conn() as c:
         _ensure_table(c)
-        c.execute("INSERT OR REPLACE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)",
-                  (key, item["text"], agent["id"], db.now()))
+        c.executemany("INSERT OR REPLACE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)", rows)
     return rollup(agent=agent)
+
+
+def _folded_with(msg_id: int, agent: dict) -> list[tuple[str, str]]:
+    """The earlier asks to this human, in the same thread, for the same PR as ask `msg_id`: they are shown
+    folded into it (see asks), so dismissing it dismisses them, or they would come back as the item."""
+    c = db.conn()
+    row = c.execute("SELECT thread_id, meta FROM messages WHERE id=?", (msg_id,)).fetchone()
+    pr = _pr_of(json.loads(row["meta"] or "{}")) if row else None
+    if not pr:
+        return []
+    out = []
+    for m in c.execute("SELECT id, body, meta FROM messages WHERE thread_id=? AND id<? AND meta LIKE '%\"pr\"%'"
+                       " AND meta LIKE '%\"needs\"%'", (row["thread_id"] or msg_id, msg_id)):
+        meta = json.loads(m["meta"] or "{}")
+        if _pr_of(meta) == pr and _needs(meta, agent["handle"]):
+            out.append((f"m{m['id']}", (str(meta.get("ask") or "").strip() or m["body"].split("\n", 1)[0])[:200]))
+    return out
 
 
 def dismiss_mentions(agent: dict) -> dict:
@@ -233,11 +252,20 @@ def _needs(meta: dict, handle: str) -> bool:
     return handle.lower() in {str(x).lower().lstrip("@") for x in names}
 
 
+def _pr_of(meta) -> str | None:
+    """The PR an ask names with meta.pr, as digits ("562" and "#562" are one PR), or None."""
+    pr = meta.get("pr") if isinstance(meta, dict) else None
+    if pr is None or isinstance(pr, bool):
+        return None
+    return str(pr).lstrip("#") or None
+
+
 def asks(agent: dict) -> dict:
     """What bots wait on this human for (#223). waiting: messages marked meta.needs=<handle>
     (or tagged needs-human with an @mention of them); each stays until the human posts in that
     thread after it, its author posts meta.resolved there, the thread is completed after it, or it
-    is dismissed. mentions: the
+    is dismissed. Asks in one thread that name the same PR (meta.pr) are one item, the newest, with
+    `folded` counting the earlier ones: a bot that asks again at each new head is one ask. mentions: the
     other @mentions of the last MENTION_DAYS days the human has not posted after; they do not
     count on the bell."""
     c = db.conn()
@@ -261,7 +289,7 @@ def asks(agent: dict) -> dict:
             c.execute("SELECT 1 FROM thread_completions WHERE thread_id=? AND through_id>=?", (t, m["id"])).fetchone()
     q = ("SELECT m.id, m.thread_id, m.agent_id, m.body, m.meta, m.created_at, a.handle author, b.slug channel"
          " FROM messages m JOIN agents a ON a.id=m.agent_id JOIN boards b ON b.id=m.board_id")
-    waiting, seen = [], set()
+    waiting, seen, by_pr = [], set(), {}
     marked = c.execute(q + " WHERE m.agent_id<>? AND (m.meta LIKE '%\"needs\"%' OR m.id IN"
                        " (SELECT message_id FROM tags WHERE tag='needs-human')) ORDER BY m.id DESC LIMIT 500", (me,))
     for m in marked:
@@ -273,9 +301,16 @@ def asks(agent: dict) -> dict:
         seen.add(m["id"])
         if f"m{m['id']}" in gone:
             continue
+        pr = _pr_of(meta)
+        if pr and (m["thread_id"] or m["id"], pr) in by_pr:     # the newest ask for this PR is already listed
+            by_pr[(m["thread_id"] or m["id"], pr)]["folded"] = by_pr[(m["thread_id"] or m["id"], pr)].get("folded", 0) + 1
+            continue
         ask = str(meta.get("ask") or "").strip() or m["body"].split("\n", 1)[0]
-        waiting.append({"key": f"m{m['id']}", "where": "@" + m["author"], "text": ask[:200],
-                        "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]})
+        item = {"key": f"m{m['id']}", "where": "@" + m["author"], "text": ask[:200],
+                "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]}
+        if pr:
+            by_pr[(m["thread_id"] or m["id"], pr)] = item
+        waiting.append(item)
     mentions = []
     rows = c.execute(q + " JOIN mentions x ON x.message_id=m.id WHERE x.agent_id=? AND m.agent_id<>?"
                      " AND m.created_at>=? ORDER BY m.id DESC LIMIT 200", (me, me, since))
