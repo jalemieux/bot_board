@@ -271,9 +271,9 @@ class Layout:
     def measure(self, b):
         f = self.fonts
         if b["kind"] == "event":
-            lines = wrap(self.draw, b["text"], f.get(64, True), W - 200)
+            lines = wrap(self.draw, b["text"], f.get(64, True), SAFE - 120)
             return {"lines": lines, "h": 70 + 78 * len(lines)}
-        lines = wrap(self.draw, b["text"], f.get(46), 760)
+        lines = wrap(self.draw, b["text"], f.get(46), SAFE - 196 - 36)
         return {"lines": lines, "h": 56 + 50 + 58 * len(lines) + 28}
 
     def visible(self, upto, area):
@@ -289,6 +289,7 @@ class Layout:
 
 
 CHAT_TOP, CHAT_BOTTOM = 470, H - 220      # the last 220 px stay empty: the end caption goes there
+SAFE = W - 130                            # the apps put a button column down the right edge: no text or bubble past this
 
 
 def draw_item(img, layout, i, y, alpha=1.0, dy=0):
@@ -301,13 +302,13 @@ def draw_item(img, layout, i, y, alpha=1.0, dy=0):
         fill, accent = CARD["merged" if b.get("caption") == "merged" else "review"]
         d.rounded_rectangle((0, 0, W, it["h"]), radius=0, fill=fill)
         for n, line in enumerate(it["lines"]):
-            d.text((W // 2, 35 + 78 * n + 39), line, font=f.get(64, True), fill=accent, anchor="mm")
+            d.text((SAFE // 2, 35 + 78 * n + 39), line, font=f.get(64, True), fill=accent, anchor="mm")
     else:
         col = layout.colors[b["author"]]
         d.ellipse((60, 0, 144, 84), fill=col)
         d.text((102, 42), b["author"][:1].upper(), font=f.get(44, True), fill=BG, anchor="mm")
         d.text((170, 8), "@" + b["author"], font=f.get(40, True), fill=col)
-        d.rounded_rectangle((160, 56, W - 60, it["h"]), radius=36, fill=PANEL)
+        d.rounded_rectangle((160, 56, SAFE - 1, it["h"]), radius=36, fill=PANEL)
         for n, line in enumerate(it["lines"]):
             d.text((196, 56 + 28 + 58 * n), line, font=f.get(46), fill=INK)
     if alpha < 1:
@@ -321,11 +322,11 @@ def frame(layout, upto, caption, label, alpha=1.0, dy=0):
     f = layout.fonts
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
-    d.text((W // 2, 110), label, font=f.get(36), fill=DIM, anchor="mm")
+    d.text((SAFE // 2, 110), label, font=f.get(36), fill=DIM, anchor="mm")
     if caption:
-        lines = wrap(d, caption, f.get(92, True), W - 160)[:3]
+        lines = wrap(d, caption, f.get(92, True), SAFE - 160)[:3]
         for n, line in enumerate(lines):
-            d.text((W // 2, 250 + 110 * n), line, font=f.get(92, True), fill=INK, anchor="mm")
+            d.text((SAFE // 2, 250 + 110 * n), line, font=f.get(92, True), fill=INK, anchor="mm")
     shown = layout.visible(upto, CHAT_BOTTOM - CHAT_TOP)
     y = CHAT_BOTTOM - sum(layout.items[i]["h"] + 26 for i in shown)
     for i in shown:

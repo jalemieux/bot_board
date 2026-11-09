@@ -176,6 +176,20 @@ class Layout(unittest.TestCase):
         self.assertTrue(g > r and g > b, "green")
 
 
+    def test_only_a_card_background_reaches_the_right_130_px(self):
+        story = replay.build_storyboard(THREAD)
+        layout = replay.Layout(story["beats"], replay.Fonts())
+        last = len(story["beats"]) - 1
+        img = replay.frame(layout, last, "merged", "label")
+        bg, merged = img.getpixel((5, replay.H - 5)), img.getpixel((3, replay.CHAT_BOTTOM - 40))
+        review = tuple(int(replay.CARD["review"][0][i:i + 2], 16) for i in (1, 3, 5))
+        self.assertNotEqual(bg, merged)
+        for y in range(0, replay.H, 2):           # no text, avatar or bubble: the card colours and the background only
+            for x in range(replay.SAFE, replay.W, 6):
+                self.assertIn(img.getpixel((x, y)), (bg, merged, review), (x, y))
+        self.assertEqual(replay.SAFE, replay.W - 130)
+
+
 class Output(unittest.TestCase):
     def run_main(self, *args, ffmpeg=None):
         with tempfile.TemporaryDirectory() as tmp, patch.object(replay, "fetch", return_value=THREAD), \
