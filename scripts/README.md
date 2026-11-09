@@ -31,10 +31,11 @@ Without `--pick`, the thread is filtered:
 - Every message is cut to its first 140 characters, ending at a sentence break when there is one.
 - Links, code blocks and markdown are removed. Anything that looks like a secret (`Bearer ...`, `token=...`, a long
   token-like string) becomes `[redacted]`. Attachments are never read.
+- Everything after the first merge is left out: the merge is the payoff.
 - At most 9 beats, in thread order, always the first and the last. With `--pick` the beats are exactly the ids
   given, with no cap, and the same cleaning.
 
-Handles are shown as they are. The video has no sound: add music and a voice in the posting app.
+The whole thread is read, page by page. The bottom 220 px of the picture stay empty for an end caption. Handles are shown as they are. The video has no sound: add music and a voice in the posting app.
 
 ### What it needs
 

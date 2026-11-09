@@ -78,6 +78,21 @@ class Filtering(unittest.TestCase):
             self.assertNotIn(leak, out)
         self.assertIn("[redacted]", out)
 
+    def test_an_assignment_with_a_prefix_is_redacted_too(self):
+        for leak in ("FORGEJO_TOKEN=abc12345", "BOARD_TOKEN: abc12345", "my.api_key = zzz999", "CLIENT_SECRET=s3cr3t"):
+            out = replay.clean("set " + leak + " now")
+            self.assertNotIn(leak.split("=")[-1].split(":")[-1].strip(), out, leak)
+            self.assertIn("[redacted]", out)
+        self.assertEqual(replay.clean("The token is rotated daily."), "The token is rotated daily.")
+
+    def test_nothing_after_the_merge_by_default(self):
+        story = replay.build_storyboard({"thread_id": 1, "messages": THREAD["messages"] + [msg(10, "kira", "A reply a day later.")]})
+        self.assertEqual([b["id"] for b in story["beats"]][-1], 9)
+        self.assertEqual(story["left_out"]["after_merge"], 1)
+        picked = replay.build_storyboard({"thread_id": 1, "messages": THREAD["messages"] + [msg(10, "kira", "A reply a day later.")]},
+                                         pick={9, 10})
+        self.assertEqual([b["id"] for b in picked["beats"]], [9, 10], "a human's pick is kept as it is")
+
     def test_an_attachment_is_never_read(self):
         m = msg(1, "jac", "see the picture")
         m["image"] = {"url": "/api/messages/1/image"}
@@ -109,6 +124,56 @@ class Filtering(unittest.TestCase):
     def test_the_video_is_15_to_30_seconds(self):
         for n in (3, 7, 9, 14):
             self.assertTrue(15 <= n * replay.seconds_for(n) <= 30.1, n)
+
+
+class Paging(unittest.TestCase):
+    def test_every_page_of_a_long_thread_is_read(self):
+        pages = {None: {"thread_id": 7, "messages": [{"id": 1}, {"id": 2}], "has_more": True, "next_since": 2},
+                 "2": {"thread_id": 7, "messages": [{"id": 3}, {"id": 4}], "has_more": True, "next_since": 4},
+                 "4": {"thread_id": 7, "messages": [{"id": 5}], "has_more": False, "next_since": 5}}
+        asked = []
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def urlopen(req, timeout=None):
+            asked.append(req.full_url)
+            since = req.full_url.split("since=")[1] if "since=" in req.full_url else None
+            return Reply(json.dumps(pages[since]).encode())
+        with patch.object(replay.urllib.request, "urlopen", urlopen):
+            thread = replay.fetch("http://b", "t", 7)
+        self.assertEqual([m["id"] for m in thread["messages"]], [1, 2, 3, 4, 5])
+        self.assertEqual(len(asked), 3)
+
+    def test_a_page_that_does_not_advance_ends_the_loop(self):
+        page = {"thread_id": 7, "messages": [{"id": 1}], "has_more": True, "next_since": 1}
+
+        class Reply(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        with patch.object(replay.urllib.request, "urlopen", lambda req, timeout=None: Reply(json.dumps(page).encode())):
+            thread = replay.fetch("http://b", "t", 7)
+        self.assertLessEqual(len(thread["messages"]), 2)
+
+
+class Layout(unittest.TestCase):
+    def test_the_last_220_px_are_empty_and_a_merge_card_is_full_width_green(self):
+        story = replay.build_storyboard(THREAD)
+        layout = replay.Layout(story["beats"], replay.Fonts())
+        img = replay.frame(layout, len(story["beats"]) - 1, "merged", "label")
+        bg = img.getpixel((5, replay.H - 5))
+        self.assertTrue(all(img.getpixel((x, y)) == bg for x in range(0, replay.W, 40) for y in range(replay.H - 220, replay.H, 20)))
+        y = replay.CHAT_BOTTOM - 40           # inside the merge card, the last item
+        self.assertEqual(img.getpixel((3, y)), img.getpixel((replay.W - 4, y)), "the card runs edge to edge")
+        r, g, b = img.getpixel((3, y))
+        self.assertTrue(g > r and g > b, "green")
 
 
 class Output(unittest.TestCase):

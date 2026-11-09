@@ -32,20 +32,32 @@ MIN_SECONDS, MAX_SECONDS = 15, 30
 
 URL = re.compile(r"https?://\S+")
 # no secret should reach a frame: an assignment, a bearer token, or a long token-like string
-SECRET = re.compile(r"(?i)\bbearer\s+\S{8,}|\b(?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*\S+")
+SECRET = re.compile(r"(?i)\bbearer\s+\S{8,}|[\w.-]*(?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*\S+")
 LONG = re.compile(r"\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b")
 
 
 def fetch(board, token, tid):
-    req = urllib.request.Request(f"{board.rstrip('/')}/api/threads/{tid}",
-                                 headers={"Authorization": f"Bearer {token}"} if token else {})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        sys.exit(f"replay: the board answered {e.code} for thread {tid}")
-    except (urllib.error.URLError, OSError) as e:
-        sys.exit(f"replay: cannot reach the board: {e}")
+    """The whole thread: the board answers a page at a time (has_more, next_since), so read them all."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    thread, since = None, None
+    for _ in range(500):
+        url = f"{board.rstrip('/')}/api/threads/{tid}" + (f"?since={since}" if since else "")
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
+                page = json.load(r)
+        except urllib.error.HTTPError as e:
+            sys.exit(f"replay: the board answered {e.code} for thread {tid}")
+        except (urllib.error.URLError, OSError) as e:
+            sys.exit(f"replay: cannot reach the board: {e}")
+        if thread is None:
+            thread = page
+        else:
+            thread["messages"] += page["messages"]
+        nxt = page.get("next_since")
+        if not page.get("has_more") or not nxt or nxt == since:
+            break
+        since = nxt
+    return thread
 
 
 def forgejo_event(m):
@@ -171,6 +183,10 @@ def build_storyboard(thread, pick=None, limit=MAX_BEATS):
         if missing:
             sys.exit(f"replay: not in the thread, or empty once cleaned: {', '.join(map(str, missing))}")
     else:
+        merged = next((i for i, b in enumerate(beats) if b["kind"] == "event" and b["caption"] == "merged"), None)
+        if merged is not None:         # the merge is the payoff: nothing after it
+            left["after_merge"] = len(beats) - merged - 1
+            beats = beats[:merged + 1]
         kept = cap(beats, limit)
         left["capped"] = len(beats) - len(kept)
         beats = kept
@@ -185,7 +201,7 @@ def build_storyboard(thread, pick=None, limit=MAX_BEATS):
 
 PALETTE = ["#f2a65a", "#6ec1e4", "#9ad27d", "#e27d9b", "#b79cf0", "#f0d264", "#5fd0b8", "#ef8b6b"]
 BG, PANEL, INK, DIM = "#0f1217", "#1c2230", "#f3f4f6", "#8b93a3"
-CARD = {"merged": ("#12301f", "#6ee7a0"), "review": ("#14293d", "#7cc4f5")}
+CARD = {"merged": ("#146c3a", "#eafff1"), "review": ("#173d5c", "#e3f3ff")}
 FONT_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans{b}.ttf", "/usr/share/fonts/dejavu/DejaVuSans{b}.ttf",
     "/Library/Fonts/Arial{b2}.ttf", "/System/Library/Fonts/Supplemental/Arial{b2}.ttf",
@@ -255,8 +271,8 @@ class Layout:
     def measure(self, b):
         f = self.fonts
         if b["kind"] == "event":
-            lines = wrap(self.draw, b["text"], f.get(44, True), W - 200)
-            return {"lines": lines, "h": 60 + 56 * len(lines)}
+            lines = wrap(self.draw, b["text"], f.get(64, True), W - 200)
+            return {"lines": lines, "h": 70 + 78 * len(lines)}
         lines = wrap(self.draw, b["text"], f.get(46), 760)
         return {"lines": lines, "h": 56 + 50 + 58 * len(lines) + 28}
 
@@ -272,7 +288,7 @@ class Layout:
         return out[::-1]
 
 
-CHAT_TOP, CHAT_BOTTOM = 470, 1800
+CHAT_TOP, CHAT_BOTTOM = 470, H - 220      # the last 220 px stay empty: the end caption goes there
 
 
 def draw_item(img, layout, i, y, alpha=1.0, dy=0):
@@ -283,10 +299,9 @@ def draw_item(img, layout, i, y, alpha=1.0, dy=0):
     d = ImageDraw.Draw(layer)
     if b["kind"] == "event":
         fill, accent = CARD["merged" if b.get("caption") == "merged" else "review"]
-        d.rounded_rectangle((60, 0, W - 60, it["h"]), radius=34, fill=fill)
-        d.rounded_rectangle((60, 0, 78, it["h"]), radius=9, fill=accent)
+        d.rounded_rectangle((0, 0, W, it["h"]), radius=0, fill=fill)
         for n, line in enumerate(it["lines"]):
-            d.text((W // 2, 30 + 56 * n + 28), line, font=f.get(44, True), fill=accent, anchor="mm")
+            d.text((W // 2, 35 + 78 * n + 39), line, font=f.get(64, True), fill=accent, anchor="mm")
     else:
         col = layout.colors[b["author"]]
         d.ellipse((60, 0, 144, 84), fill=col)
