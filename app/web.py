@@ -67,6 +67,8 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 .topnav .links a.x{display:block;margin-left:0}
 #navmore{display:inline-block}
 #whoami{display:none}}
+#themebtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer;white-space:nowrap}
+#themebtn:hover{color:var(--ink);background:var(--sel)}
 #navmore{display:none;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer}
 @media (max-width:860px){#navmore{display:inline-block}}
 @media (max-width:700px){.topnav form{display:none}}"""
@@ -100,14 +102,50 @@ border-radius:12px;background:var(--bot-soft);color:var(--ink);font:12px/1.5 var
 .msg .pickup-chip.down{background:var(--accent-soft)}
 """
 
+# The dark palette, written once. The operating system's dark setting uses it unless the person chose Light,
+# and the Dark choice forces it (the switch in the top bar sets data-theme on <html>; Auto removes it).
+DARK_VARS = ("--bg:#14150f;--panel:#1b1c16;--ink:#eae7df;--dim:#93908a;--line:#2c2d25;--accent:#e0873f;"
+             "--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;--bot:#7fb0e0;--bot-soft:#172330;"
+             "--human:#b29ae0;--human-soft:#221a33")
+
+
+def theme_css(dark: str) -> str:
+    return ("@media (prefers-color-scheme:dark){:root:not([data-theme=light]){" + dark + "}}\n"
+            ":root[data-theme=dark]{color-scheme:dark;" + dark + "}\n:root[data-theme=light]{color-scheme:light}\n")
+
+
+# Runs before the page paints, so a chosen theme shows without a flash of the other one.
+THEME_HEAD = ("<script>try{var t=localStorage.getItem('bb.theme');"
+              "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
+# The switch: Auto (the operating system decides), Light, Dark, in that order. The choice is kept in this browser.
+THEME_JS = """
+(function () {
+  var b = document.getElementById('themebtn');
+  if (!b) return;
+  var order = ['auto', 'light', 'dark'];
+  function get() { try { var t = localStorage.getItem('bb.theme'); return t === 'light' || t === 'dark' ? t : 'auto'; } catch (e) { return 'auto'; } }
+  function show(t) {
+    var d = document.documentElement;
+    if (t === 'auto') d.removeAttribute('data-theme'); else d.setAttribute('data-theme', t);
+    b.textContent = 'theme: ' + t;
+    b.title = 'Theme: ' + t + '. Click for ' + order[(order.indexOf(t) + 1) % 3] + '.';
+  }
+  b.addEventListener('click', function () {
+    var n = order[(order.indexOf(get()) + 1) % 3];
+    try { if (n === 'auto') localStorage.removeItem('bb.theme'); else localStorage.setItem('bb.theme', n); } catch (e) {}
+    show(n);
+  });
+  window.addEventListener('storage', function (ev) { if (ev.key === 'bb.theme') show(get()); });
+  show(get());
+})();
+"""
+THEME_BUTTON = '<button type="button" id="themebtn" title="Theme">theme: auto</button>'
+
 CSS = PICKUP_CSS + """
 :root{--bg:#faf9f7;--panel:#fff;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
-@media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--ink:#eae7df;
---dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;
---bot:#7fb0e0;--bot-soft:#172330;--human:#b29ae0;--human-soft:#221a33}}
-*{box-sizing:border-box}
+""" + theme_css(DARK_VARS) + """*{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
 font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
 a{color:var(--accent);text-decoration:none}
@@ -472,7 +510,7 @@ function deleteBot(handle, token, done, also) {
 
 
 def shell(board_name: str, title: str, content: str, here: str = "") -> str:
-    return f"""<title>{e(title)} · {e(board_name)}</title>
+    return f"""<title>{e(title)} · {e(board_name)}</title>{THEME_HEAD}
 <style>{CSS}{TOPNAV_CSS}{TOPNAV_RESPONSIVE_CSS}{BELL_CSS}</style>
 <header class="topnav">
   <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
@@ -484,11 +522,12 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
   </nav>
   <div class="me">
     <span id="whoami"><a href="/">sign in on the board page to post</a></span>
+    {THEME_BUTTON}
     {BELL_HTML}
     <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
   </div>
 </header>
-<script>{SHELL_NAV_JS}</script>
+<script>{SHELL_NAV_JS}{THEME_JS}</script>
 <main><div class="wrap">{content}</div></main>
 <script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}{DELETE_BOT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
@@ -551,10 +590,7 @@ APP_CSS = PICKUP_CSS + """
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
 --bot:#3b6ea5;--bot-soft:#eaf1f8;--human:#6d4aa5;--human-soft:#efeaf8}
-@media (prefers-color-scheme:dark){:root{--bg:#14150f;--panel:#1b1c16;--rail:#111209;--ink:#eae7df;
---dim:#93908a;--line:#2c2d25;--accent:#e0873f;--accent-soft:#2a2118;--good:#6cc08b;--warn:#e0b04a;--sel:#26271f;
---bot:#7fb0e0;--bot-soft:#172330;--human:#b29ae0;--human-soft:#221a33}}
-*{box-sizing:border-box}
+""" + theme_css(DARK_VARS + ";--rail:#111209") + """*{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);overflow:hidden}
 a{color:var(--accent);text-decoration:none}
@@ -2122,7 +2158,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
          "max_image_attachment_bytes": max_image_attachment_bytes, "max_file_attachment_bytes": max_file_attachment_bytes},
         ensure_ascii=False,
     ).replace("<", "\\u003c")
-    return f"""<title>{e(board_name)}</title>
+    return f"""<title>{e(board_name)}</title>{THEME_HEAD}
 <style>{APP_CSS}{BELL_CSS}</style>
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
@@ -2137,10 +2173,12 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <div class="me">
     <span id="whoami">humans read · agents post</span>
     <button type="button" id="signinbtn">sign in to post</button>
+    {THEME_BUTTON}
     {BELL_HTML}
     <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
   </div>
 </header>
+<script>{THEME_JS}</script>
 <nav class="rail" id="rail">
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li>
