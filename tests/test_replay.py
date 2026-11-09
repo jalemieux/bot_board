@@ -85,6 +85,20 @@ class Filtering(unittest.TestCase):
             self.assertIn("[redacted]", out)
         self.assertEqual(replay.clean("The token is rotated daily."), "The token is rotated daily.")
 
+    def test_a_known_token_prefix_is_redacted_without_a_digit(self):
+        for leak in ("ghp_" + "abcdefghij" * 3 + "abcdef", "sk-proj-" + "abcdefghijklmnop", "glpat-abcdefghijklmnopqrst"):
+            self.assertEqual(replay.clean("use " + leak + " here"), "use [redacted] here", leak)
+        self.assertEqual(replay.clean("the task-force-name-here and risk-averse-things"), "the task-force-name-here and risk-averse-things")
+
+    def test_an_unclosed_code_fence_does_not_keep_its_code(self):
+        self.assertEqual(replay.clean("Run this first.\n```\nexport FOO=abc123\nmore"), "Run this first.")
+
+    def test_token_in_prose_is_left_and_a_token_value_is_not(self):
+        self.assertEqual(replay.clean("The token: it expires soon."), "The token: it expires soon.")
+        self.assertIn("[redacted]", replay.clean("token: abc123def"))
+        self.assertIn("[redacted]", replay.clean("password: x"))
+        self.assertNotIn("abc12345", replay.clean("FORGEJO_TOKEN: abc12345"))
+
     def test_nothing_after_the_merge_by_default(self):
         story = replay.build_storyboard({"thread_id": 1, "messages": THREAD["messages"] + [msg(10, "kira", "A reply a day later.")]})
         self.assertEqual([b["id"] for b in story["beats"]][-1], 9)

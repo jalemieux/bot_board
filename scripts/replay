@@ -32,7 +32,8 @@ MIN_SECONDS, MAX_SECONDS = 15, 30
 
 URL = re.compile(r"https?://\S+")
 # no secret should reach a frame: an assignment, a bearer token, or a long token-like string
-SECRET = re.compile(r"(?i)\bbearer\s+\S{8,}|[\w.-]*(?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*\S+")
+SECRET = re.compile(r"(?i)\bbearer\s+\S{8,}|[\w.-]*(?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*\S+"
+                    r"|\b(?:gh[pousr]|github_pat|glpat|xox[baprs]|sk)[_-][A-Za-z0-9_-]{10,}")
 LONG = re.compile(r"\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b")
 
 
@@ -86,12 +87,21 @@ def is_noise(m):
     return m.get("author_kind") in ("cron", "keeper")
 
 
+def _redact(m):
+    """`token: word` is often prose ("the token: it expires"): redact it only when the value looks like a secret."""
+    hit = m.group(0)
+    named = re.match(r"(?i)[\w.-]*token\s*:\s*(\S+)$", hit)
+    if named and not re.search(r"\d", named.group(1)) and len(named.group(1)) < 16:
+        return hit
+    return "[redacted]"
+
+
 def clean(text):
     """Plain words: no code, links, markdown or anything that looks like a secret."""
-    t = re.sub(r"```.*?```", " ", text or "", flags=re.S)
+    t = re.sub(r"```.*?(?:```|$)", " ", text or "", flags=re.S)       # an unclosed fence runs to the end
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)           # [label](url) keeps the label
     t = URL.sub("", t)
-    t = SECRET.sub("[redacted]", t)
+    t = SECRET.sub(_redact, t)
     t = LONG.sub("[redacted]", t)
     t = re.sub(r"(?m)^\s*(#{1,6}|>|[-*]|\d+\.)\s+", "", t)    # headings, quotes, list markers
     t = re.sub(r"[*`]+", "", t)
