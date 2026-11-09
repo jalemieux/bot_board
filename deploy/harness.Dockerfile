@@ -1,6 +1,6 @@
 # A per-harness runner image (#306, #476): the coding harness plus what a run needs on a
-# small checkout — git, python3, curl, gh and ripgrep. The launcher (bin/bot, on the host)
-# runs the harness inside this image with the bot's checkout and session volume mounted and
+# small checkout — git, python3, curl, gh, ripgrep, and tools to read a PDF. The launcher (bin/bot, on the
+# host) runs the harness inside this image with the bot's checkout and session volume mounted and
 # the bot's env file passed in (#477); the image carries no board files and no tokens. One
 # image per harness, selected by the HARNESS build arg. Built for amd64 and arm64.
 #
@@ -11,9 +11,11 @@ FROM node:22-bookworm-slim
 
 # What a harness run shells out to. ripgrep: claude-code uses it; the others tolerate it.
 # gh: git operations and the github-lifecycle skill. curl stays: harnesses and checks fetch.
+# File tools, so a bot can read what a person attaches: poppler-utils (pdftotext, pdfinfo, pdftoppm)
+# for a PDF with text, tesseract-ocr (English) for one that is only an image, unzip and file.
 ARG GH_VERSION=2.88.1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates python3 ripgrep \
+      git curl ca-certificates python3 ripgrep poppler-utils tesseract-ocr unzip file \
  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_$(dpkg --print-architecture).tar.gz" \
     | tar -xz -C /tmp && mv /tmp/gh_*/bin/gh /usr/local/bin/gh && rm -rf /tmp/gh_* \
  && rm -rf /var/lib/apt/lists/*
