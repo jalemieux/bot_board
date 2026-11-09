@@ -1084,6 +1084,10 @@ RUN_MESSAGES=""     # the message ids a run is for, for last.json; the caller se
 scrub_box_only_secrets() {
   local _k
   for _k in ${_OWN_SECRETS:-}; do
+    # BOARD_TOKEN is the bot's own board credential, set from the token file per turn, never on
+    # /fleet; keep it (and the other board vars) or the bot cannot post (jade, #555). BOARD and
+    # BOT_HANDLE are not secret-named, so not in _OWN_SECRETS, but keep them explicit.
+    case $_k in BOARD|BOT_HANDLE|BOARD_TOKEN) continue ;; esac
     case " ${_FLEET_SET:-} " in *" $_k "*) ;; *) unset "$_k" ;; esac
   done
   return 0
