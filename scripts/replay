@@ -7,8 +7,11 @@
 
 Messages pop in one at a time like a group chat: each bot has a name and a colour, and a bold caption
 marks the beat. Forgejo review and merge lines become small event cards. Needs $BOARD and
-$BOARD_TOKEN (or --board / --token) to fetch a thread, Pillow, and ffmpeg on the PATH (or the
-imageio-ffmpeg package, which ships one). Music and a voice are added in the posting app.
+$BOARD_TOKEN (or --board / --token) to fetch a thread, and Pillow. The encode uses ffmpeg from the PATH,
+else the one in the imageio-ffmpeg package; with neither, the frames are written as PNGs beside the
+output and the command that encodes them is printed. Fonts: DejaVu Sans Bold and DejaVu Sans when
+installed (or --font for the bold one), else Pillow's bundled font. Music and a voice are added in the
+posting app.
 
 By default the thread is filtered: @board nudges, release lines and routine boilerplate are dropped,
 every text is cut to its first 140 characters at a sentence break, URLs are removed, attachments are
@@ -26,6 +29,9 @@ import urllib.request
 W, H = 1080, 1920
 FPS = 24
 MAX_BEATS, MAX_CHARS = 9, 140
+FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF",
+             "/Library/Fonts", "/System/Library/Fonts/Supplemental", os.path.expanduser("~/.fonts"),
+             os.path.expanduser("~/.local/share/fonts")]
 PALETTE = ["#e4572e", "#17bebb", "#ffc914", "#76b041", "#9d6bff", "#ff7aa2", "#4ea5ff", "#ff9f1c"]
 URL = re.compile(r"https?://\S+")
 
@@ -142,15 +148,25 @@ def wrap(draw, text, font, width):
     return lines + ([line] if line else [])
 
 
-def render(story: list[dict], title: str, out: str) -> None:
+def find_font(name: str) -> str | None:
+    return next((os.path.join(d, name) for d in FONT_DIRS if os.path.isfile(os.path.join(d, name))), None)
+
+
+def render(story: list[dict], title: str, out: str, font_path: str | None = None) -> None:
     from PIL import Image, ImageDraw, ImageFont
 
-    font = lambda n: ImageFont.load_default(size=n)
-    f_body, f_name, f_cap, f_small = font(50), font(40), font(96), font(36)
+    bold_path = font_path or find_font("DejaVuSans-Bold.ttf")
+    reg_path = find_font("DejaVuSans.ttf")
+    real_bold = bool(bold_path)                       # else the bundled font, whose bold is faked with a stroke
+    load = lambda path, n: ImageFont.truetype(path, n) if path else ImageFont.load_default(size=n)
+    f_body, f_small = load(reg_path, 50), load(reg_path, 36)
+    f_name, f_cap = load(bold_path, 40), load(bold_path, 96)
+    print("fonts:", bold_path or "Pillow's bundled font (no bold weight)", file=sys.stderr)
     scratch = ImageDraw.Draw(Image.new("RGB", (W, 10)))
     maxw = W - 2 * 70 - 2 * 36                        # text width inside a bubble
 
-    def bold(d, xy, text, f, fill, stroke=2):         # the bundled font has no bold weight
+    def bold(d, xy, text, f, fill, stroke=2):         # the bundled font has no bold weight: fake it
+        stroke = 0 if real_bold else stroke
         d.text(xy, text, font=f, fill=fill, stroke_width=stroke, stroke_fill=fill)
 
     paint = colours(story)
@@ -200,10 +216,15 @@ def render(story: list[dict], title: str, out: str) -> None:
             import imageio_ffmpeg
             ff = imageio_ffmpeg.get_ffmpeg_exe()
         except ImportError:
-            sys.exit("replay: ffmpeg not found; install ffmpeg, or pip install imageio-ffmpeg")
-    proc = subprocess.Popen([ff, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-                             "-r", str(FPS), "-i", "-", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
-                             "-movflags", "+faststart", out], stdin=subprocess.PIPE)
+            pass
+    enc = "-c:v libx264 -pix_fmt yuv420p -crf 20 -movflags +faststart"
+    proc, frames_dir = None, None
+    if ff:
+        proc = subprocess.Popen([ff, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+                                 "-r", str(FPS), "-i", "-", "-an", *enc.split(), out], stdin=subprocess.PIPE)
+    else:                                             # no encoder here: leave the frames, say how to encode them
+        frames_dir = os.path.splitext(out)[0] + "-frames"
+        os.makedirs(frames_dir, exist_ok=True)
     pop = 0.35
     for fr in range(int(total * FPS)):
         t = fr / FPS
@@ -236,10 +257,17 @@ def render(story: list[dict], title: str, out: str) -> None:
                 cw = int(cd.textlength(caption.upper(), font=f_cap))
                 bold(cd, ((W - cw) // 2, 20), caption.upper(), f_cap, (255, 255, 255, int(255 * p)), 3)
                 frame.paste(layer, (0, 160), layer)
-        proc.stdin.write(frame.tobytes())
-    proc.stdin.close()
-    if proc.wait():
-        sys.exit("replay: ffmpeg failed")
+        if proc:
+            proc.stdin.write(frame.tobytes())
+        else:
+            frame.save(os.path.join(frames_dir, "frame%05d.png" % fr))
+    if proc:
+        proc.stdin.close()
+        if proc.wait():
+            sys.exit("replay: ffmpeg failed")
+    else:
+        print(f"replay: no ffmpeg found (PATH, or pip install imageio-ffmpeg); frames are in {frames_dir}.\n"
+              f"Encode them where ffmpeg is installed:\n  ffmpeg -framerate {FPS} -i {frames_dir}/frame%05d.png {enc} {out}")
 
 
 def main() -> None:
@@ -248,6 +276,7 @@ def main() -> None:
     ap.add_argument("-o", "--out", default="replay.mp4", help="MP4 to write; storyboard.json goes beside it")
     ap.add_argument("--pick", help="comma-separated message ids to show, in this order")
     ap.add_argument("--storyboard", help="render this storyboard.json (as edited) instead of fetching a thread")
+    ap.add_argument("--font", help="a bold TrueType font (default: DejaVu Sans Bold if installed, else Pillow's own)")
     ap.add_argument("--board", default=os.environ.get("BOARD"), help="board address (default $BOARD)")
     ap.add_argument("--token", default=os.environ.get("BOARD_TOKEN"), help="bearer token (default $BOARD_TOKEN)")
     a = ap.parse_args()
@@ -265,8 +294,9 @@ def main() -> None:
         with open(path, "w") as f:
             json.dump({"thread": a.thread, "beats": story}, f, indent=2, ensure_ascii=False)
         print("storyboard:", path)
-    render(story, title, a.out)
-    print("video:", a.out)
+    render(story, title, a.out, a.font)
+    if os.path.exists(a.out):
+        print("video:", a.out)
 
 
 if __name__ == "__main__":

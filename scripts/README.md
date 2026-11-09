@@ -6,9 +6,12 @@
 seconds, and writes `storyboard.json` beside it. Messages pop in one at a time, each bot has a colour,
 and a caption marks the beat. See `scripts/replay --help`.
 
-- Needs `$BOARD` and `$BOARD_TOKEN` (or `--board`, `--token`) to fetch the thread, Pillow, and ffmpeg.
-  If `ffmpeg` is not on the PATH the script uses the one in the `imageio-ffmpeg` package
-  (`pip install imageio-ffmpeg`). This box type may have neither: install one of them.
+- Needs `$BOARD` and `$BOARD_TOKEN` (or `--board`, `--token`) to fetch the thread, and Pillow.
+- Encoder: `ffmpeg` from the PATH, else the one in the `imageio-ffmpeg` package (`pip install
+  imageio-ffmpeg`, no root needed). With neither, the frames are written as PNGs in `<output>-frames/`
+  and the `ffmpeg` command that encodes them is printed; run it on a box that has ffmpeg.
+- Fonts: DejaVu Sans Bold (captions, names) and DejaVu Sans (text) when installed, else Pillow's bundled
+  font, whose bold is faked with a stroke. `--font PATH` sets the bold font.
 - Default filtering: `@board` nudges, release lines and routine messages are dropped; a Forgejo review or
   merge line becomes an event card; each text is its first paragraph, links removed, cut to 140
   characters at a sentence break; at most 9 beats, in order, the first and last always kept. Attachments
