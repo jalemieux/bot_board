@@ -24,31 +24,53 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 W, H = 1080, 1920
 FPS = 24
 MAX_BEATS, MAX_CHARS = 9, 140
+STRIP = 220                       # px kept empty at the bottom, for a caption added in the posting app
 FONT_DIRS = ["/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/dejavu", "/usr/share/fonts/TTF",
              "/Library/Fonts", "/System/Library/Fonts/Supplemental", os.path.expanduser("~/.fonts"),
              os.path.expanduser("~/.local/share/fonts")]
 PALETTE = ["#e4572e", "#17bebb", "#ffc914", "#76b041", "#9d6bff", "#ff7aa2", "#4ea5ff", "#ff9f1c"]
 URL = re.compile(r"https?://\S+")
+# Never show a credential: a bearer value, a NAME=value or token: value assignment, a well-known token
+# prefix, a hex run, or any long token-like string that mixes letters and digits (patterns after seth's).
+SECRET = re.compile(r"(?i)\bbearer\s+\S{8,}|(?<![A-Za-z0-9])(?:token|secret|password|passwd|api[_-]?key)\s*[=:]\s*\S+"
+                    r"|\b(?:ghp_|gho_|github_pat_|glpat-|sk-)[A-Za-z0-9_-]{10,}|\b[0-9a-fA-F]{32,}\b")
+LONG = re.compile(r"\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}\b")
 
 
 # ---------------------------------------------------------------- the thread -> a storyboard
 
 def fetch(board: str, token: str, tid: int) -> list[dict]:
-    req = urllib.request.Request(f"{board.rstrip('/')}/api/threads/{tid}", headers={"Authorization": "Bearer " + token})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.load(r)["messages"]
+    """Every message of the thread: the board pages long threads (has_more, next_since)."""
+    out, since = [], None
+    while True:
+        url = f"{board.rstrip('/')}/api/threads/{tid}" + (f"?since={since}" if since else "")
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Bearer " + token}), timeout=30) as r:
+                page = json.load(r)
+        except urllib.error.HTTPError as exc:
+            sys.exit(f"replay: the board answered {exc.code} for thread {tid}")
+        except urllib.error.URLError as exc:
+            sys.exit(f"replay: cannot reach the board: {exc.reason}")
+        out += [m for m in page["messages"] if m["id"] not in {x["id"] for x in out}]
+        if not page.get("has_more") or not page.get("next_since") or page["next_since"] == since:
+            return out
+        since = page["next_since"]
 
 
 def clean(text: str) -> str:
-    """First paragraph, markdown and links stripped, mentions flattened to the bare handle."""
-    text = URL.sub("", text or "")
+    """First paragraph, as plain words: no code fences, links or secrets, markdown marks removed, and the
+    underscores and angle brackets of names (post_message, <human>) kept."""
+    text = re.sub(r"```.*?(?:```|$)", "", text or "", flags=re.S)       # a fenced block is code, never the beat
+    text = SECRET.sub("[redacted]", LONG.sub("[redacted]", URL.sub("", text)))
     para = next((p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()), "")
-    para = re.sub(r"^#+\s*|[`*_>]+", "", para)
+    para = re.sub(r"(?m)^\s*#+\s*|^\s*>\s?", "", para)             # a heading mark or a quote marker at a line start
+    para = re.sub(r"[`*]+|(?<!\w)_+|_+(?!\w)", "", para)              # emphasis marks; underscores only at a word edge
     para = re.sub(r"\s+", " ", para).strip()
     return re.sub(r"(?<=[.!?])\s+[A-Z]\w*:$", "", para).rstrip(":")   # a link removed above can leave "Review:" dangling
 
@@ -98,6 +120,8 @@ def caption_for(m: dict, text: str, first: bool, worker: str | None, ev: str | N
 def storyboard(messages: list[dict], pick: list[int] | None) -> list[dict]:
     worker = next((m.get("worker") for m in messages if m.get("worker")), None)
     beats = []
+    if pick is not None and (missing := sorted(set(pick) - {m["id"] for m in messages})):
+        sys.exit("replay: not in this thread: " + ", ".join(map(str, missing)))
     for i, m in enumerate(messages):
         meta = m.get("meta") or {}
         if pick is not None and m["id"] not in pick:
@@ -106,10 +130,14 @@ def storyboard(messages: list[dict], pick: list[int] | None) -> list[dict]:
             ev = event_of(m)
             if not ev or (pick is None and not re.search(r"merged|reviewed|approved|requested", ev)):
                 continue
+            who = ev.split(" ", 1)[0]
+            if pick is None and " reviewed " in ev and beats and beats[-1]["kind"] == "message" and beats[-1]["author"] == who:
+                continue                                  # the review message just before already says it
             beats.append({"id": m["id"], "kind": "event", "author": "board", "text": ev,
                           "caption": caption_for(m, ev, False, worker, ev)})
             continue
-        if pick is None and (meta.get("kind") in ("nudge", "thread_released") or meta.get("routine")):
+        if pick is None and (meta.get("kind") in ("nudge", "thread_released") or meta.get("routine")
+                             or m.get("author_kind") in ("cron", "keeper")):
             continue
         text = cut(clean(m.get("body", "")))
         if not text:
@@ -118,7 +146,11 @@ def storyboard(messages: list[dict], pick: list[int] | None) -> list[dict]:
                       "caption": caption_for(m, text, not beats, worker, None)})
     if pick is not None:
         beats.sort(key=lambda b: pick.index(b["id"]))
-    elif len(beats) > MAX_BEATS:                      # keep the order; the first and the last stay
+    else:
+        merged = next((k for k, b in enumerate(beats) if b["kind"] == "event" and " merged " in f" {b['text']} "), None)
+        if merged is not None:
+            beats = beats[:merged + 1]                    # the story ends on the merge
+    if pick is None and len(beats) > MAX_BEATS:                      # keep the order; the first and the last stay
         keep = {round(k * (len(beats) - 1) / (MAX_BEATS - 1)) for k in range(MAX_BEATS)}
         beats = [b for k, b in enumerate(beats) if k in keep]
     return beats
@@ -161,6 +193,7 @@ def render(story: list[dict], title: str, out: str, font_path: str | None = None
     load = lambda path, n: ImageFont.truetype(path, n) if path else ImageFont.load_default(size=n)
     f_body, f_small = load(reg_path, 50), load(reg_path, 36)
     f_name, f_cap = load(bold_path, 40), load(bold_path, 96)
+    f_merge, f_event = load(bold_path, 64), load(bold_path, 46)
     print("fonts:", bold_path or "Pillow's bundled font (no bold weight)", file=sys.stderr)
     scratch = ImageDraw.Draw(Image.new("RGB", (W, 10)))
     maxw = W - 2 * 70 - 2 * 36                        # text width inside a bubble
@@ -172,14 +205,18 @@ def render(story: list[dict], title: str, out: str, font_path: str | None = None
     paint = colours(story)
     bubbles = []
     for b in story:                                   # one RGBA image per beat
-        if b["kind"] == "event":
-            tw = int(scratch.textlength(b["text"], font=f_small))
-            img = Image.new("RGBA", (tw + 110, 84), (0, 0, 0, 0))
+        if b["kind"] == "event":                          # a full-width card; the merge is the payoff, in green
+            win = " merged " in f" {b['text']} "
+            img = Image.new("RGBA", (W - 140, 150 if win else 110), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
-            d.rounded_rectangle((0, 0, img.width - 1, 83), 42, fill=(255, 255, 255, 34), outline=(255, 255, 255, 120), width=2)
-            d.ellipse((36, 33, 54, 51), fill=(255, 201, 20, 255))         # the bundled font has no star glyph
-            d.text((72, 20), b["text"], font=f_small, fill=(255, 255, 255, 255))
-            bubbles.append((img, "centre"))
+            if win:
+                d.rounded_rectangle((0, 0, img.width - 1, img.height - 1), 40, fill=(35, 134, 54, 255))
+            else:
+                d.rounded_rectangle((0, 0, img.width - 1, img.height - 1), 40, fill=(255, 255, 255, 34), outline=(255, 255, 255, 120), width=2)
+            f = f_merge if win else f_event
+            tw = int(scratch.textlength(b["text"], font=f))
+            bold(d, ((img.width - tw) // 2, (img.height - f.size) // 2 - 4), b["text"], f, (255, 255, 255, 255), 1)
+            bubbles.append((img, "left"))
             continue
         lines = wrap(scratch, b["text"], f_body, maxw)
         h = 36 + 54 + len(lines) * 66 + 30
@@ -195,7 +232,7 @@ def render(story: list[dict], title: str, out: str, font_path: str | None = None
     n = len(story)
     total = min(30, max(15, 2.4 * n + 3))             # seconds
     hold = (total - 1.5) / n                          # per beat; the last one holds longer at the end
-    top, bottom, gap = 360, H - 120, 28
+    top, bottom, gap = 360, H - STRIP, 28            # the bottom strip is left empty for the end caption
     ys, y = [], 0
     for img, _ in bubbles:
         ys.append(y)
@@ -250,6 +287,7 @@ def render(story: list[dict], title: str, out: str, font_path: str | None = None
                     layer.putalpha(img.getchannel("A").point(lambda a: int(a * p)))
                 frame.paste(layer, (x, int(yy)), layer)
             frame.paste(bg.crop((0, 0, W, 330)), (0, 0))      # header and caption zone: scrolled bubbles slide under it
+            frame.paste(bg.crop((0, H - STRIP, W, H)), (0, H - STRIP))      # the end-caption strip stays empty
             caption = story[k]["caption"]
             if caption:
                 layer = Image.new("RGBA", (W, 170), (0, 0, 0, 0))
