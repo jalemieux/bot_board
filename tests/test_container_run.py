@@ -175,137 +175,89 @@ class ContainerRun(unittest.TestCase):
         self.assertFalse(any(a.endswith(":/work") for a in c), "box mode mounts no checkout: %s" % c)
         self.assertNotIn("BOARD", c, "box mode does not pass the board vars: %s" % c)
 
-    def test_claude_token_from_env_is_forwarded_to_the_bot_container(self):
-        # claude's token often lives in the launcher env (claude setup-token), not fleet.env, so it
-        # is not in $_FLEET_SET; container_run must forward it or claude is logged out inside (#306)
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        self.log.write_text("")
-        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "CLAUDE_CODE_OAUTH_TOKEN": "dummy-oauth-token"})
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, "claude token forwarded by name: %s" % run)
-        self.assertNotIn("dummy-oauth-token", " ".join(run), "passed by name, not value")
+    # ---- /fleet is the only source of a bot's secrets (#555) --------------------------------------
+    def _fleet_env(self, fleet=None, extra=None, pop=("GH_TOKEN", "GITHUB_TOKEN", "FORGEJO_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")):
+        # a sub env with a fleet.env holding the given secrets. The named secrets are popped from the
+        # launcher's own environment first, so the scenario is controlled: a secret reaches a bot only
+        # when it is on /fleet (in fleet.env), never because the launcher happened to hold it.
+        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", **(extra or {})})
+        for k in pop:
+            env.pop(k, None)
+        if fleet:
+            fe = Path(env["HOME"]) / ".config" / "bot_board"
+            fe.mkdir(parents=True, exist_ok=True)
+            (fe / "fleet.env").write_text("".join("%s=%s\n" % (k, v) for k, v in fleet.items()))
+        return env
 
-    def test_claude_token_from_env_is_forwarded_in_box_mode(self):
-        # the keeper's login check runs in box mode and needs the token the same way
+    def _checkout(self):
+        c = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, c, ignore_errors=True)
+        (Path(c) / ".keep").write_text("a non-empty checkout")
+        return c
+
+    def _run(self):
+        return next((c for c in self.calls() if c and c[0] == "run"), None)
+
+    def test_a_fleet_secret_is_forwarded_to_the_bot_container(self):
+        # every /fleet secret rides $_FLEET_SET into the container by name, the claude login and the
+        # forge token among them, so no secret needs its own forwarding line any more (#555)
         self.log.write_text("")
-        env = self.sub_env({"CLAUDE_CODE_OAUTH_TOKEN": "dummy-oauth-token"})
+        env = self._fleet_env({"CLAUDE_CODE_OAUTH_TOKEN": "fleet-oauth", "FORGEJO_TOKEN": "fleet-forge"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", self._checkout(), "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = self._run()
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, "claude login forwarded by name: %s" % run)
+        self.assertIn("FORGEJO_TOKEN", run, "forge token forwarded by name: %s" % run)
+        self.assertNotIn("fleet-oauth", " ".join(run), "passed by name, not value")
+
+    def test_a_launcher_env_only_secret_does_not_reach_the_container(self):
+        # a secret the launcher's own environment has but /fleet does not (the operator's own login)
+        # is not on $_FLEET_SET, so it is never forwarded (#555)
+        self.log.write_text("")
+        env = self._fleet_env({"FORGEJO_TOKEN": "fleet-forge"}, extra={"OPERATOR_TOKEN": "from-box"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", self._checkout(), "--", "--version"], env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = self._run()
+        self.assertIsNotNone(run, self.calls())
+        self.assertIn("FORGEJO_TOKEN", run, "the /fleet secret is forwarded: %s" % run)
+        self.assertNotIn("OPERATOR_TOKEN", run, "a box-only secret is not: %s" % run)
+
+    def test_a_fleet_secret_is_forwarded_in_box_mode(self):
+        # the keeper's login check runs in box mode and the claude login reaches it the same way
+        self.log.write_text("")
+        env = self._fleet_env({"CLAUDE_CODE_OAUTH_TOKEN": "fleet-oauth"})
         r = self.run_sub(["--box", "claude", "--", "--version"], env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        run = self._run()
         self.assertIsNotNone(run, self.calls())
         self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", run, run)
 
-    def test_forgejo_token_from_env_is_forwarded_to_the_bot_container(self):
-        # the forge credential often lives in the launcher env, not fleet.env; a container bot needs
-        # it to clone, push and review, so container_run must forward it (#306, hugo)
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+    def test_a_fleet_gh_token_reaches_a_non_copilot_container(self):
+        # GH_TOKEN and GITHUB_TOKEN ride $_FLEET_SET like any /fleet secret for a non-copilot harness
         self.log.write_text("")
-        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "FORGEJO_TOKEN": "dummy-forge-token"})
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
+        env = self._fleet_env({"GH_TOKEN": "fleet-gh", "GITHUB_TOKEN": "fleet-github"})
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", self._checkout(), "--", "--version"], env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        run = self._run()
         self.assertIsNotNone(run, self.calls())
-        self.assertIn("FORGEJO_TOKEN", run, "forge token forwarded by name: %s" % run)
-        self.assertNotIn("dummy-forge-token", " ".join(run), "passed by name, not value")
+        self.assertIn("GH_TOKEN", run, run)
+        self.assertIn("GITHUB_TOKEN", run, run)
+        self.assertNotIn("fleet-gh", " ".join(run), "passed by name, not value")
 
-    def test_forgejo_token_not_forwarded_in_box_mode(self):
-        # a box-mode login check does not touch the forge, so it does not carry the forge token
+    def test_a_fleet_gh_token_is_still_skipped_for_copilot(self):
+        # copilot refuses a gh token in its own environment without Copilot Requests permission, so
+        # GH_TOKEN and GITHUB_TOKEN are skipped for it whatever the source; other /fleet secrets still
+        # reach it (#542, #545)
         self.log.write_text("")
-        env = self.sub_env({"FORGEJO_TOKEN": "dummy-forge-token"})
-        r = self.run_sub(["--box", "claude", "--", "--version"], env)
+        env = self._fleet_env({"GH_TOKEN": "fleet-gh", "GITHUB_TOKEN": "fleet-github", "FORGEJO_TOKEN": "fleet-forge"})
+        r = self.run_sub(["copilot", "--handle", "tbot", "--dir", self._checkout(), "--", "--version"], env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        run = self._run()
         self.assertIsNotNone(run, self.calls())
-        self.assertNotIn("FORGEJO_TOKEN", run, "box mode does not need the forge token: %s" % run)
-
-    def test_gh_token_from_env_is_forwarded_to_the_bot_container(self):
-        # GH_TOKEN is the keeper's GitHub credential for gh. It usually also sits in the launcher's
-        # own environment, so _OWN_SECRETS drops the fleet.env copy and $_FLEET_SET does not carry
-        # it; container_run must forward it in bot mode or a container bot's gh is logged out (#538)
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        self.log.write_text("")
-        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1",
-                            "GH_TOKEN": "dummy-gh-token", "GITHUB_TOKEN": "dummy-github-token"})
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertIn("GH_TOKEN", run, "gh token forwarded by name: %s" % run)
-        self.assertIn("GITHUB_TOKEN", run, "github token forwarded by name: %s" % run)
-        self.assertNotIn("dummy-gh-token", " ".join(run), "passed by name, not value")
-
-    def test_gh_token_is_not_forwarded_to_a_copilot_container(self):
-        # copilot refuses a gh token in its own environment without Copilot Requests permission; it
-        # takes one through COPILOT_GITHUB_TOKEN. Forwarding GH_TOKEN would hide copilot's own login,
-        # so the copilot container must not get it (#538)
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        self.log.write_text("")
-        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", "GH_TOKEN": "dummy-gh-token"})
-        r = self.run_sub(["copilot", "--handle", "tbot", "--dir", checkout, "--", "--version"], env)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertNotIn("GH_TOKEN", run, "copilot container must not carry a gh token: %s" % run)
-
-    def _fleet_env_gh(self, extra=None):
-        # a sub env whose fleet.env (not the launcher's own environment) sets GH_TOKEN and
-        # GITHUB_TOKEN, so they ride in $_FLEET_SET; the loop then forwards them by name
-        env = self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1", **(extra or {})})
-        env.pop("GH_TOKEN", None); env.pop("GITHUB_TOKEN", None)   # not in _OWN_SECRETS, so not dropped
-        fe = Path(env["HOME"]) / ".config" / "bot_board"
-        fe.mkdir(parents=True, exist_ok=True)
-        (fe / "fleet.env").write_text("GH_TOKEN=dummy-fleet-gh\nGITHUB_TOKEN=dummy-fleet-github\n")
-        return env
-
-    def test_a_fleet_env_gh_token_reaches_a_non_copilot_container(self):
-        # a GH_TOKEN from fleet.env (not the launcher env) rides in $_FLEET_SET and the loop forwards
-        # it to a non-copilot harness. This also guards the copilot test below from passing vacuously.
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        self.log.write_text("")
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], self._fleet_env_gh())
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertIn("GH_TOKEN", run, "a fleet.env gh token reaches claude: %s" % run)
-        self.assertNotIn("dummy-fleet-gh", " ".join(run), "passed by name, not value")
-
-    def test_a_fleet_env_gh_token_is_still_skipped_for_copilot(self):
-        # the #539 guard only covered the launcher-environment case. A GH_TOKEN from fleet.env rides
-        # in $_FLEET_SET and the loop would forward it to every harness; copilot must still not get
-        # it, so the loop skips GH_TOKEN and GITHUB_TOKEN for copilot (#542, jade-dc77)
-        checkout = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
-        (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        self.log.write_text("")
-        r = self.run_sub(["copilot", "--handle", "tbot", "--dir", checkout, "--", "--version"], self._fleet_env_gh())
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertNotIn("GH_TOKEN", run, "copilot must not get a fleet.env gh token: %s" % run)
-        self.assertNotIn("GITHUB_TOKEN", run, "nor a fleet.env github token: %s" % run)
-
-    def test_gh_token_not_forwarded_in_box_mode(self):
-        # a box-mode login check does not do code work, so it does not carry the gh token
-        self.log.write_text("")
-        env = self.sub_env({"GH_TOKEN": "dummy-gh-token"})
-        r = self.run_sub(["--box", "claude", "--", "--version"], env)
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        run = next((c for c in self.calls() if c and c[0] == "run"), None)
-        self.assertIsNotNone(run, self.calls())
-        self.assertNotIn("GH_TOKEN", run, "box mode does not need the gh token: %s" % run)
+        self.assertNotIn("GH_TOKEN", run, "copilot gets no gh token: %s" % run)
+        self.assertNotIn("GITHUB_TOKEN", run, run)
+        self.assertIn("FORGEJO_TOKEN", run, "but still gets other /fleet secrets: %s" % run)
 
     def test_forge_host_is_mapped_into_the_bridge_container(self):
         # the harness reaches the forge by its tailnet name; a bridge container must resolve it too

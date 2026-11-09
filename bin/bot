@@ -228,7 +228,11 @@ fi
 # harness run, so a rotated token is used from the next run and a removed one is dropped.
 # Read as KEY=value lines exactly as the keeper reads them, never run as shell: a bad
 # line must not stop bin/bot. Only secret names (*_TOKEN, *_KEY, *_SECRET), so the file
-# cannot move a box's BOARD or PATH; and a secret this bot's own environment had wins.
+# cannot move a box's BOARD or PATH. /fleet is the only source a bot sees: on a name the box
+# environment also holds, the fleet.env value wins and is exported over it (#555, replacing #297,
+# where the box environment shadowed fleet.env instead). _OWN_SECRETS keeps the box's own secret
+# names, so a bot turn can drop the ones /fleet does not have (scrub_box_only_secrets) and the
+# launcher can report the collisions.
 _OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"
 _FLEET_SET=" "
 load_fleet_env() {
@@ -236,7 +240,6 @@ load_fleet_env() {
   if [ -f "$HOME/.config/bot_board/fleet.env" ]; then
     while IFS= read -r -d '' _kv; do
       _k=${_kv%%=*}
-      case $_OWN_SECRETS in *" $_k "*) continue ;; esac
       export "$_kv"; now+="$_k "
     done < <(python3 - "$HOME/.config/bot_board/fleet.env" <<'PY' || true
 import re,shlex,sys
@@ -325,9 +328,12 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
       done
     fi
   fi
-  # copilot refuses a gh token in its own environment without Copilot Requests permission, so it
-  # must not get one even when GH_TOKEN comes from fleet.env (and so rides in $_FLEET_SET, unlike the
-  # launcher-environment case the block below guards); skip it here for copilot (#542).
+  # /fleet is the only source for a bot's secrets (#555): every /fleet secret rides $_FLEET_SET into
+  # the container by name, the claude login (CLAUDE_CODE_OAUTH_TOKEN) and the forge token
+  # (FORGEJO_TOKEN) among them, so no secret needs its own forwarding line any more. copilot is the
+  # one exception: it refuses a gh token in its own environment without Copilot Requests permission
+  # (see run_copilot) and takes one through COPILOT_GITHUB_TOKEN, so skip GH_TOKEN and GITHUB_TOKEN
+  # for copilot (#542, #545).
   for _k in $_FLEET_SET; do
     [ "$harness" = copilot ] && case $_k in GH_TOKEN|GITHUB_TOKEN) continue ;; esac
     run+=(-e "$_k")
@@ -335,25 +341,6 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # opencode takes its per-bot config as content in this var (#324); forward it when set so a
   # container run uses the same model and config block as the host does.
   [ -n "${OPENCODE_CONFIG_CONTENT:-}" ] && run+=(-e OPENCODE_CONFIG_CONTENT)
-  # claude logs in with CLAUDE_CODE_OAUTH_TOKEN. It often lives in the launcher's environment
-  # (claude setup-token), not fleet.env, so $_FLEET_SET does not carry it; forward it when set so
-  # claude is logged in inside the container too, the same as the keeper's login check (#306).
-  [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && run+=(-e CLAUDE_CODE_OAUTH_TOKEN)
-  # FORGEJO_TOKEN is the forge credential a bot clones, pushes and reviews with. Like the claude
-  # token it is often in the launcher's environment, not fleet.env, so $_FLEET_SET does not carry
-  # it; forward it when set so a container bot can do code work (#306, hugo). Bot mode only: a
-  # box-mode login check does not touch the forge.
-  [ "$mode" = bot ] && [ -n "${FORGEJO_TOKEN:-}" ] && run+=(-e FORGEJO_TOKEN)
-  # GH_TOKEN (and GITHUB_TOKEN) is the GitHub credential the keeper writes under Secrets, so a bot's
-  # gh acts as the fleet account. Like the two above it usually also sits in the launcher's own
-  # environment, so _OWN_SECRETS drops the fleet.env copy from $_FLEET_SET and nothing reaches the
-  # container (milo, #538). Forward it in bot mode. Not for copilot: copilot refuses a gh token in
-  # its own environment without Copilot Requests permission (see run_copilot), and takes one through
-  # COPILOT_GITHUB_TOKEN instead, so a gh token in its env would hide copilot's own login.
-  if [ "$mode" = bot ] && [ "$harness" != copilot ]; then
-    [ -n "${GH_TOKEN:-}" ] && run+=(-e GH_TOKEN)
-    [ -n "${GITHUB_TOKEN:-}" ] && run+=(-e GITHUB_TOKEN)
-  fi
   # bot mode names the container so `bot kill` can remove a turn that outlives the runtime client
   # (KILL ends the client, not the container), and so two turns of one bot cannot overlap (#485).
   if [ "$mode" = box ]; then run+=(-v "bot_board-box-state:/home/bot")
@@ -1090,6 +1077,17 @@ BOT_BAD_WAIT=${BOT_BAD_WAIT:-1800}           # the harness cannot be run at all 
 BOT_RETRY_WAITS=${BOT_RETRY_WAITS:-60 300 900}   # transient failures, one wait per try; after the last, the batch is given up
 BOT_UNKNOWN_WAIT=${BOT_UNKNOWN_WAIT:-300}    # a failure the launcher cannot name: one more try, then the batch is given up
 RUN_MESSAGES=""     # the message ids a run is for, for last.json; the caller sets it
+# A bot's turn sees only /fleet's secrets. Drop, for the turn, any secret-named variable the box
+# environment has that /fleet does not (the keeper's or operator's own login on the box): on the
+# host it would otherwise be inherited by the harness, and a container forwards only $_FLEET_SET, so
+# it is already dropped there (#555). Runs in the harness subshell, so the launcher keeps its own.
+scrub_box_only_secrets() {
+  local _k
+  for _k in ${_OWN_SECRETS:-}; do
+    case " ${_FLEET_SET:-} " in *" $_k "*) ;; *) unset "$_k" ;; esac
+  done
+  return 0
+}
 run_harness() {
   local dir=$1 sfile=$2 prompt=$3 rc=0 sid="" off started now input=/dev/null bytes
   local arg=("$prompt") codex_arg=("$prompt") copilot_arg=(-p "$prompt")
@@ -1116,7 +1114,7 @@ run_harness() {
   # In a subshell: the harness runs in its directory, the launcher stays where it was.
   # Stdin is /dev/null or the prompt too long for an argument, never the caller's: its
   # loop feeds stdin, and a harness that read it would eat the loop's input.
-  (cd "$dir" && case $HARNESS in
+  (cd "$dir" && scrub_box_only_secrets && case $HARNESS in
     claude)
       if [ ! -s "$sfile" ]; then set -- claude -p --output-format json --session-id "$sid" $BOT_CLAUDE_FLAGS ${arg[@]+"${arg[@]}"}
       else                       set -- claude -p --output-format json --resume     "$sid" $BOT_CLAUDE_FLAGS ${arg[@]+"${arg[@]}"}; fi
@@ -1607,6 +1605,13 @@ BACKLOG_BEFORE=$((SEEN + 1))
 BACKLOG_CUTOFF=$(python3 -c 'import sys,time;print(time.time()-float(sys.argv[1]))' "$CATCH_UP_SECS")
 : > "$STATE/backlog.threads"
 log "startup catch-up: checking the last $((CATCH_UP_SECS / 3600)) hours without rewinding seen=$SEEN"
+# Report, names only, which /fleet secrets this box's environment also holds. On such a collision
+# /fleet wins inside a bot (#555); the keeper shows the same on /fleet. Never a value.
+_collisions=""
+for _ck in $_FLEET_SET; do case $_OWN_SECRETS in *" $_ck "*) _collisions+="$_ck " ;; esac; done
+if [ -n "$_collisions" ]; then log "fleet secrets also in this box's environment, bots use /fleet: $_collisions"
+else log "no fleet/box secret-name collisions"; fi
+unset _collisions _ck
 if [ -s "$STATE/health" ]; then
   # a stopped bot's outage carries over, with the wait it had left
   if grep -qE '^(logged out|out of|cannot run)' "$STATE/health"; then
