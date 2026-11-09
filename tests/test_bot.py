@@ -71,6 +71,7 @@ HARNESS=copilot
 STATE=$TEST_STATE
 LOG=$STATE/log
 load_fleet_env() { :; }
+scrub_box_only_secrets() { :; }
 said_limited() { :; }
 copilot() { printf '%s\\n' "$@" >> "$STATE/args"; }
 run_harness "$STATE" "$STATE/session" "first turn"

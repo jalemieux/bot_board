@@ -3,6 +3,7 @@ otherwise runs without GH_TOKEN, so copilot's own login is used, while the gh it
 the token. Run with python -m unittest discover -s tests."""
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -24,6 +25,12 @@ class CopilotLogin(unittest.TestCase):
             for k in ("GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"):     # only what the test gives
                 if k not in env:
                     L.env.pop(k, None)
+            # /fleet is the only source a bot's turn sees (#555): deliver the test's secrets through
+            # fleet.env, or the bot-turn scrub drops them as box-only before copilot runs
+            fe = Path(L.tmp.name) / ".config/bot_board/fleet.env"
+            fe.parent.mkdir(parents=True, exist_ok=True)
+            fe.write_text("".join("%s=%s\n" % (k, v) for k, v in env.items()
+                                  if re.fullmatch(r"[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)", k)))
             try:
                 L.plan(fh.step("copilot", "ok", "rules read"))
                 L.start()
