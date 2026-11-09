@@ -79,6 +79,26 @@ class Keeper(unittest.TestCase):
         k = load_keeper(self.home, COLLIDE_TOKEN='from_box', OWNONLY_TOKEN='from_box')
         self.assertEqual(k.secret_collisions(), ['COLLIDE_TOKEN'])
 
+    def test_secret_collisions_through_bin_bot_excludes_its_own_fleet_exports(self):
+        # bot keeper runs through bin/bot, which exports fleet.env's secrets before it exec's the
+        # keeper, so by then the keeper's own environment holds every /fleet secret. The box's own
+        # names must come from bin/bot (BOT_OWN_SECRETS, captured before that export), or every /fleet
+        # secret shows as a collision (jade, #556). COLLIDE_TOKEN is in the box env and on /fleet;
+        # FLEET_TOKEN is only on /fleet, so only COLLIDE_TOKEN is a real collision.
+        import subprocess, json
+        with tempfile.TemporaryDirectory() as home:
+            cfg = os.path.join(home, '.config', 'bot_board'); os.makedirs(cfg)
+            bindir = os.path.join(home, 'bin'); os.makedirs(bindir)
+            fake(bindir, 'gh', 'exit 0')
+            with open(os.path.join(cfg, 'fleet.env'), 'w') as f:
+                f.write('FLEET_TOKEN=x\nCOLLIDE_TOKEN=x\n')
+            env = {'HOME': home, 'BOT_CONFIG': os.path.join(home, 'missing'), 'COLLIDE_TOKEN': 'from_box',
+                   'PATH': bindir + os.pathsep + os.environ['PATH']}
+            r = subprocess.run([str(ROOT / 'bin' / 'bot'), 'keeper', 'show'], env=env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(json.loads(r.stdout)['secret_collisions'], ['COLLIDE_TOKEN'], r.stdout)
+
     def test_out_returns_a_commands_stdout(self):
         # the host name, memory and bot list all read through out(); it must give text, "" on failure
         self.assertEqual(self.k.out('echo', 'hi'), 'hi\n')

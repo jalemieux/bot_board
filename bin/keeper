@@ -703,10 +703,13 @@ FROM_BOARD = "# written by bin/keeper from the board's secrets (/fleet); edits h
 
 
 SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")   # what fleet.env may set; bin/bot reads the same
-# The box's own secret-named variables, captured at keeper start (as bin/bot's _OWN_SECRETS is): a
-# /fleet secret whose name is also here collides, and /fleet wins inside a bot (#555). secret_collisions
-# reports which, names only, for /fleet (#556).
-_OWN_SECRETS = frozenset(n for n in os.environ if SECRET_NAME.fullmatch(n))
+# The box's own secret-named variables. bin/bot computes them before it exports fleet.env's secrets
+# and passes them in BOT_OWN_SECRETS, so a /fleet secret bin/bot just exported is not mistaken for
+# one the box already had (jade, #556): by the time the keeper starts, its own environment holds
+# every /fleet secret. Run without bin/bot (a direct python3), fall back to this process's own
+# environment. A /fleet secret whose name is here collides, and /fleet wins inside a bot (#555).
+_OWN_SECRETS = frozenset(os.environ["BOT_OWN_SECRETS"].split() if "BOT_OWN_SECRETS" in os.environ
+                         else (n for n in os.environ if SECRET_NAME.fullmatch(n)))
 
 
 def read_env(path):
