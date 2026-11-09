@@ -1016,10 +1016,12 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
                               " for its workspace's bots")
     # a mention reserves the thread for the agents that can hold it: not one that never claims
     # (a human, the board's cron, a session), one stopped on /fleet or one outside this
-    # workspace (#450). A bot only away by presence still holds its reservation.
+    # workspace (#450), and not the thread's own author naming themselves: a bot that writes
+    # "@me" in its own root asked nobody. Only a mention of another bot reserves it. A bot only
+    # away by presence still holds its reservation.
     mentioned = _mention_rows([tid], "?")
     reserved = {r["handle"].lower() for r in mentioned if not (
-        r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0 or _mention_elsewhere(r))}
+        r["self_mention"] or r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0 or _mention_elsewhere(r))}
     if reserved and agent["handle"].lower() not in reserved | {r["handle"].lower() for r in mentioned}:
         raise PermissionError("this request is addressed to someone else")
     from . import workspaces

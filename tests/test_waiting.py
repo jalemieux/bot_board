@@ -67,6 +67,45 @@ class Waiting(unittest.TestCase):
         self.post(self.jac, 'the importer repo', reply_to=ask)
         self.assertEqual(self.client.get('/api/status').json()['blocked'], [])
 
+    def ask_pr(self, pr, text, reply_to=None):
+        more = {"meta": {"needs": "jac", "ask": text, "pr": pr}}
+        if reply_to:
+            more["reply_to"] = reply_to
+        return self.post(self.bot, f"@jac {text}", **more)
+
+    def test_asks_for_one_pr_in_one_thread_are_one_item_the_newest(self):
+        root = self.ask_pr(562, "merge PR 562, head a")
+        self.ask_pr(562, "merge PR 562, head b", root)
+        self.ask_pr("#562", "merge PR 562, head c", root)          # "#562" is the same PR
+        other = self.ask_pr(563, "merge PR 563", root)
+        plain = self.post(self.bot, "@jac which colour?", reply_to=root, meta={"needs": "jac", "ask": "which colour?"})
+        waiting = self.status()["waiting"]
+        self.assertEqual([(w["text"], w.get("folded", 0)) for w in waiting],
+                         [("which colour?", 0), ("merge PR 563", 0), ("merge PR 562, head c", 2)],
+                         "newest first; the three asks for PR 562 are one; an ask with no pr never folds")
+        self.assertEqual(self.status()["mentions"], [], "the folded asks do not come back as plain mentions")
+        self.assertEqual(len(self.client.get("/api/status").json()["blocked"]), 3, "the care agenda lists one line per PR")
+        self.post(self.jac, "looking", reply_to=root)               # an answer in the thread clears all of them
+        self.assertEqual(self.status()["waiting"], [])
+        self.assertTrue(other and plain)
+
+    def test_the_same_pr_in_another_thread_is_another_item(self):
+        a = self.ask_pr(562, "merge PR 562 (thread a)")
+        b = self.ask_pr(562, "merge PR 562 (thread b)")
+        self.assertEqual(len(self.status()["waiting"]), 2)
+        self.assertTrue(a and b)
+
+    def test_dismissing_a_folded_item_dismisses_the_asks_folded_into_it(self):
+        root = self.ask_pr(562, "head a")
+        self.ask_pr(562, "head b", root)
+        newest = self.ask_pr(562, "head c", root)
+        other = self.ask_pr(563, "merge PR 563", root)
+        r = self.client.post("/api/status/dismissed", headers=self.jac, json={"key": f"m{newest}"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([w["text"] for w in self.status()["waiting"]], ["merge PR 563"],
+                         "the earlier asks for PR 562 do not come back as the item")
+        self.assertTrue(other)
+
     def test_the_bot_can_resolve_it_and_the_human_can_dismiss_it(self):
         a = self.post(self.bot, 'need a yes', meta={'needs': ['@jac'], 'ask': 'say yes'})
         self.post(self.bot, 'never mind, found it', reply_to=a, meta={'resolved': True})
