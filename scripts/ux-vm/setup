@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# setup: prepare this Mac for the UX bot, once (issue #565). Safe to run again: a second run changes
+# nothing and says so.
+#
+#   scripts/ux-vm/setup [--from ADDR[,ADDR...]] [--no-verify]
+#
+# It: installs Tart with Homebrew if missing; makes two ed25519 keys under ~/.ux-vm/keys; builds the base
+# images with build-base if they are missing; checks that Remote Login is on; adds two restricted lines
+# to ~/.ssh/authorized_keys; checks them (the control key runs only ux-vm, the jump key runs no command
+# and forwards only to a Tart VM's ssh port); and prints what to paste into /fleet and what ssh config
+# the bot needs.
+#
+#   control key  command="<path>/ux-vm",restrict          can run nothing but ux-vm
+#   jump key     restrict,port-forwarding,permitopen="192.168.64.*:22",command="/usr/bin/false"
+#                                                         can only forward to a VM's ssh port. The
+#                                                         forced command matters: `restrict` alone
+#                                                         still lets a key run commands on this Mac.
+#
+# --from      limit both keys to these source addresses (from="..."): the bot box's tailnet address.
+#             Recommended. The checks connect from this Mac, so they are skipped when --from is given.
+# --no-verify skip the checks
+#
+# The private keys are written to files, never printed. Each also gets a one-line base64 copy
+# (<key>.b64), because a multi-line value does not survive fleet.env: paste the .b64 contents into /fleet
+# as UX_SSH_CONTROL_KEY and UX_SSH_JUMP_KEY, and the bot decodes them with base64 -d.
+# Written for bash 3.2. Not run on a real Mac when it was written.
+set -euo pipefail
+
+PATH=/opt/homebrew/bin:/usr/local/bin:$PATH
+HERE=$(cd "$(dirname "$0")" && pwd)
+UXVM=$HERE/ux-vm
+BUILD=${UX_BUILD_BASE:-$HERE/build-base}
+KEYS=${UX_VM_KEYS:-$HOME/.ux-vm/keys}
+AUTH=$HOME/.ssh/authorized_keys
+TART=${TART:-tart}
+RANGE=${UX_VM_RANGE:-192.168.64.*}
+FROM=""
+VERIFY=1
+CHANGED=0
+
+say() { echo "setup: $*"; }
+warn() { echo "setup: WARNING: $*" >&2; }
+die() { echo "setup: $*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --from) shift; [ $# -gt 0 ] || die "--from needs an address"; FROM=$1 ;;
+    --no-verify) VERIFY="" ;;
+    *) die "usage: setup [--from ADDR[,ADDR...]] [--no-verify]" ;;
+  esac
+  shift
+done
+case $UXVM in *\"*) die "the path of ux-vm contains a double quote: $UXVM" ;; esac
+case $FROM in *\"*) die "--from must not contain a double quote" ;; esac
+
+platform=${UX_SETUP_PLATFORM:-$(uname -sm)}
+[ "$platform" = "Darwin arm64" ] || die "this is for an Apple Silicon Mac (Tart needs one); this machine is: $platform"
+
+# 1. Tart
+if ! command -v "$TART" >/dev/null 2>&1; then
+  command -v brew >/dev/null 2>&1 || die "Tart is missing and so is Homebrew: install Homebrew first (https://brew.sh), then run this again"
+  say "installing Tart"
+  brew install cirruslabs/cli/tart
+  CHANGED=1
+else
+  say "Tart is installed"
+fi
+
+# 2. the keys
+mkdir -p "$KEYS"
+chmod 700 "$KEYS"
+for name in control jump; do
+  if [ ! -f "$KEYS/$name" ]; then
+    say "creating the $name key"
+    ssh-keygen -q -t ed25519 -N "" -C "ux-vm-$name" -f "$KEYS/$name"
+    CHANGED=1
+  fi
+  chmod 600 "$KEYS/$name"
+  b64=$(base64 < "$KEYS/$name" | tr -d '\n')
+  if [ "$(cat "$KEYS/$name.b64" 2>/dev/null || true)" != "$b64" ]; then
+    printf '%s\n' "$b64" > "$KEYS/$name.b64"
+    chmod 600 "$KEYS/$name.b64"
+    CHANGED=1
+  fi
+done
+
+# 3. the base images (they hold the jump key, so the keys come first)
+missing=""
+for os in linux mac; do
+  "$TART" get "ux-base-$os" >/dev/null 2>&1 || missing="$missing $os"
+done
+if [ -n "$missing" ]; then
+  say "building the base images:$missing (this downloads several GB and takes a while)"
+  for os in $missing; do "$BUILD" "$os" --pubkey "$KEYS/jump.pub"; done
+  CHANGED=1
+else
+  say "the base images exist"
+fi
+
+# 4. Remote Login
+if ${UX_SETUP_PROBE:-nc -z -w 2} 127.0.0.1 22 >/dev/null 2>&1; then
+  remote=1
+  say "Remote Login is on"
+else
+  remote=""
+  warn "Remote Login is off, so the bot cannot reach this Mac. Turn it on in System Settings > General > Sharing > Remote Login (it needs your password), then run this again."
+fi
+
+# 5. authorized_keys
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+touch "$AUTH"
+chmod 600 "$AUTH"
+pubfields() { awk '{print $1 " " $2}' "$KEYS/$1.pub"; }
+opts_from=""
+[ -z "$FROM" ] || opts_from="from=\"$FROM\","
+control_line="${opts_from}command=\"$UXVM\",restrict $(pubfields control) ux-vm-control"
+jump_line="${opts_from}restrict,port-forwarding,permitopen=\"$RANGE:22\",command=\"/usr/bin/false\" $(pubfields jump) ux-vm-jump"
+install_line() {   # install_line MARKER LINE: the one line that ends in MARKER, replaced if it differs
+  if grep -qxF -- "$2" "$AUTH"; then return 0; fi
+  [ -e "$AUTH.ux-vm.bak" ] || cp -p "$AUTH" "$AUTH.ux-vm.bak"
+  { grep -v -- " $1\$" "$AUTH" || true; printf '%s\n' "$2"; } > "$AUTH.new"
+  chmod 600 "$AUTH.new"
+  mv "$AUTH.new" "$AUTH"
+  CHANGED=1
+  say "authorized_keys: $1 line written (a copy of the old file is at $AUTH.ux-vm.bak)"
+}
+install_line ux-vm-control "$control_line"
+install_line ux-vm-jump "$jump_line"
+[ -n "$FROM" ] || warn "no --from: both keys accept connections from any address. Run again with --from <the bot box's tailnet address> to limit them."
+
+# 6. the Tart network range
+bridge=$(ifconfig bridge100 2>/dev/null | awk '/inet /{print $2; exit}' || true)
+if [ -n "$bridge" ]; then
+  case $bridge in
+    ${RANGE%\*}*) say "the Tart network is $bridge, inside the permitted range $RANGE" ;;
+    *) warn "the Tart network is $bridge, outside $RANGE: run this with UX_VM_RANGE set to a pattern that covers it, or the jump key will refuse every VM" ;;
+  esac
+else
+  say "no VM is running, so the Tart network range cannot be read yet. After the first 'ux-vm reset', check that the IP it prints matches $RANGE"
+fi
+
+# 7. check the restrictions
+ssh_check() {   # ssh_check KEY ARGS...: ssh to this Mac with one key, nothing else
+  local key=$1; shift
+  ssh -i "$KEYS/$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new \
+      -o UserKnownHostsFile="$KEYS/known_hosts" "$@"
+}
+if [ -z "$VERIFY" ]; then
+  say "checks skipped (--no-verify)"
+elif [ -z "$remote" ]; then
+  say "checks skipped: Remote Login is off"
+elif [ -n "$FROM" ]; then
+  say "checks skipped: --from limits the keys to other addresses than this Mac"
+else
+  failed=""
+  out=$(ssh_check control 127.0.0.1 whoami 2>&1 || true)
+  case $out in *"usage: ux-vm"*) say "check ok: the control key runs ux-vm and nothing else" ;;
+    *) failed=1; warn "the control key did not run ux-vm: $out" ;; esac
+  out=$(ssh_check jump 127.0.0.1 id 2>&1 || true)
+  case $out in *uid=*) failed=1; warn "the jump key ran a command on this Mac: $out" ;;
+    *) say "check ok: the jump key runs no command" ;; esac
+  out=$(ssh_check jump -W 127.0.0.1:22 127.0.0.1 </dev/null 2>&1 | head -c 200 || true)
+  case $out in *SSH-2.0*) failed=1; warn "the jump key forwarded to this Mac's own ssh port" ;;
+    *) say "check ok: the jump key does not forward outside the VM range" ;; esac
+  [ -z "$failed" ] || die "a check failed: fix authorized_keys before the bot gets these keys"
+fi
+
+# 8. what to do next
+mac=$(scutil --get LocalHostName 2>/dev/null || hostname)
+echo
+if [ "$CHANGED" = 0 ]; then say "nothing changed: this Mac was already set up"; else say "done"; fi
+cat <<EOF
+
+Next, on the board's /fleet page, add two secrets. Their values are the one-line files below
+(on macOS: pbcopy < FILE copies one):
+  UX_SSH_CONTROL_KEY   $KEYS/control.b64
+  UX_SSH_JUMP_KEY      $KEYS/jump.b64
+Do not paste or print the private keys elsewhere.
+
+At the start of a journey the bot writes them to ~/.ssh with mode 600:
+  echo "\$UX_SSH_CONTROL_KEY" | base64 -d > ~/.ssh/ux_control
+  echo "\$UX_SSH_JUMP_KEY"    | base64 -d > ~/.ssh/ux_jump
+  chmod 600 ~/.ssh/ux_control ~/.ssh/ux_jump
+and uses this ssh config (replace $mac.local with an address the bot's box can reach, and ${USER:-you} if it differs):
+
+  Host ux-control
+    HostName $mac.local
+    User ${USER:-you}
+    IdentityFile ~/.ssh/ux_control
+    IdentitiesOnly yes
+  Host ux-jump
+    HostName $mac.local
+    User ${USER:-you}
+    IdentityFile ~/.ssh/ux_jump
+    IdentitiesOnly yes
+  Host ${RANGE}
+    User admin
+    IdentityFile ~/.ssh/ux_jump
+    IdentitiesOnly yes
+    ProxyJump ux-jump
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+
+Then: ssh ux-control reset linux      (prints the VM's IP)
+      ssh <that IP>                   (through the jump key)
+      ssh ux-control stop
+EOF
