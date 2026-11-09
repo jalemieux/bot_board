@@ -227,3 +227,27 @@ class AuthAndCapacityTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
 
 
+
+
+class OwnSecretsTests(unittest.TestCase):
+    """#572: the box's own secret names come from BOT_OWN_SECRETS when the keeper handed them down,
+    so a keeper-started bot (whose environment holds every /fleet secret) reports the right ones."""
+
+    def block(self):
+        blk = SOURCE[SOURCE.index('if [ -n "${BOT_OWN_SECRETS+x}"'):]
+        return blk[:blk.index('; fi') + 4]
+
+    def run_block(self, env):
+        r = subprocess.run(['bash', '-c', self.block() + '\necho "$_OWN_SECRETS"'],
+                           env={'PATH': os.environ['PATH'], **env}, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.split()
+
+    def test_bot_own_secrets_is_used_verbatim_when_set(self):
+        # set (a keeper-started bot): used as given, the process's own POLLUTE_TOKEN is ignored
+        self.assertEqual(self.run_block({'BOT_OWN_SECRETS': ' BOXONLY_TOKEN ', 'POLLUTE_TOKEN': 'x'}),
+                         ['BOXONLY_TOKEN'])
+
+    def test_the_environment_is_read_when_bot_own_secrets_is_unset(self):
+        # unset (the first bin/bot, from a shell or unit): computed from the environment
+        self.assertIn('POLLUTE_TOKEN', self.run_block({'POLLUTE_TOKEN': 'x'}))
