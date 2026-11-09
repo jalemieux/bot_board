@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# build-base: build the Tart base images the UX bot's VMs are cloned from (issue #564).
+#
+#   build-base [linux|mac|all] [--pubkey FILE] [--force]
+#
+# Makes `ux-base-linux` and `ux-base-mac`. Each is a clean machine with a user that accepts the
+# bot's jump key, and Chromium with Playwright, so the bot can drive a browser inside the VM.
+# Nothing from bot_board goes in: installing it is what the journeys test.
+#
+# --pubkey FILE   the jump key's public half (default ~/.ssh/ux_jump.pub)
+# --force         rebuild an image that exists; without it an existing image is left alone
+#
+# An image is built under a temporary name (ux-base-<os>-building) and renamed at the end, so a build
+# that fails leaves no half-made `ux-base-<os>` for the next run to take as finished.
+#
+# NOT TESTED on a real Mac when this was written. It assumes the Cirrus Labs images, whose guest
+# agent lets `tart exec` run commands in a booted VM, and whose user is `admin` with passwordless
+# sudo. If an image changes, this script is the place to fix it. Needs ~60 GB of disk and a good
+# connection: the first build downloads two images of several GB each.
+set -euo pipefail
+
+TART=${TART:-tart}
+LINUX_SRC=${UX_LINUX_SRC:-ghcr.io/cirruslabs/ubuntu:latest}
+MAC_SRC=${UX_MAC_SRC:-ghcr.io/cirruslabs/macos-sequoia-base:latest}
+WAIT=${UX_VM_WAIT:-300}
+PUBKEY=$HOME/.ssh/ux_jump.pub
+FORCE=""
+WHAT=all
+
+say() { echo "build-base: $*" >&2; }
+die() { say "$*"; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    linux|mac|all) WHAT=$1 ;;
+    --pubkey) shift; [ $# -gt 0 ] || die "--pubkey needs a file"; PUBKEY=$1 ;;
+    --force) FORCE=1 ;;
+    *) die "usage: build-base [linux|mac|all] [--pubkey FILE] [--force]" ;;
+  esac
+  shift
+done
+[ -r "$PUBKEY" ] || die "no public key at $PUBKEY: create the jump key first (scripts/ux-vm/setup does) or pass --pubkey"
+command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install cirruslabs/cli/tart"
+
+# what runs in the VM may not have Homebrew on its PATH (/opt/homebrew/bin on macOS)
+GUEST_PATH='PATH=/opt/homebrew/bin:/usr/local/bin:$PATH;'
+
+in_vm() {   # in_vm NAME COMMAND...: run a command in the booted VM
+  local name=$1; shift
+  "$TART" exec "$name" "$@"
+}
+
+in_vm_stdin() {   # like in_vm, with this script's stdin forwarded into the command (tart exec needs -i for that)
+  local name=$1; shift
+  "$TART" exec -i "$name" "$@"
+}
+
+BUILDING=""   # the temporary image being built, so a failure can remove it
+cleanup() {
+  if [ -n "$BUILDING" ]; then
+    say "build failed: removing the unfinished $BUILDING"
+    "$TART" stop "$BUILDING" >/dev/null 2>&1 || true
+    "$TART" delete "$BUILDING" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+wait_for_vm() {
+  local name=$1 waited=0
+  while [ "$waited" -lt "$WAIT" ]; do
+    if in_vm "$name" true >/dev/null 2>&1; then return 0; fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+  die "$name did not answer within ${WAIT} seconds (does the image have the Tart guest agent?)"
+}
+
+build() {   # build linux|mac
+  local os=$1 final="ux-base-$1" src
+  if [ "$os" = linux ]; then src=$LINUX_SRC; else src=$MAC_SRC; fi
+  local name="$final-building"
+  if "$TART" get "$final" >/dev/null 2>&1 && [ -z "$FORCE" ]; then
+    say "$final exists: left alone (--force rebuilds it)"
+    return 0
+  fi
+  if "$TART" get "$name" >/dev/null 2>&1; then "$TART" stop "$name" >/dev/null 2>&1 || true; "$TART" delete "$name"; fi
+  BUILDING=$name
+  say "cloning $src into $name (the first time this downloads several GB)"
+  "$TART" clone "$src" "$name"
+  say "booting $name"
+  "$TART" run --no-graphics "$name" </dev/null >/dev/null 2>&1 &
+  wait_for_vm "$name"
+  say "adding the jump key to the admin user"
+  in_vm "$name" sh -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh'
+  # the key text goes in as an argument, never through a shell string of ours
+  in_vm_stdin "$name" sh -c 'cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' < "$PUBKEY"
+  # check the key landed: a stdin that was not forwarded would leave the file empty and the bot locked out
+  local key
+  key=$(head -n 1 "$PUBKEY")
+  in_vm "$name" sh -c 'grep -qF -- "$1" ~/.ssh/authorized_keys' sh "$key" || die "the jump key did not reach $name"
+  if [ "$os" = linux ]; then
+    say "installing node and Playwright with Chromium"
+    in_vm "$name" sudo sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm openssh-server'
+    in_vm "$name" sudo sh -c 'npm install -g playwright && playwright install --with-deps chromium'
+  else
+    say "installing node and Playwright with Chromium"
+    in_vm "$name" sh -c "$GUEST_PATH command -v node >/dev/null || brew install node"
+    in_vm "$name" sh -c "$GUEST_PATH npm install -g playwright && playwright install chromium"
+    in_vm "$name" sudo sh -c 'systemsetup -setremotelogin on' || say "could not turn on Remote Login in $name: turn it on in the image by hand"
+  fi
+  say "stopping $name"
+  "$TART" stop "$name"
+  if "$TART" get "$final" >/dev/null 2>&1; then "$TART" delete "$final"; fi     # --force: the old image goes only now
+  "$TART" rename "$name" "$final"
+  BUILDING=""
+  say "$final is ready"
+}
+
+case $WHAT in
+  linux) build linux ;;
+  mac)   build mac ;;
+  all)   build linux; build mac ;;
+esac
