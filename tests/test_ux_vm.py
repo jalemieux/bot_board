@@ -116,6 +116,14 @@ class UxVm(unittest.TestCase):
         self.assertIn("did not answer", r.stderr)
         self.assertFalse((self.fake / "running" / "ux-run").exists())
 
+    def test_a_missing_tart_is_said_not_read_as_no_vm_or_no_image(self):
+        for args in (("status",), ("reset", "linux"), ("reset", "mac"), ("stop",)):
+            r = self.run_ux(*args, TART="/nonexistent/tart")
+            self.assertEqual(r.returncode, 1, args)
+            self.assertIn("tart not found", r.stderr)
+            self.assertEqual(r.stdout, "")
+            self.assertNotIn("missing", r.stderr, "it must not send the user to rebuild an image that exists")
+
     def test_stop_and_status(self):
         self.assertEqual(self.run_ux("status").stdout, "no run VM\n")
         self.run_ux("reset", "linux")

@@ -42,6 +42,9 @@ done
 [ -r "$PUBKEY" ] || die "no public key at $PUBKEY: create the jump key first (scripts/ux-vm/setup does) or pass --pubkey"
 command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install cirruslabs/cli/tart"
 
+# what runs in the VM may not have Homebrew on its PATH (/opt/homebrew/bin on macOS)
+GUEST_PATH='PATH=/opt/homebrew/bin:/usr/local/bin:$PATH;'
+
 in_vm() {   # in_vm NAME COMMAND...: run a command in the booted VM
   local name=$1; shift
   "$TART" exec "$name" "$@"
@@ -101,8 +104,8 @@ build() {   # build linux|mac
     in_vm "$name" sudo sh -c 'npm install -g playwright && playwright install --with-deps chromium'
   else
     say "installing node and Playwright with Chromium"
-    in_vm "$name" sh -c 'command -v node >/dev/null || brew install node'
-    in_vm "$name" sh -c 'npm install -g playwright && playwright install chromium'
+    in_vm "$name" sh -c "$GUEST_PATH command -v node >/dev/null || brew install node"
+    in_vm "$name" sh -c "$GUEST_PATH npm install -g playwright && playwright install chromium"
     in_vm "$name" sudo sh -c 'systemsetup -setremotelogin on' || say "could not turn on Remote Login in $name: turn it on in the image by hand"
   fi
   say "stopping $name"

@@ -16,6 +16,8 @@
 # Written for bash 3.2, the one macOS ships.
 set -euo pipefail
 
+# a forced ssh command gets only /usr/bin:/bin:...; Homebrew's tart is in /opt/homebrew/bin
+PATH=/opt/homebrew/bin:/usr/local/bin:$PATH
 VM=ux-run
 TART=${TART:-tart}
 STATE=${UX_VM_STATE:-$HOME/.ux-vm}
@@ -28,6 +30,9 @@ usage() { say "usage: ux-vm reset linux | reset mac | stop | status"; exit 2; }
 # the action: the forced command's text if there is one, else the arguments
 action=${SSH_ORIGINAL_COMMAND:-}
 [ -n "$action" ] || action="$*"
+
+# every tart call below is silenced, so a missing tart would read as "no VM" or "image missing": say it first
+need_tart() { command -v "$TART" >/dev/null 2>&1 || die "tart not found on PATH ($PATH): install it with brew install cirruslabs/cli/tart"; }
 
 vm_exists() { "$TART" get "$VM" >/dev/null 2>&1; }
 
@@ -83,9 +88,9 @@ status() {
 }
 
 case "$action" in
-  "reset linux") reset linux ;;
-  "reset mac")   reset mac ;;
-  "stop")        remove_vm; say "stopped" ;;
-  "status")      status ;;
+  "reset linux") need_tart; reset linux ;;
+  "reset mac")   need_tart; reset mac ;;
+  "stop")        need_tart; remove_vm; say "stopped" ;;
+  "status")      need_tart; status ;;
   *)             usage ;;
 esac
