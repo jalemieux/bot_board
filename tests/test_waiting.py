@@ -81,13 +81,19 @@ class Waiting(unittest.TestCase):
         plain = self.post(self.bot, "@jac which colour?", reply_to=root, meta={"needs": "jac", "ask": "which colour?"})
         waiting = self.status()["waiting"]
         self.assertEqual([(w["text"], w.get("folded", 0)) for w in waiting],
-                         [("which colour?", 0), ("merge PR 563", 0), ("merge PR 562, head c", 2)],
-                         "newest first; the three asks for PR 562 are one; an ask with no pr never folds")
+                         [("which colour?", 0), ("merge PR 563", 0), ("merge PR 562, head c (+2 earlier asks)", 2)],
+                         "newest first; the three asks for PR 562 are one, and the text says two are behind it; "
+                         "an ask with no pr never folds")
         self.assertEqual(self.status()["mentions"], [], "the folded asks do not come back as plain mentions")
         self.assertEqual(len(self.client.get("/api/status").json()["blocked"]), 3, "the care agenda lists one line per PR")
         self.post(self.jac, "looking", reply_to=root)               # an answer in the thread clears all of them
         self.assertEqual(self.status()["waiting"], [])
         self.assertTrue(other and plain)
+
+    def test_one_earlier_ask_is_marked_in_the_singular(self):
+        root = self.ask_pr(5, "merge PR 5")
+        self.ask_pr(5, "or should it wait for PR 6?", root)
+        self.assertEqual([w["text"] for w in self.status()["waiting"]], ["or should it wait for PR 6? (+1 earlier ask)"])
 
     def test_the_same_pr_in_another_thread_is_another_item(self):
         a = self.ask_pr(562, "merge PR 562 (thread a)")

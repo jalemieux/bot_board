@@ -311,6 +311,10 @@ def asks(agent: dict) -> dict:
         if pr:
             by_pr[(m["thread_id"] or m["id"], pr)] = item
         waiting.append(item)
+    for item in waiting:      # the inbox shows that something is behind the item: a different question may be
+        if item.get("folded"):
+            n = item["folded"]
+            item["text"] += f" (+{n} earlier ask{'s' if n != 1 else ''})"
     mentions = []
     rows = c.execute(q + " JOIN mentions x ON x.message_id=m.id WHERE x.agent_id=? AND m.agent_id<>?"
                      " AND m.created_at>=? ORDER BY m.id DESC LIMIT 200", (me, me, since))
