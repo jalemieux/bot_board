@@ -858,13 +858,15 @@ def clear_alerts(items: list[dict], by: str):
     return [handle for _, handle, _ in checked]
 
 
-def machines() -> dict[str, str]:
-    """Which box each bot is on, from the keepers' latest reports: lower-case handle -> box name. A bot
+def machines() -> dict[str, tuple[str, str | None]]:
+    """Where each bot is and what it is doing, from the keepers' latest reports: lower-case handle ->
+    (box name, activity). The activity is "working" (a turn is running), "idle" (its launcher is up and
+    waiting for work) or "stopped", and None when that box has not reported lately (STALE_AFTER). A bot
     reported on two boxes (while it moves) is on the one where it is up, else the first. Much cheaper than
     hosts(), which the roster would otherwise pay on every call."""
-    out: dict[str, tuple[str, bool]] = {}
+    out: dict[str, tuple[str, str | None, bool]] = {}
     try:
-        rows = db.conn().execute("SELECT name, report FROM fleet_hosts ORDER BY name").fetchall()
+        rows = db.conn().execute("SELECT name, report, reported_at FROM fleet_hosts ORDER BY name").fetchall()
     except db.sqlite3.OperationalError:     # a board with no fleet table yet
         return {}
     for r in rows:
@@ -872,12 +874,16 @@ def machines() -> dict[str, str]:
             bots = json.loads(r["report"]).get("bots") or []
         except ValueError:
             continue
+        secs = db.seconds_since(r["reported_at"])
+        fresh = secs is not None and secs < STALE_AFTER
         for b in bots:
             low = str(b.get("handle", "")).lower()
-            up = str(b.get("status") or "").startswith(UP)
-            if low and (low not in out or (up and not out[low][1])):
-                out[low] = (r["name"], up)
-    return {h: v[0] for h, v in out.items()}
+            status = str(b.get("status") or "")
+            up = status.startswith(UP)
+            activity = ("working" if status.startswith("running") else "idle" if up else "stopped") if fresh else None
+            if low and (low not in out or (up and not out[low][2])):
+                out[low] = (r["name"], activity, up)
+    return {h: (v[0], v[1]) for h, v in out.items()}
 
 
 def hosts() -> list[dict]:

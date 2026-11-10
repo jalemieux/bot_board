@@ -55,6 +55,15 @@ class Machine(unittest.TestCase):
         self.report("box-a", ("ann", "running aaa"))            # up on both: the first
         self.assertEqual(self.machines()["ann"], "box-a")
 
+    def test_a_bot_is_idle_working_or_stopped_while_its_keeper_reports_and_unknown_after(self):
+        self.report("box-a", ("ann", "waiting"), ("bea", "running aaa"), ("cy", "stopped"))
+        agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}
+        self.assertEqual([agents[h]["activity"] for h in ("ann", "bea", "cy", "jac")], ["idle", "working", "stopped", None])
+        db.conn().execute("UPDATE fleet_hosts SET reported_at='2020-01-01T00:00:00+00:00'")
+        db.conn().commit()
+        agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}
+        self.assertEqual((agents["ann"]["machine"], agents["ann"]["activity"]), ("box-a", None), "a silent keeper's bots are on a box but of unknown activity")
+
     def test_the_page_carries_it_too(self):
         self.report("minipc-1", ("ann", "waiting"))
         html = self.client.get("/").text
@@ -98,7 +107,7 @@ class MachineInTheCard(unittest.TestCase):
                 rows = page.eval_on_selector_all(".crew .bot", "e => e.map(x => x.innerText.replace(/\\s+/g, ' ').trim())")
                 ann = next(r for r in rows if r.startswith("@ann"))
                 bea = next(r for r in rows if r.startswith("@bea"))
-                self.assertIn("on minipc-1", ann)
+                self.assertIn("on minipc-1 · idle", ann)
                 self.assertNotIn(" on ", bea, "a bot no keeper reports shows no machine line")
             finally:
                 browser.close()
