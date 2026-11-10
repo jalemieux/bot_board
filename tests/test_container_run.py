@@ -56,12 +56,32 @@ work_src = next((s for s, d in mounts if d == "/work"), None)
 if os.environ.get("FAKE_RUNTIME_NO_MOUNT"):    # a failed bind-mount: the container sees an empty /work
     work_src = os.environ["FAKE_RUNTIME_NO_MOUNT"]
 cwd = work_src if workdir == "/work" and work_src else None
+# The bot's skills (#581) are mounted at /opt/bot-skills/<name>. FAKE_RUNTIME_SKILLS is a directory that
+# stands for /opt/bot-skills (each mount becomes a link in it to its source), and FAKE_RUNTIME_HOME is the
+# container's $HOME, so the command that links the skills runs for real.
+skills_root = os.environ.get("FAKE_RUNTIME_SKILLS")
+env = dict(os.environ)
+if os.environ.get("FAKE_RUNTIME_HOME"):
+    env["HOME"] = os.environ["FAKE_RUNTIME_HOME"]
+if skills_root:
+    os.makedirs(skills_root, exist_ok=True)
+    for src, dest in mounts:
+        if dest.startswith("/opt/bot-skills/"):
+            link = os.path.join(skills_root, os.path.basename(dest))
+            if not os.path.lexists(link):
+                os.symlink(src, link)
 # bot mode wraps the command as: sh -c '<guard>' sh <harness> <args>
 if len(cmd) >= 4 and cmd[0] == "sh" and cmd[1] == "-c" and cmd[3] == "sh":
     guard = cmd[2].replace("/work", work_src or "/work")
+    if skills_root:
+        guard = guard.replace("/opt/bot-skills", skills_root)
     cmd = ["sh", "-c", guard, "sh"] + cmd[4:]
-sys.exit(subprocess.run(cmd, cwd=cwd).returncode)
+sys.exit(subprocess.run(cmd, cwd=cwd, env=env).returncode)
 '''
+
+HELLO = "---\nname: hello\ndescription: Says hello.\n---\n\nOne.\n"
+REVIEW = "---\nname: pr-review\ndescription: Reviews.\n---\n\nTwo.\n"
+SKILL = lambda name, mandatory=False: {"name": name, "mandatory": mandatory, "description": "d", "revision": 1}
 
 RESUME_FLAG = {"claude": "--resume", "copilot": "--resume", "codex": "resume", "opencode": "--session"}
 
@@ -121,6 +141,75 @@ class ContainerRun(unittest.TestCase):
                 self.assertTrue(resumed, "a %s resume turn carried the kept session id %s: %s"
                                 % (harness, sid, L.runs()))
 
+    # ---- the bot's skills reach the container (#581) -------------------------------------------------
+    def _skills_bot(self, board, skills, chome, **extra):
+        """A launcher whose bot lists `skills`, with a fake runtime that simulates the skill mounts and
+        a container home at `chome`. Returns it after its first turn."""
+        L = Launcher(board, "claude", env={"BOT_RUNTIME": str(self.runtime), "FAKE_RUNTIME_LOG": str(self.log),
+                                           "BOT_CONTAINER_HOST_NETWORK": "1", "FAKE_RUNTIME_HOME": str(chome),
+                                           "FAKE_RUNTIME_SKILLS": str(Path(self.rt) / "optskills"), **extra})
+        self.addCleanup(L.close)
+        checkout = Path(L.tmp.name) / "work" / L.name
+        checkout.mkdir(parents=True, exist_ok=True)
+        (checkout / ".keep").write_text("a non-empty checkout")
+        board.profile = {"profile": {"name": "dev"}, "skills": skills}
+        board.skills = {"hello": HELLO, "pr-review": REVIEW, "a:b": HELLO}
+        board.skills_revision = "aaaa"
+        L.plan(fh.step("claude", "ok", "rules read"))
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1 and not (L.state / "busy").exists(), "the first turn")
+        return L
+
+    def _skill_mounts(self):
+        out = {}
+        for c in self.calls():
+            if c and c[0] == "run":
+                for i, a in enumerate(c):
+                    if a == "-v" and "/opt/bot-skills/" in c[i + 1]:
+                        src, dest, *mode = c[i + 1].split(":")
+                        out[dest.rsplit("/", 1)[1]] = (src, mode)
+        return out
+
+    def test_a_bot_gets_the_skills_it_lists_in_its_container(self):
+        with FakeBoard() as board:
+            chome = Path(self.rt) / "chome"
+            (chome / ".claude/skills/other").mkdir(parents=True)
+            (chome / ".claude/skills/other/SKILL.md").write_text("a skill that is really there")
+            (chome / ".agents/skills").mkdir(parents=True)
+            os.symlink(str(Path(self.rt) / "optskills" / "old"), chome / ".agents/skills/old")   # a link an earlier turn made
+            L = self._skills_bot(board, [SKILL("hello", True), SKILL("pr-review")], chome)
+            home = Path(L.tmp.name)
+            # no stray skill: the launcher left it alone and the bot does not list it
+            stray = home / ".config/bot_board/skills/stray"
+            stray.mkdir(parents=True, exist_ok=True)
+            mounts = self._skill_mounts()
+            self.assertEqual(sorted(mounts), ["hello", "pr-review"], "one mount per listed skill: %s" % mounts)
+            for name, (src, mode) in mounts.items():
+                self.assertEqual(src, os.path.realpath(home / ".config/bot_board/skills" / name),
+                                 "the mount is the real directory, not the host's symlink")
+                self.assertEqual(mode, ["ro"], "read-only")
+            for base in (".claude/skills", ".agents/skills"):
+                self.assertEqual((chome / base / "hello/SKILL.md").read_text(), HELLO, base)
+                self.assertEqual((chome / base / "pr-review/SKILL.md").read_text(), REVIEW, base)
+            self.assertFalse(os.path.lexists(chome / ".agents/skills/old"), "a link to a skill no longer mounted is removed")
+            self.assertEqual((chome / ".claude/skills/other/SKILL.md").read_text(), "a skill that is really there",
+                             "a skill that is really there is left alone")
+            self.assertEqual(L.read("health"), "", "the turn completed")
+
+    def test_a_skill_with_an_unsafe_name_is_not_mounted(self):
+        with FakeBoard() as board:
+            self._skills_bot(board, [SKILL("hello"), SKILL("a:b")], Path(self.rt) / "chome")
+            self.assertEqual(sorted(self._skill_mounts()), ["hello"])
+
+    def test_a_bot_with_no_skills_gets_no_mounts_and_loses_stale_links(self):
+        with FakeBoard() as board:
+            chome = Path(self.rt) / "chome"
+            (chome / ".claude/skills").mkdir(parents=True)
+            os.symlink(str(Path(self.rt) / "optskills" / "old"), chome / ".claude/skills/old")
+            self._skills_bot(board, [], chome)
+            self.assertEqual(self._skill_mounts(), {})
+            self.assertFalse(os.path.lexists(chome / ".claude/skills/old"))
+
     # ---- the opencode model and config cross into the container (#324 + #477) -------------
     def test_opencode_model_and_config_cross_into_the_container(self):
         with FakeBoard() as board:
@@ -174,6 +263,7 @@ class ContainerRun(unittest.TestCase):
         self.assertIn("bot_board-box-state:/home/bot", c, c)
         self.assertFalse(any(a.endswith(":/work") for a in c), "box mode mounts no checkout: %s" % c)
         self.assertNotIn("BOARD", c, "box mode does not pass the board vars: %s" % c)
+        self.assertFalse(any("/opt/bot-skills" in a for a in c), "box mode mounts no skills: %s" % c)
 
     # ---- /fleet is the only source of a bot's secrets (#555) --------------------------------------
     def _fleet_env(self, fleet=None, extra=None, pop=("GH_TOKEN", "GITHUB_TOKEN", "FORGEJO_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")):
