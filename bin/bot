@@ -349,6 +349,20 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # (KILL ends the client, not the container), and so two turns of one bot cannot overlap (#485).
   if [ "$mode" = box ]; then run+=(-v "bot_board-box-state:/home/bot")
   else                       run+=(--name "bot_board-${HANDLE:-bot}-run" -v "$dir:/work" -w /work -v "bot_board-${HANDLE:-bot}-state:/home/bot"); fi
+  # The bot's skills (#581). A container does not see the host home, where skill_link puts them, so
+  # mount each skill the bot lists read-only, from its real directory (a symlink's target is a host
+  # path the container cannot read) into /opt/bot-skills; the command below links them into the
+  # harnesses' skill directories. They cannot be mounted straight into /home/bot/.claude/skills:
+  # that is on the state volume, and Docker would create .claude there as root. Bot mode only.
+  if [ "$mode" = bot ] && [ -s "${STATE:-/nonexistent}/skills" ]; then
+    local _sk _skdir
+    while IFS= read -r _sk; do
+      case $_sk in ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac
+      _skdir=$(cd -P "$CFG/skills/$_sk" 2>/dev/null && pwd -P) || continue
+      case $_skdir in *:*) continue ;; esac
+      if [ -f "$_skdir/SKILL.md" ]; then run+=(-v "$_skdir:/opt/bot-skills/$_sk:ro"); fi
+    done < "$STATE/skills"
+  fi
   # codex keeps its login in ~/.codex/auth.json; mount just that file read-only, so the container
   # reads the host login but writes its session state to the state volume (#478 mounts it the same)
   [ "$harness" = codex ] && [ -f "$HOME/.codex/auth.json" ] && run+=(-v "$HOME/.codex/auth.json:/home/bot/.codex/auth.json:ro")
@@ -367,8 +381,25 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
     # then exec's the harness, so no extra container.
     local _host_files=0
     if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then _host_files=1; fi
+    # The same command links the skills mounted at /opt/bot-skills into the harnesses' skill
+    # directories (#581): first it removes the links an earlier turn made (a skill the bot no longer
+    # lists), then it adds one per mounted skill, never over something that is already there.
     $BOT_RUNTIME "${run[@]}" "$image" sh -c \
-      'has=$1; shift; [ "$has" = 0 ] || test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }; exec "$@"' \
+      'has=$1; shift; [ "$has" = 0 ] || test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }
+       for b in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+         for l in "$b"/*; do [ -L "$l" ] && case $(readlink "$l") in /opt/bot-skills/*) rm -f "$l" ;; esac; done
+       done
+       if [ -d /opt/bot-skills ]; then
+         for b in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+           mkdir -p "$b" || continue
+           for d in /opt/bot-skills/*/; do
+             [ -d "$d" ] || continue
+             n=${d%/}; n=${n##*/}
+             [ -e "$b/$n" ] || [ -L "$b/$n" ] || ln -s "${d%/}" "$b/$n"
+           done
+         done
+       fi
+       exec "$@"' \
       sh "$_host_files" "$@"
   fi
 }

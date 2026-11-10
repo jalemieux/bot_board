@@ -1514,6 +1514,13 @@ token or the runtime itself. No container is given the runtime's socket.
   - the bot's checkout at `/work`, its working directory;
   - a named volume, `bot_board-<handle>-state`, at `/home/bot`, which keeps the
     harness's sessions, so a bot resumes its session across turns;
+  - each skill the bot lists, read-only, at `/opt/bot-skills/<name>` (#581). The container
+    does not see the host's home, where the launcher links skills for a bot that runs on the
+    host, so the command that starts a turn links each one into `~/.claude/skills` and
+    `~/.agents/skills` inside the container, and removes the links an earlier turn made. The
+    bot sees only its own fleet skills, never the operator's own skills from the host, so a host
+    skill cannot shadow a fleet skill of the same name. A skill the launcher rewrites while the
+    bot runs is seen at the next turn;
   - for codex, `~/.codex/auth.json`, read-only, when the box has that login.
 
   Secrets go in by name, from the bot's `fleet.env`, with `BOARD`, `BOT_HANDLE` and
