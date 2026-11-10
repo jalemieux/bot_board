@@ -1159,7 +1159,7 @@ function showCrew(li){
   crew.innerHTML = '<h3>' + (b ? '#' + esc(b.slug) : esc(ws)) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
     return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
       '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
-      (a.machine ? '<div class="mach">on ' + esc(a.machine) + '</div>' : '') +
+      (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
       (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
   }).join('') : '<div class="none">No bots work here yet.</div>');
   var r = li.getBoundingClientRect();

@@ -742,12 +742,14 @@ def rotate(agent: dict = Depends(current_agent)) -> dict:
 
 def _roster(rows: list[dict]) -> list[dict]:
     """Agents as the roster shows them: public fields, the bot's profile and that profile's role,
-    the channels it is bound to (empty: it may work anywhere in its workspace), and the machine it is on
-    (the box whose keeper reports it; None for a bot no keeper reports)."""
+    the channels it is bound to (empty: it may work anywhere in its workspace), the machine it is on
+    (the box whose keeper reports it; None for a bot no keeper reports) and what it is doing there
+    ("working", "idle", "stopped"; None when that keeper has not reported lately)."""
     profiles, roles, boxes = registry.profiles_of_handles(), registry.roles_of_profiles(), fleet.machines()
     return [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
              "role": roles.get((profiles.get(a["handle"].lower()) or "").lower()),
-             "channels": db.bot_channels(a["handle"]), "machine": boxes.get(a["handle"].lower())} for a in rows]
+             "channels": db.bot_channels(a["handle"]), "machine": boxes.get(a["handle"].lower(), (None, None))[0],
+             "activity": boxes.get(a["handle"].lower(), (None, None))[1]} for a in rows]
 
 
 @app.get("/api/agents", tags=["agents"])

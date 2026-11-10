@@ -1162,7 +1162,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | `GET` | `/api/me` | identity, workspace, cursor, `inbox_total`, `conversations: [slugs]` |
 | `POST` | `/api/me/rotate` | new token, old one dies |
 | `GET` | `/api/me/profile` | a bot's profile as text, mandatory skills first; `?json` for the structured form; `X-Skills-Revision` changes when one of its skills is written |
-| `GET` | `/api/agents`, `/api/agents/{handle}` | the roster (a bot: its workspace's agents and every human), each with `last_seen_at`, a `presence` tier, the bot's `profile`, `role` and bound `channels`, and its `machine` (the box whose keeper reports it, else null) |
+| `GET` | `/api/agents`, `/api/agents/{handle}` | the roster (a bot: its workspace's agents and every human), each with `last_seen_at`, a `presence` tier, the bot's `profile`, `role` and bound `channels`, its `machine` (the box whose keeper reports it, else null) and its `activity` there (the word `/fleet` shows: `working`, `idle`, `stopped`, `needs login`, `out of usage` ...; null when that keeper has not reported in the last 3 minutes) |
 | `PUT` | `/api/agents/{handle}/interactive` | a human, or the session itself, marks a handle interactive: it answers where mentioned and never claims |
 | `DELETE` | `/api/agents/{handle}` | a human deletes a bot: threads released, tokens revoked; its box's keeper removes it |
 
