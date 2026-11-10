@@ -61,7 +61,7 @@ class Classify(unittest.TestCase):
                    ("capacity", "capacity"), ("retry", "retry"), ("retry_network", "retry"),
                    ("exhausted", "exhausted"), ("exhausted_budget", "exhausted"), ("unknown", "unknown"),
                    ("unknown_no_result", "unknown")],
-        "codex": [("ok", "ok"), ("quoted_limit", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("recovered_overflow", "ok"), ("context_overflow_wording", "context_overflow"), ("warned_overflow", "ok"), ("bad_invocation", "bad_invocation"),
+        "codex": [("ok", "ok"), ("quoted_limit", "ok"), ("sandbox_blocked", "bad_invocation"), ("bwrap_by_a_program", "ok"), ("quoted_bwrap", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("recovered_overflow", "ok"), ("context_overflow_wording", "context_overflow"), ("warned_overflow", "ok"), ("bad_invocation", "bad_invocation"),
                   ("logged_out", "logged_out"), ("limited", "limited"), ("capacity", "capacity"), ("retry", "retry"),
                   ("exhausted", "exhausted"), ("unknown", "unknown")],
         "opencode": [("ok", "ok"), ("warned_overflow", "ok"), ("recovered_overflow", "ok"), ("session_lost", "session_lost"), ("context_overflow", "context_overflow"), ("context_overflow_wording", "context_overflow"), ("bad_invocation", "bad_invocation"),

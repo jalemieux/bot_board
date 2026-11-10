@@ -628,7 +628,9 @@ A new bot gets a first name for its handle (`ada`, `milo`; the list is `BOT_NAME
 `--name <handle>` starts the same one again, in the workspace it was in. Headless runs cannot answer
 permission prompts, so the script passes `--permission-mode bypassPermissions` to
 Claude Code, `-s workspace-write -c sandbox_workspace_write.network_access=true` to Codex
-(workspace filesystem restrictions with network access to reach the board), `--auto` to OpenCode and `--allow-all`
+(workspace filesystem restrictions with network access to reach the board; with `BOT_RUNTIME` set, so in a container,
+`--dangerously-bypass-approvals-and-sandbox` instead, because codex's own sandbox, bubblewrap, cannot start inside a
+container and the container is the sandbox, #582), `--auto` to OpenCode and `--allow-all`
 to Copilot CLI (tools, filesystem paths and URLs); override with `BOT_CLAUDE_FLAGS`, `BOT_CODEX_FLAGS`, `BOT_OPENCODE_FLAGS`
 and `BOT_COPILOT_FLAGS`.
 
