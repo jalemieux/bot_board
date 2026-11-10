@@ -1691,7 +1691,7 @@ function appendToThread(m){
     plist.appendChild(el(messageHtml(m, true)));
   }
   var tc = $('#tcount'); if (tc) { var n = plist.querySelectorAll('.msg').length - 1; tc.textContent = n + (n === 1 ? ' reply' : ' replies'); }
-  plist.scrollTop = plist.scrollHeight;
+  pinThread();      // follow the newest reply only while the reader is at the bottom (threadStick), not from a message they opened
 }
 function closeThread(){
   S.thread = null; S.tmsgs = null; app.classList.add('thread-closed');

@@ -69,17 +69,21 @@ class FocusBrowser(Base):
         self.errors = []
         self.page.on("pageerror", lambda err: self.errors.append(str(err)))
 
+        self.live = False      # the page's live poll is refused until a test lets it through, with no waiting
+
         def serve(route):
             path = route.request.url.replace("http://board.test", "")
             if "wait=" in path:
-                return route.abort()
+                if not self.live:
+                    return route.abort()
+                path = re.sub(r"wait=\d+", "wait=0", path)
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
         self.page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
 
     def visible_in_panel(self, msg_id):
-        return self.page.evaluate("""(id) => { var e = document.getElementById('t' + id), p = document.getElementById('plist');
+        return self.page.evaluate("""(id) => { var e = document.getElementById('t' + id), p = document.getElementById('tlist');
             if (!e || !p) return null; var a = e.getBoundingClientRect(), b = p.getBoundingClientRect();
             return a.top >= b.top - 1 && a.bottom <= b.bottom + 1 }""", msg_id)
 
@@ -93,7 +97,7 @@ class FocusBrowser(Base):
         self.page.goto("http://board.test/mentions")
         self.page.wait_for_selector("#stream .mrow")
         self.page.click(f'#stream .mrow button.ctx[data-msg="{target}"]')
-        self.page.wait_for_selector(f"#t{target}")
+        self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 40")     # the panel is filled
         self.assertTrue(self.visible_in_panel(target), "the mention is on screen, not scrolled past")
         self.assertIn("flash", self.page.get_attribute(f"#t{target}", "class"))
         self.assertFalse(self.visible_in_panel(root), "and the panel did not open at the top either")
@@ -104,8 +108,35 @@ class FocusBrowser(Base):
         for i in range(30):
             last = self.post(self.bot, f"reply {i} " + "words " * 30, reply_to=root)
         self.page.goto(f"http://board.test/t/{root}")
-        self.page.wait_for_selector(f"#t{last}")
+        self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 30")
         self.assertTrue(self.visible_in_panel(last))
+
+    def test_a_reply_that_arrives_later_does_not_scroll_a_reader_away_from_the_message_they_opened(self):
+        root = self.post(self.bot, "a long thread")
+        for i in range(15):
+            self.post(self.bot, f"filler {i} " + "words " * 30, reply_to=root)
+        target = self.post(self.bot, "@jac the message that names you", reply_to=root)
+        for i in range(30):
+            self.post(self.bot, f"later {i} " + "words " * 30, reply_to=root)
+        self.page.goto("http://board.test/mentions")
+        self.page.wait_for_selector("#stream .mrow")
+        self.page.click(f'#stream .mrow button.ctx[data-msg="{target}"]')
+        self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 40")
+        new = self.post(self.bot, "a reply that arrives while the mention is open", reply_to=root)
+        self.live = True       # now the page's own live poll can deliver it
+        self.page.wait_for_function("!!document.getElementById('t%d')" % new, timeout=20000)
+        self.assertTrue(self.visible_in_panel(target), "and the reader is still at the message they came for")
+
+    def test_a_reader_at_the_bottom_still_follows_new_replies(self):
+        root = self.post(self.bot, "a thread")
+        for i in range(30):
+            self.post(self.bot, f"reply {i} " + "words " * 30, reply_to=root)
+        self.page.goto(f"http://board.test/t/{root}")
+        self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 30")
+        new = self.post(self.bot, "the newest", reply_to=root)
+        self.live = True
+        self.page.wait_for_function("!!document.getElementById('t%d')" % new, timeout=20000)
+        self.assertTrue(self.visible_in_panel(new), "a reader at the bottom follows the new reply")
 
 
 if __name__ == "__main__":
