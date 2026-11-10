@@ -39,6 +39,14 @@ class Machine(unittest.TestCase):
                         json={"bots": [{"handle": h, "harness": "claude", "status": st, "serves": "/pool", "pool": True}
                                        for h, st in bots]}).raise_for_status()
 
+    def activity(self, handle):
+        return {a["handle"]: a["activity"] for a in self.client.get("/api/agents").json()["agents"]}[handle]
+
+    def report_health(self, box, handle, health):
+        self.client.put(f"/api/fleet/hosts/{box}", headers={"Authorization": "Bearer " + self.tokens[box]},
+                        json={"bots": [{"handle": handle, "harness": "claude", "status": "waiting", "serves": "/pool",
+                                        "pool": True, "health": health}]}).raise_for_status()
+
     def machines(self):
         return {a["handle"]: a["machine"] for a in self.client.get("/api/agents").json()["agents"]}
 
@@ -59,6 +67,9 @@ class Machine(unittest.TestCase):
         self.report("box-a", ("ann", "waiting"), ("bea", "running aaa"), ("cy", "stopped"))
         agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}
         self.assertEqual([agents[h]["activity"] for h in ("ann", "bea", "cy", "jac")], ["idle", "working", "stopped", None])
+        self.assertEqual(self.activity("ann"), "idle")
+        self.report_health("box-a", "ann", "logged out of claude: run claude login on the box")
+        self.assertEqual(self.activity("ann"), "needs login", "a bot that cannot work is not idle")
         db.conn().execute("UPDATE fleet_hosts SET reported_at='2020-01-01T00:00:00+00:00'")
         db.conn().commit()
         agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}

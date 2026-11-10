@@ -860,8 +860,9 @@ def clear_alerts(items: list[dict], by: str):
 
 def machines() -> dict[str, tuple[str, str | None]]:
     """Where each bot is and what it is doing, from the keepers' latest reports: lower-case handle ->
-    (box name, activity). The activity is "working" (a turn is running), "idle" (its launcher is up and
-    waiting for work) or "stopped", and None when that box has not reported lately (STALE_AFTER). A bot
+    (box name, activity). The activity is the word /fleet uses (bot_state): "working" (a turn is running),
+    "idle" (its launcher is up and waiting for work), "stopped", "needs login", "out of usage" and so on, and
+    None when that box has not reported lately (STALE_AFTER). A bot
     reported on two boxes (while it moves) is on the one where it is up, else the first. Much cheaper than
     hosts(), which the roster would otherwise pay on every call."""
     out: dict[str, tuple[str, str | None, bool]] = {}
@@ -880,7 +881,8 @@ def machines() -> dict[str, tuple[str, str | None]]:
             low = str(b.get("handle", "")).lower()
             status = str(b.get("status") or "")
             up = status.startswith(UP)
-            activity = ("working" if status.startswith("running") else "idle" if up else "stopped") if fresh else None
+            state = bot_state(b, fresh)["state"]     # the /fleet vocabulary: "needs login" is not "idle"
+            activity = None if state == "unknown" else "idle" if state == "waiting" else state
             if low and (low not in out or (up and not out[low][2])):
                 out[low] = (r["name"], activity, up)
     return {h: (v[0], v[1]) for h, v in out.items()}
