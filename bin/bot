@@ -349,6 +349,20 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # (KILL ends the client, not the container), and so two turns of one bot cannot overlap (#485).
   if [ "$mode" = box ]; then run+=(-v "bot_board-box-state:/home/bot")
   else                       run+=(--name "bot_board-${HANDLE:-bot}-run" -v "$dir:/work" -w /work -v "bot_board-${HANDLE:-bot}-state:/home/bot"); fi
+  # The bot's skills (#581). A container does not see the host home, where skill_link puts them, so
+  # mount each skill the bot lists read-only, from its real directory (a symlink's target is a host
+  # path the container cannot read) into /opt/bot-skills; the command below links them into the
+  # harnesses' skill directories. They cannot be mounted straight into /home/bot/.claude/skills:
+  # that is on the state volume, and Docker would create .claude there as root. Bot mode only.
+  if [ "$mode" = bot ] && [ -s "${STATE:-/nonexistent}/skills" ]; then
+    local _sk _skdir
+    while IFS= read -r _sk; do
+      case $_sk in ""|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*) continue ;; esac
+      _skdir=$(cd -P "$CFG/skills/$_sk" 2>/dev/null && pwd -P) || continue
+      case $_skdir in *:*) continue ;; esac
+      if [ -f "$_skdir/SKILL.md" ]; then run+=(-v "$_skdir:/opt/bot-skills/$_sk:ro"); fi
+    done < "$STATE/skills"
+  fi
   # codex keeps its login in ~/.codex/auth.json; mount just that file read-only, so the container
   # reads the host login but writes its session state to the state volume (#478 mounts it the same)
   [ "$harness" = codex ] && [ -f "$HOME/.codex/auth.json" ] && run+=(-v "$HOME/.codex/auth.json:/home/bot/.codex/auth.json:ro")
@@ -367,8 +381,25 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
     # then exec's the harness, so no extra container.
     local _host_files=0
     if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then _host_files=1; fi
+    # The same command links the skills mounted at /opt/bot-skills into the harnesses' skill
+    # directories (#581): first it removes the links an earlier turn made (a skill the bot no longer
+    # lists), then it adds one per mounted skill, never over something that is already there.
     $BOT_RUNTIME "${run[@]}" "$image" sh -c \
-      'has=$1; shift; [ "$has" = 0 ] || test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }; exec "$@"' \
+      'has=$1; shift; [ "$has" = 0 ] || test -n "$(ls -A /work 2>/dev/null)" || { echo "bot: the checkout did not bind-mount into the container (/work is empty); on Colima or Docker Desktop only paths under \$HOME are shared, so move the checkout under \$HOME" >&2; exit 97; }
+       for b in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+         for l in "$b"/*; do [ -L "$l" ] && case $(readlink "$l") in /opt/bot-skills/*) rm -f "$l" ;; esac; done
+       done
+       if [ -d /opt/bot-skills ]; then
+         for b in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+           mkdir -p "$b" || continue
+           for d in /opt/bot-skills/*/; do
+             [ -d "$d" ] || continue
+             n=${d%/}; n=${n##*/}
+             [ -e "$b/$n" ] || [ -L "$b/$n" ] || ln -s "${d%/}" "$b/$n"
+           done
+         done
+       fi
+       exec "$@"' \
       sh "$_host_files" "$@"
   fi
 }
@@ -378,7 +409,15 @@ BOT_WAIT=${BOT_WAIT:-60}
 # Headless runs cannot answer permission prompts, so the harness must be told
 # up front what it may do. Override these if your box wants something tighter.
 BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
-BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
+# codex sandboxes its commands with bubblewrap, which cannot create namespaces inside a container:
+# every command then fails ("bwrap: No permissions to create a new namespace"). With BOT_RUNTIME set the
+# container is the sandbox, as it is for claude (bypassPermissions), so codex runs without its own (#582).
+# A BOT_CODEX_FLAGS set on the box or in the environment wins.
+if [ -n "${BOT_RUNTIME:-}" ]; then
+  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox --skip-git-repo-check}
+else
+  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
+fi
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
@@ -1271,7 +1310,7 @@ with open(logp, "a", encoding="utf-8") as lg:     # the log stays a transcript: 
 # evidence (luca's notice 7383: a reply quoting a limit is not a limit), with one
 # exception: a short reply from a run that printed no result object, the way an older
 # claude printed a limit refusal with exit 0 (#81).
-errors = [err]; short = ""
+errors = [err]; short = ""; sandbox_blocked = False
 if harness in ("codex", "opencode"):
     for l in tail.splitlines():
         try: d = json.loads(l)
@@ -1280,6 +1319,22 @@ if harness in ("codex", "opencode"):
             continue
         if isinstance(d, dict) and (d.get("type") in ("error", "turn.failed") or (harness == "opencode" and d.get("error"))):
             errors.append(error_text(d))
+    # a command that failed because codex's own sandbox could not start (#582). The sandbox blocks a run only
+    # when it blocks every command, so one that succeeded means the error came from a program the bot ran
+    # (anything that uses bubblewrap itself): then the run did work and is not failed. Read only off command
+    # output, never the model's words, and only a failed command
+    ran_ok = False
+    for l in tail.splitlines():
+        try: d = json.loads(l)
+        except ValueError: continue
+        it = d.get("item") if isinstance(d, dict) else None
+        if harness != "codex" or not (isinstance(it, dict) and it.get("type") == "command_execution"): continue
+        if it.get("exit_code") == 0 or (it.get("exit_code") is None and it.get("status") == "completed"):
+            ran_ok = True
+        elif (it.get("exit_code") not in (0, None) or it.get("status") == "failed") \
+                and re.search(r"bwrap: (No permissions to create a new namespace|Creating new namespace failed|setting up uid map)", str(it.get("aggregated_output") or "")):
+            sandbox_blocked = True
+    sandbox_blocked = sandbox_blocked and not ran_ok
 elif harness == "copilot":
     # text only: its reply and its errors share the stream. A refusal is the whole output,
     # a line or two; in a longer output only lines that read as errors count
@@ -1309,6 +1364,8 @@ elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error"))):
     o, d = "context_overflow", last(CONTEXT)
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
+elif sandbox_blocked:
+    o, d = "bad_invocation", "codex's sandbox (bwrap) cannot start here, so no command can run: set BOT_CODEX_FLAGS=--dangerously-bypass-approvals-and-sandbox in a container"
 elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth (token|session) (has )?expired|could not be refreshed|failed to authenticate|no login|no authentication information found|failed to fetch pat user login \(40[13]\)"):
     o, d = "logged_out", last() or "HTTP %s" % status
 elif subtype in ("error_max_turns", "error_max_budget_usd", "error_max_budget") or m(r"max(imum)? turns|turn limit|budget (was )?(exceeded|reached)|exceeded .*budget"):

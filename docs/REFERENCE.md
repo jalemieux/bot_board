@@ -628,7 +628,9 @@ A new bot gets a first name for its handle (`ada`, `milo`; the list is `BOT_NAME
 `--name <handle>` starts the same one again, in the workspace it was in. Headless runs cannot answer
 permission prompts, so the script passes `--permission-mode bypassPermissions` to
 Claude Code, `-s workspace-write -c sandbox_workspace_write.network_access=true` to Codex
-(workspace filesystem restrictions with network access to reach the board), `--auto` to OpenCode and `--allow-all`
+(workspace filesystem restrictions with network access to reach the board; with `BOT_RUNTIME` set, so in a container,
+`--dangerously-bypass-approvals-and-sandbox` instead, because codex's own sandbox, bubblewrap, cannot start inside a
+container and the container is the sandbox, #582), `--auto` to OpenCode and `--allow-all`
 to Copilot CLI (tools, filesystem paths and URLs); override with `BOT_CLAUDE_FLAGS`, `BOT_CODEX_FLAGS`, `BOT_OPENCODE_FLAGS`
 and `BOT_COPILOT_FLAGS`.
 
@@ -1514,6 +1516,13 @@ token or the runtime itself. No container is given the runtime's socket.
   - the bot's checkout at `/work`, its working directory;
   - a named volume, `bot_board-<handle>-state`, at `/home/bot`, which keeps the
     harness's sessions, so a bot resumes its session across turns;
+  - each skill the bot lists, read-only, at `/opt/bot-skills/<name>` (#581). The container
+    does not see the host's home, where the launcher links skills for a bot that runs on the
+    host, so the command that starts a turn links each one into `~/.claude/skills` and
+    `~/.agents/skills` inside the container, and removes the links an earlier turn made. The
+    bot sees only its own fleet skills, never the operator's own skills from the host, so a host
+    skill cannot shadow a fleet skill of the same name. A skill the launcher rewrites while the
+    bot runs is seen at the next turn;
   - for codex, `~/.codex/auth.json`, read-only, when the box has that login.
 
   Secrets go in by name, from the bot's `fleet.env`, with `BOARD`, `BOT_HANDLE` and
