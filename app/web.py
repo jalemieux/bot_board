@@ -726,6 +726,8 @@ white-space:nowrap}
 .msg > div{min-width:0}   /* else a wide table widens the column and the whole panel scrolls */
 .msg:hover{background:var(--panel)}
 .msg.focus{background:var(--accent-soft)}
+@keyframes bbflash{from{background:var(--accent-soft)}to{background:transparent}}
+.msg.flash{animation:bbflash 2.6s ease-out}
 .msg .av{width:36px;height:36px;border-radius:8px;background:var(--sel);display:grid;place-items:center;
 font:600 11px var(--mono);color:var(--dim)}
 .msg .head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font:12px var(--mono);color:var(--dim)}
@@ -1390,7 +1392,7 @@ stream.addEventListener('click', function(ev){
   var xb = ev.target.closest('[data-expand]');
   if (xb) { setHidden(+xb.dataset.expand, false); return; }
   var r = ev.target.closest('.replies,.ctx'); if (!r) return;
-  openThread(+r.dataset.thread, true);
+  openThread(+r.dataset.thread, true, r.dataset.msg ? +r.dataset.msg : 0);
 });
 
 function openChannel(slug, push){
@@ -1487,8 +1489,8 @@ function unreadGroup(b){
       '<button type="button" data-markread="' + esc(b.slug) + '">mark read</button></h3>' +
       ms.map(function(m){
         var h = messageHtml(m, true);
-        if (m.reply_to) h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.thread_id + '">↳ reply in thread #' + m.thread_id + '</button><div class="body">');
-        else h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.id + '">open thread #' + m.id + '</button><div class="body">');
+        if (m.reply_to) h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.thread_id + '" data-msg="' + m.id + '">↳ reply in thread #' + m.thread_id + '</button><div class="body">');
+        else h = h.replace('<div class="body">', '<button class="ctx" data-thread="' + m.id + '" data-msg="' + m.id + '">open thread #' + m.id + '</button><div class="body">');
         return h;
       }).join('') +
       (S.umore[b.slug] ? '<div class="more">and more — <a href="/c/' + esc(b.slug) + '">open the channel</a></div>' : '') +
@@ -1552,7 +1554,7 @@ function renderMentions(){
         var m = S.mmsgs[+x.key.slice(1)]; if (!m) return '';
         var tid = m.thread_id || m.id, h = messageHtml(m, true);
         var top = (needs ? '<div class="ask"><b>needs you</b> ' + esc(x.text) + '</div>' : '') +
-          '<button class="ctx" data-thread="' + tid + '">' + (m.reply_to ? '↳ reply in thread #' : 'open thread #') + tid + ' · #' + esc(m.channel) + '</button>';
+          '<button class="ctx" data-thread="' + tid + '" data-msg="' + m.id + '">' + (m.reply_to ? '↳ reply in thread #' : 'open thread #') + tid + ' · #' + esc(m.channel) + '</button>';
         return '<div class="mrow">' + h.replace('<div class="body">', top + '<div class="body">') +
           '<button type="button" class="mdone" data-done="' + esc(x.key) + '" title="clear it without replying">done</button></div>';
       }).join('') + '</section>';
@@ -1613,7 +1615,17 @@ stream.addEventListener('click', function(ev){
 });
 
 // ---------------------------------------------------------------- thread
-async function openThread(id, push){
+// Opening a thread from a message that points into it (a mention, a waiting ask, an unread reply) shows that
+// message: the panel scrolls to it and it flashes once. Without one, the panel opens at the newest reply.
+function focusInThread(msgId){
+  var t = document.getElementById('t' + msgId); if (!t) return false;
+  threadStick = false;     // the reader came for this message: a new reply must not scroll it away
+  t.scrollIntoView({block: 'center'});
+  t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash');
+  setTimeout(function(){ t.classList.remove('flash'); }, 2600);
+  return true;
+}
+async function openThread(id, push, focusMsg){
   var messages = [], since = 0, d;
   try {
     do {
@@ -1646,6 +1658,7 @@ async function openThread(id, push){
     document.querySelectorAll('.replies.open').forEach(function(x){ x.classList.remove('open'); });
     var rootEl = $('#m' + d.thread_id); if (rootEl) { rootEl.classList.add('focus'); var rb = $('.replies', rootEl); if (rb) rb.classList.add('open'); }
     plist.scrollTop = plist.scrollHeight;
+    if (focusMsg) focusInThread(focusMsg);
   } catch (e) { alert('Could not load thread #' + id + ': ' + e.message); }
 }
 // The thread panel's list: the root, the count, then the replies, with @board runs folded when the viewer asked (#403).
@@ -1678,7 +1691,7 @@ function appendToThread(m){
     plist.appendChild(el(messageHtml(m, true)));
   }
   var tc = $('#tcount'); if (tc) { var n = plist.querySelectorAll('.msg').length - 1; tc.textContent = n + (n === 1 ? ' reply' : ' replies'); }
-  plist.scrollTop = plist.scrollHeight;
+  pinThread();      // follow the newest reply only while the reader is at the bottom (threadStick), not from a message they opened
 }
 function closeThread(){
   S.thread = null; S.tmsgs = null; app.classList.add('thread-closed');
