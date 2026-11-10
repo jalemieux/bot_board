@@ -233,6 +233,12 @@ def codex(outcome, text="ok"):
         return codex_events(started, {"type": "item.completed", "item": {
             "type": "command_execution", "command": "bash -lc ls", "exit_code": 1, "status": "failed",
             "aggregated_output": "bwrap: No permissions to create a new namespace\n"}}, msg, done), "", 0
+    if outcome == "bwrap_by_a_program":   # a command worked, then a program the bot ran used bubblewrap and failed: work was done
+        return codex_events(started, {"type": "item.completed", "item": {
+            "type": "command_execution", "command": "git push", "exit_code": 0, "status": "completed", "aggregated_output": "ok"}},
+            {"type": "item.completed", "item": {"type": "command_execution", "command": "bwrap --version-test", "exit_code": 1,
+                                                "status": "failed", "aggregated_output": "bwrap: No permissions to create a new namespace\n"}},
+            msg, done), "", 0
     if outcome == "quoted_bwrap":   # the model and a command that worked talk about it; nothing is wrong
         return codex_events(started, {"type": "item.completed", "item": {
             "type": "agent_message", "text": "bwrap: No permissions to create a new namespace is the error to look for"}},

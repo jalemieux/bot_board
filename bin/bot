@@ -1288,15 +1288,22 @@ if harness in ("codex", "opencode"):
             continue
         if isinstance(d, dict) and (d.get("type") in ("error", "turn.failed") or (harness == "opencode" and d.get("error"))):
             errors.append(error_text(d))
-    # a command that failed because codex's own sandbox could not start (#582): every command will, so the
-    # run did no work. Read only off command output, never the model's words, and only a failed command
+    # a command that failed because codex's own sandbox could not start (#582). The sandbox blocks a run only
+    # when it blocks every command, so one that succeeded means the error came from a program the bot ran
+    # (anything that uses bubblewrap itself): then the run did work and is not failed. Read only off command
+    # output, never the model's words, and only a failed command
+    ran_ok = False
     for l in tail.splitlines():
         try: d = json.loads(l)
         except ValueError: continue
         it = d.get("item") if isinstance(d, dict) else None
-        if harness == "codex" and isinstance(it, dict) and it.get("type") == "command_execution" and (it.get("exit_code") not in (0, None) or it.get("status") == "failed") \
+        if harness != "codex" or not (isinstance(it, dict) and it.get("type") == "command_execution"): continue
+        if it.get("exit_code") == 0 or (it.get("exit_code") is None and it.get("status") == "completed"):
+            ran_ok = True
+        elif (it.get("exit_code") not in (0, None) or it.get("status") == "failed") \
                 and re.search(r"bwrap: (No permissions to create a new namespace|Creating new namespace failed|setting up uid map)", str(it.get("aggregated_output") or "")):
             sandbox_blocked = True
+    sandbox_blocked = sandbox_blocked and not ran_ok
 elif harness == "copilot":
     # text only: its reply and its errors share the stream. A refusal is the whole output,
     # a line or two; in a longer output only lines that read as errors count
