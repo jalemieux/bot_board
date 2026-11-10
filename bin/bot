@@ -378,7 +378,15 @@ BOT_WAIT=${BOT_WAIT:-60}
 # Headless runs cannot answer permission prompts, so the harness must be told
 # up front what it may do. Override these if your box wants something tighter.
 BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
-BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
+# codex sandboxes its commands with bubblewrap, which cannot create namespaces inside a container:
+# every command then fails ("bwrap: No permissions to create a new namespace"). With BOT_RUNTIME set the
+# container is the sandbox, as it is for claude (bypassPermissions), so codex runs without its own (#582).
+# A BOT_CODEX_FLAGS set on the box or in the environment wins.
+if [ -n "${BOT_RUNTIME:-}" ]; then
+  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox --skip-git-repo-check}
+else
+  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
+fi
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
@@ -1271,7 +1279,7 @@ with open(logp, "a", encoding="utf-8") as lg:     # the log stays a transcript: 
 # evidence (luca's notice 7383: a reply quoting a limit is not a limit), with one
 # exception: a short reply from a run that printed no result object, the way an older
 # claude printed a limit refusal with exit 0 (#81).
-errors = [err]; short = ""
+errors = [err]; short = ""; sandbox_blocked = False
 if harness in ("codex", "opencode"):
     for l in tail.splitlines():
         try: d = json.loads(l)
@@ -1280,6 +1288,15 @@ if harness in ("codex", "opencode"):
             continue
         if isinstance(d, dict) and (d.get("type") in ("error", "turn.failed") or (harness == "opencode" and d.get("error"))):
             errors.append(error_text(d))
+    # a command that failed because codex's own sandbox could not start (#582): every command will, so the
+    # run did no work. Read only off command output, never the model's words, and only a failed command
+    for l in tail.splitlines():
+        try: d = json.loads(l)
+        except ValueError: continue
+        it = d.get("item") if isinstance(d, dict) else None
+        if harness == "codex" and isinstance(it, dict) and it.get("type") == "command_execution" and (it.get("exit_code") not in (0, None) or it.get("status") == "failed") \
+                and re.search(r"bwrap: (No permissions to create a new namespace|Creating new namespace failed|setting up uid map)", str(it.get("aggregated_output") or "")):
+            sandbox_blocked = True
 elif harness == "copilot":
     # text only: its reply and its errors share the stream. A refusal is the whole output,
     # a line or two; in a longer output only lines that read as errors count
@@ -1309,6 +1326,8 @@ elif m(CONTEXT) and (rc != 0 or (result and result.get("is_error"))):
     o, d = "context_overflow", last(CONTEXT)
 elif rc == 127 or m(r"command not found|unknown option|unrecognized (option|subcommand|argument)|unexpected argument|Unknown argument|error: (option|missing|too many|invalid value)|is not installed|^usage: (claude|codex|copilot|opencode)"):
     o, d = "bad_invocation", last()
+elif sandbox_blocked:
+    o, d = "bad_invocation", "codex's sandbox (bwrap) cannot start here, so no command can run: set BOT_CODEX_FLAGS=--dangerously-bypass-approvals-and-sandbox in a container"
 elif status in (401, 403) or m(r"not logged in|please run /login|run .?(claude|codex|copilot) login|invalid api key|authentication_error|oauth (token|session) (has )?expired|could not be refreshed|failed to authenticate|no login|no authentication information found|failed to fetch pat user login \(40[13]\)"):
     o, d = "logged_out", last() or "HTTP %s" % status
 elif subtype in ("error_max_turns", "error_max_budget_usd", "error_max_budget") or m(r"max(imum)? turns|turn limit|budget (was )?(exceeded|reached)|exceeded .*budget"):

@@ -129,6 +129,7 @@ The error stream is captured to its own file for the run. Classification:
 | stderr says "No conversation found" | `session_lost` |
 | result or stderr says the context is exceeded or the prompt too long | `context_overflow` |
 | no result object at all, exit 127, or stderr begins with an option error | `bad_invocation` |
+| codex only: a failed command whose output says `bwrap: No permissions to create a new namespace` (its sandbox cannot start, so every command fails; #582) | `bad_invocation`, with the fix in the detail |
 | anything else with exit non-zero or `is_error` true | `unknown` |
 
 The result object's `session_id` is written as the session file after a
