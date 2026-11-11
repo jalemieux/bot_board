@@ -409,6 +409,13 @@ except ValueError:
         self.post(self.worker, "Never mind, one last line.", reply=root["id"])
         self.assertIsNone(self.client.get(endpoint).json()["worker"], "only the first reply claims")
 
+    def test_a_named_bot_that_answers_done_does_not_take_the_thread(self):
+        root = self.post(self.human, "@worker quick question: is 41 deployed?")
+        r = self.client.post("/api/messages", headers=self.worker, json={
+            "channel": "work", "reply_to": root["id"], "body": "Yes, it is.", "meta": {"done": True}})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertIsNone(self.client.get(f'/api/threads/{root["id"]}/worker').json()["worker"])
+
     def test_a_thread_that_names_nobody_is_not_taken_by_an_answer(self):
         self.post(self.worker, "Here is a thought.", reply=self.root["id"])
         self.assertIsNone(self.client.get(self.endpoint).json()["worker"])

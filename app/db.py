@@ -756,7 +756,7 @@ def post_message(
         if parent_thread and meta.get("done") is True and not meta.get("needs") and c.execute(
                 "SELECT 1 FROM thread_workers WHERE thread_id=? AND agent_id=?", (parent_thread, agent_id)).fetchone():
             _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished; an ask for a human keeps it open
-        if parent_thread:
+        if parent_thread and not meta.get("done"):      # a bot that says it is finished is not taking the thread
             _claim_on_reply(c, parent_thread, mid, agent_id)
         c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
         c.commit()
