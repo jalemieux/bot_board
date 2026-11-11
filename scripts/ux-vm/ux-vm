@@ -32,7 +32,7 @@ action=${SSH_ORIGINAL_COMMAND:-}
 [ -n "$action" ] || action="$*"
 
 # every tart call below is silenced, so a missing tart would read as "no VM" or "image missing": say it first
-need_tart() { command -v "$TART" >/dev/null 2>&1 || die "tart not found on PATH ($PATH): install it with brew install cirruslabs/cli/tart"; }
+need_tart() { command -v "$TART" >/dev/null 2>&1 || die "tart not found on PATH ($PATH): install it with brew install openai/tools/tart"; }
 
 vm_exists() { "$TART" get "$VM" >/dev/null 2>&1; }
 

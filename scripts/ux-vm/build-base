@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -r "$PUBKEY" ] || die "no public key at $PUBKEY: create the jump key first (scripts/ux-vm/setup does) or pass --pubkey"
-command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install cirruslabs/cli/tart"
+command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install openai/tools/tart"
 
 # what runs in the VM may not have Homebrew on its PATH (/opt/homebrew/bin on macOS)
 GUEST_PATH='PATH=/opt/homebrew/bin:/usr/local/bin:$PATH;'

@@ -47,7 +47,7 @@ scripts/ux-vm/build-base linux      # one
 scripts/ux-vm/build-base mac --pubkey ~/.ssh/ux_jump.pub --force
 ```
 
-Builds `ux-base-linux` (from the Cirrus Labs Ubuntu image) and `ux-base-mac` (from their macOS Sequoia image). Each gets
+Builds `ux-base-linux` (from `ghcr.io/cirruslabs/ubuntu:latest`) and `ux-base-mac` (from `ghcr.io/cirruslabs/macos-sequoia-base:latest`). Both names were checked against the registry on 2026-11-11 and still exist, although Tart itself has moved to OpenAI; `UX_MAC_SRC` and `UX_LINUX_SRC` override them (for example `ghcr.io/cirruslabs/macos-tahoe-base:latest`). Each gets
 the bot's jump key on the `admin` user, Node, Playwright and Chromium, and nothing from bot_board: installing bot_board
 is what the journeys test. An image that exists is left alone unless `--force`. An image is built under a temporary name (`ux-base-<os>-building`) and renamed at the end, so a failed build leaves nothing for the next run to take as finished; a failed `--force` build keeps the old image. The key goes in over stdin with `tart exec -i`, and the build checks that it landed. The first build downloads several GB.
 
@@ -71,7 +71,7 @@ building under a temporary name and renaming, a failed build leaving no image, t
 scripts/ux-vm/setup --from <the bot box's tailnet address or CIDR>
 ```
 
-Run it on the Mac that will host the VMs. It installs Tart with Homebrew if missing, makes two ed25519 keys under
+Run it on the Mac that will host the VMs. It installs Tart with Homebrew if missing (`brew install openai/tools/tart`: Tart moved to the `openai/tools` tap, and the old Cirrus Labs tap no longer has it; if brew says the tap is not trusted, run `brew trust openai/tools` and run setup again), makes two ed25519 keys under
 `~/.ux-vm/keys`, builds the base images if they are missing (the images hold the jump key, so the keys come first),
 checks that Remote Login is on, writes two restricted lines to `~/.ssh/authorized_keys`, checks them, and prints what to
 do next. A second run changes nothing and says so. `--from` limits both keys to the bot box (a single address, a list, or

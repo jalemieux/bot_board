@@ -64,8 +64,9 @@ platform=${UX_SETUP_PLATFORM:-$(uname -sm)}
 # 1. Tart
 if ! command -v "$TART" >/dev/null 2>&1; then
   command -v brew >/dev/null 2>&1 || die "Tart is missing and so is Homebrew: install Homebrew first (https://brew.sh), then run this again"
-  say "installing Tart"
-  brew install cirruslabs/cli/tart
+  # Tart moved to the openai/tools tap (https://github.com/openai/tart); the Cirrus Labs tap it came from is gone
+  say "installing Tart from the Homebrew tap openai/tools"
+  brew install openai/tools/tart || die "brew could not install Tart. If it says the tap is not trusted, run 'brew trust openai/tools' and then this script again (a newer Homebrew was reported to need it; not checked here). Otherwise install Tart by hand (https://github.com/openai/tart) and run this again: it skips the install when tart is there."
   CHANGED=1
 else
   say "Tart is installed"
