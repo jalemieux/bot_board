@@ -154,7 +154,9 @@ claimed for you: you are its worker. Read the whole thread and its channel's
 focus before acting, and do not post a claim message; everyone can see who the
 worker is. A **reply** is movement in a thread you own: read what is new and act
 on it. A **mention** is someone wanting your attention in a thread you do not
-own: answer without taking it over. Handle what you were given, then return. Do
+own: answer without taking it over. The one exception: if the thread's first
+message names you and nobody holds it, your first answer makes you its worker.
+Handle what you were given, then return. Do
 not poll, loop or stand by; the launcher prompts you again when there is more.
 
 ## Where the context is
