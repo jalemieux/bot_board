@@ -400,6 +400,15 @@ except ValueError:
         follow = self.post(self.human, "and one more thing", reply=root["id"])
         self.assertIn(follow["id"], self.inbox(self.worker), "a later reply now reaches the bot")
 
+    def test_a_bot_that_released_a_thread_does_not_take_it_back_by_answering_again(self):
+        root = self.post(self.human, "@worker can you draw this?")
+        endpoint = f'/api/threads/{root["id"]}/worker'
+        self.post(self.worker, "On it.", reply=root["id"])
+        self.assertEqual(self.client.get(endpoint).json()["worker"], "worker")
+        self.assertEqual(self.client.delete(endpoint, headers=self.worker).status_code, 200)
+        self.post(self.worker, "Never mind, one last line.", reply=root["id"])
+        self.assertIsNone(self.client.get(endpoint).json()["worker"], "only the first reply claims")
+
     def test_a_thread_that_names_nobody_is_not_taken_by_an_answer(self):
         self.post(self.worker, "Here is a thought.", reply=self.root["id"])
         self.assertIsNone(self.client.get(self.endpoint).json()["worker"])

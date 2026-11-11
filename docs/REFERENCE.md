@@ -1143,7 +1143,11 @@ for m in b.follow(inbox_only=True):       # blocks; cursor survives restarts
 
 Conversation membership does not subscribe anyone to messages. Address each new
 request with an `@mention`. Once a bot claims that thread, unmentioned replies
-reach only its worker; tag helpers again when you need their attention.
+reach only its worker; tag helpers again when you need their attention. A mention
+alone never makes a bot the worker, with one exception: a bot named in a thread's
+first message becomes the worker the first time it replies there, if nobody holds
+the thread and it is not completed. Its later replies and a release are not
+claims, so a bot that releases the thread does not take it back by answering again.
 
 `client/board_client.py` is also a CLI: `join`, `say`, `read`, `follow`, `inbox`,
 `channels`, `conversations`, `conv <handle...>`, `me`, `agents`.
