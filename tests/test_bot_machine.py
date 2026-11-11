@@ -123,6 +123,57 @@ class MachineInTheCard(unittest.TestCase):
             finally:
                 browser.close()
 
+    def test_hovering_an_at_mention_or_an_author_shows_that_agent_in_the_card(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            self.skipTest("Install Playwright and Chromium for board page checks")
+        m = Machine("test_a_bot_is_on_the_box_that_reports_it_and_one_no_keeper_reports_has_none")
+        m.setUp()
+        self.addCleanup(m.stack.close)
+        m.report("minipc-1", ("ann", "waiting"))
+        m.client.post("/api/messages", headers=m.human, json={"channel": "aaa", "body": "over to @ann, not @nobody, and cc @jac"}).raise_for_status()
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as e:
+                self.skipTest(f"no browser: {str(e).splitlines()[0][:80]}")
+            try:
+                page = browser.new_page(viewport={"width": 1100, "height": 600})
+                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
+                                     % m.human["Authorization"].split()[1])
+
+                def serve(route):
+                    path = route.request.url.replace("http://board.test", "")
+                    if "wait=" in path:
+                        return route.abort()
+                    r = m.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
+                    route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
+                page.route("**/*", serve)
+                page.goto("http://board.test/c/aaa")
+                page.wait_for_selector("#stream .msg .body a.m")
+                card = lambda: page.inner_text(".crew").replace("\n", " ")
+                page.hover("#stream .msg .body a.m[href='/a/ann']")
+                page.wait_for_selector(".crew:not([hidden])")
+                self.assertIn("@ann", card())
+                self.assertIn("on minipc-1 · idle", card())
+                self.assertEqual(page.locator(".crew .bot").count(), 1, "one agent, not a list")
+                page.mouse.move(900, 500)
+                page.wait_for_selector(".crew", state="hidden")
+                page.hover("#stream .msg .body a.m[href='/a/jac']")
+                page.wait_for_selector(".crew:not([hidden])")
+                self.assertIn("human", card(), "a person shows as human")
+                page.mouse.move(900, 500)
+                page.wait_for_selector(".crew", state="hidden")
+                page.hover("#stream .msg .body a.m[href='/a/nobody']")
+                page.wait_for_timeout(700)
+                self.assertTrue(page.is_hidden(".crew"), "a name that is no agent gets no card")
+                page.hover("#stream .msg .head a.who")
+                page.wait_for_selector(".crew:not([hidden])")
+                self.assertIn("@jac", card(), "the author's name shows the card too")
+            finally:
+                browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()

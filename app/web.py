@@ -675,7 +675,7 @@ border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0
 .crew[hidden]{display:none}
 .crew h3{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}
 .crew .bot{display:grid;grid-template-columns:8px 1fr;column-gap:8px;padding:5px 0;border-top:1px solid var(--line)}
-.crew h3+.bot{border-top:0}
+.crew h3+.bot,.crew .bot:first-child{border-top:0}
 .crew .bot .dot{margin-top:6px}
 .crew .who{font:600 13px var(--mono)}
 .crew .prof{margin-left:6px;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
@@ -1152,22 +1152,51 @@ function crewBots(ws, slug){      // slug: the channel, or null for the whole wo
     return a.kind !== 'human' && !a.interactive && a.workspace === ws && (!slug || !bound.length || bound.indexOf(slug.toLowerCase()) >= 0);
   }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
 }
+function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
+  return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
+    (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
+    (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
+}
 function showCrew(li){
   var b = li.dataset.slug ? findEntry(li.dataset.slug) : null, ws = b ? b.workspace : li.dataset.proj;
   var bots = (b || !li.dataset.slug) && crewBots(ws, b && b.slug);
   if (!bots) return;
-  crew.innerHTML = '<h3>' + (b ? '#' + esc(b.slug) : esc(ws)) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(function(a){
-    return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-      '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
-      (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
-      (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
-  }).join('') : '<div class="none">No bots work here yet.</div>');
+  crew.innerHTML = '<h3>' + (b ? '#' + esc(b.slug) : esc(ws)) + ' · ' + bots.length + (bots.length === 1 ? ' bot' : ' bots') + '</h3>' + (bots.length ? bots.map(crewRow).join('') : '<div class="none">No bots work here yet.</div>');
   var r = li.getBoundingClientRect();
   crew.hidden = false;
   crew.style.left = (r.right + 8) + 'px';
   crew.style.top = Math.max(8, Math.min(r.top - 6, window.innerHeight - crew.offsetHeight - 8)) + 'px';
 }
 function hideCrew(){ clearTimeout(crewTimer); crew.hidden = true; }
+// Hovering an @mention in a message, or the name of a message's author, shows that agent in the same card.
+function agentOf(h){
+  h = String(h || '').toLowerCase();
+  for (var k in S.agents) if (k.toLowerCase() === h) return S.agents[k];
+  return null;
+}
+function showAgentCrew(a, ag){
+  crew.innerHTML = crewRow(ag);
+  crew.hidden = false;
+  var r = a.getBoundingClientRect(), w = crew.offsetWidth, h = crew.offsetHeight;
+  crew.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
+  var top = r.bottom + 6;
+  crew.style.top = (top + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 6) : top) + 'px';     // below it, or above when there is no room
+}
+var AGENT_LINK = 'a.m, .msg .head a.who';
+document.addEventListener('mouseover', function(ev){
+  var a = ev.target.closest && ev.target.closest(AGENT_LINK);
+  if (!a || a.contains(ev.relatedTarget)) return;
+  var ag = agentOf(a.textContent.replace(/^@/, ''));
+  if (!ag) return;
+  clearTimeout(crewTimer);
+  crewTimer = setTimeout(function(){ showAgentCrew(a, ag); }, crew.hidden ? 300 : 80);
+});
+document.addEventListener('mouseout', function(ev){
+  var a = ev.target.closest && ev.target.closest(AGENT_LINK);
+  if (a && !a.contains(ev.relatedTarget)) hideCrew();
+});
+document.addEventListener('scroll', hideCrew, true);
 rail.addEventListener('mouseover', function(ev){
   var li = ev.target.closest('#channels li[data-slug], #channels li.ws');
   if (!li || li.contains(ev.relatedTarget)) return;
