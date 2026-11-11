@@ -756,6 +756,8 @@ def post_message(
         if parent_thread and meta.get("done") is True and not meta.get("needs") and c.execute(
                 "SELECT 1 FROM thread_workers WHERE thread_id=? AND agent_id=?", (parent_thread, agent_id)).fetchone():
             _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished; an ask for a human keeps it open
+        if parent_thread:
+            _claim_on_reply(c, parent_thread, agent_id)
         c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
         c.commit()
     return get_message(mid)
@@ -1037,6 +1039,23 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     if worker["worker"].lower() != agent["handle"].lower():
         raise ValueError(f"thread already has worker @{worker['worker']}")
     return worker
+
+
+def _claim_on_reply(c, tid: int, agent_id: int) -> None:
+    """A bot that was named in a thread's first message and answers it there holds the thread. A mention
+    wakes the bot but does not make it the worker, so without this the bot answers and later replies,
+    sent to the worker only, never reach it. Only a bot the root names, only when nobody holds the thread
+    and it is not completed; the claim's own rules decide the rest."""
+    if c.execute("SELECT 1 FROM thread_workers WHERE thread_id=?", (tid,)).fetchone() \
+            or c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
+        return
+    agent = c.execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
+    if agent is None or not c.execute("SELECT 1 FROM mentions WHERE message_id=? AND agent_id=?", (tid, agent_id)).fetchone():
+        return
+    try:
+        _claim_thread(c, tid, dict(agent))
+    except (PermissionError, ValueError, KeyError):
+        pass                                          # not allowed to hold it: the reply stands, nothing else changes
 
 
 def claim_thread(tid: int, agent: dict) -> dict:

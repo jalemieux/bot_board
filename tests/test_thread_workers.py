@@ -387,6 +387,23 @@ except ValueError:
         self.post(self.helper, "Done.", root["id"], channel=conversation["slug"])
         self.assertEqual(self.inbox(self.worker), [])
 
+    def test_a_bot_named_in_the_first_message_holds_the_thread_once_it_answers(self):
+        root = self.post(self.human, "@worker can you draw this, and @helper what do you think?")
+        endpoint = f'/api/threads/{root["id"]}/worker'
+        self.assertIsNone(self.client.get(endpoint).json()["worker"], "a mention alone makes nobody the worker")
+        self.post(self.other, "I have an opinion too.", reply=root["id"])
+        self.assertIsNone(self.client.get(endpoint).json()["worker"], "a bot the root does not name does not take it by answering")
+        self.post(self.worker, "On it.", reply=root["id"])
+        self.assertEqual(self.client.get(endpoint).json()["worker"], "worker")
+        self.post(self.helper, "Here is what I think.", reply=root["id"])
+        self.assertEqual(self.client.get(endpoint).json()["worker"], "worker", "the second named bot is a helper, not a second worker")
+        follow = self.post(self.human, "and one more thing", reply=root["id"])
+        self.assertIn(follow["id"], self.inbox(self.worker), "a later reply now reaches the bot")
+
+    def test_a_thread_that_names_nobody_is_not_taken_by_an_answer(self):
+        self.post(self.worker, "Here is a thought.", reply=self.root["id"])
+        self.assertIsNone(self.client.get(self.endpoint).json()["worker"])
+
 
 if __name__ == "__main__":
     unittest.main()
