@@ -23,6 +23,11 @@ TART=${TART:-tart}
 LINUX_SRC=${UX_LINUX_SRC:-ghcr.io/cirruslabs/ubuntu:latest}
 MAC_SRC=${UX_MAC_SRC:-ghcr.io/cirruslabs/macos-sequoia-base:latest}
 WAIT=${UX_VM_WAIT:-300}
+# Ubuntu's apt has Node 18, and Playwright needs 20 or newer: the Linux image gets the official Node LTS tarball,
+# pinned to a version and to its published sha256 (nodejs.org/dist/<version>/SHASUMS256.txt)
+NODE_VERSION=${UX_NODE_VERSION:-v22.23.4}
+NODE_SHA_ARM64=${UX_NODE_SHA_ARM64:-6287aa46b6c375d816e63ae66d024fbbfd70404825aabdfdf898a970871d2f4b}
+NODE_SHA_X64=${UX_NODE_SHA_X64:-1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce}
 PUBKEY=$HOME/.ssh/ux_jump.pub
 FORCE=""
 WHAT=all
@@ -40,7 +45,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -r "$PUBKEY" ] || die "no public key at $PUBKEY: create the jump key first (scripts/ux-vm/setup does) or pass --pubkey"
-command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install cirruslabs/cli/tart"
+command -v "$TART" >/dev/null 2>&1 || die "tart is not installed: brew install openai/tools/tart"
 
 # what runs in the VM may not have Homebrew on its PATH (/opt/homebrew/bin on macOS)
 GUEST_PATH='PATH=/opt/homebrew/bin:/usr/local/bin:$PATH;'
@@ -100,7 +105,9 @@ build() {   # build linux|mac
   in_vm "$name" sh -c 'grep -qF -- "$1" ~/.ssh/authorized_keys' sh "$key" || die "the jump key did not reach $name"
   if [ "$os" = linux ]; then
     say "installing node and Playwright with Chromium"
-    in_vm "$name" sudo sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm openssh-server'
+    in_vm "$name" sudo sh -c 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y curl xz-utils ca-certificates openssh-server'
+    say "installing Node $NODE_VERSION from nodejs.org (apt's Node is too old for Playwright)"
+    in_vm "$name" sudo sh -c "set -e; case \$(uname -m) in aarch64|arm64) a=arm64; h=$NODE_SHA_ARM64 ;; x86_64) a=x64; h=$NODE_SHA_X64 ;; *) echo \"no Node for \$(uname -m)\" >&2; exit 1 ;; esac; f=node-$NODE_VERSION-linux-\$a.tar.xz; cd /tmp; curl -fsSLO https://nodejs.org/dist/$NODE_VERSION/\$f; echo \"\$h  \$f\" | sha256sum -c -; tar -xJf \$f -C /usr/local --strip-components=1; rm -f \$f; node --version"
     in_vm "$name" sudo sh -c 'npm install -g playwright && playwright install --with-deps chromium'
   else
     say "installing node and Playwright with Chromium"
