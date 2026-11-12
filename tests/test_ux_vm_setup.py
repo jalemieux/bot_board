@@ -249,6 +249,34 @@ class Setup(unittest.TestCase):
         self.assertTrue(all(l.startswith('from="127.0.0.1",') for l in self.lines()))
         self.assertIn("limited to 127.0.0.1", r.stderr)
 
+    def brew_stub(self, ok=True):
+        # a brew that logs its arguments and, when it works, puts a tart where TART points
+        newtart = Path(self.tmp.name) / "newbin" / "tart"
+        newtart.parent.mkdir(exist_ok=True)
+        body = '#!/usr/bin/env bash\necho "$*" >> "$FAKE/brew"\n'
+        body += (f'cp {Path(self.tmp.name) / "bin" / "tart"} {newtart}\n' if ok else "exit 1\n")
+        script(Path(self.tmp.name) / "bin" / "brew", body)
+        return newtart
+
+    def test_a_missing_tart_is_installed_from_the_openai_tools_tap(self):
+        newtart = self.brew_stub()
+        r = self.run_setup(TART=str(newtart))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((self.fake / "brew").read_text().split("\n")[0], "install openai/tools/tart", "not the old cirruslabs/cli tap")
+        self.assertNotIn("cirruslabs/cli", r.stdout + r.stderr)
+
+    def test_a_brew_that_cannot_install_tart_says_what_to_try(self):
+        newtart = self.brew_stub(ok=False)
+        r = self.run_setup(TART=str(newtart))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("brew trust openai/tools", r.stderr)
+        self.assertIn("https://github.com/openai/tart", r.stderr)
+        self.assertFalse(self.keys.exists(), "nothing else was done")
+
+    def test_no_script_names_the_old_tap(self):
+        for f in ("setup", "ux-vm", "build-base", "README.md"):
+            self.assertNotIn("cirruslabs/cli", (ROOT / "scripts" / "ux-vm" / f).read_text(), f)
+
     def test_existing_images_are_not_rebuilt(self):
         for os_ in ("linux", "mac"):
             (self.fake / "vm" / f"ux-base-{os_}").write_text("")
