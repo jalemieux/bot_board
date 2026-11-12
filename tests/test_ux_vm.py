@@ -187,6 +187,34 @@ class UxVm(unittest.TestCase):
         self.assertNotIn("left alone", r.stderr)
         self.assertEqual(self.images(), ["ux-base-linux", "ux-base-mac"])
 
+    def test_the_linux_image_gets_a_current_node_from_nodejs_org_not_the_old_one_from_apt(self):
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        calls = "\n".join(self.calls())
+        self.assertNotIn("install -y nodejs", calls, "Ubuntu's apt has Node 18; Playwright needs 20 or newer")
+        self.assertIn("apt-get install -y curl xz-utils ca-certificates openssh-server", calls)
+        self.assertIn("https://nodejs.org/dist/v22.23.4/", calls)
+        self.assertIn("sha256sum -c -", calls, "the tarball is checked against its pinned sha256 before it is unpacked")
+        self.assertLess(calls.index("sha256sum -c -"), calls.index("tar -xJf"))
+        self.assertLess(calls.index("tar -xJf"), calls.index("npm install -g playwright"), "Node first, then Playwright")
+
+    def test_the_pinned_node_hashes_are_sha256_values_and_the_version_can_be_overridden(self):
+        import re
+        src = BUILD.read_text()
+        for name in ("NODE_SHA_ARM64", "NODE_SHA_X64"):
+            self.assertRegex(src, name + r":-[0-9a-f]{64}\}")
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build(UX_NODE_VERSION="v24.0.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("https://nodejs.org/dist/v24.0.0/", "\n".join(self.calls()))
+
+    def test_a_node_download_that_fails_stops_the_build_and_leaves_no_image(self):
+        (self.fake / "vm" / "ux-base-linux").unlink()
+        r = self.build(FAKE_EXEC_FAILS="nodejs.org")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(self.images(), ["ux-base-mac"])
+
     def test_a_key_that_did_not_land_stops_the_build(self):
         (self.fake / "vm" / "ux-base-linux").unlink()
         r = self.build(FAKE_NO_STDIN="1")
