@@ -2486,7 +2486,7 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
     h = e(b["handle"])
     k = e(key or b["handle"])
     row = (f'<tr id="bot-{k}" class="bot-row" data-state="{e(st["state"])}" data-group="{e(b.get("workspace") or "")}">'
-           f'<td class="who"{srt(b["handle"])}><a href="/a/{h}">@{h}</a></td>'
+           f'<td class="who"{srt(b["handle"])}><a href="/a/{h}">@{h}</a>{_host_badge(b)}</td>'
            f'<td class="doing"{srt(DOING_ORDER.get(st["state"], len(DOING_ORDER)))}><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
            f'<td data-label="workspace"{srt(b.get("workspace") or b.get("serves") or "")}>{group}</td>'
            f'<td data-label="profile"{srt(b.get("profile") or "")}>{profile}</td>'
@@ -2496,6 +2496,100 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
            f'<td class="tog"><button type="button" class="open-bot" aria-label="Actions for @{h}" aria-expanded="false" '
            f'aria-controls="drawer-{k}" title="its actions and details"></button></td></tr>')
     return row + _drawer(b, host, btn, danger, _stop_panel(b, host, k) if asks and can else "", k)
+
+
+HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home folder and your ssh keys, and it can open "
+                "windows on this Mac's screen while you work. Moving it to another machine puts it back in a container.")
+
+
+def _host_badge(b: dict) -> str:
+    """The mark of a host bot (#595), in one colour wherever its name appears on /fleet: it runs outside a container,
+    as the user of its Mac. Keyed off the board's flag (host_flag, on_host), never off runmode, which every bot has."""
+    if not b.get("host_flag"):
+        return ""
+    by = e(b.get("host_by") or "the operator")
+    if b.get("on_host") and b.get("runmode") == "host":
+        words, title = f"host · as {by}", "runs outside a container, as the user of its Mac"
+    elif b.get("on_host"):
+        words, title = "host · at its next start", "will run outside a container from its next start; it is still in a container now"
+    else:
+        words, title = "host bot · in a container", "flagged as a host bot, but runs in a container: its Mac's switch is off, or it moved"
+    return f' <span class="hostbadge{"" if b.get("on_host") else " off"}" title="{e(title)}">{words}</span>'
+
+
+def _host_block(b: dict) -> str:
+    """A host bot's opened row (#595): how it runs, who set it and when, why, whether the Mac listed it, its apps
+    (with a warning for one the Mac does not have), and the two things a human does: edit the reason, move it back."""
+    if not b.get("host_flag"):
+        return ""
+    box = b.get("_box") or {}
+    h = e(b["handle"])
+    found = {a.get("name", "").lower(): a.get("version", "") for a in box.get("apps") or [] if isinstance(a, dict)}
+    apps = []
+    for name in b.get("host_apps") or []:
+        have = found.get(name.lower())
+        apps.append(f'<li>{e(name)} <b>{e(have)}</b></li>' if have is not None
+                    else f'<li class="prob">{e(name)} <b>not found in /Applications on this Mac</b></li>')
+    listed = (b.get("handle") or "").lower() in [x.lower() for x in box.get("allowed") or []]
+    allowed = ('<span>listed in the Mac\'s host-bots-allowed file <b>yes</b></span>' if listed else
+               f'<span class="prob">waiting for you: add the line <b>{h}</b> to ~/.config/bot_board/host-bots-allowed on the Mac</span>')
+    runs = ("on its Mac, outside a container" if b.get("on_host") else "in a container (its Mac's host switch is off, or it moved)")
+    return (f'<div class="d-host" data-handle="{h}" data-reason="{e(b.get("host_reason") or "")}" data-apps="{e(", ".join(b.get("host_apps") or []))}">'
+            f'<h4>Runs on the host <button type="button" class="act host-edit needs-me">Edit why and apps</button>'
+            f'<button type="button" class="act host-back needs-me">Move back to a container</button></h4>'
+            f'<div class="d-facts"><span>runs <b>{e(runs)}</b></span>'
+            f'<span>set by <b>{e(b.get("host_by") or "?")}</b>{" " + e(ago(b["host_at"])) if b.get("host_at") else ""}</span>{allowed}</div>'
+            f'<div class="quote"><b>Why it needs the host</b><span>{e(b.get("host_reason") or "")}</span></div>'
+            + (f'<ul class="d-apps">{"".join(apps)}</ul>' if apps else '')
+            + '<p class="dim">Moving it back takes effect at its next start and keeps its conversation where its harness allows.</p></div>')
+
+
+def _host_banner(hosts: list) -> str:
+    """At the top of /fleet while any host bot exists (#595): which, where, and why."""
+    items = [(b, h["name"]) for h in hosts for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
+    if not items:
+        return ""
+    lis = "".join(f'<li><a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a> on {e(box)} · '
+                  f'{e(b.get("host_reason") or "no reason given")}</li>' for b, box in items)
+    n = len(items)
+    return (f'<section class="hostbanner" role="status" aria-label="host bots"><b>{n} bot{"s" if n != 1 else ""} '
+            f'run{"s" if n == 1 else ""} outside a container, as the user of {"its" if n == 1 else "their"} Mac</b>'
+            f'<ul>{lis}</ul></section>')
+
+
+def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
+    """The Mac's card (#595): the host-bots switch, its host bots, the apps and handles it reports, and, with the
+    switch on, the short form that creates a new host bot. Nothing on a box that is not a Mac."""
+    if h.get("host_bots") is None:
+        return ""
+    on, name = bool(h["host_bots"]), e(h["name"])
+    mine = [b for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
+    bots = ", ".join(f'<a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
+    apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in h.get("apps") or [] if isinstance(a, dict)) or "none found"
+    allowed = ", ".join(e(x) for x in h.get("host_allowed") or []) or "nobody yet"
+    form = ""
+    if on and h["reporting"]:
+        ws = "".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces) or '<option value="" disabled selected>no workspace yet</option>'
+        prof = '<option value="">none</option>' + "".join(f'<option value="{e(p["name"])}">{e(p["name"])}</option>' for p in profiles)
+        pick = "".join(f'<label class="chk"><input type="checkbox" name="app" value="{e(a["name"])}"> {e(a["name"])} {e(a.get("version", ""))}</label>'
+                       for a in h.get("apps") or [] if isinstance(a, dict) and a.get("name"))
+        form = (f'<details class="hostnew"><summary>Start a host bot</summary>'
+                f'<form class="hostform" data-host="{name}"><p class="prob">{e(HOST_WARNING)}</p>'
+                '<label class="fld"><span><b>Name</b></span><input name="handle" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._-]+"></label>'
+                f'<label class="fld"><span><b>Workspace</b></span><select name="workspace">{ws}</select></label>'
+                f'<label class="fld"><span><b>Role</b></span><select name="profile">{prof}</select></label>'
+                '<label class="fld"><span><b>Harness</b></span><select name="harness"><option>claude</option><option>codex</option></select></label>'
+                '<label class="fld"><span><b>Why it needs the host</b></span><input name="reason" required maxlength="200" placeholder="Godot captures for the effects bots"></label>'
+                f'<div class="fld"><span><b>Apps it uses</b></span>{pick or "<span class=dim>none found in /Applications</span>"}</div>'
+                '<label class="chk"><input type="checkbox" name="ack" required> I understand this bot can read everything my user can.</label>'
+                '<button type="submit" class="act needs-me">Start the host bot</button>'
+                '<p class="dim">After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.</p></form></details>')
+    return (f'<div class="hostbox" data-host="{name}"><b>Host bots</b> '
+            f'<span class="pip {"ok" if on else "bad"}"></span>{"on" if on else "off"} '
+            f'<button type="button" class="act host-switch needs-me" data-host="{name}" data-on="{0 if on else 1}">'
+            f'turn {"off" if on else "on"}</button>'
+            f'<div class="by">{"bots here that run as the user: " + bots if on or mine else "off: every bot here runs in a container"}</div>'
+            f'<div class="by">apps found: {apps}</div><div class="by">allowed on this Mac: {allowed}</div>{form}</div>')
 
 
 def _drawer(b: dict, host: str, acts: str, danger: str, question: str, k: str) -> str:
@@ -2510,7 +2604,7 @@ def _drawer(b: dict, host: str, acts: str, danger: str, question: str, k: str) -
         ("last post", ago(b["last_post"]) if b.get("last_post") else ""),
     ) if v]
     facts_html = ('<div class="d-facts">' + "".join(f'<span>{e(k)} <b>{e(v)}</b></span>' for k, v in facts) + '</div>') if facts else ""
-    facts_html += _voice_block(b)
+    facts_html += _voice_block(b) + _host_block(b)
     held, listed = b.get("open_threads") or 0, b.get("open_thread_list") or []
     items = "".join(f'<li><a href="/t/{t["thread_id"]}">#{e(t["channel"])} · {e(t["title"] or "(untitled)")}</a>'
                     f' <span class="dim">{e(ago(t["last_at"]))}</span></li>' for t in listed[:3])
@@ -2767,6 +2861,46 @@ document.addEventListener('click', function (ev) {
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
+});
+// Host bots (#595): the Mac's switch, a new host bot, editing why and apps, and moving one back to a container.
+function hostCall(method, path, body) {
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  fetch(path, {method: method, headers: {'Authorization': 'Bearer ' + ME.token, 'Content-Type': 'application/json'},
+               body: body ? JSON.stringify(body) : undefined})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.host-switch'); if (!b) return;
+  var on = b.dataset.on === '1';
+  if (on && !confirm('Allow host bots on ' + b.dataset.host + '? A host bot runs outside a container, as the user of this Mac, '
+      + 'and can read every bot token, the home folder and the ssh keys. Each one also needs its name in host-bots-allowed on the Mac.')) return;
+  if (!on && !confirm('Turn host bots off on ' + b.dataset.host + '? Each host bot runs in a container again from its next start.')) return;
+  hostCall('PUT', '/api/fleet/hosts/' + encodeURIComponent(b.dataset.host) + '/host-bots', {on: on});
+});
+document.addEventListener('submit', function (ev) {
+  var f = ev.target.closest('form.hostform'); if (!f) return;
+  ev.preventDefault();
+  var v = function (n) { return (f.elements[n] || {}).value || ''; };
+  var apps = Array.prototype.map.call(f.querySelectorAll('input[name=app]:checked'), function (i) { return i.value; });
+  var body = {host: f.dataset.host, run: true, harness: v('harness'), workspace: v('workspace'), host_reason: v('reason').trim(), host_apps: apps};
+  if (v('profile')) body.profile = v('profile');
+  hostCall('PUT', '/api/fleet/bots/' + encodeURIComponent(v('handle').trim()), body);
+});
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.host-edit'); if (!b) return;
+  var d = b.closest('.d-host');
+  var reason = prompt('Why does @' + d.dataset.handle + ' need the host? One line.', d.dataset.reason); if (reason === null) return;
+  var apps = prompt('The apps it uses, separated by commas.', d.dataset.apps); if (apps === null) return;
+  hostCall('PUT', '/api/fleet/bots/' + encodeURIComponent(d.dataset.handle) + '/host',
+           {reason: reason.trim(), apps: apps.split(',').map(function (x) { return x.trim(); }).filter(Boolean)});
+});
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.host-back'); if (!b) return;
+  var h = b.closest('.d-host').dataset.handle;
+  if (!confirm('Move @' + h + ' back to a container? It runs there from its next start and keeps its conversation where its harness allows.')) return;
+  hostCall('DELETE', '/api/fleet/bots/' + encodeURIComponent(h) + '/host');
 });
 document.addEventListener('change', function (ev) {
   var s = ev.target.closest('select.move'); if (!s || !s.value) return;
@@ -3137,6 +3271,18 @@ setInterval(function () {
 
 
 FLEET_CSS = """
+.fleet-page .hostbanner{margin:0 0 16px;padding:10px 14px;border:1px solid var(--hostc,#b4572a);border-left-width:4px;border-radius:8px;background:color-mix(in srgb,var(--hostc,#b4572a) 8%,var(--panel))}
+.fleet-page .hostbanner ul{margin:6px 0 0;padding-left:18px;font-size:13px}
+.fleet-page .hostbadge{margin-left:6px;padding:1px 7px;border-radius:8px;background:var(--hostc,#b4572a);color:#fff;font:600 10.5px var(--sans);white-space:nowrap}
+.fleet-page .hostbadge.off{background:transparent;color:var(--hostc,#b4572a);border:1px solid var(--hostc,#b4572a)}
+.fleet-page .hostbox{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line);font-size:12.5px}
+.fleet-page .hostbox .by{margin-top:3px}
+.fleet-page .hostnew{margin-top:6px}.fleet-page .hostnew summary{cursor:pointer;color:var(--accent)}
+.fleet-page .hostform{display:grid;gap:6px;max-width:420px;margin-top:6px}
+.fleet-page .hostform .chk{display:block;font-size:12.5px}
+.fleet-page .d-host{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
+.fleet-page .d-host h4{display:flex;gap:8px;align-items:center;margin:0 0 6px}
+.fleet-page .d-apps{margin:6px 0 0;padding-left:18px;font-size:12.5px}
 .fleet-page{max-width:1100px}
 .fleet-page .fleet-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .fleet-page h1{margin:0 0 12px}
@@ -3330,7 +3476,9 @@ def _fleet_section(id_: str, title: str, body: str, is_open: bool = True) -> str
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None,
                claude_token=None) -> str:
     from . import registry_web
-    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
+    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
+                             "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
+             for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
     order = {"working": 0, "waiting": 1, "failing": 2, "starting": 3, "stopping": 4, "moving": 5}
@@ -3427,7 +3575,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         srt = _sort_value
         bad = sum(c["state"] != "ok" for c in h.get("credentials") or [])
         machines.append(
-            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
+            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}{_host_machine_block(h, workspaces, profiles)}</td>'
             f'<td data-label="status" class="nw"{srt(int(h["reporting"]))}>{seen}</td>'
             f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up · {len(bots) - len(up)} stopped</td>'
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
@@ -3492,6 +3640,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <div class="fleet-head"><h1>Fleet</h1>{add_bot}</div>
 {add_bot_card}
 <datalist id="profiles-data">{"".join(f'<option value="{e(p["name"])}"></option>' for p in profiles)}</datalist>
+{_host_banner(hosts)}
 {attention}
 <nav class="fleet-tabs" aria-label="Fleet">
 <a href="#tab-bots">Bots <b>{len(active)}</b>{f' <span class="dim">· {len(stopped)} stopped</span>' if stopped else ""}</a>

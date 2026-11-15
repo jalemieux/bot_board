@@ -1012,6 +1012,33 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     return {"ok": True}
 
 
+class FleetHostDetailsIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=200, description="Why the bot needs the host.")
+    apps: list[str] | None = Field(default=None, max_length=20, description="The apps it uses, by name.")
+
+
+@app.put("/api/fleet/bots/{handle}/host", tags=["fleet"])
+def fleet_host_details(handle: str, body: FleetHostDetailsIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human edits a host bot's reason and apps (#595). The flag itself is only set when the bot is created."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human edits a host bot")
+    why = fleet.set_host_details(handle, body.reason, body.apps)
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
+
+
+@app.delete("/api/fleet/bots/{handle}/host", tags=["fleet"])
+def fleet_host_clear(handle: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human moves a host bot back to a container (#595): it runs there from its next start."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human moves a host bot back to a container")
+    why = fleet.clear_host(handle)
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
+
+
 @app.put("/api/fleet/hosts/{name}/host-bots", tags=["fleet"])
 def fleet_host_bots(name: str, body: FleetHostBotsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human turns the host-bots switch of a Mac on or off (#595). A bot's token is refused."""
