@@ -464,7 +464,7 @@ class ContainerRun(unittest.TestCase):
         (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n")
         time.sleep(7)
         self.assertEqual(L.prompts(), [], "a file that lists another bot is no consent for this one")
-        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n%s\n" % L.name)
+        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n  %s \n" % L.name)   # spaces around it are fine
         L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn once the bot is listed", timeout=30)
         self.assertEqual(L.read("runmode"), "host")
         self.assertNotIn("waiting for the Mac", L.read("health"))

@@ -1089,7 +1089,9 @@ log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPA
 # consulted, so a file a host bot writes for another bot does nothing. Decided at every start. Until the consent
 # file exists the bot waits and says so in its health line, which /fleet shows. $STATE/runmode records the result.
 BOT_HOST_CONSENT=${BOT_HOST_CONSENT:-$CFG/host-bots-allowed}
-host_allowed() { [ -f "$BOT_HOST_CONSENT" ] && grep -qixF "$HANDLE" "$BOT_HOST_CONSENT" 2>/dev/null; }
+host_allowed() {       # a line holding the handle, spaces around it ignored, as the keeper reads the file
+  [ -f "$BOT_HOST_CONSENT" ] && sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "$BOT_HOST_CONSENT" 2>/dev/null | grep -qixF "$HANDLE"
+}
 # RUN_MODE: container (the box has a runtime), native (it has none: every bot runs on it) or host (decide_host
 # chose it for a bot the board says is a host bot). Only "host" marks a bot as one that runs as the user by exception.
 RUN_MODE=native; [ -z "${BOT_RUNTIME:-}" ] || RUN_MODE=container
