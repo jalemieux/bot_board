@@ -47,6 +47,8 @@ class CodexFlags(unittest.TestCase):
         self.assertEqual(flags(then=host, BOT_RUNTIME="docker",
                                BOT_CODEX_FLAGS="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"), sandboxed)
         self.assertEqual(flags(then=host, BOT_CODEX_FLAGS="--full-auto"), "--full-auto", "other flags the box set stay")
+        for unsafe in ("--yolo --skip-git-repo-check", "-s danger-full-access --skip-git-repo-check"):
+            self.assertEqual(flags(then=host, BOT_CODEX_FLAGS=unsafe), sandboxed, unsafe)
 
     def test_an_empty_runtime_is_not_a_container(self):
         self.assertIn("workspace-write", flags(BOT_RUNTIME=""))

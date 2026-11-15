@@ -424,10 +424,10 @@ codex_flags_default() {
   fi
 }
 # A host bot (#595) runs as the user, so codex's own sandbox stays on: a box that set the container workaround
-# (the bypass flag, #582) does not get it for a host bot. The flag is replaced, and one line says so.
+# (the bypass flag, #582; also --yolo and a danger-full-access sandbox) does not get it for a host bot. The flag is replaced, and one line says so.
 codex_flags_host() {
   case " ${BOT_CODEX_FLAGS:-} " in
-    *" --dangerously-bypass-approvals-and-sandbox "*)
+    *" --dangerously-bypass-approvals-and-sandbox "*|*" --yolo "*|*danger-full-access*)
       log "host: BOT_CODEX_FLAGS holds the sandbox bypass flag, which a host bot does not use: codex runs with its own sandbox"
       BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check" ;;
     *) codex_flags_default ;;
