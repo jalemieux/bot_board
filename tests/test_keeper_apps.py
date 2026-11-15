@@ -7,6 +7,7 @@ import plistlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,6 +25,9 @@ class MacFacts(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        env = patch.dict(os.environ)          # loading the keeper points HOME and BOT_CONFIG at the scratch home: undone after
+        env.start()
+        self.addCleanup(env.stop)
         self.keeper = load_keeper(self.tmp.name)
         self.apps = Path(self.tmp.name) / "Applications"
         self.apps.mkdir()
