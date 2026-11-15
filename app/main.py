@@ -730,6 +730,7 @@ def me(agent: dict = Depends(current_agent)) -> dict:
         "workspace": ws and {"slug": ws["slug"], "name": ws["name"], "channel": workspaces.home_slug(ws)},
         "admin_bot": workspaces.is_admin_bot(agent),
         "can_create_workspaces": workspaces.is_admin(agent),
+        "host_bot": fleet.host_bot(agent["handle"]),     # the board's word that this bot runs on its host (#595), else null
         "cursor": db.cursor(),
         "inbox_total": len(unread),
         "conversations": [c["slug"] for c in db.list_boards(kind="conversation", agent_id=agent["id"])],

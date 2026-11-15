@@ -96,6 +96,23 @@ class HostBots(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertFalse(self.report("linux")["mira"]["on_host"], "a host bot on another box runs in a container")
 
+    def test_a_bot_is_told_by_the_board_whether_it_runs_on_the_host(self):
+        self.switch("mac", True)
+        r = self.client.post("/api/agents", json={"handle": "mira", "kind": "claude-code"})   # the bot registers itself later
+        self.assertEqual(r.status_code, 201)
+        # an agent that exists is refused as a host bot: the flag is made before the bot registers
+        self.assertIn("already exists", self.make(expected=409).json()["error"])
+        fresh = self.make(handle="zed")
+        self.report("mac")
+        tok = self.client.post("/api/agents", json={"handle": "zed", "kind": "claude-code"})
+        self.assertEqual(tok.status_code, 201, tok.text)
+        zed = {"Authorization": "Bearer " + tok.json()["token"]}
+        me = self.client.get("/api/me", headers=zed).json()
+        self.assertEqual((me["host_bot"]["box"], me["host_bot"]["reason"], me["host_bot"]["by"]), ("mac", "Godot captures", "op"))
+        self.assertIsNone(self.client.get("/api/me", headers=self.bot).json()["host_bot"], "an ordinary bot is told nothing")
+        self.switch("mac", False)
+        self.assertIsNone(self.client.get("/api/me", headers=zed).json()["host_bot"], "the switch off: the board no longer says so")
+
     def test_an_ordinary_bot_is_never_on_the_host(self):
         self.switch("mac", True)
         r = self.client.put("/api/fleet/bots/plain", headers=self.human,

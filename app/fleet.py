@@ -496,6 +496,18 @@ def _host_fields(w: dict, box: str, switch: bool) -> dict:
             else json.loads(w["host_apps"]) if w.get("host_apps") else []}
 
 
+def host_bot(handle: str) -> dict | None:
+    """The board's own record that this bot runs on the host (#595), or None: what `GET /api/me` tells a bot,
+    so a launcher starts it outside a container only when the board says so, whatever files sit on the box.
+    Set only while the bot is on the box it was made for and that box's switch is on."""
+    r = db.conn().execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    if r is None or not r["onhost"]:
+        return None
+    w = _host_fields(dict(r), r["host"], host_bots_on(r["host"]))
+    return {"box": r["host"], "reason": w["host_reason"], "by": w["host_by"], "at": w["host_at"],
+            "apps": w["host_apps"]} if w["on_host"] else None
+
+
 def _deleted(handle: str) -> bool:
     a = db.get_agent_by_handle(handle)
     return bool(a and a.get("retired_at"))
