@@ -412,12 +412,18 @@ BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
 # codex sandboxes its commands with bubblewrap, which cannot create namespaces inside a container:
 # every command then fails ("bwrap: No permissions to create a new namespace"). With BOT_RUNTIME set the
 # container is the sandbox, as it is for claude (bypassPermissions), so codex runs without its own (#582).
-# A BOT_CODEX_FLAGS set on the box or in the environment wins.
-if [ -n "${BOT_RUNTIME:-}" ]; then
-  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox --skip-git-repo-check}
-else
-  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
-fi
+# A BOT_CODEX_FLAGS set on the box or in the environment wins. A host bot (#595) turns BOT_RUNTIME off
+# for itself after this point, so the default is picked again then: on the host codex keeps its own sandbox.
+_CODEX_FLAGS_SET=${BOT_CODEX_FLAGS+x}
+codex_flags_default() {
+  [ -z "$_CODEX_FLAGS_SET" ] || return 0
+  if [ -n "${BOT_RUNTIME:-}" ]; then
+    BOT_CODEX_FLAGS="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+  else
+    BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check"
+  fi
+}
+codex_flags_default
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
@@ -1064,6 +1070,39 @@ trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"' EXIT
 # what ended sessions left behind goes at every start; skill clones only on `bot gc`
 gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "gc: $line"; done || true
 log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPACE}, seen=$SEEN"
+
+# ---- host bots (#595) --------------------------------------------------------------------
+# A bot the board says runs on its host starts outside a container, as the user running this launcher:
+# only when ALL of these hold: the board's own record says so (GET /api/me, host_bot: it is flagged, on the
+# box it was made for, that box's switch on), this is a Mac, and the box's owner made the consent file
+# (a file only the Mac's user can create; a container bot cannot). Nothing in the bot's own state directory is
+# consulted, so a file a host bot writes for another bot does nothing. Decided at every start. Until the consent
+# file exists the bot waits and says so in its health line, which /fleet shows. $STATE/runmode records the result.
+BOT_HOST_CONSENT=${BOT_HOST_CONSENT:-$CFG/host-bots-allowed}
+RUN_MODE=container; [ -n "${BOT_RUNTIME:-}" ] || RUN_MODE=host      # as the box's own setting has it
+decide_host() {
+  local box waited=0
+  box=$(api --max-time 20 "$BOARD/api/me" 2>/dev/null | python3 -c '
+import sys,json
+try: h=json.load(sys.stdin).get("host_bot")
+except ValueError: h=None
+print(h.get("box","") if isinstance(h,dict) else "")' 2>/dev/null) || box=
+  [ -n "$box" ] || return 0                 # the board does not say so: this bot runs as the box says
+  if [ "$(uname -s)" != Darwin ]; then
+    log "host: the board says $HANDLE runs on its host, but this is not a Mac; it runs as this box says"; return 0
+  fi
+  while [ ! -f "$BOT_HOST_CONSENT" ]; do
+    echo "waiting for the Mac: the board says $HANDLE runs on its host, and host bots are not allowed here; create $BOT_HOST_CONSENT" >"$STATE/health"
+    [ ! -e "$STATE/stop" ] || return 0
+    [ "$waited" -gt 0 ] || log "host: waiting for $BOT_HOST_CONSENT before $HANDLE starts on the host"
+    waited=1; sleep 5
+  done
+  grep -q '^waiting for the Mac' "$STATE/health" 2>/dev/null && rm -f "$STATE/health"
+  BOT_RUNTIME=""; RUN_MODE=host; codex_flags_default
+  log "host: $HANDLE runs outside a container, as $(id -un) on $(hostname -s); the board and $BOT_HOST_CONSENT agree"
+}
+decide_host
+echo "$RUN_MODE" > "$STATE/runmode"
 
 # ---- the bot's skills ----------------------------------------------------------------
 # A bot's skills come from the board, their only home (#328), and the launcher keeps the

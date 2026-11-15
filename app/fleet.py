@@ -466,8 +466,17 @@ def _host_bot_problem(handle: str, boxes: dict, host: str, run: bool, here: dict
 
 
 def host_bots_on(host: str) -> bool:
-    r = db.conn().execute("SELECT on_ FROM fleet_host_bots WHERE host=?", (host,)).fetchone()
-    return bool(r and r["on_"])
+    """The box's switch is on and its latest report says macOS: a box whose name a Linux keeper took over later
+    has no host bots, whatever the switch says."""
+    c = db.conn()
+    r = c.execute("SELECT on_ FROM fleet_host_bots WHERE host=?", (host,)).fetchone()
+    if not (r and r["on_"]):
+        return False
+    row = c.execute("SELECT report FROM fleet_hosts WHERE name=?", (host,)).fetchone()
+    try:
+        return bool(row) and _is_mac(json.loads(row["report"]))
+    except ValueError:
+        return False
 
 
 def set_host_bots(host: str, on: bool, by: str) -> str | None:

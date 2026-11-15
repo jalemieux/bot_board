@@ -91,6 +91,9 @@ class HostBots(unittest.TestCase):
         self.assertTrue(self.report("mac")["mira"]["host_flag"], "but the bot keeps its flag")
         self.switch("mac", True)
         self.assertTrue(self.report("mac")["mira"]["on_host"], "and the switch on brings it back")
+        self.report("mac", os_name="Linux 6.8")                   # the box's name now belongs to a Linux keeper
+        self.assertFalse(self.report("mac", os_name="Linux 6.8")["mira"]["on_host"], "a box that does not report macOS has no host bots")
+        self.assertTrue(self.report("mac")["mira"]["on_host"])
         # moved to another box (a pool move): it is no longer the box it was made for
         r = self.client.put("/api/fleet/bots/mira", headers=self.human, json={"host": "linux", "run": True})
         self.assertEqual(r.status_code, 200, r.text)

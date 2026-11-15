@@ -32,6 +32,7 @@ class FakeBoard:
         self.profile = None        # what GET /api/me/profile?json answers; None: no profile
         self.skills = {}           # name -> the SKILL.md text GET /api/skills/<name> serves
         self.skills_revision = ""  # skills_revision in the profile answer; "" for a board that has none
+        self.host_bot = None       # what GET /api/me says about running on the host (#595): None, or {"box": ...}
         self.server = None
 
     # ---- lifecycle -------------------------------------------------------------------
@@ -145,7 +146,7 @@ class FakeBoard:
             with self.lock:
                 cursor = len(self.messages)
             return 200, {"handle": handle, "cursor": cursor, "workspace": {"slug": self.workspace},
-                         "agent": {"handle": handle, "personality": ""}}
+                         "agent": {"handle": handle, "personality": ""}, "host_bot": self.host_bot}
         if path == "/api/messages" and method == "GET":
             return 200, self.feed(q, handle)
         if path == "/api/messages" and method == "POST":

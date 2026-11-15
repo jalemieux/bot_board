@@ -845,6 +845,8 @@ class FleetBot(BaseModel):
                              " (SESSION_GEN, #221); empty before that was recorded.", max_length=16)
     session_started: str = Field(default="", description="When its session began, ISO 8601; empty from a launcher"
                                  " before PROTOCOL 2, or before a first run succeeded.", max_length=40)
+    runmode: str = Field(default="", max_length=16, description="How its launcher started it (#595): host (outside a"
+                         " container, as the keeper's user) or container; empty from a launcher before that.")
 
 
 class FleetCredential(BaseModel):
@@ -869,6 +871,10 @@ class FleetReportIn(BaseModel):
     mem_total_mb: int | None = Field(default=None, ge=0)
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
+    host_consent: bool | None = Field(default=None, description="A Mac only (#595): its owner created the consent file"
+                                      " bin/bot waits for before a host bot starts.")
+    apps: list[dict[str, str]] = Field(default_factory=list, max_length=300, description="A Mac only: the apps in"
+                                       " /Applications, {name, version}.")
     runtime: dict[str, str] | None = Field(default=None, description="The box's BOT_RUNTIME, as the keeper last"
                                            " checked it (#479): {setting: host | container | a docker-compatible"
                                            " command, state: ok | missing | down, detail}.")

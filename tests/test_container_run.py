@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -405,6 +406,79 @@ class ContainerRun(unittest.TestCase):
         r = self.run_sub(["claude", "--handle", "tbot", "--dir", empty, "--", "--version"],
                          self.sub_env({"BOT_CONTAINER_HOST_NETWORK": "1"}))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    # ---- host bots (#595): outside the container only when the board, a Mac and its owner all say so ------
+    def host_bot(self, harness="claude", board_says=True, mac=True, consent=True, state_file=False):
+        """A launcher for a bot on a box with BOT_RUNTIME set, against a board that says (or not) that this
+        bot runs on its host; `mac` fakes uname, `consent` makes the owner's file, `state_file` plants a host
+        file in the bot's own state directory (which must change nothing)."""
+        board = FakeBoard()
+        board.__enter__()
+        self.addCleanup(board.__exit__, None, None, None)
+        if board_says:
+            board.host_bot = {"box": "mac", "reason": "Godot captures", "by": "op", "at": "now", "apps": []}
+        L = Launcher(board, harness, env={"BOT_RUNTIME": str(self.runtime), "FAKE_RUNTIME_LOG": str(self.log),
+                                          "BOT_CONTAINER_HOST_NETWORK": "1"})
+        self.addCleanup(L.close)
+        uname = Path(L.bin) / "uname"
+        uname.write_text("#!/bin/sh\necho %s\n" % ("Darwin" if mac else "Linux"))
+        uname.chmod(0o755)
+        checkout = Path(L.tmp.name) / "work" / L.name
+        checkout.mkdir(parents=True, exist_ok=True)
+        (checkout / ".keep").write_text("a non-empty checkout")
+        cfg = Path(L.tmp.name) / ".config" / "bot_board"
+        cfg.mkdir(parents=True, exist_ok=True)
+        if consent:
+            (cfg / "host-bots-allowed").write_text("")
+        if state_file:
+            L.state.mkdir(parents=True, exist_ok=True)
+            (L.state / "host").write_text("1")
+        L.plan(fh.step(harness, "ok", "rules read"), fh.step(harness, "ok", "done"))
+        return board, L
+
+    def container_runs(self):
+        return [c for c in self.calls() if c and c[0] == "run"]
+
+    def test_a_host_bot_runs_on_the_host_when_the_board_a_mac_and_its_owner_agree(self):
+        board, L = self.host_bot()
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        L.wait_for(lambda: L.read("runmode") == "host", "the run mode recorded")
+        self.assertEqual(self.container_runs(), [], "no container: the harness ran on the host")
+        self.assertIn("runs outside a container", L.log())
+
+    def test_a_host_codex_bot_keeps_codex_own_sandbox(self):
+        board, L = self.host_bot(harness="codex")
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        run = next(r for r in L.runs() if "exec" in r)
+        self.assertIn("workspace-write", run)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", run, "on the host codex is not run without its sandbox")
+
+    def test_without_the_owners_consent_file_a_host_bot_waits_and_says_so(self):
+        board, L = self.host_bot(consent=False)
+        L.start()
+        L.wait_for(lambda: "waiting for the Mac" in L.read("health"), "the waiting health line")
+        time.sleep(1)
+        self.assertEqual((L.prompts(), self.container_runs()), ([], []), "nothing ran while it waits")
+        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("")
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn once the file exists", timeout=30)
+        self.assertEqual(L.read("runmode"), "host")
+        self.assertNotIn("waiting for the Mac", L.read("health"))
+
+    def test_a_host_file_in_the_bots_state_directory_does_nothing(self):
+        board, L = self.host_bot(board_says=False, state_file=True)
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertTrue(self.container_runs(), "the board never said so: it runs in its container")
+        self.assertEqual(L.read("runmode"), "container")
+
+    def test_a_host_bot_on_a_box_that_is_not_a_mac_stays_in_its_container(self):
+        board, L = self.host_bot(mac=False)
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertTrue(self.container_runs())
+        self.assertEqual(L.read("runmode"), "container")
 
     def test_bot_mode_needs_a_checkout_dir(self):
         r = self.run_sub(["claude", "--handle", "tbot", "--", "--version"], self.sub_env())
