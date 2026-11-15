@@ -2506,10 +2506,15 @@ def _host_badge(b: dict) -> str:
     """The mark of a host bot (#595), in one colour wherever its name appears on /fleet: it runs outside a container,
     as the user of its Mac. Keyed off the board's flag (host_flag, on_host), never off runmode, which every bot has."""
     if not b.get("host_flag"):
+        if b.get("runmode") == "host":      # moved back, but still running on the host until it restarts: it still has the access
+            return (' <span class="hostbadge" title="moved back to a container; it still runs on the host, with its access, '
+                    'until it restarts">host · leaving at its next restart</span>')
         return ""
     by = e(b.get("host_by") or "the operator")
     if b.get("on_host") and b.get("runmode") == "host":
         words, title = f"host · as {by}", "runs outside a container, as the user of its Mac"
+    elif b.get("on_host") and (b.get("handle") or "").lower() not in [x.lower() for x in (b.get("_box") or {}).get("allowed") or []]:
+        words, title = "host · waiting for the Mac", "its name is not yet in host-bots-allowed on the Mac, so it does not start"
     elif b.get("on_host"):
         words, title = "host · at its next start", "will run outside a container from its next start; it is still in a container now"
     else:
@@ -2533,7 +2538,9 @@ def _host_block(b: dict) -> str:
     listed = (b.get("handle") or "").lower() in [x.lower() for x in box.get("allowed") or []]
     allowed = ('<span>listed in the Mac\'s host-bots-allowed file <b>yes</b></span>' if listed else
                f'<span class="prob">waiting for you: add the line <b>{h}</b> to ~/.config/bot_board/host-bots-allowed on the Mac</span>')
-    runs = ("on its Mac, outside a container" if b.get("on_host") else "in a container (its Mac's host switch is off, or it moved)")
+    runs = ("on its Mac, outside a container" if b.get("on_host") and b.get("runmode") == "host"
+            else "in a container now, and on its Mac from its next start" if b.get("on_host")
+            else "in a container (its Mac's host switch is off, or it moved)")
     return (f'<div class="d-host" data-handle="{h}" data-reason="{e(b.get("host_reason") or "")}" data-apps="{e(", ".join(b.get("host_apps") or []))}">'
             f'<h4>Runs on the host <button type="button" class="act host-edit needs-me">Edit why and apps</button>'
             f'<button type="button" class="act host-back needs-me">Move back to a container</button></h4>'
@@ -2546,11 +2553,12 @@ def _host_block(b: dict) -> str:
 
 def _host_banner(hosts: list) -> str:
     """At the top of /fleet while any host bot exists (#595): which, where, and why."""
-    items = [(b, h["name"]) for h in hosts for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
+    items = [(b, h["name"]) for h in hosts for b in h["bots"]
+             if (b.get("host_flag") or b.get("runmode") == "host") and not b.get("deleted")]
     if not items:
         return ""
     lis = "".join(f'<li><a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a> on {e(box)} · '
-                  f'{e(b.get("host_reason") or "no reason given")}</li>' for b, box in items)
+                  f'{e(b.get("host_reason") or "moved back; leaves the host at its next restart")}</li>' for b, box in items)
     n = len(items)
     return (f'<section class="hostbanner" role="status" aria-label="host bots"><b>{n} bot{"s" if n != 1 else ""} '
             f'run{"s" if n == 1 else ""} outside a container, as the user of {"its" if n == 1 else "their"} Mac</b>'
@@ -2899,7 +2907,8 @@ document.addEventListener('click', function (ev) {
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.host-back'); if (!b) return;
   var h = b.closest('.d-host').dataset.handle;
-  if (!confirm('Move @' + h + ' back to a container? It runs there from its next start and keeps its conversation where its harness allows.')) return;
+  if (!confirm('Move @' + h + ' back to a container? It runs there from its next start and keeps its conversation where its harness allows. '
+      + 'This cannot be undone: to run it on the host again, start a new host bot.')) return;
   hostCall('DELETE', '/api/fleet/bots/' + encodeURIComponent(h) + '/host');
 });
 document.addEventListener('change', function (ev) {
@@ -3278,7 +3287,11 @@ FLEET_CSS = """
 .fleet-page .hostbox{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line);font-size:12.5px}
 .fleet-page .hostbox .by{margin-top:3px}
 .fleet-page .hostnew{margin-top:6px}.fleet-page .hostnew summary{cursor:pointer;color:var(--accent)}
-.fleet-page .hostform{display:grid;gap:6px;max-width:420px;margin-top:6px}
+.fleet-page .hostform{display:grid;gap:6px;max-width:460px;margin-top:6px}
+.fleet-page .hostbox,.fleet-page .hostform{white-space:normal}
+.fleet-page .hostform .fld{display:grid;gap:2px}
+.fleet-page .hostform input[type=text],.fleet-page .hostform input:not([type]),.fleet-page .hostform select{width:100%;box-sizing:border-box}
+.fleet-page tr.hostrow td{padding-left:14px}
 .fleet-page .hostform .chk{display:block;font-size:12.5px}
 .fleet-page .d-host{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
 .fleet-page .d-host h4{display:flex;gap:8px;align-items:center;margin:0 0 6px}
@@ -3575,13 +3588,15 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         srt = _sort_value
         bad = sum(c["state"] != "ok" for c in h.get("credentials") or [])
         machines.append(
-            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}{_host_machine_block(h, workspaces, profiles)}</td>'
+            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
             f'<td data-label="status" class="nw"{srt(int(h["reporting"]))}>{seen}</td>'
             f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up · {len(bots) - len(up)} stopped</td>'
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
             f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
             # how many of its logins are in trouble
-            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
+            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>'
+            # a Mac's host-bots block has its own full-width row under it, which a sort keeps beneath the Mac
+            + (f'<tr class="bot-drawer hostrow"><td colspan="7">{blk}</td></tr>' if (blk := _host_machine_block(h, workspaces, profiles)) else ""))
     machines_html = (('<table class="bots machines"><thead><tr>'
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else

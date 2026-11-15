@@ -38,6 +38,7 @@ class HostBotsPage(unittest.TestCase):
         self.assertIn("Godot captures", page)
         self.assertEqual(page.count('class="hostbadge"'), 1, "only the host bot is marked, not a bot on a box with no runtime")
         self.assertIn("host · as op", page)
+        self.assertIn("on its Mac, outside a container", page)
         self.assertIn("Runs on the host", page)
         self.assertIn("not found in /Applications on this Mac", page)       # Blender is not on this Mac
         self.assertIn("Godot <b>4.6.1</b>", page)
@@ -50,6 +51,14 @@ class HostBotsPage(unittest.TestCase):
         self.assertNotIn("waiting for you", page)
         self.assertIn("waiting for you: add the line <b>mira</b>", page2)
 
+    def test_a_host_bot_that_has_not_started_yet_is_said_to_wait_and_then_to_start_at_its_next_start(self):
+        fresh = dict(MIRA, runmode="")
+        waiting = self.render([host("jacs-m5", [bot("mira", **fresh)], os_name="Darwin 25.0", host_bots=True, host_allowed=[], apps=[])])
+        self.assertIn("host · waiting for the Mac", waiting)
+        self.assertIn("in a container now, and on its Mac from its next start", waiting)
+        listed = self.render([mac([bot("mira", **fresh)])])
+        self.assertIn("host · at its next start", listed)
+
     def test_a_flagged_bot_off_the_host_says_it_is_in_a_container(self):
         off = dict(MIRA, on_host=False)
         page = self.render([mac([bot("mira", **off)], on=False)])
@@ -59,6 +68,7 @@ class HostBotsPage(unittest.TestCase):
     def test_the_switch_and_the_form_are_on_a_mac_only(self):
         page = self.render([mac([], on=True), host("box", [])])
         self.assertEqual(page.count('class="hostbox"'), 1, "the Linux box has no host-bots block")
+        self.assertIn('<tr class="bot-drawer hostrow"><td colspan="7"><div class="hostbox"', page, "its own full-width row under the Mac")
         self.assertIn('data-on="0"', page)                  # on: the button turns it off
         self.assertIn('class="hostform"', page)
         self.assertIn("It can read every bot", page)        # the warning the form carries
@@ -66,6 +76,12 @@ class HostBotsPage(unittest.TestCase):
         off = self.render([mac([], on=False)])
         self.assertIn('data-on="1"', off)
         self.assertNotIn('class="hostform"', off, "no form while the switch is off")
+
+    def test_a_bot_moved_back_but_still_running_on_the_host_is_still_marked(self):
+        gone = dict(want="running", pool=True, runmode="host", host_flag=False, on_host=False)
+        page = self.render([mac([bot("mira", **gone)])])
+        self.assertIn("host · leaving at its next restart", page)
+        self.assertIn('class="hostbanner"', page)
 
     def test_a_page_with_no_host_bot_has_no_banner(self):
         page = self.render([host("box", [bot("zed", runmode="native")])])
