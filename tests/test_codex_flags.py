@@ -7,13 +7,13 @@ import unittest
 from pathlib import Path
 
 SOURCE = (Path(__file__).resolve().parents[1] / "bin" / "bot").read_text()
-BLOCK = SOURCE[SOURCE.index("if [ -n \"${BOT_RUNTIME:-}\" ]; then\n  BOT_CODEX_FLAGS="):]
-BLOCK = BLOCK[:BLOCK.index("\nfi\n") + 4]
+BLOCK = SOURCE[SOURCE.index("_CODEX_FLAGS_SET=${BOT_CODEX_FLAGS+x}"):]
+BLOCK = BLOCK[:BLOCK.index("\ncodex_flags_default\n") + len("\ncodex_flags_default\n")]
 
 
-def flags(**env):
+def flags(then="", **env):
     base = {k: v for k, v in os.environ.items() if k not in ("BOT_RUNTIME", "BOT_CODEX_FLAGS")}
-    r = subprocess.run(["bash", "-c", BLOCK + '\nprintf "%s" "$BOT_CODEX_FLAGS"'], env={**base, **env},
+    r = subprocess.run(["bash", "-c", BLOCK + then + '\nprintf "%s" "$BOT_CODEX_FLAGS"'], env={**base, **env},
                        capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
     return r.stdout
@@ -31,6 +31,14 @@ class CodexFlags(unittest.TestCase):
     def test_a_box_that_sets_its_own_flags_keeps_them_in_a_container_and_outside(self):
         self.assertEqual(flags(BOT_RUNTIME="docker", BOT_CODEX_FLAGS="-s read-only"), "-s read-only")
         self.assertEqual(flags(BOT_CODEX_FLAGS="--full-auto"), "--full-auto")
+
+    def test_a_host_bot_turns_the_runtime_off_after_the_flags_were_picked_and_gets_the_sandbox(self):
+        # the launcher picked the container default at load; a host bot (#595) unsets BOT_RUNTIME and picks again
+        host = 'BOT_RUNTIME=""; codex_flags_default'
+        self.assertEqual(flags(then=host, BOT_RUNTIME="docker"),
+                         "-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check")
+        self.assertEqual(flags(then=host, BOT_RUNTIME="docker", BOT_CODEX_FLAGS="-s read-only"), "-s read-only",
+                         "flags the box set stay, on the host too")
 
     def test_an_empty_runtime_is_not_a_container(self):
         self.assertIn("workspace-write", flags(BOT_RUNTIME=""))
