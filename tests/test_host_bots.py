@@ -125,6 +125,8 @@ class HostBots(unittest.TestCase):
         row = self.report("mac")["mira"]
         self.assertEqual((row["host_reason"], row["host_apps"]), ("Blender renders", ["Blender"]))
         self.assertEqual(put(self.human, reason="  ").status_code, 409)
+        self.assertEqual(put(self.human, reason="Changed", apps=["x" * 65]).status_code, 409)
+        self.assertEqual(self.report("mac")["mira"]["host_reason"], "Blender renders", "a refused edit changes nothing")
         self.assertEqual(self.client.put("/api/fleet/bots/edie/host", headers=self.human, json={"reason": "x"}).status_code, 409,
                          "an ordinary bot cannot be given host details")
         self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.bot).status_code, 403)
