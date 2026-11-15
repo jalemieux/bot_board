@@ -523,6 +523,18 @@ HOST_CONSENT = os.environ.get("BOT_HOST_CONSENT") or os.path.join(CFG, "host-bot
 _apps = {"at": 0.0, "list": []}
 
 
+APPS_DIR = "/Applications"
+
+
+def host_allowed():
+    """The handles the Mac's owner listed in the consent file (#595), one per line, lower case."""
+    try:
+        with open(HOST_CONSENT, encoding="utf-8", errors="replace") as fh:
+            return sorted({ln.strip().lower() for ln in fh if ln.strip()})[:50]
+    except OSError:
+        return []
+
+
 def mac_apps():
     """The apps in /Applications with their versions (#595), for a Mac's host bots: [{name, version}], read from
     each bundle's Info.plist, at most every ten minutes. Only a Mac reports any."""
@@ -531,14 +543,16 @@ def mac_apps():
     found = []
     try:
         import plistlib
-        for entry in sorted(os.listdir("/Applications"))[:400]:
+        for entry in sorted(os.listdir(APPS_DIR))[:400]:
             if not entry.endswith(".app"):
                 continue
-            try:
-                with open(os.path.join("/Applications", entry, "Contents", "Info.plist"), "rb") as fh:
+            version = ""
+            try:       # one broken bundle (malformed XML, a plist that is not a dict) must not stop the keeper reporting
+                with open(os.path.join(APPS_DIR, entry, "Contents", "Info.plist"), "rb") as fh:
                     info = plistlib.load(fh)
-                version = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")[:40]
-            except (OSError, ValueError, plistlib.InvalidFileException):
+                if isinstance(info, dict):
+                    version = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")[:40]
+            except Exception:
                 version = ""
             found.append({"name": entry[:-4][:64], "version": version})
     except OSError:
@@ -548,11 +562,11 @@ def mac_apps():
 
 
 def host_facts():
-    """What a Mac says about host bots (#595): whether its owner allowed them (the consent file bin/bot
-    waits for) and the apps found. Nothing from any other box."""
+    """What a Mac says about host bots (#595): the handles its owner listed in the consent file bin/bot checks,
+    and the apps found. Nothing from any other box."""
     if sys.platform != "darwin":
         return {}
-    return {"host_consent": os.path.exists(HOST_CONSENT), "apps": mac_apps()}
+    return {"host_allowed": host_allowed(), "apps": mac_apps()}
 
 
 def snapshot():

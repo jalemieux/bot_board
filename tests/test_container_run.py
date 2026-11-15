@@ -429,7 +429,7 @@ class ContainerRun(unittest.TestCase):
         cfg = Path(L.tmp.name) / ".config" / "bot_board"
         cfg.mkdir(parents=True, exist_ok=True)
         if consent:
-            (cfg / "host-bots-allowed").write_text("")
+            (cfg / "host-bots-allowed").write_text("someone-else\n%s\n" % L.name)     # the owner listed this bot
         if state_file:
             L.state.mkdir(parents=True, exist_ok=True)
             (L.state / "host").write_text("1")
@@ -455,14 +455,17 @@ class ContainerRun(unittest.TestCase):
         self.assertIn("workspace-write", run)
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", run, "on the host codex is not run without its sandbox")
 
-    def test_without_the_owners_consent_file_a_host_bot_waits_and_says_so(self):
+    def test_a_host_bot_waits_until_the_owner_lists_its_handle_in_the_consent_file(self):
         board, L = self.host_bot(consent=False)
         L.start()
         L.wait_for(lambda: "waiting for the Mac" in L.read("health"), "the waiting health line")
         time.sleep(1)
         self.assertEqual((L.prompts(), self.container_runs()), ([], []), "nothing ran while it waits")
-        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("")
-        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn once the file exists", timeout=30)
+        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n")
+        time.sleep(7)
+        self.assertEqual(L.prompts(), [], "a file that lists another bot is no consent for this one")
+        (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n%s\n" % L.name)
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn once the bot is listed", timeout=30)
         self.assertEqual(L.read("runmode"), "host")
         self.assertNotIn("waiting for the Mac", L.read("health"))
 
