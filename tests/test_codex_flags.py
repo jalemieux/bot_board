@@ -34,11 +34,19 @@ class CodexFlags(unittest.TestCase):
 
     def test_a_host_bot_turns_the_runtime_off_after_the_flags_were_picked_and_gets_the_sandbox(self):
         # the launcher picked the container default at load; a host bot (#595) unsets BOT_RUNTIME and picks again
-        host = 'BOT_RUNTIME=""; codex_flags_default'
+        host = 'log() { :; }; BOT_RUNTIME=""; codex_flags_host'
         self.assertEqual(flags(then=host, BOT_RUNTIME="docker"),
                          "-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check")
         self.assertEqual(flags(then=host, BOT_RUNTIME="docker", BOT_CODEX_FLAGS="-s read-only"), "-s read-only",
                          "flags the box set stay, on the host too")
+
+    def test_a_host_bot_does_not_use_the_sandbox_bypass_a_box_set_for_its_containers(self):
+        # the M5's config has the #582 workaround; a host bot runs as jac and must keep codex's sandbox
+        host = 'log() { :; }; BOT_RUNTIME=""; codex_flags_host'
+        sandboxed = "-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check"
+        self.assertEqual(flags(then=host, BOT_RUNTIME="docker",
+                               BOT_CODEX_FLAGS="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"), sandboxed)
+        self.assertEqual(flags(then=host, BOT_CODEX_FLAGS="--full-auto"), "--full-auto", "other flags the box set stay")
 
     def test_an_empty_runtime_is_not_a_container(self):
         self.assertIn("workspace-write", flags(BOT_RUNTIME=""))

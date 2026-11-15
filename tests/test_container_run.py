@@ -466,6 +466,23 @@ class ContainerRun(unittest.TestCase):
         self.assertEqual(L.read("runmode"), "host")
         self.assertNotIn("waiting for the Mac", L.read("health"))
 
+    def test_a_host_codex_bot_does_not_inherit_the_bypass_flag_a_box_set_for_its_containers(self):
+        board, L = self.host_bot(harness="codex")
+        L.env["BOT_CODEX_FLAGS"] = "--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"     # the box's own setting
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        run = next(r for r in L.runs() if "exec" in r)
+        self.assertIn("workspace-write", run)
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", run)
+        self.assertIn("does not use", L.log())
+
+    def test_only_a_bot_that_decide_host_chose_records_host(self):
+        board, L = self.host_bot(board_says=False)
+        L.env.pop("BOT_RUNTIME")                      # a box with no container runtime at all
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertEqual(L.read("runmode"), "native", "an ordinary bot on a box with no runtime is not a host bot")
+
     def test_a_host_file_in_the_bots_state_directory_does_nothing(self):
         board, L = self.host_bot(board_says=False, state_file=True)
         L.start()

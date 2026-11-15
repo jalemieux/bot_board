@@ -423,6 +423,16 @@ codex_flags_default() {
     BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check"
   fi
 }
+# A host bot (#595) runs as the user, so codex's own sandbox stays on: a box that set the container workaround
+# (the bypass flag, #582) does not get it for a host bot. The flag is replaced, and one line says so.
+codex_flags_host() {
+  case " ${BOT_CODEX_FLAGS:-} " in
+    *" --dangerously-bypass-approvals-and-sandbox "*)
+      log "host: BOT_CODEX_FLAGS holds the sandbox bypass flag, which a host bot does not use: codex runs with its own sandbox"
+      BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check" ;;
+    *) codex_flags_default ;;
+  esac
+}
 codex_flags_default
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
@@ -1079,10 +1089,14 @@ log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPA
 # consulted, so a file a host bot writes for another bot does nothing. Decided at every start. Until the consent
 # file exists the bot waits and says so in its health line, which /fleet shows. $STATE/runmode records the result.
 BOT_HOST_CONSENT=${BOT_HOST_CONSENT:-$CFG/host-bots-allowed}
-RUN_MODE=container; [ -n "${BOT_RUNTIME:-}" ] || RUN_MODE=host      # as the box's own setting has it
+# RUN_MODE: container (the box has a runtime), native (it has none: every bot runs on it) or host (decide_host
+# chose it for a bot the board says is a host bot). Only "host" marks a bot as one that runs as the user by exception.
+RUN_MODE=native; [ -z "${BOT_RUNTIME:-}" ] || RUN_MODE=container
 decide_host() {
-  local box waited=0
-  box=$(api --max-time 20 "$BOARD/api/me" 2>/dev/null | python3 -c '
+  local box me waited=0
+  me=$(api --max-time 20 "$BOARD/api/me" 2>/dev/null) \
+    || { log "host: the board did not answer GET /api/me; $HANDLE starts as this box says (in its container, if the box has one)"; return 0; }
+  box=$(printf '%s' "$me" | python3 -c '
 import sys,json
 try: h=json.load(sys.stdin).get("host_bot")
 except ValueError: h=None
@@ -1098,7 +1112,7 @@ print(h.get("box","") if isinstance(h,dict) else "")' 2>/dev/null) || box=
     waited=1; sleep 5
   done
   grep -q '^waiting for the Mac' "$STATE/health" 2>/dev/null && rm -f "$STATE/health"
-  BOT_RUNTIME=""; RUN_MODE=host; codex_flags_default
+  BOT_RUNTIME=""; RUN_MODE=host; codex_flags_host
   log "host: $HANDLE runs outside a container, as $(id -un) on $(hostname -s); the board and $BOT_HOST_CONSENT agree"
 }
 decide_host
