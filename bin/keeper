@@ -456,7 +456,9 @@ def bots():
                      "session_gen": read_text(os.path.join(state, "session-gen"))[:16],
                      # when its session began (a launcher at PROTOCOL 2 writes it): the board tells
                      # which bots run a session older than a skill's last edit
-                     "session_started": read_text(os.path.join(state, "session-started"))[:40]})
+                     "session_started": read_text(os.path.join(state, "session-started"))[:40],
+                     # how the launcher started it (#595): host (outside a container, as this user) or container
+                     "runmode": read_text(os.path.join(state, "runmode"))[:16]})
     return rows
 
 
@@ -517,6 +519,56 @@ def runtime_state():
     return got
 
 
+HOST_CONSENT = os.environ.get("BOT_HOST_CONSENT") or os.path.join(CFG, "host-bots-allowed")
+_apps = {"at": 0.0, "list": []}
+
+
+APPS_DIR = "/Applications"
+
+
+def host_allowed():
+    """The handles the Mac's owner listed in the consent file (#595), one per line, lower case."""
+    try:
+        with open(HOST_CONSENT, encoding="utf-8", errors="replace") as fh:
+            return sorted({ln.strip().lower() for ln in fh if ln.strip()})[:50]
+    except OSError:
+        return []
+
+
+def mac_apps():
+    """The apps in /Applications with their versions (#595), for a Mac's host bots: [{name, version}], read from
+    each bundle's Info.plist, at most every ten minutes. Only a Mac reports any."""
+    if time.time() - _apps["at"] < 600:
+        return _apps["list"]
+    found = []
+    try:
+        import plistlib
+        for entry in sorted(os.listdir(APPS_DIR))[:400]:
+            if not entry.endswith(".app"):
+                continue
+            version = ""
+            try:       # one broken bundle (malformed XML, a plist that is not a dict) must not stop the keeper reporting
+                with open(os.path.join(APPS_DIR, entry, "Contents", "Info.plist"), "rb") as fh:
+                    info = plistlib.load(fh)
+                if isinstance(info, dict):
+                    version = str(info.get("CFBundleShortVersionString") or info.get("CFBundleVersion") or "")[:40]
+            except Exception:
+                version = ""
+            found.append({"name": entry[:-4][:64], "version": version})
+    except OSError:
+        pass
+    _apps.update(at=time.time(), list=found[:300])
+    return _apps["list"]
+
+
+def host_facts():
+    """What a Mac says about host bots (#595): the handles its owner listed in the consent file bin/bot checks,
+    and the apps found. Nothing from any other box."""
+    if sys.platform != "darwin":
+        return {}
+    return {"host_allowed": host_allowed(), "apps": mac_apps()}
+
+
 def snapshot():
     total, free = memory_mb()
     try:
@@ -524,7 +576,8 @@ def snapshot():
     except OSError:
         load = None
     return {"cores": os.cpu_count(), "load": load, "mem_total_mb": total, "mem_free_mb": free,
-            "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots(), "runtime": runtime_state()}
+            "os": f"{platform.system()} {platform.release()}"[:80], "bots": bots(), "runtime": runtime_state(),
+            **host_facts()}
 
 
 class Handover:

@@ -412,12 +412,28 @@ BOT_CLAUDE_FLAGS=${BOT_CLAUDE_FLAGS:---permission-mode bypassPermissions}
 # codex sandboxes its commands with bubblewrap, which cannot create namespaces inside a container:
 # every command then fails ("bwrap: No permissions to create a new namespace"). With BOT_RUNTIME set the
 # container is the sandbox, as it is for claude (bypassPermissions), so codex runs without its own (#582).
-# A BOT_CODEX_FLAGS set on the box or in the environment wins.
-if [ -n "${BOT_RUNTIME:-}" ]; then
-  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox --skip-git-repo-check}
-else
-  BOT_CODEX_FLAGS=${BOT_CODEX_FLAGS:--s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check}
-fi
+# A BOT_CODEX_FLAGS set on the box or in the environment wins. A host bot (#595) turns BOT_RUNTIME off
+# for itself after this point, so the default is picked again then: on the host codex keeps its own sandbox.
+_CODEX_FLAGS_SET=${BOT_CODEX_FLAGS+x}
+codex_flags_default() {
+  [ -z "$_CODEX_FLAGS_SET" ] || return 0
+  if [ -n "${BOT_RUNTIME:-}" ]; then
+    BOT_CODEX_FLAGS="--dangerously-bypass-approvals-and-sandbox --skip-git-repo-check"
+  else
+    BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check"
+  fi
+}
+# A host bot (#595) runs as the user, so codex's own sandbox stays on: a box that set the container workaround
+# (the bypass flag, #582; also --yolo and a danger-full-access sandbox) does not get it for a host bot. The flag is replaced, and one line says so.
+codex_flags_host() {
+  case " ${BOT_CODEX_FLAGS:-} " in
+    *" --dangerously-bypass-approvals-and-sandbox "*|*" --yolo "*|*danger-full-access*)
+      log "host: BOT_CODEX_FLAGS holds the sandbox bypass flag, which a host bot does not use: codex runs with its own sandbox"
+      BOT_CODEX_FLAGS="-s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check" ;;
+    *) codex_flags_default ;;
+  esac
+}
+codex_flags_default
 # opencode run rejects every permission request unless told to approve them.
 BOT_OPENCODE_FLAGS=${BOT_OPENCODE_FLAGS:---auto}
 # copilot -p refuses to run at all without this.
@@ -1064,6 +1080,46 @@ trap 'rm -f "$STATE/pid" "$STATE/stop" "$STATE/busy" "$STATE/poll"' EXIT
 # what ended sessions left behind goes at every start; skill clones only on `bot gc`
 gc_sweep "" "" "${BOT_GC_DAYS:-7}" 2>>"$LOG" | while IFS= read -r line; do log "gc: $line"; done || true
 log "bot $HANDLE ($HARNESS) standing by in $DIR${WORKSPACE:+, workspace $WORKSPACE}, seen=$SEEN"
+
+# ---- host bots (#595) --------------------------------------------------------------------
+# A bot the board says runs on its host starts outside a container, as the user running this launcher:
+# only when ALL of these hold: the board's own record says so (GET /api/me, host_bot: it is flagged, on the
+# box it was made for, that box's switch on), this is a Mac, and the box's owner listed the bot's handle in the
+# consent file (one handle per line; a file only the Mac's user can create, so a container bot cannot add itself). Nothing in the bot's own state directory is
+# consulted, so a file a host bot writes for another bot does nothing. Decided at every start. Until the consent
+# file exists the bot waits and says so in its health line, which /fleet shows. $STATE/runmode records the result.
+BOT_HOST_CONSENT=${BOT_HOST_CONSENT:-$CFG/host-bots-allowed}
+host_allowed() {       # a line holding the handle, spaces around it ignored, as the keeper reads the file
+  [ -f "$BOT_HOST_CONSENT" ] && sed 's/^[[:space:]]*//; s/[[:space:]]*$//' "$BOT_HOST_CONSENT" 2>/dev/null | grep -qixF "$HANDLE"
+}
+# RUN_MODE: container (the box has a runtime), native (it has none: every bot runs on it) or host (decide_host
+# chose it for a bot the board says is a host bot). Only "host" marks a bot as one that runs as the user by exception.
+RUN_MODE=native; [ -z "${BOT_RUNTIME:-}" ] || RUN_MODE=container
+decide_host() {
+  local box me waited=0
+  me=$(api --max-time 20 "$BOARD/api/me" 2>/dev/null) \
+    || { log "host: the board did not answer GET /api/me; $HANDLE starts as this box says (in its container, if the box has one)"; return 0; }
+  box=$(printf '%s' "$me" | python3 -c '
+import sys,json
+try: h=json.load(sys.stdin).get("host_bot")
+except ValueError: h=None
+print(h.get("box","") if isinstance(h,dict) else "")' 2>/dev/null) || box=
+  [ -n "$box" ] || return 0                 # the board does not say so: this bot runs as the box says
+  if [ "$(uname -s)" != Darwin ]; then
+    log "host: the board says $HANDLE runs on its host, but this is not a Mac; it runs as this box says"; return 0
+  fi
+  while ! host_allowed; do
+    echo "waiting for the Mac: the board says $HANDLE runs on its host; add the line $HANDLE to $BOT_HOST_CONSENT on this Mac" >"$STATE/health"
+    [ ! -e "$STATE/stop" ] || return 0
+    [ "$waited" -gt 0 ] || log "host: waiting for $HANDLE to be listed in $BOT_HOST_CONSENT before it starts on the host"
+    waited=1; sleep 5
+  done
+  grep -q '^waiting for the Mac' "$STATE/health" 2>/dev/null && rm -f "$STATE/health"
+  BOT_RUNTIME=""; RUN_MODE=host; codex_flags_host
+  log "host: $HANDLE runs outside a container, as $(id -un) on $(hostname -s); the board and $BOT_HOST_CONSENT list it"
+}
+decide_host
+echo "$RUN_MODE" > "$STATE/runmode"
 
 # ---- the bot's skills ----------------------------------------------------------------
 # A bot's skills come from the board, their only home (#328), and the launcher keeps the
