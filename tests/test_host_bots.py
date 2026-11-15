@@ -1,0 +1,109 @@
+"""Host bots (#595), the board side: a new bot on a Mac can run outside its container, as the operator.
+Only a human sets it, only on a box that reported macOS with the switch on, only for a new bot; the box's
+keeper is told to run it on the host only while all of that holds. Run with python -m unittest discover -s tests."""
+import os
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fastapi.testclient import TestClient
+from app import db, main
+
+
+class HostBots(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.DB_PATH = os.path.join(self.tmp.name, "board.db")
+        db._local = threading.local()
+        self.client = TestClient(main.app)
+        self.client.__enter__()
+        self.human = self.register("op", "human")
+        self.bot = self.register("edie", "claude-code")
+        self.keepers = {"mac": self.register("keeper-mac", "keeper"), "linux": self.register("keeper-linux", "keeper")}
+        self.client.post("/api/workspaces", headers=self.human, json={"slug": "proj", "name": "Proj", "purpose": "x"})
+        self.report("mac", "Darwin 25.0")
+        self.report("linux", "Linux 6.8")
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        if hasattr(db._local, "conn"):
+            db._local.conn.close()
+        self.tmp.cleanup()
+
+    def register(self, handle, kind):
+        r = self.client.post("/api/agents", json={"handle": handle, "kind": kind})
+        self.assertEqual(r.status_code, 201, r.text)
+        return {"Authorization": "Bearer " + r.json()["token"]}
+
+    OS = {"mac": "Darwin 25.0", "linux": "Linux 6.8"}
+
+    def report(self, box, os_name=None, bots=()):
+        body = {"bots": list(bots), "os": os_name or self.OS[box]}      # a keeper reports its OS every time
+        r = self.client.put(f"/api/fleet/hosts/{box}", headers=self.keepers[box], json=body)
+        self.assertEqual(r.status_code, 200, r.text)
+        return {w["handle"]: w for w in r.json()["want"]}
+
+    def switch(self, box, on, auth=None, expected=200):
+        r = self.client.put(f"/api/fleet/hosts/{box}/host-bots", headers=auth or self.human, json={"on": on})
+        self.assertEqual(r.status_code, expected, r.text)
+        return r
+
+    def make(self, handle="mira", box="mac", expected=200, **extra):
+        body = {"host": box, "run": True, "harness": "claude", "workspace": "proj", "host_reason": "Godot captures", **extra}
+        r = self.client.put(f"/api/fleet/bots/{handle}", headers=self.human, json=body)
+        self.assertEqual(r.status_code, expected, r.text)
+        return r
+
+    def test_only_a_human_turns_the_switch_and_only_on_a_mac(self):
+        self.switch("mac", True, auth=self.bot, expected=403)
+        self.switch("mac", True, auth=self.keepers["mac"], expected=403)
+        self.assertIn("not a Mac", self.switch("linux", True, expected=409).json()["error"])
+        self.assertIn("no box named", self.switch("nowhere", True, expected=409).json()["error"])
+        self.switch("mac", True)
+        hosts = {h["name"]: h for h in self.client.get("/api/fleet").json()["hosts"]}
+        self.assertEqual((hosts["mac"]["host_bots"], hosts["linux"]["host_bots"]), (True, None), "a Linux box has no such switch")
+
+    def test_a_host_bot_needs_the_switch_a_mac_a_reason_and_to_be_new(self):
+        why = lambda r: r.json()["error"]
+        self.assertIn("off on mac", why(self.make(expected=409)))
+        self.switch("mac", True)
+        self.assertIn("not a Mac", why(self.make(box="linux", expected=409)))
+        self.assertIn("why the bot needs the host", why(self.make(host_reason="  ", expected=409)))
+        self.assertIn("created running", why(self.make(run=False, expected=409)))
+        self.assertIn("already exists", why(self.make(handle="edie", expected=409)), "an existing bot is not converted")
+        self.assertEqual(self.client.put("/api/fleet/bots/mira", headers=self.bot,
+                                         json={"host": "mac", "run": True, "host_reason": "x"}).status_code, 403)
+        self.make()                                              # a new bot, all conditions met
+        self.assertIn("already exists", why(self.make(expected=409)), "and not made twice")
+
+    def test_the_keeper_is_told_to_run_it_on_the_host_only_while_everything_holds(self):
+        self.switch("mac", True)
+        self.make(host_apps=["Godot", "Blender"])
+        row = self.report("mac")["mira"]
+        self.assertTrue(row["on_host"])
+        self.assertEqual((row["host_reason"], row["host_apps"], row["host_by"]), ("Godot captures", ["Godot", "Blender"], "op"))
+        self.assertEqual(row["host"], "mac", "host is still the box it runs on")
+        self.switch("mac", False)
+        self.assertFalse(self.report("mac")["mira"]["on_host"], "the switch off: back in a container")
+        self.assertTrue(self.report("mac")["mira"]["host_flag"], "but the bot keeps its flag")
+        self.switch("mac", True)
+        self.assertTrue(self.report("mac")["mira"]["on_host"], "and the switch on brings it back")
+        # moved to another box (a pool move): it is no longer the box it was made for
+        r = self.client.put("/api/fleet/bots/mira", headers=self.human, json={"host": "linux", "run": True})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(self.report("linux")["mira"]["on_host"], "a host bot on another box runs in a container")
+
+    def test_an_ordinary_bot_is_never_on_the_host(self):
+        self.switch("mac", True)
+        r = self.client.put("/api/fleet/bots/plain", headers=self.human,
+                            json={"host": "mac", "run": True, "harness": "claude", "workspace": "proj"})
+        self.assertEqual(r.status_code, 200, r.text)
+        row = self.report("mac")["plain"]
+        self.assertEqual((row["on_host"], row["host_flag"]), (False, False))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -396,6 +396,7 @@ API_MAP = {
                                         " keeper carries it out",
         "PUT /api/threads/{tid}/hidden": "a human hides a thread from the channel views, for every human; it stays in"
                                          " search and at its link, and bots still see it. DELETE brings it back",
+        "PUT /api/fleet/hosts/{name}/host-bots": "a human allows host bots on a Mac, or not {on}; the host bots on it run in a container again at their next start when it is off (#595)",
         "PUT /api/fleet/bots/{handle}/channels": "a human binds a bot to channels of its workspace {channels}: it claims"
                                                 " new threads only there; [] unbinds, unless its profile is specialized",
         "PUT /api/fleet/bots/{handle}/profile": "a human moves a bot to another profile {profile}, leaving the"
@@ -922,6 +923,17 @@ class FleetWantIn(BaseModel):
                               " later with PUT /api/fleet/bots/{handle}/voice.")
     personality: str | None = Field(default=None, max_length=MAX_VOICE, description="Who the bot is: expression only,"
                                     " task rules still win. Changed later with PUT /api/fleet/bots/{handle}/voice.")
+    host_reason: str | None = Field(default=None, max_length=200, description="Makes a NEW bot a host bot (#595): it"
+                                    " runs outside a container, as the operator, on a Mac whose host switch is on."
+                                    " The one-line reason it needs the host. Refused for an existing bot, a box that"
+                                    " is not a Mac, or a box with the switch off.")
+    host_apps: list[str] | None = Field(default=None, max_length=20, description="With host_reason: the apps"
+                                        " the bot uses on the host, by name.")
+
+
+class FleetHostBotsIn(BaseModel):
+    on: bool = Field(description="true: a human allows host bots on this Mac. false: every host bot on it goes"
+                     " back to a container at its next start (they keep their flag, so on again brings them back).")
 
 
 class FleetChannelsIn(BaseModel):
@@ -986,10 +998,22 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
                      workspace=(body.workspace or "").lower() or None, threads=body.threads,
                      profile=(body.profile or "").strip().lower() or None,
                      channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None,
-                     voice=_text_or_none(body.voice), personality=_text_or_none(body.personality))
+                     voice=_text_or_none(body.voice), personality=_text_or_none(body.personality),
+                     host_reason=body.host_reason, host_apps=body.host_apps)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
+
+
+@app.put("/api/fleet/hosts/{name}/host-bots", tags=["fleet"])
+def fleet_host_bots(name: str, body: FleetHostBotsIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human turns the host-bots switch of a Mac on or off (#595). A bot's token is refused."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human changes whether a box may run host bots")
+    why = fleet.set_host_bots(name, body.on, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True, "host_bots": body.on}
 
 
 @app.put("/api/fleet/bots/{handle}/channels", tags=["fleet"])
