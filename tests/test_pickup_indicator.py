@@ -18,8 +18,9 @@ class PickupIndicator(unittest.TestCase):
                              web.APP_JS.index("setInterval(function(){\n  refreshWorkers()")]
         script = r"""
 const assert = require('node:assert/strict');
-let S = {thread: 1, roots: [], umsgs: {}}, ME = null;
+let S = {thread: 1, roots: [], umsgs: {}, agents: {}}, ME = null;
 function av(){ return ''; }
+function hostMark(){ return ''; }
 function isHuman(){ return true; }
 function when(){ return 'now'; }
 function body(text){ return esc(text); }
