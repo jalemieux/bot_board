@@ -505,6 +505,36 @@ def _host_fields(w: dict, box: str, switch: bool) -> dict:
             else json.loads(w["host_apps"]) if w.get("host_apps") else []}
 
 
+def set_host_details(handle: str, reason: str | None, apps: list[str] | None) -> str | None:
+    """Edit what a host bot (#595) says about itself: the reason it needs the host, and the apps it uses. Only a bot
+    that is a host bot; the flag itself is never set here. Both are checked before either is written."""
+    if reason is not None and not 1 <= len(reason.strip()) <= 200:
+        return "say in one line (up to 200 characters) why the bot needs the host"
+    if apps is not None and (len(apps) > 20 or any(not isinstance(a, str) or not 1 <= len(a) <= 64 for a in apps)):
+        return "apps: up to 20 names of up to 64 characters"
+    c = db.conn()
+    with db._write_lock:
+        r = c.execute("SELECT onhost FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        if not (r and r["onhost"]):
+            return f"{handle} is not a host bot"
+        if reason is not None:
+            c.execute("UPDATE fleet_bots SET host_reason=? WHERE handle=?", (reason.strip(), handle))
+        if apps is not None:
+            c.execute("UPDATE fleet_bots SET host_apps=? WHERE handle=?", (json.dumps(apps), handle))
+        c.commit()
+    return None
+
+
+def clear_host(handle: str) -> str | None:
+    """Take a host bot back to the container way (#595): the flag goes, so it runs in a container from its next start.
+    Its conversation is kept as the harness allows; nothing here stops it."""
+    c = db.conn()
+    with db._write_lock:
+        n = c.execute("UPDATE fleet_bots SET onhost=NULL WHERE handle=? AND onhost IS NOT NULL", (handle,)).rowcount
+        c.commit()
+    return None if n else f"{handle} is not a host bot"
+
+
 def host_bot(handle: str) -> dict | None:
     """The board's own record that this bot runs on the host (#595), or None: what `GET /api/me` tells a bot,
     so a launcher starts it outside a container only when the board says so, whatever files sit on the box.

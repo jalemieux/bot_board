@@ -116,6 +116,25 @@ class HostBots(unittest.TestCase):
         self.switch("mac", False)
         self.assertIsNone(self.client.get("/api/me", headers=zed).json()["host_bot"], "the switch off: the board no longer says so")
 
+    def test_a_human_edits_a_host_bots_reason_and_apps_and_moves_it_back(self):
+        self.switch("mac", True)
+        self.make()
+        put = lambda auth, **b: self.client.put("/api/fleet/bots/mira/host", headers=auth, json=b)
+        self.assertEqual(put(self.bot, reason="x").status_code, 403)
+        self.assertEqual(put(self.human, reason="Blender renders", apps=["Blender"]).status_code, 200)
+        row = self.report("mac")["mira"]
+        self.assertEqual((row["host_reason"], row["host_apps"]), ("Blender renders", ["Blender"]))
+        self.assertEqual(put(self.human, reason="  ").status_code, 409)
+        self.assertEqual(put(self.human, reason="Changed", apps=["x" * 65]).status_code, 409)
+        self.assertEqual(self.report("mac")["mira"]["host_reason"], "Blender renders", "a refused edit changes nothing")
+        self.assertEqual(self.client.put("/api/fleet/bots/edie/host", headers=self.human, json={"reason": "x"}).status_code, 409,
+                         "an ordinary bot cannot be given host details")
+        self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.bot).status_code, 403)
+        self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.human).status_code, 200)
+        row = self.report("mac")["mira"]
+        self.assertEqual((row["host_flag"], row["on_host"]), (False, False), "moved back: a container from its next start")
+        self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.human).status_code, 409)
+
     def test_an_ordinary_bot_is_never_on_the_host(self):
         self.switch("mac", True)
         r = self.client.put("/api/fleet/bots/plain", headers=self.human,
