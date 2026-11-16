@@ -89,6 +89,16 @@ class HostBotsPage(unittest.TestCase):
         self.assertNotIn("hostbadge", page.split("</style>")[-1])
 
     @unittest.skipUnless(shutil.which("node"), "node is needed to check the script")
+    def test_the_board_page_script_is_valid_javascript_and_marks_host_bots(self):
+        self.assertIn("hostMark(", web.APP_JS)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "app.js")
+            with open(path, "w") as fh:
+                fh.write(web.APP_JS)
+            r = subprocess.run(["node", "--check", path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "node is needed to check the script")
     def test_the_page_script_is_valid_javascript(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "fleet.js")

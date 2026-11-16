@@ -535,6 +535,41 @@ def clear_host(handle: str) -> str | None:
     return None if n else f"{handle} is not a host bot"
 
 
+def host_operators() -> dict[str, str]:
+    """Which bots run on their host now (#595), for the roster: lower-case handle -> the human who set it, or "" when
+    that is no longer known. Two kinds: the board says so (flagged, on the box it was made for, that box's switch on,
+    the same rule as host_bot()), and a bot a box that reported lately says runs on the host (runmode host), which
+    stays marked after the switch goes off or it is moved back, until it restarts and loses the access."""
+    c = db.conn()
+    try:
+        rows = c.execute("SELECT handle, host, host_box, host_by, onhost FROM fleet_bots").fetchall()
+        reports = c.execute("SELECT name, report, reported_at FROM fleet_hosts").fetchall()
+    except db.sqlite3.OperationalError:        # a board with no fleet table yet
+        return {}
+    by = {r["handle"].lower(): r["host_by"] or "" for r in rows}
+    on, out = {}, {}
+    for r in rows:
+        if not r["onhost"] or (r["host_box"] or "").lower() != (r["host"] or "").lower():
+            continue
+        if r["host"] not in on:
+            on[r["host"]] = host_bots_on(r["host"])
+        if on[r["host"]]:
+            out[r["handle"].lower()] = r["host_by"] or ""
+    for h in reports:
+        secs = db.seconds_since(h["reported_at"])
+        if secs is None or secs >= STALE_AFTER:
+            continue
+        try:
+            bots = json.loads(h["report"]).get("bots") or []
+        except ValueError:
+            continue
+        for b in bots:
+            low = str(b.get("handle", "")).lower()
+            if b.get("runmode") == "host" and str(b.get("status") or "").startswith(UP):
+                out.setdefault(low, by.get(low, ""))
+    return out
+
+
 def host_bot(handle: str) -> dict | None:
     """The board's own record that this bot runs on the host (#595), or None: what `GET /api/me` tells a bot,
     so a launcher starts it outside a container only when the board says so, whatever files sit on the box.

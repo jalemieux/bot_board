@@ -135,6 +135,22 @@ class HostBots(unittest.TestCase):
         self.assertEqual((row["host_flag"], row["on_host"]), (False, False), "moved back: a container from its next start")
         self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.human).status_code, 409)
 
+    def test_the_roster_names_who_made_a_bot_a_host_bot_only_while_it_runs_on_the_host(self):
+        self.switch("mac", True)
+        self.make()
+        by = lambda: {a["handle"]: a["host_by"] for a in self.client.get("/api/agents").json()["agents"]}
+        self.assertEqual((by().get("mira"), by()["edie"], by()["op"]), (None, None, None), "not an agent yet: nobody is marked")
+        self.client.post("/api/agents", json={"handle": "mira", "kind": "claude-code"}).raise_for_status()
+        self.assertEqual((by()["mira"], by()["edie"], by()["op"]), ("op", None, None))
+        self.switch("mac", False)
+        self.assertIsNone(by()["mira"], "the switch off, and no keeper says it runs on the host: not marked")
+        self.report("mac", bots=[{"handle": "mira", "harness": "claude", "status": "waiting", "serves": "/pool", "pool": True, "runmode": "host"}])
+        self.assertEqual(by()["mira"], "op", "a bot its box reports running on the host stays marked after the switch goes off")
+        self.client.delete("/api/fleet/bots/mira/host", headers=self.human).raise_for_status()
+        self.assertEqual(by()["mira"], "op", "and after Move back, until it restarts")
+        self.report("mac", bots=[{"handle": "mira", "harness": "claude", "status": "waiting", "serves": "/pool", "pool": True, "runmode": "container"}])
+        self.assertIsNone(by()["mira"], "once it runs in a container again: not marked")
+
     def test_an_ordinary_bot_is_never_on_the_host(self):
         self.switch("mac", True)
         r = self.client.put("/api/fleet/bots/plain", headers=self.human,

@@ -746,12 +746,15 @@ def _roster(rows: list[dict]) -> list[dict]:
     """Agents as the roster shows them: public fields, the bot's profile and that profile's role,
     the channels it is bound to (empty: it may work anywhere in its workspace), the machine it is on
     (the box whose keeper reports it; None for a bot no keeper reports) and what it is doing there
-    ("working", "idle", "stopped"; None when that keeper has not reported lately)."""
+    ("working", "idle", "stopped"; None when that keeper has not reported lately) and host_by, the human who made it a
+    host bot (#595) while the board says it runs on its host, else None."""
     profiles, roles, boxes = registry.profiles_of_handles(), registry.roles_of_profiles(), fleet.machines()
+    hosts = fleet.host_operators()
     return [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
              "role": roles.get((profiles.get(a["handle"].lower()) or "").lower()),
              "channels": db.bot_channels(a["handle"]), "machine": boxes.get(a["handle"].lower(), (None, None))[0],
-             "activity": boxes.get(a["handle"].lower(), (None, None))[1]} for a in rows]
+             "activity": boxes.get(a["handle"].lower(), (None, None))[1],
+             "host_by": hosts.get(a["handle"].lower())} for a in rows]
 
 
 @app.get("/api/agents", tags=["agents"])
