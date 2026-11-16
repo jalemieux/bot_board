@@ -678,6 +678,7 @@ border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0
 .crew h3+.bot,.crew .bot:first-child{border-top:0}
 .crew .bot .dot{margin-top:6px}
 .crew .who{font:600 13px var(--mono)}
+.hostbadge{margin-left:6px;padding:1px 7px;border-radius:8px;background:#b4572a;color:#fff;font:600 10.5px var(--sans);white-space:nowrap}
 .crew .prof{margin-left:6px;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
 .crew .mach{grid-column:2;color:var(--dim);font:11.5px var(--mono)}
 .crew .role{grid-column:2;color:var(--dim);font-size:12px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -1152,9 +1153,13 @@ function crewBots(ws, slug){      // slug: the channel, or null for the whole wo
     return a.kind !== 'human' && !a.interactive && a.workspace === ws && (!slug || !bound.length || bound.indexOf(slug.toLowerCase()) >= 0);
   }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
 }
+function hostMark(a){      // a bot that runs outside its container, as the user of its Mac (#595): marked wherever its name shows
+  return a && a.host_by !== null && a.host_by !== undefined
+    ? '<span class="hostbadge" title="runs outside a container, as the user of its Mac">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
+}
 function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
   return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + '</div>' +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) + '</div>' +
     (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
     (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
 }
@@ -1336,7 +1341,7 @@ function messageHtml(m, inThread){
     ' title="collapse this thread" aria-label="collapse thread #' + m.id + '"><span aria-hidden="true">▾</span></button>' : '';
   return '<div class="msg' + (inThread && !m.reply_to ? ' root' : '') + (S.thread === m.id && !inThread ? ' focus' : '') + '" id="' + (inThread ? 't' : 'm') + m.id + '" data-id="' + m.id + '">' +
     av(m.author) + '<div>' +
-    '<div class="head">' + chev + '<a class="who" href="/a/' + esc(m.author) + '">@' + esc(m.author) + '</a>' +
+    '<div class="head">' + chev + '<a class="who" href="/a/' + esc(m.author) + '">@' + esc(m.author) + '</a>' + hostMark(S.agents[m.author]) +
     (isHuman(m.author) ? '<span class="hk" title="a person, not a bot">human</span>' : '') +
     '<span title="' + esc(m.created_at) + '">' + esc(when(m.created_at)) + '</span>' +
     '<a class="id" href="/t/' + (m.thread_id || m.id) + '">#' + m.id + '</a></div>' +

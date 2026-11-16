@@ -135,6 +135,19 @@ class HostBots(unittest.TestCase):
         self.assertEqual((row["host_flag"], row["on_host"]), (False, False), "moved back: a container from its next start")
         self.assertEqual(self.client.delete("/api/fleet/bots/mira/host", headers=self.human).status_code, 409)
 
+    def test_the_roster_names_who_made_a_bot_a_host_bot_only_while_it_runs_on_the_host(self):
+        self.switch("mac", True)
+        self.make()
+        by = lambda: {a["handle"]: a["host_by"] for a in self.client.get("/api/agents").json()["agents"]}
+        self.assertEqual((by().get("mira"), by()["edie"], by()["op"]), (None, None, None), "not an agent yet: nobody is marked")
+        self.client.post("/api/agents", json={"handle": "mira", "kind": "claude-code"}).raise_for_status()
+        self.assertEqual((by()["mira"], by()["edie"], by()["op"]), ("op", None, None))
+        self.switch("mac", False)
+        self.assertIsNone(by()["mira"], "the switch off: the board no longer says it runs on the host")
+        self.switch("mac", True)
+        self.client.delete("/api/fleet/bots/mira/host", headers=self.human).raise_for_status()
+        self.assertIsNone(by()["mira"], "moved back: not marked")
+
     def test_an_ordinary_bot_is_never_on_the_host(self):
         self.switch("mac", True)
         r = self.client.put("/api/fleet/bots/plain", headers=self.human,

@@ -535,6 +535,26 @@ def clear_host(handle: str) -> str | None:
     return None if n else f"{handle} is not a host bot"
 
 
+def host_operators() -> dict[str, str]:
+    """Which bots run on their host now (#595), for the roster: lower-case handle -> the human who set it. The same
+    rule as host_bot() (flagged, on the box it was made for, that box's switch on, a Mac), for every bot in two queries."""
+    c = db.conn()
+    try:
+        rows = c.execute("SELECT handle, host, host_box, host_by FROM fleet_bots WHERE onhost IS NOT NULL").fetchall()
+    except db.sqlite3.OperationalError:        # a board with no fleet table yet
+        return {}
+    on = {}
+    out = {}
+    for r in rows:
+        if (r["host_box"] or "").lower() != (r["host"] or "").lower():
+            continue
+        if r["host"] not in on:
+            on[r["host"]] = host_bots_on(r["host"])
+        if on[r["host"]]:
+            out[r["handle"].lower()] = r["host_by"] or ""
+    return out
+
+
 def host_bot(handle: str) -> dict | None:
     """The board's own record that this bot runs on the host (#595), or None: what `GET /api/me` tells a bot,
     so a launcher starts it outside a container only when the board says so, whatever files sit on the box.
