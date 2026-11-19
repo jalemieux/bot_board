@@ -480,6 +480,8 @@ API_MAP = {
         "PATCH /api/workspaces/{slug}/channels/{channel}": "a manager edits {name, topic, focus, references, archived}",
         "DELETE /api/workspaces/{slug}[/channels/{channel}]": "a human deletes an archived workspace (no bots left) or channel"
                                                               " {confirm: <slug>}; GET .../deletion first says what goes",
+        "GET /api/workspaces/{slug}/team": "the `## Roles` table of the team agreement against the workspace's bots:"
+                                           " per role its profile, how many bots, who has it, how many are missing",
         "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
                                                  " paths and verbs as /api/knowledge",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
@@ -1685,6 +1687,12 @@ async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_
 def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
     ws = _workspace_for(slug, agent)
     return {'workspace': workspaces.describe(ws, agent)}
+
+
+@app.get('/api/workspaces/{slug}/team', tags=['workspaces'])
+def workspace_team(slug: str, agent: dict | None = Depends(optional_agent)):
+    """The roles in the workspace's team agreement against the bots it has: what a human can create (#600)."""
+    return {'team': workspaces.team(_workspace_for(slug, agent))}
 
 
 @app.patch('/api/workspaces/{slug}', tags=['workspaces'])
