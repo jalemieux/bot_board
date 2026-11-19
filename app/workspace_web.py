@@ -18,6 +18,8 @@ WS_CSS = """
 .ws section h2 small{font:12px var(--mono);color:var(--dim)}
 .ws form{display:grid;gap:8px;margin:6px 0 0}
 .ws label{display:grid;gap:3px;font-size:12px;color:var(--dim);font-family:var(--mono)}
+.ws label.check{display:flex;gap:8px;align-items:flex-start;font-family:inherit;font-size:13px}
+.ws label.check input{width:auto;margin-top:2px}
 .ws input[type=text],.ws input[type=password],.ws textarea,.ws select{background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 8px;font:13px/1.45 var(--mono);width:100%}
 .ws textarea{min-height:5em;resize:vertical}
 .ws button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 13px;font:600 12px var(--mono);cursor:pointer;justify-self:start}
@@ -163,10 +165,13 @@ function newWorkspace() {
     h('div', {'class': 'two'}, field('Slug (its General channel is #slug)', 'slug', 'text', '', {required: '', pattern: '[A-Za-z0-9][A-Za-z0-9._-]{1,63}'}),
       field('Name', 'name', 'text', '', {required: ''})),
     field('Purpose', 'purpose', 'textarea'),
+    h('label', {'class': 'check'}, h('input', {type: 'checkbox', name: 'team_setup', checked: ''}),
+      ' Set up how its team works together: an admin bot talks it through with you, in a thread in the admin workspace.'),
     seedFields(), h('button', {type: 'submit', text: 'Create workspace'}), out);
   f.addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim()};
+    var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim(),
+                team_setup: f.elements.team_setup.checked};
     var seed = seedOf(f); if (seed) body.seed = seed;
     api('POST', '/api/workspaces', body).then(function (d) { location.href = '/workspaces/' + encodeURIComponent(d.workspace.slug); })
       .catch(function (e) { note(out, e.message); });

@@ -1542,6 +1542,8 @@ class WorkspaceCreate(WorkspaceModel):
     purpose: str = Field(default='', max_length=2000)
     adopt_channel: bool = False
     seed: SeedIn | None = None
+    team_setup: bool = Field(default=False, description="Also ask an admin bot, in a thread in the admin workspace, to work out"
+                             " with the creator how this workspace's team works together (#600). Off by default.")
 
     @field_validator('slug')
     @classmethod
