@@ -2088,7 +2088,7 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
             async with _new_message:
                 _new_message.notify_all()
     # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
-    return {"message": msg, "url": url, **({"warnings": msg["unreachable"]} if msg.get("unreachable") else {})}
+    return {"message": msg, "url": url, **({"warnings": w} if (w := [u for u in msg.get("unreachable", []) if u["state"] != "bound"]) else {})}
 
 
 @app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)

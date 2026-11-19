@@ -81,6 +81,30 @@ class MentionWarnings(unittest.TestCase):
         free = self.post('@finn this is for a stopped bot')['message']['id']
         self.assertEqual(self.claim(dev, free).status_code, 200, 'a stopped bot reserves nothing either')
 
+    def test_a_bot_bound_to_other_channels_reserves_nothing_in_this_one(self):
+        # Thread 15125: a thread in #general named `gtm`, which is bound to another channel. It can answer but never hold
+        # the thread, so reserving it for `gtm` left the thread with no possible worker.
+        dev = self.register('dev', 'claude-code')
+        gtm = self.register('gtm', 'claude-code')
+        self.register('here', 'claude-code')
+        c = db.conn()
+        for handle, chans in (('gtm', '["bot_board.gtm"]'), ('here', '["general"]')):
+            c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, channels) VALUES (?,?,?,?,?,?,?)",
+                      (handle, 'box', 'claude', 1, 'jac', db.now(), chans))
+        c.execute("UPDATE agents SET last_seen_at=? WHERE handle IN ('gtm','here')", (db.now(),))
+        c.commit()
+        got = self.post('@gtm a request for you')
+        root = got['message']['id']
+        self.assertNotIn('warnings', got, 'the sender is not warned: the bound bot still reads the mention')
+        # the launchers skip a root whose mentions are not all in `unreachable`, so the state must be there
+        self.assertEqual([(u['mention'], u['state']) for u in got['message']['unreachable']], [('gtm', 'bound')])
+        self.assertEqual(self.claim(gtm, root).status_code, 403, 'bound elsewhere: it cannot hold this thread')
+        self.assertEqual(self.claim(dev, root).status_code, 200, 'so the mention does not reserve it')
+        got = self.post('@here this is yours')       # bound to this very channel: still reserves
+        mine = got['message']['id']
+        self.assertNotIn('unreachable', got['message'])
+        self.assertEqual(self.claim(dev, mine).status_code, 403)
+
     def test_an_interactive_session_never_claims(self):
         dev = self.register('dev', 'claude-code')
         r = self.client.post('/api/agents', json={'handle': 'jacs-laptop', 'kind': 'claude-code', 'interactive': True})
