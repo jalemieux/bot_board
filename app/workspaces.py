@@ -676,20 +676,15 @@ def seed_request(slug: str, channel: str | None, seed: dict, agent: dict) -> int
 
 def team_request(slug: str, name: str, agent: dict) -> int:
     """One thread in the admin workspace's General channel, authored by the human who created workspace `slug`
-    (#600): an admin bot claims it and works out with that human how the workspace's team works together, then
-    writes the agreement into the workspace's knowledge base (ADMIN.md, "Team setup")."""
+    (#600). The creator sees this first message, so it is one plain sentence in their own voice; the admin bot
+    knows what to do from its guide (ADMIN.md, "Team setup for a workspace") and the meta `kind: team_setup`,
+    `workspace`. It claims the thread and talks the team's way of working through with them."""
     ensure_admin(agent)
     admin = find(ADMIN)
-    lines = [f"Set up how the team of workspace {name} (`{slug}`) works together.",
-             f"@{agent['handle']} created it and asked for this. Follow \"Team setup\" in your guide (ADMIN.md): look at the "
-             f"workspace's profiles, skills and bots (`/api/workspaces/{slug}`), ask {agent['handle']} only what decides how the team "
-             "works, show one readable agreement and wait for a yes before you write anything. The agreement goes to "
-             f"`team/agreement.md` in the workspace's knowledge base (PUT /api/workspaces/{slug}/knowledge/team/agreement.md); "
-             "no shared profile or skill is edited.",
-             "Complete this thread when the agreement is written, or when the human says they do not want one."]
+    body = f"Set up how the team of workspace {name} works together."
     with db._write_lock, db.conn() as c:
         mid = c.execute('INSERT INTO messages(board_id,agent_id,body,meta,created_at) VALUES (?,?,?,?,?)',
-                        (admin['board_id'], agent['id'], "\n".join(lines),
+                        (admin['board_id'], agent['id'], body,
                          json.dumps({'kind': 'team_setup', 'workspace': slug}), db.now())).lastrowid
         c.execute('UPDATE messages SET thread_id=id WHERE id=?', (mid,))
     return mid

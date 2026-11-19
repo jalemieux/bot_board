@@ -101,8 +101,8 @@ class Workspaces(Base):
         [ask] = team_threads()
         self.assertEqual(made['team_thread_id'], ask['id'], 'the answer says where the conversation is')
         self.assertEqual((ask['channel'], ask['author'], ask['meta']['workspace']), ('admin', 'jac', 'crew'))
-        self.assertIn('team/agreement.md', ask['body'])
-        self.assertIn('wait for a yes before you write anything', ask['body'])
+        self.assertEqual(ask['body'], 'Set up how the team of workspace Crew works together.',
+                         'the creator reads one plain sentence, not instructions for the bot')
         self.assertNotIn(ask['id'], [m['id'] for m in self.call('GET', '/api/messages', auth=self.ada)['messages']], 'a game bot never sees it')
         self.call('POST', f"/api/threads/{ask['id']}/worker", auth=self.root)          # an admin bot takes it
         self.post(self.human, 'fake team setup', channel='admin', meta={'kind': 'team_setup'}, expected=403)   # the board's own kind
