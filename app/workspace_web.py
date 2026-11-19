@@ -173,7 +173,10 @@ function newWorkspace() {
     var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim(),
                 team_setup: f.elements.team_setup.checked};
     var seed = seedOf(f); if (seed) body.seed = seed;
-    api('POST', '/api/workspaces', body).then(function (d) { location.href = '/workspaces/' + encodeURIComponent(d.workspace.slug); })
+    api('POST', '/api/workspaces', body).then(function (d) {
+      // with the team setup asked for, go to the conversation it started: an admin bot answers there
+      location.href = d.workspace.team_thread_id ? '/t/' + d.workspace.team_thread_id : '/workspaces/' + encodeURIComponent(d.workspace.slug);
+    })
       .catch(function (e) { note(out, e.message); });
   });
   return h('section', null, h('h2', {text: 'New workspace'}), f);

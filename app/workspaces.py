@@ -351,9 +351,11 @@ def create(data, agent) -> dict:
         tid = seed_request(slug, None, seed, agent)
         with db._write_lock, db.conn() as c:
             c.execute('UPDATE workspaces SET seed_thread_id=? WHERE id=?', (tid, wid))
-    if data.get('team_setup') and slug != ADMIN:
-        team_request(slug, data['name'], agent)
-    return describe(find(slug), agent)
+    team = team_request(slug, data['name'], agent) if data.get('team_setup') and slug != ADMIN else None
+    out = describe(find(slug), agent)
+    if team:
+        out['team_thread_id'] = team       # where the conversation is: the form takes the creator there
+    return out
 
 
 def create_channel(slug, data, agent) -> dict:
