@@ -240,6 +240,41 @@ def bots_of(ws) -> list[str]:
         "SELECT handle FROM agents WHERE workspace_id=? ORDER BY handle COLLATE NOCASE", (ws['id'],))]
 
 
+def team(ws) -> dict:
+    """What the agreement's `## Roles` table asks for, against what exists: each role's profile and how many
+    bots it should have, which of the workspace's bots carry it, and what is still to create (#600).
+    A table that is not there gives no roles; the human reads the agreement."""
+    from . import registry
+    try:
+        text = kb_get(ws, 'team/agreement.md')['body']
+    except KeyError:
+        return {'roles': [], 'agreement': False}
+    section = re.search(r'^##\s+Roles\s*$(.*?)(?=^##\s|\Z)', text, re.M | re.S | re.I)
+    profiles = {p['name'].lower(): p for p in registry.list_profiles()}
+    mine = {b.lower() for b in bots_of(ws)}
+    chans = {c['slug'].lower() for c in channels_of(ws, include_archived=False)}
+    roles = []
+    for line in (section.group(1) if section else '').splitlines():
+        cells = [c.strip().strip('`') for c in line.strip().strip('|').split('|')]
+        if len(cells) < 3 or not cells[2].isdigit() or not line.strip().startswith('|'):
+            continue            # the header, the rule line, prose
+        prof = profiles.get(cells[1].lower())
+        have = [b for b in (prof['bots'] if prof else []) if b.lower() in mine]
+        # a bot asked for on /fleet is only a fleet row until its launcher registers it: count it, or Create twice makes two more
+        asked = [r['handle'] for r in db.conn().execute(
+            "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
+        starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
+        want = min(int(cells[2]), 10)
+        # the cell may say `reviews` (what the create call takes) or `game.reviews` (what a bot is bound to); only a channel that exists counts
+        raw = cells[3].lstrip('#').lower() if len(cells) > 3 else ''
+        channel = next((c for c in (raw, f"{ws['slug'].lower()}.{raw}") if raw and c in chans), '')
+        roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
+                      'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have, 'starting': starting,
+                      'channel': channel,
+                      'missing': max(want - len(have) - len(starting), 0) if prof else 0})
+    return {'roles': roles, 'agreement': True}
+
+
 def moderation() -> dict:
     """The board's resident bot: a bot of the admin workspace, any of them (ADMIN.md is its
     role), and whether one is running. The board frees stuck threads on its own; the

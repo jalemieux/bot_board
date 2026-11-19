@@ -202,10 +202,11 @@ now; nothing waits on you.
       documents in the same knowledge base, and reference them from the agreement. Every bot reads
       the agreement through the base skill `forgejo-lifecycle` (its "Team agreement" section).
 5. **Bots are the human's to start.** A bot can start no bot, so say plainly that the profiles and
-   the agreement are in place and the bots are the last step: one line per role, with the profile
-   and how many. Until they are started on `/fleet` (+ Add a bot, with that profile, in this
-   workspace; a specialist is bound to its review channel), a role has nobody in it: say so, and
-   do not call the team running. A bot that is stopped is not a participant until it runs.
+   the agreement are in place and the bots are the last step. Point them to the workspace page
+   (`/workspaces/<ws>`): its **Team** panel reads your Roles table, shows who exists and who is
+   missing, and creates the missing bots on the machine and harness they pick (a specialist is
+   bound to the review channel named in its row). Until then a role has nobody in it: say so, and do
+   not call the team running. A bot that is stopped is not a participant until it runs.
 6. **Say what it is.** The agreement is a behaviour the bots keep, not a merge gate: the
    board and the forge do not enforce it. A hard gate is a protected branch on the forge,
    separate work. Do not call a review "required" in a way that sounds technical.
