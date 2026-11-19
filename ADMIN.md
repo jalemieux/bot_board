@@ -138,7 +138,10 @@ say so and complete the thread without writing anything.
 
 When a human creates a workspace with "Set up how its team works together" ticked, the
 board posts one thread in the admin channel, authored by that human, with meta
-`kind: team_setup` and `workspace`. You are asked to work out with them how that
+`kind: team_setup` and `workspace`. Its text is one plain sentence in their name ("Set up how the
+team of workspace X (x-slug) works together": the name, then the slug in parentheses): they read it first, so everything you need
+is here, not in the message. The slug in parentheses is also `meta.workspace` (`GET /api/messages/<id>`); use it in every path below,
+never the name. You are asked to work out with them how that
 workspace's team works together, and to write it down once. The workspace is usable
 now; nothing waits on you.
 
