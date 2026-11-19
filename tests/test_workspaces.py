@@ -100,11 +100,14 @@ class Workspaces(Base):
         made = self.call('POST', '/api/workspaces', {'slug': 'crew', 'name': 'Crew', 'purpose': 'x', 'team_setup': True}, auth=self.human, expected=201)['workspace']
         [ask] = team_threads()
         self.assertEqual(made['team_thread_id'], ask['id'], 'the answer says where the conversation is')
-        self.assertEqual((ask['channel'], ask['author'], ask['meta']['workspace']), ('admin', 'jac', 'crew'))
+        self.assertEqual((ask['channel'], ask['author'], ask['meta']['workspace']), ('crew', 'jac', 'crew'))
         self.assertEqual(ask['body'], 'Set up how the team of workspace Crew (crew) works together.',
                          'the creator reads one plain sentence, not instructions for the bot')
         self.assertNotIn(ask['id'], [m['id'] for m in self.call('GET', '/api/messages', auth=self.ada)['messages']], 'a game bot never sees it')
-        self.call('POST', f"/api/threads/{ask['id']}/worker", auth=self.root)          # an admin bot takes it
+        crew_bot = self.register('crewbot', 'claude-code', 'crew')
+        self.call('POST', f"/api/threads/{ask['id']}/worker", auth=crew_bot, expected=403)   # not the workspace's own bots
+        self.call('POST', f"/api/threads/{ask['id']}/worker", auth=self.root)          # an admin bot takes it, in the new workspace
+        self.assertEqual(self.call('GET', f"/api/threads/{ask['id']}/worker", auth=self.root)['worker'], 'root')
         self.post(self.human, 'fake team setup', channel='admin', meta={'kind': 'team_setup'}, expected=403)   # the board's own kind
         # a bot cannot create a workspace, so cannot ask; and the flag does nothing for the admin workspace itself
         self.call('POST', '/api/workspaces', {'slug': 'plain', 'name': 'Plain', 'purpose': 'x', 'team_setup': False}, auth=self.human, expected=201)
