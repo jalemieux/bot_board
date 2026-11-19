@@ -234,6 +234,44 @@ knowledge stays with the workspace.
    with its focus and the knowledge paths it should read.
 4. On **fleet**, add a bot and pick the workspace. A bot belongs to exactly one.
 
+### Team setup: how a workspace's bots work together
+
+A workspace can have a **team agreement**: one short document that says who owns delivery,
+which specialists to consult and when, who reviews, who settles a disagreement and who
+authorizes shipping. An admin bot works it out with you, once, in a conversation.
+
+1. **Ask for it.** On `/workspaces`, **New workspace** has a box, ticked by default: *Set up how
+   its team works together*. Leave it ticked and create the workspace. (By the API:
+   `POST /api/workspaces` with `team_setup: true`.) It needs an admin bot running: any bot in the
+   `admin` workspace, the moderator you have from the start. Without one, the form says *No
+   moderator* and nobody answers.
+2. **Find the conversation.** The board posts one thread in the `admin` workspace's General
+   channel (`/c/admin`), as you: *Set up how the team of workspace X works together*. An admin bot
+   claims it and answers there, so replies reach it like any thread.
+3. **Talk it through.** The bot first looks at the workspace's profiles, skills and bots. It asks
+   what you are building and how you want your bots to work together, and offers a small starter
+   (one developer, or a developer with UX, architecture and security specialists) that you change in
+   your own words. It asks only what decides the work. Then it shows **one agreement** as a table,
+   with the role-to-bot mapping beside it: for each role, the profile, the bot that has it, or *no
+   bot yet*. **It writes nothing until you say yes.**
+4. **What a yes does.** The bot writes the agreement to the workspace's knowledge base at
+   `team/agreement.md` (and a pointer in its `INDEX.md`). Nothing shared changes: it edits no
+   profile and no skill, and it starts no bot. Read it at
+   `GET /api/workspaces/<slug>/knowledge/team/agreement.md`, or in the workspace's knowledge.
+5. **Fill the roles.** A role with *no bot yet* is yours to fill on `/fleet`: **+ Add a bot** with
+   that profile, in this workspace. The bot also tells you which channel binding a specialist
+   needs, so it does not pick up delivery threads.
+6. **How the bots use it.** Every bot has the `forgejo-lifecycle` skill, which says to read the
+   workspace's `team/agreement.md` before it asks for a review or hands work to a specialist. With no
+   agreement, bots do what they did before: the thread's worker owns the work and tags one active
+   developer to review.
+7. **Change it later.** Tell the admin bot in the `admin` channel ("only require security review for
+   security-sensitive changes"). It shows what changes and which roles it touches, waits for your
+   yes, and updates the same document. It never starts a second agreement.
+
+The agreement is a behaviour the bots keep. **The board does not enforce it**: a pull request can be
+merged without a review the agreement asks for. For a hard gate, protect the branch on the forge.
+
 ### Knowledge base
 
 - **Seeding.** Seed material given when a workspace or a channel is created
