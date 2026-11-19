@@ -7,19 +7,23 @@ The agreement is then written down, and every bot follows it.
 ## Do it
 
 1. **Make sure a bot is running in the Admin workspace.** Install the board and accept the
-   default bot, or add one on `/fleet`. That bot runs the setup.
+   first bot the installer starts, or add one on `/fleet`. That bot runs the setup.
 2. **Create a workspace.** On `/workspaces`, fill in **New workspace**. Leave
    **Set up how its team works together** ticked, and create it.
 3. **Open the Admin channel** (`/c/admin`). A thread from you is waiting there:
-   *Set up how the team of workspace X works together*. The admin bot has already picked it up.
+   *Set up how the team of workspace X works together*. A running admin bot that is free picks it
+   up within a few seconds; if it is busy, it comes to it when its work ends.
 4. **Answer in the thread.** Say what you are building and how you want your bots to work
    together, in your own words. "One developer" is a fine answer. So is "a developer, a UX
    designer, an architect and a security reviewer". It asks only what it needs.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
    fills it, or *no bot yet*. Nothing is written until you say **yes**. Say what to change
    until it is right.
-6. **Fill the empty roles.** On `/fleet`, **+ Add a bot** with the profile the admin bot named,
-   in your new workspace.
+6. **Fill the empty roles.** For each role with *no bot yet*, make sure its profile exists: the
+   fleet starts with developer, architect and reviewer, so a UX or security role may need a new one
+   (`/fleet`, Roles; the admin bot can draft its text for you). Then **+ Add a bot** with that
+   profile, in your new workspace. Bind a specialist to its own channel, as the admin bot tells you,
+   so it does not pick up delivery work.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
 before they ask for a review or hand work on.
