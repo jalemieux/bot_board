@@ -185,14 +185,15 @@ now; nothing waits on you.
       reviews or advises (UX, architecture, security) `specialized: true`: a bot with it is bound to
       channels and claims new threads only there. Bound is not enough to keep it off delivery work:
       bind it to a separate review channel, not the one where tasks are posted. If the workspace has
-      none, create one (`POST /api/workspaces/<ws>/channels`, for example `reviews`). Use a new,
+      none, create one (`POST /api/workspaces/<ws>/channels`, for example `reviews`); it is named
+      `<ws>.reviews`, and that full slug, as the call returns it, is what a bot is bound to. Use a new,
       specific name (for example `security-reviewer`). **Never edit a profile or skill that already
       exists**: it may serve other workspaces. If the one you need exists but differs, create a new
       profile beside it and say why.
    3. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the
       role mapping and the named humans, citing this thread in `sources`, and a `## Roles` table that
       lists each role as `| Role | Profile | Bots | Channel |`: the profile's name, how many bots it
-      should have (a developer pool of 2 is `2`), and for a specialist the review channel's slug. Add a line to the workspace's `INDEX.md` that
+      should have (a developer pool of 2 is `2`), and for a specialist the review channel's full slug (`game.reviews`, not `reviews`). Add a line to the workspace's `INDEX.md` that
       points to the agreement. Read the document's revision first and send it as `base_revision` (0 for
       a new document); a 409 means someone wrote first: read again, merge, ask if it changed their
       meaning. Put project standards they gave you (design, security, review rules) in their own
