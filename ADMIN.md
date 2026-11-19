@@ -134,6 +134,64 @@ is already usable; nothing waits on you.
 No context is a valid outcome. If the material holds nothing a bot would need,
 say so and complete the thread without writing anything.
 
+## Team setup for a workspace
+
+When a human creates a workspace with "Set up how its team works together" ticked, the
+board posts one thread in the admin channel, authored by that human, with meta
+`kind: team_setup` and `workspace`. You are asked to work out with them how that
+workspace's team works together, and to write it down once. The workspace is usable
+now; nothing waits on you.
+
+1. **Look first.** Read the workspace (`GET /api/workspaces/<ws>`: its channels and
+   bots), the profiles (`GET /api/profiles`) and the skills, and the fleet's bots with
+   their profiles and channel bindings. Reuse what is there.
+2. **Ask, in the thread.** Start with what they are building and how they want their
+   bots to work together, and offer a small starter ("one developer", or "a developer
+   with a UX, an architecture and a security specialist") that they can change in their
+   own words. Do not ask for a diagram or a file. Ask only what decides the work: who owns
+   delivery; when a specialist must be consulted and what they must produce; what blocks
+   progress; who resolves a disagreement; who authorizes shipping. Find the participants
+   by profile, never by a fixed handle.
+3. **Preview one agreement, and wait.** Show it in the thread as the table below, with
+   the role-to-bot mapping beside it: for each role, the profile, the bot that has it, or
+   "no bot yet". Say plainly what is missing and what you will write. Write nothing
+   before a clear yes.
+
+   | Responsibility | Agreement |
+   |---|---|
+   | Delivery ownership | The developer owns the feature until it ships. Asking for help never transfers it. |
+   | Specialist input | Consult UX, architecture or security before the changes they care about, and say which. |
+   | PR review | Which verdicts are required before a merge is asked for, and from whom. |
+   | Re-review | Ask again when relevant code or assumptions change, naming the new commit. |
+   | Disagreement | Seek agreement; escalate what is unresolved to the named human. |
+   | Shipping | Who collects the evidence, who authorizes the merge, who closes the task. |
+
+   This is an example. They may choose conditional reviews, different specialists, or a
+   smaller process. Define obligations and handoffs, not a sequence for every change.
+4. **On a yes, write it to the workspace, not to the profiles.** `PUT
+   /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the role mapping and
+   the named humans, citing this thread in `sources`; add a line to the workspace's
+   `INDEX.md` that points to it. Read the document's revision first and send it as
+   `base_revision`; a 409 means someone wrote first: read again, merge, ask if it changed
+   their meaning. Edit no shared profile or skill: every bot reads the agreement through the
+   base skill `forgejo-lifecycle` (its "Team agreement" section). Put project standards they gave you (design,
+   security, review rules) in their own documents in the same knowledge base, and
+   reference them from the agreement.
+5. **Do not provision bots.** A role with no bot is the human's to fill on `/fleet`
+   (+ Add a bot, with that profile); say which profile, and offer the channel binding a
+   specialist needs so it does not pick up delivery threads. A bot that is stopped is not
+   a participant until it runs.
+6. **Say what it is.** The agreement is a behaviour the bots keep, not a merge gate: the
+   board and the forge do not enforce it. A hard gate is a protected branch on the forge,
+   separate work. Do not call a review "required" in a way that sounds technical.
+7. **Changing it later.** When they ask ("only require security review for
+   security-sensitive changes"), read the agreement and its revision, show what changes and
+   which roles it touches, wait for a yes, and write it with that revision. Never start a
+   second agreement beside the first. Re-running setup for a workspace that has one starts
+   from it.
+8. **Complete the thread** when the agreement is written, or when they say they do not want
+   one; write nothing in that case.
+
 ## Where attachments live
 
 Attachment files live in `attachments/` beside the database, in the `/data` volume.
