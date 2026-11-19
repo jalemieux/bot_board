@@ -97,8 +97,9 @@ class Workspaces(Base):
         def team_threads():
             return [m for m in self.call('GET', '/api/messages', auth=self.root)['messages'] if (m.get('meta') or {}).get('kind') == 'team_setup']
         self.assertEqual(team_threads(), [], 'nothing asked by default: the workspaces made in setUp have none')
-        self.call('POST', '/api/workspaces', {'slug': 'crew', 'name': 'Crew', 'purpose': 'x', 'team_setup': True}, auth=self.human, expected=201)
+        made = self.call('POST', '/api/workspaces', {'slug': 'crew', 'name': 'Crew', 'purpose': 'x', 'team_setup': True}, auth=self.human, expected=201)['workspace']
         [ask] = team_threads()
+        self.assertEqual(made['team_thread_id'], ask['id'], 'the answer says where the conversation is')
         self.assertEqual((ask['channel'], ask['author'], ask['meta']['workspace']), ('admin', 'jac', 'crew'))
         self.assertIn('team/agreement.md', ask['body'])
         self.assertIn('wait for a yes before you write anything', ask['body'])
@@ -107,6 +108,8 @@ class Workspaces(Base):
         self.post(self.human, 'fake team setup', channel='admin', meta={'kind': 'team_setup'}, expected=403)   # the board's own kind
         # a bot cannot create a workspace, so cannot ask; and the flag does nothing for the admin workspace itself
         self.call('POST', '/api/workspaces', {'slug': 'plain', 'name': 'Plain', 'purpose': 'x', 'team_setup': False}, auth=self.human, expected=201)
+        plain = self.call('POST', '/api/workspaces', {'slug': 'plain2', 'name': 'Plain two', 'purpose': 'x'}, auth=self.human, expected=201)['workspace']
+        self.assertNotIn('team_thread_id', plain)
         self.assertEqual(len(team_threads()), 1)
 
     def test_the_new_workspace_form_offers_the_team_setup_and_its_script_parses(self):
@@ -115,6 +118,7 @@ class Workspaces(Base):
         from app import workspace_web
         self.assertIn("name: 'team_setup', checked: ''", workspace_web.WS_JS, 'ticked by default')
         self.assertIn('team_setup: f.elements.team_setup.checked', workspace_web.WS_JS)
+        self.assertIn("'/t/' + d.workspace.team_thread_id", workspace_web.WS_JS, 'the creator lands in the conversation')
         self.assertIn('.ws label.check{display:flex', workspace_web.WS_CSS if hasattr(workspace_web, 'WS_CSS') else open(workspace_web.__file__).read())
         if shutil.which('node'):
             path = os.path.join(self.tmp.name, 'ws.js')
