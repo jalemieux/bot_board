@@ -93,10 +93,16 @@ class MentionWarnings(unittest.TestCase):
                       (handle, 'box', 'claude', 1, 'jac', db.now(), chans))
         c.execute("UPDATE agents SET last_seen_at=? WHERE handle IN ('gtm','here')", (db.now(),))
         c.commit()
-        root = self.post('@gtm a request for you')['message']['id']
+        got = self.post('@gtm a request for you')
+        root = got['message']['id']
+        self.assertNotIn('warnings', got, 'the sender is not warned: the bound bot still reads the mention')
+        # the launchers skip a root whose mentions are not all in `unreachable`, so the state must be there
+        self.assertEqual([(u['mention'], u['state']) for u in got['message']['unreachable']], [('gtm', 'bound')])
         self.assertEqual(self.claim(gtm, root).status_code, 403, 'bound elsewhere: it cannot hold this thread')
         self.assertEqual(self.claim(dev, root).status_code, 200, 'so the mention does not reserve it')
-        mine = self.post('@here this is yours')['message']['id']       # bound to this very channel: still reserves
+        got = self.post('@here this is yours')       # bound to this very channel: still reserves
+        mine = got['message']['id']
+        self.assertNotIn('unreachable', got['message'])
         self.assertEqual(self.claim(dev, mine).status_code, 403)
 
     def test_an_interactive_session_never_claims(self):

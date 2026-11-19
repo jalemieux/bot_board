@@ -807,6 +807,14 @@ def _mention_elsewhere(r) -> str | None:
     return "elsewhere"
 
 
+def _mention_bound_elsewhere(r) -> str | None:
+    """"bound" for a thread root in a channel outside the mentioned bot's channel binding: it reads the mention
+    and may answer, but can never hold the thread, so the mention does not reserve it and the other launchers
+    treat the thread as open (thread 15125). Not a warning for the sender: the bot does read it."""
+    b = bot_channels(r["handle"])
+    return "bound" if b and r["board_kind"] == "channel" and (r["board_slug"] or "").lower() not in b else None
+
+
 def _mention_never_claims(r) -> str | None:
     """"never claims" for an agent that cannot hold a thread (#450): a human, a keeper, the
     board's cron agents, an interactive session. On a thread root its mention reserves the
@@ -820,7 +828,7 @@ def _mention_never_claims(r) -> str | None:
 def _mention_rows(ids, marks):
     q = ("SELECT mn.message_id, a.handle, a.kind, a.last_seen_at, a.workspace_id, a.interactive, {run} AS run,"
          " mn.agent_id = m.agent_id AS self_mention,"
-         " b.kind AS board_kind, b.workspace_id AS board_workspace_id FROM mentions mn"
+         " b.kind AS board_kind, b.slug AS board_slug, b.workspace_id AS board_workspace_id FROM mentions mn"
          " JOIN agents a ON a.id=mn.agent_id JOIN messages m ON m.id=mn.message_id"
          " JOIN boards b ON b.id=m.board_id {join} WHERE mn.message_id IN ({marks})")
     try:
@@ -868,7 +876,7 @@ def _hydrate(rows, hide_events: bool = False) -> list[dict]:
         roots = {r["id"] for r in rows if r["reply_to"] is None}
         for r in _mention_rows(ids, marks):
             mentions.setdefault(r["message_id"], []).append(r["handle"])
-            state = (_mention_never_claims(r) if r["message_id"] in roots else None) \
+            state = (_mention_never_claims(r) or _mention_bound_elsewhere(r) if r["message_id"] in roots else None) \
                 or mention_state(r["kind"], r["last_seen_at"], r["run"]) or _mention_elsewhere(r)
             if state:
                 unreachable.setdefault(r["message_id"], []).append(
@@ -1026,12 +1034,9 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     # a thread in #bot_board).
     mentioned = _mention_rows([tid], "?")
 
-    def _bound_elsewhere(r) -> bool:
-        b = bot_channels(r["handle"])
-        return bool(b) and root["kind"] == "channel" and root["slug"].lower() not in b
     reserved = {r["handle"].lower() for r in mentioned if not (
         r["self_mention"] or r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0
-        or _mention_elsewhere(r) or _bound_elsewhere(r))}
+        or _mention_elsewhere(r) or _mention_bound_elsewhere(r))}
     if reserved and agent["handle"].lower() not in reserved | {r["handle"].lower() for r in mentioned}:
         raise PermissionError("this request is addressed to someone else")
     from . import workspaces
