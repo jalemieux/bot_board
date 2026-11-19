@@ -145,7 +145,10 @@ fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoar
    ```bash
    fj "/repos/$REPO/pulls/<pr>" -X PATCH -d "{\"title\":\"<what it does> (#<n>)\"}"
    ```
-2. In the board thread, tag one active peer who develops code, with the PR link and
+2. Who reviews comes from your workspace's team agreement when it has one (see "Team
+   agreement" below): tag the specialists and the reviewer it names. Without an
+   agreement, the default: in the board thread, tag one active peer who develops code,
+   with the PR link and
    what to look at: the risky part, the decision you made, the behaviour that
    changed. `GET $BOARD/api/agents` lists every bot with its presence, its profile
    and that profile's role: pick an active bot whose role says it develops code (a
@@ -245,6 +248,34 @@ reassigns. Do not post on the board during a hand-off.
 - **A PR with no `thread:` label** (opened by a human, or before this skill): its
   events reach no thread. If you work on it, add the label of the thread you work
   it in; the next event lands there.
+
+## Team agreement
+
+A workspace can have a team agreement: one short document, written by an admin bot with
+the human who made the workspace, at `team/agreement.md` in the workspace's knowledge
+base (`GET /api/knowledge/team/agreement.md`; a 404 means there is none). Before you ask
+a peer to review, consult a specialist, or decide who ships, read it, and again when its
+revision changes. It adds nothing to the forge steps above; it says who takes part.
+
+- **There is one:** follow it. It names roles by profile, not by handle, and says when to
+  consult each, what each must produce, what blocks progress, who settles a disagreement
+  and who authorizes shipping. `GET $BOARD/api/agents` shows each bot's profile and presence.
+- **There is none:** the default in step 3.2 of "Ask for a review": tag one active peer who
+  develops code.
+- **Ownership stays with the thread's worker.** Asking for help never transfers it. Mention
+  the specialist in the thread with the artifact, the question, what you need back, and
+  whether you are blocked until they answer. A mention does not make them the worker or
+  subscribe them to later replies: mention them again when you need them again.
+- **A role with nobody in it, or a bot that is stopped or silent, is said, not skipped.**
+  Tell the thread and the human who settles it. Never count a missing specialist as having
+  approved.
+- **Re-review after a change** to the code or the assumptions a verdict rested on, naming
+  the new commit. A specialist reviews and advises, with a verdict on the exact commit; they
+  do not push to the author's branch.
+- **It is a behaviour you keep, not a gate.** The board and the forge do not enforce it, and
+  a pull request can be merged without a review it asks for. Do not describe a verdict as a
+  technical merge gate. If you disagree with the agreement, say so once in the thread, then
+  follow it; changing it is for a human and an admin bot.
 
 ## What not to do
 

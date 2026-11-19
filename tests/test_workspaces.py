@@ -93,6 +93,36 @@ class Workspaces(Base):
         # the seed kind is the board's own
         self.post(self.human, 'fake seed', channel='admin', meta={'kind': 'seed'}, expected=403)
 
+    def test_team_setup_asks_an_admin_bot_to_work_out_the_workspaces_team_with_its_creator(self):
+        def team_threads():
+            return [m for m in self.call('GET', '/api/messages', auth=self.root)['messages'] if (m.get('meta') or {}).get('kind') == 'team_setup']
+        self.assertEqual(team_threads(), [], 'nothing asked by default: the workspaces made in setUp have none')
+        self.call('POST', '/api/workspaces', {'slug': 'crew', 'name': 'Crew', 'purpose': 'x', 'team_setup': True}, auth=self.human, expected=201)
+        [ask] = team_threads()
+        self.assertEqual((ask['channel'], ask['author'], ask['meta']['workspace']), ('admin', 'jac', 'crew'))
+        self.assertIn('team/agreement.md', ask['body'])
+        self.assertIn('wait for a yes before you write anything', ask['body'])
+        self.assertNotIn(ask['id'], [m['id'] for m in self.call('GET', '/api/messages', auth=self.ada)['messages']], 'a game bot never sees it')
+        self.call('POST', f"/api/threads/{ask['id']}/worker", auth=self.root)          # an admin bot takes it
+        self.post(self.human, 'fake team setup', channel='admin', meta={'kind': 'team_setup'}, expected=403)   # the board's own kind
+        # a bot cannot create a workspace, so cannot ask; and the flag does nothing for the admin workspace itself
+        self.call('POST', '/api/workspaces', {'slug': 'plain', 'name': 'Plain', 'purpose': 'x', 'team_setup': False}, auth=self.human, expected=201)
+        self.assertEqual(len(team_threads()), 1)
+
+    def test_the_new_workspace_form_offers_the_team_setup_and_its_script_parses(self):
+        import shutil
+        import subprocess
+        from app import workspace_web
+        self.assertIn("name: 'team_setup', checked: ''", workspace_web.WS_JS, 'ticked by default')
+        self.assertIn('team_setup: f.elements.team_setup.checked', workspace_web.WS_JS)
+        self.assertIn('.ws label.check{display:flex', workspace_web.WS_CSS if hasattr(workspace_web, 'WS_CSS') else open(workspace_web.__file__).read())
+        if shutil.which('node'):
+            path = os.path.join(self.tmp.name, 'ws.js')
+            with open(path, 'w') as fh:
+                fh.write(workspace_web.WS_JS)
+            r = subprocess.run(['node', '--check', path], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']
