@@ -171,20 +171,34 @@ now; nothing waits on you.
 
    This is an example. They may choose conditional reviews, different specialists, or a
    smaller process. Define obligations and handoffs, not a sequence for every change.
-4. **On a yes, write it to the workspace, not to the profiles.** `PUT
-   /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the role mapping and
-   the named humans, citing this thread in `sources`; add a line to the workspace's
-   `INDEX.md` that points to it. Read the document's revision first and send it as
-   `base_revision` (0 for a new document); a 409 means someone wrote first: read again, merge, ask if it changed
-   their meaning. Edit no shared profile or skill: every bot reads the agreement through the
-   base skill `forgejo-lifecycle` (its "Team agreement" section). Put project standards they gave you (design,
-   security, review rules) in their own documents in the same knowledge base, and
-   reference them from the agreement.
-5. **Do not provision bots.** A role with no bot is the human's to fill on `/fleet`
-   (+ Add a bot, with that profile); say which profile, and, when no such profile exists, offer to draft its text for them to save
-   on `/fleet`; offer the channel binding a
-   specialist needs so it does not pick up delivery threads. A bot that is stopped is not
-   a participant until it runs.
+4. **On a yes, set the team up, in this order, and say what you did after each.** The end state is the
+   one they asked for: the profiles, skills and bots that match their intent.
+   1. **Profiles.** For each role in the agreement with no profile, create one (`POST /api/profiles`):
+      start from a shipped starter when one fits (`GET /api/profiles/templates`, send its name as
+      `from`), else write it from what they told you: a one-line `role`, `responsibilities`, `focus`
+      and `avoid`, with the existing skills it needs. Make a specialist who reviews or advises (UX,
+      architecture, security) `specialized: true`, so a bot with it is bound to channels and claims
+      new threads only there, and never picks up delivery work. Use a new, specific name (for example
+      `security-reviewer`). **Never edit a profile or skill that already exists**: it may serve other
+      workspaces. If the one you need exists but differs, create a new profile beside it and say why.
+      Show them each new profile's text in the thread.
+   2. **Specialist skills.** Where a role needs a method no skill has (how to review for security, say),
+      write one skill (`PUT /api/skills/<name>`, a new name) and attach it to that role's profile.
+      Keep it short, and show it.
+   3. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the
+      role mapping and the named humans, citing this thread in `sources`, and a `## Roles` table that
+      lists each role as `| Role | Profile | Bots |` with the profile's name and how many bots it
+      should have (a developer pool of 2 is `2`). Add a line to the workspace's `INDEX.md` that
+      points to the agreement. Read the document's revision first and send it as `base_revision` (0 for
+      a new document); a 409 means someone wrote first: read again, merge, ask if it changed their
+      meaning. Put project standards they gave you (design, security, review rules) in their own
+      documents in the same knowledge base, and reference them from the agreement. Every bot reads
+      the agreement through the base skill `forgejo-lifecycle` (its "Team agreement" section).
+5. **Bots are the human's to start.** A bot can start no bot, so say plainly that the profiles and
+   the agreement are in place and the bots are the last step: one line per role, with the profile
+   and how many. Until they are started on `/fleet` (+ Add a bot, with that profile, in this
+   workspace; a specialist is bound to the workspace's channel), a role has nobody in it: say so, and
+   do not call the team running. A bot that is stopped is not a participant until it runs.
 6. **Say what it is.** The agreement is a behaviour the bots keep, not a merge gate: the
    board and the forge do not enforce it. A hard gate is a protected branch on the forge,
    separate work. Do not call a review "required" in a way that sounds technical.

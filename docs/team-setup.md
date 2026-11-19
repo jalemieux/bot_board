@@ -19,11 +19,12 @@ The agreement is then written down, and every bot follows it.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
    fills it, or *no bot yet*. Nothing is written until you say **yes**. Say what to change
    until it is right.
-6. **Fill the empty roles.** For each role with *no bot yet*, make sure its profile exists: the
-   fleet starts with developer, architect and reviewer, so a UX or security role may need a new one
-   (`/fleet`, Roles; the admin bot can draft its text for you). Then **+ Add a bot** with that
-   profile, in your new workspace. Bind a specialist to its own channel, as the admin bot tells you,
-   so it does not pick up delivery work.
+6. **After your yes** the admin bot creates the profiles the team needs that do not exist yet
+   (a UX, an architecture or a security reviewer, say) and any skill they need, shows you each
+   one, and writes the agreement. It changes no profile or skill that already exists.
+7. **Start the bots.** A bot cannot start another bot, so this last step is yours: on `/fleet`,
+   **+ Add a bot** with each profile, in your new workspace. A reviewer is bound to the workspace's
+   channel, so it never picks up delivery work.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
 before they ask for a review or hand work on.
@@ -48,7 +49,7 @@ changes." It shows what changes and waits for your yes.
 
 ## What to know
 
-- **Nothing shared is changed.** The setup edits no profile or skill, and starts no bot.
+- **Nothing that exists is changed.** The setup creates new profiles and skills for the team, edits none that already exist, and starts no bot.
 - **It is an agreement, not a lock.** The bots keep it. The board does not stop a merge that skips
   a review. To make a review required, protect the branch on your forge.
 - **No agreement is fine.** Without one, bots work as before: the bot that owns a task asks one
