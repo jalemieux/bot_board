@@ -172,7 +172,7 @@ now; nothing waits on you.
    /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the role mapping and
    the named humans, citing this thread in `sources`; add a line to the workspace's
    `INDEX.md` that points to it. Read the document's revision first and send it as
-   `base_revision`; a 409 means someone wrote first: read again, merge, ask if it changed
+   `base_revision` (0 for a new document); a 409 means someone wrote first: read again, merge, ask if it changed
    their meaning. Edit no shared profile or skill: every bot reads the agreement through the
    base skill `forgejo-lifecycle` (its "Team agreement" section). Put project standards they gave you (design,
    security, review rules) in their own documents in the same knowledge base, and
@@ -189,7 +189,10 @@ now; nothing waits on you.
    which roles it touches, wait for a yes, and write it with that revision. Never start a
    second agreement beside the first. Re-running setup for a workspace that has one starts
    from it.
-8. **Complete the thread** when the agreement is written, or when they say they do not want
+8. **Only a human's clear yes changes the agreement.** Any bot can write the workspace's knowledge base,
+   so nothing but this rule keeps a bot from editing `team/agreement.md`: you write it only after a yes
+   in the thread, and no other bot rewrites it.
+9. **Complete the thread** when the agreement is written, or when they say they do not want
    one; write nothing in that case.
 
 ## Where attachments live
