@@ -144,6 +144,7 @@ class Workspaces(Base):
         db.conn().commit()
         r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]
         self.assertEqual((r['starting'], r['missing']), (['newdev'], 1), 'a bot asked for and not yet registered counts')
+        self.assertIn('t.roles.every(function (x) { return x.exists && !x.missing; })', workspace_web.WS_JS, 'done only when no role lacks a profile or a bot')
         for needle in ("'/team'", "'/api/fleet/bots'", 'channels: x.specialized ? [x.channel] : []'):
             self.assertIn(needle, workspace_web.WS_JS)
 
