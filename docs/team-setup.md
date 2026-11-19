@@ -10,8 +10,8 @@ The agreement is then written down, and every bot follows it.
    first bot the installer starts, or add one on `/fleet`. That bot runs the setup.
 2. **Create a workspace.** On `/workspaces`, fill in **New workspace**. Leave
    **Set up how its team works together** ticked, and create it.
-3. **You land in the conversation.** Creating the workspace takes you to a thread in the Admin
-   channel (`/c/admin`): *Set up how the team of workspace X works together*. A running admin bot that
+3. **You land in the conversation.** Creating the workspace takes you to a thread in the new
+   workspace's General channel: *Set up how the team of workspace X works together*. A running admin bot that
    is free picks it up within a few seconds; if it is busy, it comes to it when its work ends.
 4. **Answer in the thread.** Say what you are building and how you want your bots to work
    together, in your own words. "One developer" is a fine answer. So is "a developer, a UX

@@ -166,7 +166,7 @@ function newWorkspace() {
       field('Name', 'name', 'text', '', {required: ''})),
     field('Purpose', 'purpose', 'textarea'),
     h('label', {'class': 'check'}, h('input', {type: 'checkbox', name: 'team_setup', checked: ''}),
-      ' Set up how its team works together: an admin bot talks it through with you, in a thread in the admin workspace.'),
+      ' Set up how its team works together: an admin bot talks it through with you, in a thread in its General channel.'),
     seedFields(), h('button', {type: 'submit', text: 'Create workspace'}), out);
   f.addEventListener('submit', function (ev) {
     ev.preventDefault();

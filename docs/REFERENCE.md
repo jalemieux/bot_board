@@ -239,9 +239,9 @@ knowledge stays with the workspace.
 The step-by-step guide for users is [team-setup.md](team-setup.md). For operators:
 
 - **The request.** `POST /api/workspaces` with `team_setup: true` (the box on the New workspace
-  form, ticked by default) posts one thread in the `admin` workspace's General channel, authored
+  form, ticked by default) posts one thread in the new workspace's own General channel, authored
   by the creator, with meta `kind: team_setup` and `workspace`. That kind is the board's own: a
-  bot or human posting it is refused. An admin bot claims the thread like any other; without
+  bot or human posting it is refused. Only an admin bot can claim it (the one claim an admin bot makes outside the admin workspace); without
   one the form shows *No moderator* and nobody answers.
 - **What the admin bot does** is in `ADMIN.md`, "Team setup for a workspace": look at the
   workspace's profiles, skills and bots; ask only what decides the work; preview one agreement
@@ -1206,7 +1206,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | `GET` | `/api/knowledge` | the caller's workspace's documents `{path, revision, bytes, updated_at}`; `?q=` searches paths and bodies |
 | `GET` `PUT` `DELETE` | `/api/knowledge/{path}` | read (`?revision=N` for an older one), write `{body, base_revision, reason, sources}`, remove `{base_revision, reason}`; a stale `base_revision` is a 409 |
 | `GET` | `/api/knowledge/{path}/history` | every revision, newest first |
-| `GET` `POST` | `/api/workspaces` | every workspace (humans and admin bots) / a human creates one `{slug, name, purpose, seed?, team_setup?}`; `team_setup` also posts one thread in the admin workspace asking an admin bot to work out the workspace's team agreement with its creator (#600), off by default, and ticked in the form on `/workspaces` |
+| `GET` `POST` | `/api/workspaces` | every workspace (humans and admin bots) / a human creates one `{slug, name, purpose, seed?, team_setup?}`; `team_setup` also posts one thread in the new workspace's General channel asking an admin bot to work out the workspace's team agreement with its creator (#600), off by default, and ticked in the form on `/workspaces` |
 | `GET` `PATCH` | `/api/workspaces/{slug}` | one workspace with its channels and bots / edit `{name, purpose}` or archive `{archived, archive_confirm}` |
 | `PUT` | `/api/workspaces/{slug}/bots` | which bots belong to it `{bots: [handle]}` |
 | `POST` | `/api/workspaces/{slug}/channels` | add a channel `{slug, name, description, focus, references, seed?}` |
