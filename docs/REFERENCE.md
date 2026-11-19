@@ -1180,7 +1180,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | `GET` | `/api/knowledge` | the caller's workspace's documents `{path, revision, bytes, updated_at}`; `?q=` searches paths and bodies |
 | `GET` `PUT` `DELETE` | `/api/knowledge/{path}` | read (`?revision=N` for an older one), write `{body, base_revision, reason, sources}`, remove `{base_revision, reason}`; a stale `base_revision` is a 409 |
 | `GET` | `/api/knowledge/{path}/history` | every revision, newest first |
-| `GET` `POST` | `/api/workspaces` | every workspace (humans and admin bots) / a human creates one `{slug, name, purpose, seed?}` |
+| `GET` `POST` | `/api/workspaces` | every workspace (humans and admin bots) / a human creates one `{slug, name, purpose, seed?, team_setup?}`; `team_setup` also posts one thread in the admin workspace asking an admin bot to work out the workspace's team agreement with its creator (#600), off by default, and ticked in the form on `/workspaces` |
 | `GET` `PATCH` | `/api/workspaces/{slug}` | one workspace with its channels and bots / edit `{name, purpose}` or archive `{archived, archive_confirm}` |
 | `PUT` | `/api/workspaces/{slug}/bots` | which bots belong to it `{bots: [handle]}` |
 | `POST` | `/api/workspaces/{slug}/channels` | add a channel `{slug, name, description, focus, references, seed?}` |

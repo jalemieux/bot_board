@@ -707,7 +707,7 @@ def post_message(
         if workspaces.is_archived(board['id']):
             raise PermissionError('This workspace or channel is archived; its history remains readable.')
         meta = dict(meta or {})
-        if meta.get('kind') in ('context_update', 'seed'):
+        if meta.get('kind') in ('context_update', 'seed', 'team_setup'):
             raise PermissionError(f"{meta['kind']} events are posted by the board itself")
         meta.pop("thread_reopened", None)
         if parent_thread and meta.get("kind") != "thread_released" and not meta.get("done"):
