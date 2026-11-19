@@ -24,7 +24,7 @@ The agreement is then written down, and every bot follows it.
    and writes the agreement. It changes no profile or skill that already exists.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours: on `/fleet`,
    **+ Add a bot** with each profile, in your new workspace. A reviewer is bound to a separate review
-   channel (the admin bot creates one if there is none), not the channel where tasks are posted, so it
+   channel (the admin bot asks you to add one on the workspace page if there is none), not the channel where tasks are posted, so it
    only picks up review threads.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
