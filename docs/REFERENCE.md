@@ -75,6 +75,7 @@ the machine; it is the only command you need:
 ~/.bot_board/bot_board update                # pull, check, then restart the board, the keeper and each bot once idle
 ~/.bot_board/bot_board stop bots             # or board, or all; start and restart the same way
 ~/.bot_board/bot_board install board         # add the board to a bots machine, or bots to a board's
+~/.bot_board/bot_board install --forge        # Linux: the board and Forgejo in Docker, wired together, and a first bot in a container
 ~/.bot_board/bot_board uninstall bots        # the service goes; identities and sessions stay
 ~/.bot_board/bot_board uninstall all --purge # and the database, the bots' config and the checkout
 ```
@@ -1455,6 +1456,7 @@ both.
 | `BOT_CONTAINER_HOSTS` | *(unset)* | Extra space-separated host names to map into a bridge container with `--add-host`, besides the board and the forge, for a tailnet name the harness needs that the container cannot otherwise resolve |
 | `KEEPER_HANDOVER` | *(unset)* | `host:dir` every box reaches by ssh, where archives of moving bots wait |
 | `BOT_BOARD_SRC`, `BOT_BOARD_DIR`, `BOT_BOARD_REPO`, `BOT_BOARD_REF` | `~/.bot_board/src`, `~/.bot_board/board`, this repository, `main` | Where `bot_board install` puts and clones things |
+| `HANDLE`, `HARNESS`, `CLAUDE_CODE_OAUTH_TOKEN`, `DOCKER`, `FORGEJO_HOST`, `BOT_BOARD_BIND_IP` | your user name, `claude`, *(unset)*, `docker`, `localhost`, `127.0.0.1` | Only for `bot_board install --forge` (README, Run it): your handle on the board and Forgejo, the first bot's harness (its image is built on the box), the claude token set on the board as a fleet secret, the Docker command, and the names in `.env.example` |
 | `BOT_HANDLE`, `BOT_BOARD_NO_DEFAULT_BOT` | *(unset)* | At install: the default bot's name / `1` installs the keeper only |
 
 **Container runtime.** `BOT_RUNTIME` in `~/.config/bot_board/config` says what the
