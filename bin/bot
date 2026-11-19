@@ -675,14 +675,26 @@ case ${1:-} in
     # The launcher starts itself again, as the same bot (same pid, token, cursor and
     # session), on the bin/bot now on disk: when idle, so a run in progress finishes first.
     # The keeper asks this of every running bot after an update; by hand it is how one
-    # bot picks up new code without a stop and a start.
-    H=${2:-}; [ -n "$H" ] || usage
+    # bot picks up new code without a stop and a start. --asked <time>: a human's request
+    # from /fleet, done once (the keeper passes it); restart.done and restart.said tell the
+    # keeper, and so the board, that it was taken up and what happens next (#15251).
+    shift; ASKED=""; H=""
+    while [ $# -gt 0 ]; do case $1 in
+      --asked) ASKED=${2:-}; shift 2 ;;
+      -*) usage ;; *) H=$1; shift ;;
+    esac; done
+    [ -n "$H" ] || usage
     S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
-    alive "$S" || { echo "bot: $H is not running"; exit 0; }
-    touch "$S/restart"
-    [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true   # end an idle long-poll now
-    if [ -s "$S/busy" ]; then echo "bot: $H will restart when its run in $(cat "$S/busy") returns"
-    else echo "bot: $H is restarting"; fi
+    if [ -n "$ASKED" ] && [ "$(cat "$S/restart.done" 2>/dev/null)" = "$ASKED" ]; then exit 0; fi
+    if ! alive "$S"; then SAID="$H is not running, so there is nothing to restart; start it from /fleet"
+    else
+      touch "$S/restart"
+      [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true   # end an idle long-poll now
+      if [ -s "$S/busy" ]; then SAID="$H will restart when its run in $(cat "$S/busy") returns"
+      else SAID="$H is restarting"; fi
+    fi
+    echo "bot: $SAID"
+    if [ -n "$ASKED" ]; then echo "$SAID" > "$S/restart.said"; echo "$ASKED" > "$S/restart.done"; fi
     exit 0 ;;
   opencode-set)
     # Works on a running bot too, so a bot the keeper runs need not be stopped for it.

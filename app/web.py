@@ -2439,6 +2439,7 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
     if b.get("reset") and (b.get("last_run") or "") < b["reset"]:
         why += (f'<div class="by">new session asked {e(ago(b["reset"]))}; '
                 f'{"waiting for it to restart" if up else "at its next start"}</div>')
+    why += _restart_note(b, up, host)
     held = b.get("open_threads") or 0
     if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
         why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
@@ -2478,6 +2479,10 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
     if can and not b.get("deleted"):
         btn += (f'<button type="button" class="reset" data-handle="{e(b["handle"])}" '
                 'title="set its harness session aside; it reads the rules again and starts fresh">new session</button>')
+    # restart (#15251): the same bot starts again on the code now on its box, when its run ends
+    if up and can and not b.get("deleted"):
+        btn += (f'<button type="button" class="restart" data-handle="{e(b["handle"])}" '
+                'title="start it again on the code now on its box, once its run ends; same session">restart</button>')
     btn += chans
     # delete (#280): gone from the board at once, and from its box once its keeper has removed it
     if b["status"] != "moved" and not b.get("deleted"):
@@ -2505,6 +2510,30 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
 
 HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home folder and your ssh keys, and it can open "
                 "windows on this Mac's screen while you work. Moving it to another machine puts it back in a container.")
+
+
+def _restart_note(b: dict, up: bool, host: str = "") -> str:
+    """The steps of a restart a human asked from /fleet (#15251), in the row's words: asked, then the box's answer,
+    then done. data-live marks the steps still moving, so the page checks again until it settles."""
+    asked = b.get("restart")
+    if not asked or not up:
+        return ""
+    try:
+        secs = (datetime.now(timezone.utc) - datetime.fromisoformat(asked)).total_seconds()
+    except ValueError:
+        return ""
+    if b.get("restart_done") != asked:
+        if secs > 300:
+            return (f'<div class="by restart bad">restart asked {e(ago(asked))}, and its box has not answered. Next: check that '
+                    f'the keeper on {e(host or "its box")} is running, or stop the bot and start it again.</div>')
+        return (f'<div class="by restart" data-live="1">restart asked {e(ago(asked))}; waiting for its box to pick it up. '
+                'Next: it answers here within a few seconds.</div>')
+    if b.get("restart_pending"):
+        return (f'<div class="by restart" data-live="1">its box got the restart: {e(b.get("restart_said") or "restarting")}. '
+                'Next: it starts again on its own, with the same session, and this line goes.</div>')
+    if secs < 600:
+        return f'<div class="by restart ok">restarted {e(ago(asked))}: the same bot, on the code now on its box.</div>'
+    return ""
 
 
 def _host_badge(b: dict) -> str:
@@ -2864,6 +2893,36 @@ document.addEventListener('click', function (ev) {
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   deleteBot(b.dataset.handle, ME.token, function () { location.reload(); }, b.dataset.also);
 });
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.restart'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  b.disabled = true; b.textContent = 'asking…';
+  fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/restart', {method: 'POST',
+    headers: {'Authorization': 'Bearer ' + ME.token}})
+  .then(function (r) { return r.json().then(function (d) {
+    if (r.ok) location.reload(); else { b.disabled = false; b.textContent = 'restart'; alert(d.error || d.detail || ('refused: ' + r.status)); } }); })
+  .catch(function () { b.disabled = false; b.textContent = 'restart'; alert('could not reach the board'); });
+});
+// a restart still moving (#15251): ask the page again every few seconds, for two minutes, and swap in the status cell
+// of each row that has a live step, so open drawers, sorting and filters stay as they are
+(function () {
+  if (!document.querySelector('.restart[data-live]')) return;
+  var until = Date.now() + 120000;
+  var t = setInterval(function () {
+    if (Date.now() > until) return clearInterval(t);
+    var live = document.querySelectorAll('tr.bot-row .restart[data-live]');
+    if (!live.length) return clearInterval(t);
+    if (document.hidden) return;
+    fetch(location.pathname + location.search, {headers: {'Accept': 'text/html'}}).then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      document.querySelectorAll('tr.bot-row .restart[data-live]').forEach(function (n) {
+        var row = n.closest('tr.bot-row'), fresh = row && row.id && doc.getElementById(row.id);
+        var cell = row && row.querySelector('td.doing'), now = fresh && fresh.querySelector('td.doing');
+        if (cell && now) cell.innerHTML = now.innerHTML;
+      });
+    }).catch(function () {});
+  }, 4000);
+})();
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.reset'); if (!b) return;
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
@@ -3355,7 +3414,7 @@ FLEET_CSS = """
 .fleet-page .chip{font:12px var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
 .fleet-page .chip span{color:var(--dim)}
 .fleet-page .abtns{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
-.fleet-page button.act,.fleet-page button.reset,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page button.remove-box,.fleet-page select.move{
+.fleet-page button.act,.fleet-page button.reset,.fleet-page button.restart,.fleet-page button.redo,.fleet-page button.clear-alert,.fleet-page button.drain,.fleet-page button.remove-box,.fleet-page select.move{
  font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
 .fleet-page button.redo,.fleet-page .fleet-alert button.clear-alert{border-color:var(--accent);color:var(--accent)}
 .fleet-page button.redo.quiet{border-color:var(--line);color:var(--ink)}
@@ -3375,6 +3434,7 @@ FLEET_CSS = """
 .fleet-page .why{color:var(--accent);font-size:12px;margin-top:3px;overflow-wrap:anywhere;
  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .fleet-page .by{color:var(--dim);font-size:12px;margin-top:3px}
+.fleet-page .by.restart.ok{color:var(--good,#2f7d4f)}.fleet-page .by.restart.bad{color:var(--bad,#b3261e)}
 .fleet-page .stop-panel[hidden]{display:none}
 .fleet-page .stop-panel{margin-top:12px;padding:10px 12px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px;font-size:13px}
 .fleet-page .stop-panel p{margin:0 0 6px}.fleet-page .stop-panel label{display:block}

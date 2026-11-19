@@ -458,7 +458,12 @@ def bots():
                      # which bots run a session older than a skill's last edit
                      "session_started": read_text(os.path.join(state, "session-started"))[:40],
                      # how the launcher started it (#595): host (outside a container, as this user) or container
-                     "runmode": read_text(os.path.join(state, "runmode"))[:16]})
+                     "runmode": read_text(os.path.join(state, "runmode"))[:16],
+                     # a restart a human asked of it (#15251): which request its launcher took up, what it said
+                     # would happen, and whether the restart is still to come (the launcher removes the marker as it restarts)
+                     "restart_done": read_text(os.path.join(state, "restart.done"))[:40],
+                     "restart_said": read_text(os.path.join(state, "restart.said"))[:200],
+                     "restart_pending": os.path.exists(os.path.join(state, "restart"))})
     return rows
 
 
@@ -978,6 +983,7 @@ class Hands:
         self.procs = {}         # handle -> the bin/bot we started for it, which is the bot for as long as it lives
         self.killed = {}        # handle -> the kill request (its time) already carried out
         self.reset = {}         # handle -> the new-session request (its time) already passed to bin/bot
+        self.restart = {}       # handle -> the restart request (its time) already passed to bin/bot
         self.restarting = {}    # handle -> its harness: stopped because it ignored a restart, to start again
         self.quick = {}         # handle -> how many times in a row it died soon after a start
         self.blocked = {}       # harness -> why its bots are not started now (Credentials.blocked)
@@ -997,6 +1003,11 @@ class Hands:
                 self.reset[h] = w["reset"]
                 self.spawn(h, [BOT, "reset", h, "--asked", w["reset"]])
                 print(f"keeper: new session for {h}, asked by a human at {w['reset']}", flush=True)
+            # a restart a human asked for (#15251): bin/bot restart does it once per request and records that it did
+            if w.get("restart") and self.restart.get(h) != w["restart"] and HANDLE_RE.fullmatch(h) and h.lower() in here:
+                self.restart[h] = w["restart"]
+                self.spawn(h, [BOT, "restart", h, "--asked", w["restart"]])
+                print(f"keeper: restart for {h}, asked by a human at {w['restart']}", flush=True)
             if not HANDLE_RE.fullmatch(h) or w["harness"] not in HARNESSES:
                 problems[h] = "not carried out: not a handle and harness this keeper accepts"
             elif w.get("deleted"):
