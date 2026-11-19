@@ -237,7 +237,7 @@ function teamSection(w) {
       h('p', {'class': 'sub', text: 'From team/agreement.md. A role whose profile does not exist yet is made by the admin bot first.'}));
     t.roles.forEach(function (x) {
       sec.appendChild(h('p', {'class': 'sub'}, x.role + ': ', h('b', {text: x.profile}),
-        x.exists ? ' ' + x.have.length + ' of ' + x.want + ' bots' + (x.specialized ? (x.channel ? ', claims only in #' + x.channel : ', no review channel named in the agreement') : '') : ' (no such profile yet)'));
+        x.exists ? ' ' + x.have.length + ' of ' + x.want + ' bots' + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.specialized ? (x.channel ? ', claims only in #' + x.channel : ', no review channel named in the agreement') : '') : ' (no such profile yet)'));
     });
     if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: 'Every role has its bots.'})); return sec; }
     if (!hosts.length) { sec.appendChild(h('p', {'class': 'sub'}, 'No machine is reporting. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), '.')); return sec; }

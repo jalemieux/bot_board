@@ -259,11 +259,15 @@ def team(ws) -> dict:
             continue            # the header, the rule line, prose
         prof = profiles.get(cells[1].lower())
         have = [b for b in (prof['bots'] if prof else []) if b.lower() in mine]
+        # a bot asked for on /fleet is only a fleet row until its launcher registers it: count it, or Create twice makes two more
+        asked = [r['handle'] for r in db.conn().execute(
+            "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
+        starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
         want = min(int(cells[2]), 10)
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
-                      'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have,
+                      'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have, 'starting': starting,
                       'channel': (cells[3].lstrip('#').lower() if len(cells) > 3 else ''),
-                      'missing': max(want - len(have), 0) if prof else 0})
+                      'missing': max(want - len(have) - len(starting), 0) if prof else 0})
     return {'roles': roles, 'agreement': True}
 
 

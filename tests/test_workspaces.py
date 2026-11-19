@@ -136,6 +136,10 @@ class Workspaces(Base):
         t = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']
         self.assertEqual([(r['profile'], r['want'], r['exists']) for r in t['roles']], [('developer', 2, True), ('no-such-profile', 1, False)])
         self.assertEqual([r['missing'] for r in t['roles']], [2, 0], 'a profile that does not exist is the admin bot\'s to make first')
+        db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile) VALUES('newdev','b','claude',1,'jac','now','game','developer')")
+        db.conn().commit()
+        r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]
+        self.assertEqual((r['starting'], r['missing']), (['newdev'], 1), 'a bot asked for and not yet registered counts')
         self.assertEqual([r['channel'] for r in t['roles']], ['', 'reviews'])
         for needle in ("'/team'", "'/api/fleet/bots'", 'channels: x.specialized ? [x.channel] : []'):
             self.assertIn(needle, workspace_web.WS_JS)
