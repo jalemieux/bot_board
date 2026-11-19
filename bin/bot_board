@@ -17,6 +17,9 @@
 #   update     pull the checkout (checked; rolled back if it fails), then restart the
 #              board, the keeper and, once idle, each bot on it: the one checkout alone
 #              does not move a running process
+#   install --forge   the whole fleet in containers, in one line: the board and a Forgejo beside it in
+#              Docker, the Forgejo wired to the board, and the keeper with a first bot whose harness runs
+#              in a container too. Needs Linux, Docker with Compose, jq and openssl (docs in the README)
 #   uninstall  stop it and remove its service. Data stays: the board's database
 #              (~/.bot_board/board) and the bots' identities and sessions
 #              (~/.config/bot_board). --purge removes those too, and the checkout once
@@ -27,6 +30,10 @@
 # and the bots' launchers. A bots-only machine follows the board it reports to (#240); a
 # board run here says which commit it runs, so the keeper next to it never runs ahead.
 #
+# --forge env: HANDLE (your handle on the board and on Forgejo, default your user name), HARNESS (the first
+# bot's, default claude; its image is built here), CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`; set
+# on the board as a fleet secret so the container bot is logged in), FORGEJO_HOST and BOT_BOARD_BIND_IP
+# (the names in .env.example; default localhost and 127.0.0.1), DOCKER (default docker; `sudo docker`).
 # Env: BOT_BOARD_SRC (the checkout, default ~/.bot_board/src), BOT_BOARD_DIR (the board's
 # data, default ~/.bot_board/board), BOT_BOARD_REPO and BOT_BOARD_REF (where the checkout
 # is cloned from), BOT_CONFIG (the bots' config); PORT and BIND (the board), BOARD (the
@@ -60,10 +67,12 @@ keeper_up() {
 }
 
 CMD=${1:-}; shift || true
-WHAT=""; PURGE=""
+WHAT=""; PURGE=""; FORGE=""
 for a in "$@"; do
-  case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; *) usage ;; esac
+  case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; --forge) FORGE=1 ;; *) usage ;; esac
 done
+[ -z "$FORGE" ] || [ "$CMD" = install ] || die "--forge goes with install"
+[ -z "$FORGE" ] || [ -z "$WHAT" ] || [ "$WHAT" = all ] || die "--forge installs the board, Forgejo and the bots together"
 case $CMD in
   install) WHAT=${WHAT:-all} ;;
   uninstall) [ -n "$WHAT" ] || die "uninstall what? board, bots or all" ;;
@@ -86,7 +95,7 @@ if [ "$CMD" = install ] && [ -z "${BOT_BOARD_FROM_SRC:-}" ]; then
     git -C "$SRC" pull -q --ff-only || say "could not pull $SRC: installing from it as it is"
   fi
   [ -f "$SRC/bin/bot_board" ] || die "$SRC is too old to have bin/bot_board and could not be pulled: update it by hand (git -C $SRC pull)"
-  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" BOT_BOARD_FROM_SRC=1 bash "$SRC/bin/bot_board" "$CMD" "$WHAT"
+  exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DATA" BOT_BOARD_FROM_SRC=1 bash "$SRC/bin/bot_board" "$CMD" "$WHAT" ${FORGE:+--forge}
 fi
 # which components this command acts on
 BOARD_ON=""; BOTS_ON=""
@@ -99,9 +108,56 @@ case ${WHAT:-installed} in
 esac
 board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 
+# install --forge: the board and Forgejo in Docker, the Forgejo wired to the board, and the keeper with a
+# first bot that runs in a container (BOT_RUNTIME=docker). Linux only for now: a container reaches the board
+# on 127.0.0.1 through host networking. Every step is safe to run again.
+forge_install() {
+  local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
+  local tok i _pair
+  [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
+  for c in $d jq openssl curl python3; do command -v "${c%% *}" >/dev/null || die "install --forge needs $c"; done
+  $d compose version >/dev/null 2>&1 || die "install --forge needs Docker with the Compose plugin ($d compose version)"
+  case $harness in claude|codex|opencode|copilot) ;; *) die "HARNESS: claude, codex, opencode or copilot" ;; esac
+  printf '%s' "$human" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$' || die "HANDLE ($human): letters, digits, dot, dash, underscore; 2 to 32 characters"
+  # 1. the board and Forgejo
+  [ -f "$SRC/.env" ] || cp "$SRC/.env.example" "$SRC/.env"
+  for _pair in BOT_BOARD_BIND_IP:${BOT_BOARD_BIND_IP:-} FORGEJO_HOST:${FORGEJO_HOST:-}; do
+    [ -n "${_pair#*:}" ] || continue
+    { grep -v "^#\?${_pair%%:*}=" "$SRC/.env" || true; echo "${_pair%%:*}=${_pair#*:}"; } > "$SRC/.env.new" && mv "$SRC/.env.new" "$SRC/.env"
+  done
+  say "starting the board and Forgejo in Docker (the first build takes a few minutes)"
+  (cd "$SRC" && $d compose --profile forge up -d --build) || die "docker compose failed: is Docker running, and may you use it (DOCKER=\"sudo docker\")?"
+  for i in $(seq 1 90); do curl -fsS "$api/healthz" >/dev/null 2>&1 && break; sleep 2; done
+  curl -fsS "$api/healthz" >/dev/null 2>&1 || die "the board does not answer at $api"
+  # 2. you, on the board, and the wiring of Forgejo to it
+  tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
+          -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) || die "could not sign in as $human on $api"
+  [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
+  BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
+    || die "forge-setup failed; run it again from $SRC once the cause is gone"
+  # 3. the first bot's harness runs in a container: an image of its own, built here, and its login
+  say "building the $harness image for the bots' containers"
+  $d build --build-arg "HARNESS=$harness" -f "$SRC/deploy/harness.Dockerfile" -t "localhost/jac/bot_board-harness-$harness:latest" "$SRC" \
+    || die "the $harness image did not build"
+  if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "$harness" = claude ]; then
+    curl -fsS -X PUT "$api/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+      -d "$(jq -n --arg v "$CLAUDE_CODE_OAUTH_TOKEN" '{value: $v}')" >/dev/null && say "the claude token is set on the board as a fleet secret"
+  fi
+  # 4. the keeper, with the box setting that puts every bot in a container
+  mkdir -p "$(dirname "$CFG_FILE")"; chmod 700 "$(dirname "$CFG_FILE")"; touch "$CFG_FILE"
+  for _pair in BOT_RUNTIME:docker BOT_CONTAINER_HOST_NETWORK:1 BOT_HARNESS_REGISTRY:localhost KEEPER_DEFAULT_BOT:$harness; do
+    { grep -v "^${_pair%%:*}=" "$CFG_FILE" || true; printf '%s="%s"\n' "${_pair%%:*}" "${_pair#*:}"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
+  done
+  BOARD=$api BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install --no-bot
+  say "the board is at $api (sign in as $human), Forgejo at http://${FORGEJO_HOST:-localhost}:3000, and the first bot starts in a container within a minute: watch $api/fleet"
+  [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ "$harness" != claude ] \
+    || say "the claude bot waits for a login: set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $api/fleet (make it with claude setup-token), and it starts by itself"
+}
+
 case $CMD in
   install)
     ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
+    if [ -n "$FORGE" ]; then forge_install; say "manage the keeper with $(dirname "$SRC")/bot_board status|stop|restart bots; the board and Forgejo with docker compose in $SRC"; exit 0; fi
     # the board first: bots installed beside it report to it, unless BOARD says otherwise
     [ -z "$BOARD_ON" ] || board up
     if [ -n "$BOTS_ON" ]; then
