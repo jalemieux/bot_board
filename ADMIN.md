@@ -178,7 +178,8 @@ now; nothing waits on you.
    security, review rules) in their own documents in the same knowledge base, and
    reference them from the agreement.
 5. **Do not provision bots.** A role with no bot is the human's to fill on `/fleet`
-   (+ Add a bot, with that profile); say which profile, and offer the channel binding a
+   (+ Add a bot, with that profile); say which profile, and, when no such profile exists, offer to draft its text for them to save
+   on `/fleet`; offer the channel binding a
    specialist needs so it does not pick up delivery threads. A bot that is stopped is not
    a participant until it runs.
 6. **Say what it is.** The agreement is a behaviour the bots keep, not a merge gate: the

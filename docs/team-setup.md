@@ -19,8 +19,11 @@ The agreement is then written down, and every bot follows it.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
    fills it, or *no bot yet*. Nothing is written until you say **yes**. Say what to change
    until it is right.
-6. **Fill the empty roles.** On `/fleet`, **+ Add a bot** with the profile the admin bot named,
-   in your new workspace.
+6. **Fill the empty roles.** For each role with *no bot yet*, make sure its profile exists: the
+   fleet starts with developer, architect and reviewer, so a UX or security role may need a new one
+   (`/fleet`, Roles; the admin bot can draft its text for you). Then **+ Add a bot** with that
+   profile, in your new workspace. Bind a specialist to its own channel, as the admin bot tells you,
+   so it does not pick up delivery work.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
 before they ask for a review or hand work on.
