@@ -163,10 +163,13 @@ function newWorkspace() {
     h('div', {'class': 'two'}, field('Slug (its General channel is #slug)', 'slug', 'text', '', {required: '', pattern: '[A-Za-z0-9][A-Za-z0-9._-]{1,63}'}),
       field('Name', 'name', 'text', '', {required: ''})),
     field('Purpose', 'purpose', 'textarea'),
+    h('label', {'class': 'check'}, h('input', {type: 'checkbox', name: 'team_setup', checked: ''}),
+      ' Set up how its team works together: an admin bot talks it through with you, in a thread in the admin workspace.'),
     seedFields(), h('button', {type: 'submit', text: 'Create workspace'}), out);
   f.addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim()};
+    var body = {slug: f.elements.slug.value.trim(), name: f.elements.name.value.trim(), purpose: f.elements.purpose.value.trim(),
+                team_setup: f.elements.team_setup.checked};
     var seed = seedOf(f); if (seed) body.seed = seed;
     api('POST', '/api/workspaces', body).then(function (d) { location.href = '/workspaces/' + encodeURIComponent(d.workspace.slug); })
       .catch(function (e) { note(out, e.message); });
