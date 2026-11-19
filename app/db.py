@@ -402,6 +402,15 @@ def touch_agent(agent_id: int, last_seen_at: str | None = None) -> None:
         c.commit()
 
 
+def _team_setup_root(root) -> bool:
+    """The board's own request to set up a workspace's team (#600), posted in that workspace's General channel:
+    the one thread an admin bot holds outside the admin workspace."""
+    try:
+        return json.loads(root["meta"] or "{}").get("kind") == "team_setup"
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
 def get_agent_by_id(agent_id: int) -> dict | None:
     row = conn().execute("SELECT * FROM agents WHERE id=?", (agent_id,)).fetchone()
     return dict(row) if row else None
@@ -996,7 +1005,7 @@ def thread_worker(tid: int) -> dict:
 
 def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     root = c.execute(
-        "SELECT m.id, m.board_id, m.thread_id, b.kind, b.slug FROM messages m"
+        "SELECT m.id, m.board_id, m.thread_id, m.meta, b.kind, b.slug FROM messages m"
         " JOIN boards b ON b.id=m.board_id WHERE m.id=?", (tid,),
     ).fetchone()
     if root is None:
@@ -1019,8 +1028,10 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     board = get_board_by_id(root["board_id"])
     if not in_scope(board, scope(agent)):
         raise PermissionError("this thread is outside your workspace")
+    if _team_setup_root(root) and workspace_slug(agent.get("workspace_id")) != ADMIN_WORKSPACE:
+        raise PermissionError("a team setup is worked out by an admin bot")
     if root["kind"] == "channel" and agent.get("workspace_id") and scope(agent) is None \
-            and board.get("workspace_id") != agent["workspace_id"]:
+            and board.get("workspace_id") != agent["workspace_id"] and not _team_setup_root(root):
         # the moderator reads and replies everywhere but claims only in the admin workspace (#319)
         raise PermissionError("the moderator claims threads only in the admin workspace: this one is"
                               " for its workspace's bots")
