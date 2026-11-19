@@ -239,7 +239,7 @@ function teamSection(w) {
       sec.appendChild(h('p', {'class': 'sub'}, x.role + ': ', h('b', {text: x.profile}),
         x.exists ? ' ' + x.have.length + ' of ' + x.want + ' bots' + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.specialized ? (x.channel ? ', claims only in #' + x.channel : ', its review channel does not exist (the row names none, or a wrong one)') : '') : ' (no such profile yet)'));
     });
-    if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: 'Every role has its bots.'})); return sec; }
+    if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: roles.length === t.roles.length ? 'Every role has its bots.' : 'Nothing to create yet; the roles above wait for a profile or a review channel.'})); return sec; }
     if (!hosts.length) { sec.appendChild(h('p', {'class': 'sub'}, 'No machine is reporting. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), '.')); return sec; }
     var n = todo.reduce(function (a, x) { return a + x.missing; }, 0);
     var host = h('select', {name: 'host'}, hosts.map(function (x) { return h('option', {value: x.name, text: x.name}); }));

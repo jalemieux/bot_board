@@ -25,7 +25,7 @@ The agreement is then written down, and every bot follows it.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours. Open your
    workspace page: the **Team** panel lists each role and how many bots it still lacks. Pick a machine
    and a harness and press **Create**. A reviewer is bound to a separate review channel (the admin bot
-   creates one if there is none), not the channel where tasks are posted, so it only picks up review
+   asks you to add one on the workspace page if there is none), not the channel where tasks are posted, so it only picks up review
    threads.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
