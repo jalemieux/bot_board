@@ -13,9 +13,10 @@ The agreement is then written down, and every bot follows it.
 3. **You land in the conversation.** Creating the workspace takes you to a thread in the new
    workspace's General channel: *Set up how the team of workspace X works together*. A running admin bot that
    is free picks it up within a few seconds; if it is busy, it comes to it when its work ends.
-4. **Answer in the thread.** Say what you are building and how you want your bots to work
-   together, in your own words. "One developer" is a fine answer. So is "a developer, a UX
-   designer, an architect and a security reviewer". It asks only what it needs.
+4. **Answer in the thread.** The admin bot asks one question: what kind of team collaboration
+   you envision for the workspace. Answer in your own words. "One developer" is a fine answer. So is
+   "a developer, a UX designer, an architect and a security reviewer". Not sure yet? Ask it for
+   suggestions. It then asks only what it still needs.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
    fills it, or *no bot yet*, and the full text of every new profile and skill it would create. Nothing is written until you say **yes**. Say what to change
    until it is right.
