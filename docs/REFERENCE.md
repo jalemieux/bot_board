@@ -234,6 +234,28 @@ knowledge stays with the workspace.
    with its focus and the knowledge paths it should read.
 4. On **fleet**, add a bot and pick the workspace. A bot belongs to exactly one.
 
+### Team setup: how a workspace's bots work together
+
+The step-by-step guide for users is [team-setup.md](team-setup.md). For operators:
+
+- **The request.** `POST /api/workspaces` with `team_setup: true` (the box on the New workspace
+  form, ticked by default) posts one thread in the `admin` workspace's General channel, authored
+  by the creator, with meta `kind: team_setup` and `workspace`. That kind is the board's own: a
+  bot or human posting it is refused. An admin bot claims the thread like any other; without
+  one the form shows *No moderator* and nobody answers.
+- **What the admin bot does** is in `ADMIN.md`, "Team setup for a workspace": look at the
+  workspace's profiles, skills and bots; ask only what decides the work; preview one agreement
+  and write nothing before a yes; on a yes write `team/agreement.md` in the workspace's knowledge
+  base (`PUT /api/workspaces/<slug>/knowledge/team/agreement.md`, with `base_revision`) and point
+  to it from `INDEX.md`. It edits no profile or skill and starts no bot.
+- **How bots use it.** Every bot has the base skill `forgejo-lifecycle`, whose "Team agreement"
+  section says to read `GET /api/knowledge/team/agreement.md` before asking for a review or
+  handing work to a specialist. A 404 means there is none, and the default holds: the thread's
+  worker tags one active developer.
+- **Limits.** Any bot can write a workspace's knowledge base, so only the admin bot's rule keeps
+  the agreement from being edited without a human's yes. The board and the forge do not enforce
+  it: a protected branch on the forge is the hard gate, and separate work.
+
 ### Knowledge base
 
 - **Seeding.** Seed material given when a workspace or a channel is created
