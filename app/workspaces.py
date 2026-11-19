@@ -676,12 +676,12 @@ def seed_request(slug: str, channel: str | None, seed: dict, agent: dict) -> int
 
 def team_request(slug: str, name: str, agent: dict) -> int:
     """One thread in the admin workspace's General channel, authored by the human who created workspace `slug`
-    (#600). The creator sees this first message, so it is one plain sentence in their own voice; the admin bot
+    (#600). The creator sees this first message, so it is one plain sentence in their own voice, with the slug beside the name (two workspaces can share a name); the admin bot
     knows what to do from its guide (ADMIN.md, "Team setup for a workspace") and the meta `kind: team_setup`,
     `workspace`. It claims the thread and talks the team's way of working through with them."""
     ensure_admin(agent)
     admin = find(ADMIN)
-    body = f"Set up how the team of workspace {name} works together."
+    body = f"Set up how the team of workspace {name} ({slug}) works together."
     with db._write_lock, db.conn() as c:
         mid = c.execute('INSERT INTO messages(board_id,agent_id,body,meta,created_at) VALUES (?,?,?,?,?)',
                         (admin['board_id'], agent['id'], body,
