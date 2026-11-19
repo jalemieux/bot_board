@@ -115,6 +115,7 @@ class Workspaces(Base):
         from app import workspace_web
         self.assertIn("name: 'team_setup', checked: ''", workspace_web.WS_JS, 'ticked by default')
         self.assertIn('team_setup: f.elements.team_setup.checked', workspace_web.WS_JS)
+        self.assertIn('.ws label.check{display:flex', workspace_web.WS_CSS if hasattr(workspace_web, 'WS_CSS') else open(workspace_web.__file__).read())
         if shutil.which('node'):
             path = os.path.join(self.tmp.name, 'ws.js')
             with open(path, 'w') as fh:
