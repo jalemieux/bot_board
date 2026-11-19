@@ -76,13 +76,15 @@ MOVE_COLUMNS = ("move_to", "fetch")
 # was retired, so it leaves the stopped list; cleared by the next start.
 # reset: when a human asked for the bot's next run to start a new harness session (#221);
 # the keeper runs `bot reset --asked <reset>`, which does it once per request.
+# restart: when a human asked a running bot to start itself again (#15251); the keeper runs
+# `bot restart --asked <restart>`, once per request, and reports what the launcher said.
 # deleted: when a human deleted the bot (#280); its keeper stops it and removes it from the box
 # (`bot delete`), and the row goes once the box no longer reports it.
 # onhost, host_box, host_reason, host_by, host_at, host_apps: a host bot (#595), made only as a new bot on a
 # box with the switch on. It runs outside a container only while it is on host_box and that box's switch is on:
 # a move to another box or the switch off puts it back in a container at its next start.
 HOST_COLUMNS = ("onhost", "host_box", "host_reason", "host_by", "host_at", "host_apps")
-EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "deleted") + HOST_COLUMNS
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "restart", "deleted") + HOST_COLUMNS
 THREADS = ("keep", "handoff", "retire")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
 STALE_AFTER = 180
@@ -207,7 +209,7 @@ def delete(handle: str, by: dict) -> str | None:
         with db._write_lock:
             c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, deleted) VALUES (?,?,?,0,?,?,?)"
                       " ON CONFLICT(handle) DO UPDATE SET run=0, set_by=excluded.set_by, set_at=excluded.set_at,"
-                      " deleted=excluded.deleted, problem='', move_to=NULL, fetch=NULL, kill=NULL, threads=NULL, reset=NULL",
+                      " deleted=excluded.deleted, problem='', move_to=NULL, fetch=NULL, kill=NULL, threads=NULL, reset=NULL, restart=NULL",
                       (handle, host, (row["harness"] if row else None) or seen.get("harness") or "claude",
                        by["handle"], now, now))
             c.commit()
@@ -882,6 +884,37 @@ def reset(handle: str, by: str) -> str | None:
     return None
 
 
+def restart(handle: str, by: str) -> str | None:
+    """Record that a human wants this running bot to start itself again (#15251). The keeper of its box
+    carries it out and reports what the launcher said; /fleet shows the steps. Returns None, or why not."""
+    if _deleted(handle):
+        return f"{handle} was deleted"
+    c = db.conn()
+    row = c.execute("SELECT * FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    boxes = {h["name"].lower(): h for h in hosts()}
+    src = row["host"] if row else next((n for n, h in boxes.items() if h["reporting"] and any(
+        b["handle"].lower() == handle.lower() and b["status"] != "moved" for b in h["bots"])), None)
+    if not src or src not in boxes:
+        return f"no box reports {handle}"
+    if not boxes[src]["reporting"]:
+        return f"{src} is not reporting, so nothing can restart {handle} there"
+    seen = next((b for b in boxes[src]["bots"] if b["handle"].lower() == handle.lower()), None)
+    if not (seen and seen["status"].startswith(UP)):
+        return f"{handle} is not running on {src}: start it instead"
+    harness = seen.get("harness") or (row["harness"] if row else None)
+    if harness not in HARNESSES:
+        return f"{src} does not say which harness {handle} runs"
+    now = db.now()
+    with db._write_lock:
+        if row:
+            c.execute("UPDATE fleet_bots SET restart=? WHERE handle=?", (now, handle))
+        else:   # nothing asked of it yet: ask that it stay running, restarted
+            c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, restart) VALUES (?,?,?,1,?,?,?)",
+                      (handle, src, harness, by, now, now))
+        c.commit()
+    return None
+
+
 def drain(host: str, by: str, to: str | None = None) -> dict | str:
     """Move every pool bot up on a box to other boxes, one move() each: a full box
     emptied in one request. Each bot goes to `to`, else to the reporting box with
@@ -1097,7 +1130,7 @@ def hosts() -> list[dict]:
                          problem=w["problem"], harness=b.get("harness") or w["harness"],
                          move_to=w["move_to"], fetch=w["fetch"], kill=w["kill"], profile=w.get("profile"),
                          channels=_channels(w), voice=w.get("voice") or "", personality=w.get("personality") or "",
-                         threads=w["threads"], retired=w["retired"], reset=w["reset"],
+                         threads=w["threads"], retired=w["retired"], reset=w["reset"], restart=w["restart"],
                          deleted=w["deleted"], **_host_fields(w, h["name"], on))
         h["bots"] += [{"handle": w["handle"], "harness": w["harness"], "status": "stopped", "serves": "",
                        "want": "running" if w["run"] else "stopped", "set_by": w["set_by"], "set_at": w["set_at"],

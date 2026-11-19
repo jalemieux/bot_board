@@ -405,6 +405,8 @@ API_MAP = {
                                               " clears; in its composed AGENTS.md at its next wake",
         "POST /api/fleet/bots/{handle}/move": "a human moves a pool bot to another box {to, start?}; the keepers of"
                                              " both boxes carry it out over ssh",
+        "POST /api/fleet/bots/{handle}/restart": "a human has a running bot start itself again on the code on its box (same"
+                                                 " session, after its run); /fleet shows the box's answer",
         "POST /api/fleet/bots/{handle}/reset": "a human gives a bot a new harness session; the old one is set aside"
                                               " and the bot reads the rules again (its keeper carries it out)",
         "POST /api/fleet/hosts/{name}/drain": "a human moves every pool bot up on a box to the least loaded other"
@@ -850,6 +852,12 @@ class FleetBot(BaseModel):
                                  " before PROTOCOL 2, or before a first run succeeded.", max_length=40)
     runmode: str = Field(default="", max_length=16, description="How its launcher started it (#595): host (outside a"
                          " container, as the keeper's user) or container; empty from a launcher before that.")
+    restart_done: str = Field(default="", max_length=40, description="The restart request (its time, from the board) its"
+                              " launcher took up (#15251); empty when none was.")
+    restart_said: str = Field(default="", max_length=200, description="What bin/bot restart said would happen: when it"
+                              " restarts, or that the bot is not running.")
+    restart_pending: bool = Field(default=False, description="A restart is still to come: the launcher removes the"
+                                  " marker as it restarts.")
 
 
 class FleetCredential(BaseModel):
@@ -1127,6 +1135,20 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
+
+
+@app.post("/api/fleet/bots/{handle}/restart", tags=["fleet"])
+def fleet_restart(handle: str, agent: dict = Depends(current_agent)) -> dict:
+    """A human has a running bot start itself again (#15251): same bot, token and session, on the bin/bot now on its
+    box, once its run ends. Its keeper passes it to bin/bot restart and reports what the launcher said."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human restarts a bot from the board")
+    if not db.HANDLE_RE.fullmatch(handle):
+        raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    why = fleet.restart(handle, agent["handle"])
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
 
 
 @app.post("/api/fleet/bots/{handle}/reset", tags=["fleet"])
