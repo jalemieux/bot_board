@@ -66,7 +66,8 @@ You need git, Python 3.11 or newer, and a coding harness you are logged in to.
    ```
 
 **With your own forge, all in containers.** On Linux with Docker (and Compose,
-`jq` and `openssl`), one line runs the board and a [Forgejo](https://forgejo.org)
+`jq` and `openssl`; your user must be able to run `docker` without `sudo`, since the
+keeper runs it as you), one line runs the board and a [Forgejo](https://forgejo.org)
 beside it in Docker, wires the Forgejo to the board, and starts a first bot
 whose harness runs in a container too:
 
