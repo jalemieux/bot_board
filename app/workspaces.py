@@ -248,7 +248,7 @@ def team(ws) -> dict:
     try:
         text = kb_get(ws, 'team/agreement.md')['body']
     except KeyError:
-        return {'roles': [], 'channel': home_slug(ws), 'agreement': False}
+        return {'roles': [], 'agreement': False}
     section = re.search(r'^##\s+Roles\s*$(.*?)(?=^##\s|\Z)', text, re.M | re.S | re.I)
     profiles = {p['name'].lower(): p for p in registry.list_profiles()}
     mine = {b.lower() for b in bots_of(ws)}
@@ -262,8 +262,9 @@ def team(ws) -> dict:
         want = min(int(cells[2]), 10)
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
                       'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have,
+                      'channel': (cells[3].lstrip('#').lower() if len(cells) > 3 else ''),
                       'missing': max(want - len(have), 0) if prof else 0})
-    return {'roles': roles, 'channel': home_slug(ws), 'agreement': True}
+    return {'roles': roles, 'agreement': True}
 
 
 def moderation() -> dict:

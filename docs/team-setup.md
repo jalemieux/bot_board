@@ -17,15 +17,16 @@ The agreement is then written down, and every bot follows it.
    together, in your own words. "One developer" is a fine answer. So is "a developer, a UX
    designer, an architect and a security reviewer". It asks only what it needs.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
-   fills it, or *no bot yet*. Nothing is written until you say **yes**. Say what to change
+   fills it, or *no bot yet*, and the full text of every new profile and skill it would create. Nothing is written until you say **yes**. Say what to change
    until it is right.
 6. **After your yes** the admin bot creates the profiles the team needs that do not exist yet
-   (a UX, an architecture or a security reviewer, say) and any skill they need, shows you each
-   one, and writes the agreement. It changes no profile or skill that already exists.
+   (a UX, an architecture or a security reviewer, say) and any skill they need, exactly as you saw them,
+   and writes the agreement. It changes no profile or skill that already exists.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours. Open your
    workspace page: the **Team** panel lists each role and how many bots it still lacks. Pick a machine
-   and a harness and press **Create**. A reviewer is bound to the workspace's channel, so it never
-   picks up delivery work.
+   and a harness and press **Create**. A reviewer is bound to a separate review channel (the admin bot
+   creates one if there is none), not the channel where tasks are posted, so it only picks up review
+   threads.
 
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
 before they ask for a review or hand work on.

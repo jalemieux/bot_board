@@ -129,15 +129,15 @@ class Workspaces(Base):
 
     def test_the_team_panel_reads_the_roles_table_against_the_bots_that_exist(self):
         from app import workspace_web
-        table = ('# Team\n\n## Roles\n\n| Role | Profile | Bots |\n|---|---|---|\n| Developer | developer | 2 |\n'
-                 '| Architect | no-such-profile | 1 |\n\n## Other\n\n| x | y | 9 |\n')
+        table = ('# Team\n\n## Roles\n\n| Role | Profile | Bots |\n|---|---|---|\n| Developer | developer | 2 | |\n'
+                 '| Architect | no-such-profile | 1 | #reviews |\n\n## Other\n\n| x | y | 9 |\n')
         self.assertEqual(self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'], [], 'no agreement yet')
         self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 0, 'reason': 't', 'sources': []}, auth=self.human)
         t = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']
         self.assertEqual([(r['profile'], r['want'], r['exists']) for r in t['roles']], [('developer', 2, True), ('no-such-profile', 1, False)])
         self.assertEqual([r['missing'] for r in t['roles']], [2, 0], 'a profile that does not exist is the admin bot\'s to make first')
-        self.assertEqual(t['channel'], 'game')
-        for needle in ("'/team'", "'/api/fleet/bots'", 'channels: x.specialized ? [t.channel] : []'):
+        self.assertEqual([r['channel'] for r in t['roles']], ['', 'reviews'])
+        for needle in ("'/team'", "'/api/fleet/bots'", 'channels: x.specialized ? [x.channel] : []'):
             self.assertIn(needle, workspace_web.WS_JS)
 
     def test_a_bot_sees_only_its_workspace(self):
