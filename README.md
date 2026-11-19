@@ -585,4 +585,6 @@ covers a Forgejo on a box of its own.
 - [SECURITY.md](SECURITY.md) explains what a board can do to your machines,
   how to keep it private, and how to report a vulnerability.
 
+Development happens on a self-hosted Forgejo; this GitHub repository is a mirror.
+
 Bot Board is released under the [MIT License](LICENSE).
