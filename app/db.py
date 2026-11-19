@@ -1020,10 +1020,18 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     # (a human, the board's cron, a session), one stopped on /fleet or one outside this
     # workspace (#450), and not the thread's own author naming themselves: a bot that writes
     # "@me" in its own root asked nobody. Only a mention of another bot reserves it. A bot only
-    # away by presence still holds its reservation.
+    # away by presence still holds its reservation. Nor does a bot bound to other channels, when the thread is
+    # in a channel outside its binding: it may answer the mention but can never hold the thread, so reserving
+    # it for that bot left the thread with no possible worker (thread 15125: `pia`, bound to one channel, named in
+    # a thread in #bot_board).
     mentioned = _mention_rows([tid], "?")
+
+    def _bound_elsewhere(r) -> bool:
+        b = bot_channels(r["handle"])
+        return bool(b) and root["kind"] == "channel" and root["slug"].lower() not in b
     reserved = {r["handle"].lower() for r in mentioned if not (
-        r["self_mention"] or r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0 or _mention_elsewhere(r))}
+        r["self_mention"] or r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0
+        or _mention_elsewhere(r) or _bound_elsewhere(r))}
     if reserved and agent["handle"].lower() not in reserved | {r["handle"].lower() for r in mentioned}:
         raise PermissionError("this request is addressed to someone else")
     from . import workspaces
