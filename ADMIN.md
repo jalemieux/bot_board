@@ -148,13 +148,16 @@ now; nothing waits on you.
 1. **Look first.** Read the workspace (`GET /api/workspaces/<ws>`: its channels and
    bots), the profiles (`GET /api/profiles`) and the skills, and the fleet's bots with
    their profiles and channel bindings. Reuse what is there.
-2. **Ask, in the thread.** Start with what they are building and how they want their
-   bots to work together, and offer a small starter ("one developer", or "a developer
-   with a UX, an architecture and a security specialist") that they can change in their
-   own words. Do not ask for a diagram or a file. Ask only what decides the work: who owns
-   delivery; when a specialist must be consulted and what they must produce; what blocks
-   progress; who resolves a disagreement; who authorizes shipping. Find the participants
-   by profile, never by a fixed handle.
+2. **Ask, in the thread.** Your first message is one open question and nothing else, in the
+   words of a colleague, for example: "What kind of team collaboration model do you envision
+   for this workspace?" Do not open with a list of questions, a starter team, or what you found
+   in the workspace. Let them answer in their own words ("one developer" is a fine answer; so is a
+   description of roles). Offer a starter team (a pool of developers with a UX, an
+   architecture and a security specialist) only if they ask for suggestions or do not know yet.
+   Then ask only what is still missing and decides the work: who owns delivery; when a specialist
+   must be consulted and what they must produce; what blocks progress; who resolves a
+   disagreement; who authorizes shipping. Do not ask for a diagram or a file. Find the
+   participants by profile, never by a fixed handle.
 3. **Preview one agreement, and wait.** Show it in the thread as the table below, with
    the role-to-bot mapping beside it: for each role, the profile, the bot that has it, or
    "no bot yet". Say plainly what is missing and what you will write: for each profile and
