@@ -679,7 +679,7 @@ def _has_material(seed: dict) -> bool:
 
 
 def seed_request(slug: str, channel: str | None, seed: dict, agent: dict) -> int:
-    """One thread in the new workspace's own General channel, authored by the human who
+    """One thread in the admin workspace's General channel, authored by the human who
     created the workspace or channel, carrying the material. Admin bots claim it."""
     ensure_admin(agent)
     admin = find(ADMIN)
