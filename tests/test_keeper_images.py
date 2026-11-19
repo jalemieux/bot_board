@@ -66,6 +66,20 @@ class KeeperImages(unittest.TestCase):
             time.sleep(0.05)
         self.fail('the pull did not finish')
 
+    def test_an_image_built_on_this_box_is_checked_not_pulled(self):
+        self.runtime('docker')
+        with open(os.path.join(self.home, '.config', 'bot_board', 'config'), 'a') as fh:
+            fh.write('BOT_HARNESS_REGISTRY=localhost\n')
+        os.environ.pop('BOT_HARNESS_REGISTRY', None)
+        images = self.k.Images()
+        report = self.pulled(images)
+        self.assertEqual(report[0]['state'], 'missing', 'no local image: said so, with the build command')
+        self.assertIn('docker build', report[0]['detail'])
+        open(os.path.join(self.home, 'have-bot_board-harness-claude:latest'), 'w').close()      # the build made it
+        report = self.pulled(images)
+        self.assertEqual((report[0]['state'], report[0]['image']), ('ok', 'localhost/jac/bot_board-harness-claude:latest'))
+        self.assertFalse([c for c in self.calls() if c.startswith('pull')], 'nothing was pulled from a registry that is not there')
+
     def test_the_host_path_does_not_touch_the_runtime(self):
         images = self.k.Images()
         images.tick({'claude'}, force=True)
