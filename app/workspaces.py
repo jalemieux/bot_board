@@ -252,6 +252,7 @@ def team(ws) -> dict:
     section = re.search(r'^##\s+Roles\s*$(.*?)(?=^##\s|\Z)', text, re.M | re.S | re.I)
     profiles = {p['name'].lower(): p for p in registry.list_profiles()}
     mine = {b.lower() for b in bots_of(ws)}
+    chans = {c['slug'].lower() for c in channels_of(ws, include_archived=False)}
     roles = []
     for line in (section.group(1) if section else '').splitlines():
         cells = [c.strip().strip('`') for c in line.strip().strip('|').split('|')]
@@ -264,9 +265,12 @@ def team(ws) -> dict:
             "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
         want = min(int(cells[2]), 10)
+        # the cell may say `reviews` (what the create call takes) or `game.reviews` (what a bot is bound to); only a channel that exists counts
+        raw = cells[3].lstrip('#').lower() if len(cells) > 3 else ''
+        channel = next((c for c in (raw, f"{ws['slug'].lower()}.{raw}") if raw and c in chans), '')
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
                       'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have, 'starting': starting,
-                      'channel': (cells[3].lstrip('#').lower() if len(cells) > 3 else ''),
+                      'channel': channel,
                       'missing': max(want - len(have) - len(starting), 0) if prof else 0})
     return {'roles': roles, 'agreement': True}
 

@@ -129,18 +129,21 @@ class Workspaces(Base):
 
     def test_the_team_panel_reads_the_roles_table_against_the_bots_that_exist(self):
         from app import workspace_web
-        table = ('# Team\n\n## Roles\n\n| Role | Profile | Bots |\n|---|---|---|\n| Developer | developer | 2 | |\n'
-                 '| Architect | no-such-profile | 1 | #reviews |\n\n## Other\n\n| x | y | 9 |\n')
+        table = ('# Team\n\n## Roles\n\n| Role | Profile | Bots | Channel |\n|---|---|---|---|\n| Developer | developer | 2 | |\n'
+                 '| Architect | no-such-profile | 1 | reviews |\n| Security | developer | 1 | reviews |\n'
+                 '| Ux | developer | 1 | game.nothing |\n| Full | developer | 1 | game.reviews |\n\n## Other\n\n| x | y | 9 | |\n')
         self.assertEqual(self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'], [], 'no agreement yet')
         self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 0, 'reason': 't', 'sources': []}, auth=self.human)
-        t = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']
-        self.assertEqual([(r['profile'], r['want'], r['exists']) for r in t['roles']], [('developer', 2, True), ('no-such-profile', 1, False)])
-        self.assertEqual([r['missing'] for r in t['roles']], [2, 0], 'a profile that does not exist is the admin bot\'s to make first')
+        self.call('POST', '/api/workspaces/game/channels', {'slug': 'reviews', 'name': 'Reviews'}, auth=self.human, expected=201)
+        roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
+        self.assertEqual([(r['profile'], r['want'], r['exists']) for r in roles][:2], [('developer', 2, True), ('no-such-profile', 1, False)])
+        self.assertEqual([r['missing'] for r in roles], [2, 0, 1, 1, 1], 'a profile that does not exist is the admin bot\'s to make first')
+        self.assertEqual([r['channel'] for r in roles], ['', 'game.reviews', 'game.reviews', '', 'game.reviews'],
+                         'short or full slug resolves to the full one a bot is bound to; one that does not exist is empty')
         db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile) VALUES('newdev','b','claude',1,'jac','now','game','developer')")
         db.conn().commit()
         r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]
         self.assertEqual((r['starting'], r['missing']), (['newdev'], 1), 'a bot asked for and not yet registered counts')
-        self.assertEqual([r['channel'] for r in t['roles']], ['', 'reviews'])
         for needle in ("'/team'", "'/api/fleet/bots'", 'channels: x.specialized ? [x.channel] : []'):
             self.assertIn(needle, workspace_web.WS_JS)
 
