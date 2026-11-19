@@ -131,7 +131,7 @@ forge_install() {
   curl -fsS "$api/healthz" >/dev/null 2>&1 || die "the board does not answer at $api"
   # 2. you, on the board, and the wiring of Forgejo to it
   tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
-          -d "$(jq -n --arg h "$human" '{handle: $h, kind: "human"}')" | jq -r .token) || die "could not sign in as $human on $api"
+          -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) || die "could not sign in as $human on $api"
   [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
   BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
     || die "forge-setup failed; run it again from $SRC once the cause is gone"

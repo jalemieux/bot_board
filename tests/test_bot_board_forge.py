@@ -19,7 +19,7 @@ if a[:1] == ["-n"]:                      # jq -n --arg k v '<filter>'
     args = {a[i + 1]: a[i + 2] for i in range(len(a)) if a[i] == "--arg"}
     f = a[-1]
     if "kind" in f:
-        print(json.dumps({"handle": args["h"], "kind": "human"}))
+        print(json.dumps({"handle": args["h"], "kind": "human", "invite_code": args["i"]}))
     else:
         print(json.dumps({"value": args["v"]}))
 else:                                     # jq -r .token
@@ -29,6 +29,8 @@ FAKE_CURL = r'''#!/usr/bin/env python3
 import os, sys
 log = os.environ["FAKE_LOG"]
 open(log, "a").write("curl " + " ".join(sys.argv[1:]) + "\n")
+if "-d" in sys.argv:
+    open(log, "a").write("body " + sys.argv[sys.argv.index("-d") + 1] + "\n")
 url = [x for x in sys.argv[1:] if x.startswith("http")][0]
 if url.endswith("/api/agents"):
     print('{"token": "tok-human"}')
@@ -105,6 +107,11 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("BOT_BOARD_BIND_IP=100.64.0.9", env)
         self.assertIn("FORGEJO_HOST=box.example", env)
         self.assertNotIn("127.0.0.1", env, "the old bind address is replaced, not kept beside the new one")
+
+    def test_the_invite_code_goes_with_the_sign_in(self):
+        r = self.run_install(INVITE="open-sesame")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('"invite_code": "open-sesame"', "\n".join(self.calls()))
 
     def test_running_it_again_does_not_double_the_config(self):
         self.run_install()

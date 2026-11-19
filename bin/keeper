@@ -711,6 +711,8 @@ class Images:
 
     def pull(self, rt, harness):
         image = harness_image(harness)
+        if (setting("BOT_HARNESS_REGISTRY").strip() or HARNESS_REGISTRY).split("/")[0].split(":")[0] == "localhost":
+            return self.local(rt, harness, image)
         try:
             r = subprocess.run([rt, "pull", "-q", image], capture_output=True, text=True, timeout=1800,
                                stdin=subprocess.DEVNULL)
@@ -730,6 +732,24 @@ class Images:
                 self.changed = True
         if got["digest"] and got["digest"] != old:
             print(f"keeper: {harness} image is {got['digest'][:19]}", flush=True)
+
+    def local(self, rt, harness, image):
+        """An image built on this box (BOT_HARNESS_REGISTRY=localhost, bot_board install --forge): there is no registry
+        to pull from, so it is checked, not pulled. Its id stands for the digest, so a rebuild still counts as new."""
+        try:
+            d = subprocess.run([rt, "image", "inspect", "--format", "{{.Id}}", image], capture_output=True, text=True,
+                               timeout=30, stdin=subprocess.DEVNULL)
+            ident = d.stdout.strip() if d.returncode == 0 else ""
+            got = ({"state": "ok", "digest": ident, "detail": ""} if ident else
+                   {"state": "missing", "digest": "", "detail": f"not built on this box: docker build --build-arg HARNESS={harness}"
+                                                               f" -f deploy/harness.Dockerfile -t {image} ."})
+        except (OSError, subprocess.SubprocessError) as e:
+            got = {"state": "missing", "digest": "", "detail": f"image check failed: {e}"[:200]}
+        with self.lock:
+            old = self.state.get(harness, {}).get("digest")
+            self.state[harness] = {"image": image, **got, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            if got["digest"] != old:
+                self.changed = True
 
     def report(self):
         with self.lock:
