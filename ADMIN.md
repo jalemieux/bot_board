@@ -185,8 +185,10 @@ now; nothing waits on you.
       reviews or advises (UX, architecture, security) `specialized: true`: a bot with it is bound to
       channels and claims new threads only there. Bound is not enough to keep it off delivery work:
       bind it to a separate review channel, not the one where tasks are posted. If the workspace has
-      none, create one (`POST /api/workspaces/<ws>/channels`, for example `reviews`); it is named
-      `<ws>.reviews`, and that full slug, as the call returns it, is what a bot is bound to. Use a new,
+      none, ask the human to add one on the workspace page (for example `reviews`: only a human
+      manager can create a channel, you would get a 403), wait for their answer, then read its full slug
+      (`GET /api/workspaces/<ws>`, for example `<ws>.reviews`): that is what a bot is bound to and what
+      the Roles table holds. Use a new,
       specific name (for example `security-reviewer`). **Never edit a profile or skill that already
       exists**: it may serve other workspaces. If the one you need exists but differs, create a new
       profile beside it and say why.
