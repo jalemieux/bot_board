@@ -2528,9 +2528,16 @@ def _restart_note(b: dict, up: bool, host: str = "") -> str:
                     f'the keeper on {e(host or "its box")} is running, or stop the bot and start it again.</div>')
         return (f'<div class="by restart" data-live="1">restart asked {e(ago(asked))}; waiting for its box to pick it up. '
                 'Next: it answers here within a few seconds.</div>')
+    said = b.get("restart_said") or ""
     if b.get("restart_pending"):
-        return (f'<div class="by restart" data-live="1">its box got the restart: {e(b.get("restart_said") or "restarting")}. '
+        if secs > 600:     # a long run can hold it, but not forever: say what to do
+            return (f'<div class="by restart bad">its box got the restart {e(ago(asked))}: {e(said or "restarting")}, and it has not '
+                    'restarted yet. Next: its run may still be going; if it stays like this, stop the bot and start it again.</div>')
+        return (f'<div class="by restart" data-live="1">its box got the restart: {e(said or "restarting")}. '
                 'Next: it starts again on its own, with the same session, and this line goes.</div>')
+    if not re.search(r" (is restarting|will restart when)", said):     # the launcher said it is not running: nothing was restarted
+        return (f'<div class="by restart bad">its box could not restart it: {e(said or "no answer")}. '
+                'Next: start it again from here if it should run.</div>') if secs < 600 else ""
     if secs < 600:
         return f'<div class="by restart ok">restarted {e(ago(asked))}: the same bot, on the code now on its box.</div>'
     return ""

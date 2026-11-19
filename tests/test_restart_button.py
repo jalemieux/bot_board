@@ -134,6 +134,23 @@ class Board(unittest.TestCase):
         self.assertIn("the same bot, on the code now on its box", page)
         self.assertNotIn('data-live="1"', page, "settled: the page stops asking")
 
+    def test_the_green_line_needs_the_launcher_to_have_restarted_and_a_long_wait_is_said(self):
+        self.report()
+        self.client.post("/api/fleet/bots/tarzan/restart", headers=self.human)
+        asked = self.report()[0]["restart"]
+        self.report(restart_done=asked, restart_said="tarzan is not running, so there is nothing to restart; start it from /fleet",
+                    restart_pending=False)
+        page = self.client.get("/fleet").text
+        self.assertIn("its box could not restart it", page)
+        self.assertNotIn("the same bot, on the code now on its box", page, "nothing was restarted")
+        old = (datetime.now(timezone.utc) - timedelta(minutes=12)).isoformat(timespec="seconds")
+        c = db.conn(); c.execute("UPDATE fleet_bots SET restart=? WHERE handle='tarzan'", (old,)); c.commit()
+        self.report(restart_done=old, restart_said="tarzan will restart when its run in #12 returns", restart_pending=True)
+        page = self.client.get("/fleet").text
+        self.assertIn("has not restarted yet", page)
+        self.assertIn("stop the bot and start it again", page)
+        self.assertNotIn('data-live="1"', page)
+
     def test_a_box_that_never_answers_is_said_so_with_what_to_do(self):
         self.report()
         self.client.post("/api/fleet/bots/tarzan/restart", headers=self.human)
