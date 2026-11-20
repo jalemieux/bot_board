@@ -853,8 +853,9 @@ def seed() -> None:
     """Every docs/skills/<name>/SKILL.md the board has no revision of becomes an authored skill
     at revision 1, at every start: a skill shipped after a board's first start arrives at its
     next one, and a deleted skill keeps its tombstone revision, so deleting sticks. The
-    templates under docs/profiles/ become profiles once, at the first start; the files are
-    not consulted again, so deleting a seeded profile sticks."""
+    starters under docs/profiles/ work the same way (#631): a starter whose name no profile has
+    ever had becomes a profile, at every start, so one shipped after a board's first start
+    arrives at its next. A deleted profile keeps its name, so deleting one sticks."""
     c = db.conn()
     if os.path.isdir(SKILLS_DIR):
         for name in sorted(os.listdir(SKILLS_DIR)):
@@ -866,9 +867,9 @@ def seed() -> None:
                     put_skill(name, fh.read(), None, 0, f"seeded from docs/skills/{name}", None)
                 except ValueError:
                     continue
-    if c.execute("SELECT 1 FROM registry_meta WHERE key='seeded'").fetchone():
-        return
     for t in templates():
+        if c.execute("SELECT 1 FROM profiles WHERE name=?", (t["name"],)).fetchone():
+            continue                 # it exists, or existed and was deleted
         try:
             create_profile({**t, "from": t["name"]}, None)
         except ValueError:

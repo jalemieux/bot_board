@@ -81,6 +81,20 @@ class Registry(unittest.TestCase):
         names = [t["name"] for t in self.client.get("/api/profiles/templates", headers=self.human).json()["templates"]]
         self.assertEqual(names, ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "reviewer", "security-engineer", "ui-designer", "voice"])
 
+    def test_a_starter_shipped_after_the_first_start_arrives_at_the_next(self):
+        # #631: as with skills, a starter whose name no profile ever had becomes a profile at the next start
+        with db._write_lock, db.conn() as c:
+            for table in ("profiles", "profile_history"):   # as on a board that started before they shipped
+                c.execute(f"DELETE FROM {table} WHERE name IN ('architect', 'ui-designer')")
+        self.client.delete("/api/profiles/security-engineer", headers=self.human).raise_for_status()
+        self.assertNotIn("architect", self.profiles())
+        registry.init()
+        got = self.profiles()
+        self.assertIn("architect", got)
+        self.assertIn("ui-designer", got)
+        self.assertFalse(got["architect"]["takes_new_work"], "it keeps its starter's default")
+        self.assertNotIn("security-engineer", got, "a profile a human deleted stays deleted")
+
     # ---- base skills (#347)
 
     def make_base(self):
