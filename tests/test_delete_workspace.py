@@ -55,7 +55,7 @@ class DeleteWorkspace(Base):
         wid = db.conn().execute("SELECT id FROM workspaces WHERE slug='game'").fetchone()[0]
         gone = self.call('GET', '/api/workspaces/game/deletion', auth=self.human)['deletion']
         self.assertEqual(gone['bots'], ['ada'])
-        self.assertEqual(gone['documents'], 1)
+        self.assertEqual(gone['documents'], 2)
         self.assertEqual(sorted(gone['channels']), ['game', 'game.art'])
         self.call('DELETE', '/api/workspaces/game', {'confirm': 'game'}, auth=self.human, expected=409)   # not archived
         self.call('PATCH', '/api/workspaces/game', {'archived': True, 'archive_confirm': True}, auth=self.human)
