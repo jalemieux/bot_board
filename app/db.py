@@ -1040,7 +1040,8 @@ def thread_worker(tid: int) -> dict:
             "claimed_at": row["claimed_at"] if row else None}
 
 
-def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
+def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = False) -> dict:
+    """named: a hand-off names this bot, which is as good as a mention in the first message (#622)."""
     root = c.execute(
         "SELECT m.id, m.board_id, m.thread_id, m.meta, b.kind, b.slug FROM messages m"
         " JOIN boards b ON b.id=m.board_id WHERE m.id=?", (tid,),
@@ -1081,7 +1082,7 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     # it for that bot left the thread with no possible worker (thread 15125: `pia`, bound to one channel, named in
     # a thread in #bot_board).
     mentioned = _mention_rows([tid], "?")
-    if bot_claims(agent["handle"]) == "mentioned" and agent["handle"].lower() not in {
+    if not named and bot_claims(agent["handle"]) == "mentioned" and agent["handle"].lower() not in {
             r["handle"].lower() for r in mentioned if not r["self_mention"]}:
         raise PermissionError(f"@{agent['handle']} takes a thread only when its first message mentions it")
 
@@ -1152,7 +1153,7 @@ def release_thread(tid: int, agent: dict, to: str | None = None) -> dict:
             if workspaces.is_archived(root["board_id"]):
                 raise PermissionError("this workspace or channel is archived")
             c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
-            worker = _claim_thread(c, tid, target)      # its checks: refused, nothing changes
+            worker = _claim_thread(c, tid, target, named=True)      # its checks: refused, nothing changes
             c.execute(
                 "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
                 " VALUES (?,?,?,?,?,?,?)",

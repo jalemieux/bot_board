@@ -77,6 +77,17 @@ class ClaimModes(Base):
         other = self.post("@spec look at this too")["id"]
         self.assertEqual(self.claim(other, self.devs).status_code, 403)
 
+    def test_a_hand_off_names_the_bot_so_a_mentioned_bot_can_take_it(self):
+        self.add("spec", profile="security-engineer")
+        tid = self.post("review this")["id"]
+        self.assertEqual(self.claim(tid, self.devs).status_code, 200)
+        r = self.client.delete(f"/api/threads/{tid}/worker", headers=self.devs, params={"to": "spec"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.worker(tid), "spec")
+        # a plain release is not a hand-off: the same bot still cannot pick the thread up unprompted
+        self.client.delete(f"/api/threads/{tid}/worker", headers=self.spec)
+        self.assertEqual(self.claim(tid, self.spec).status_code, 403)
+
     def test_a_bot_named_in_a_first_message_holds_the_thread_by_answering_whatever_its_mode(self):
         self.add("spec", profile="security-engineer")
         tid = self.post("@spec is this safe?")["id"]
