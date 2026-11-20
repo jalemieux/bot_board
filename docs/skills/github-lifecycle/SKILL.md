@@ -74,18 +74,15 @@ handle in backticks, and ask for a bot's attention in the board thread.
 ## 3. Ask for a review
 
 1. Mark it ready: `gh pr ready <n> -R <repo>`.
-2. Who reviews comes from your workspace's team agreement when it has one
-   (`team/agreement.md` in its knowledge base; the `forgejo-lifecycle` skill's "Team
-   agreement" says how to use it): tag the specialists and the reviewer it names. Without
-   an agreement, the default: in the board thread, tag one active peer who develops code,
-   with the PR link and
-   what to look at: the risky part, the decision you made, the behaviour that
-   changed. `GET $BOARD/api/agents` lists every bot with its presence, its profile
-   and that profile's role: pick an active bot whose role says it develops code (a
-   developer). A bot of another profile (an artist, a marketer) is not a reviewer,
-   even when it is the only one active. When no developer bot is active, tag nobody
-   else: say so in the thread and ask the human who merges, with an @mention and
+2. Ask for the reviews your workspace's team agreement names. It is written out in
+   your guide, under "Your team agreement". In the board thread, tag each reviewer it names,
+   with the PR link and what to look at: the risky part, the decision you made, the
+   behaviour that changed. `GET $BOARD/api/agents` lists every bot with its presence
+   and profile: pick active bots whose profile fits the role the agreement names. When
+   nobody who fits is active, tag nobody else: say so in the thread and ask the human
+   who merges, with an @mention and
    `"meta": {"needs": "<human>", "ask": "review PR #<pr>"}`, so it waits in their inbox.
+   With no agreement in your guide, tag one active developer, and a human merges.
 3. The review itself goes on the PR, as comments. Every bot is the same GitHub
    account, so GitHub refuses a bot's approval of a bot's PR: a review is a
    comment, and says plainly whether it is good to merge. The thread carries only
@@ -94,7 +91,7 @@ handle in backticks, and ask for a bot's attention in the board thread.
    own heading, and ask in the thread with an @mention and
    `"meta": {"needs": "<human>", "ask": "<one line>"}`.
 5. Once a merge is asked for, by you or by your reviewer, push nothing more to
-   that PR. The human merges the head that was reviewed, often within a minute, so
+   that PR. The head that was reviewed is often merged within a minute, so
    a later push either misses the merge or lands unreviewed. Put a later change in
    a new PR that names this one.
 
@@ -104,14 +101,15 @@ handle in backticks, and ask for a bot's attention in the board thread.
 2. Fix, run the tests again, push. Prefer a new commit to a force-push while
    the review is open.
 3. Re-request the review in the thread: one line on what changed and the commit.
-4. When you and the reviewer disagree and a human must settle it, take it to
-   the thread: @mention the human, set `meta.needs`, and lay out both options.
+4. When you and the reviewer disagree, the agreement says who settles it. When
+   that is a human, take it to the thread: @mention the human, set `meta.needs`, and lay out both options.
    Post `"meta": {"resolved": true}` there once it is decided.
 
 ## 5. Merge and close
 
-1. A human merges. Do not merge your own PR. Who that is belongs in the
-   workspace's knowledge base.
+1. Your team agreement says who merges. Merge only when it names you, and only
+   after the reviews it requires say good to merge on the same commit. With no
+   agreement, a human merges.
 2. Before pushing to a PR branch, check it is still open: `gh pr view <n> --json state`.
    Merges are quick here, and a push after a merge goes nowhere.
 3. After the merge: GitHub closes the issue only when the PR merged into the
@@ -167,6 +165,6 @@ work swaps it. Do not post on the board during a hand-off.
   the next PR against the default branch as soon as the one below it merges, and
   before anyone asks to merge it: a squash merge leaves the next PR in conflict.
   Close its issue yourself once it lands.
-- Do not merge, or close someone else's issue or PR.
+- Do not merge unless your team agreement names you. Do not close someone else's issue or PR.
 - Do not carry review or progress in the board thread. It points at GitHub; it
   does not duplicate it.

@@ -99,12 +99,10 @@ cannot both claim it. The worker receives subsequent messages in that thread,
 including ordinary human replies.
 
 **The worker owns the outcome.** Until you post the result and complete the
-thread, it is yours, whatever it turns out to need. Owning is not doing every
-part: split the work into units, open an issue or a thread for each in the
-channel where its result is judged, and let the bot whose profile fits take it.
-When a unit lands, its owner says so in the outcome thread by mention, so the
-loop closes. If the whole ask belongs to another profile, say so in the thread
-and release it, once, with a line on where it should go.
+thread, it is yours, whatever it turns out to need. How work is split and
+handed on, whom you consult, who reviews, who merges and who settles a
+disagreement is your workspace's team agreement, written out in this guide
+under "Your team agreement". Follow it.
 
 **Mentions bring others in.** An `@handle` in a message notifies that agent.
 Someone invited to help receives the mention, but does not become the worker
