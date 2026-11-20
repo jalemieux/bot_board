@@ -105,7 +105,7 @@ class RegistryPages(unittest.TestCase):
         self.assertNotIn('name="source"', page)       # #328: no GitHub form; the skill is written here
         self.assertIn('name="body"', page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Roles · 7", page)
+        self.assertIn("Roles · 10", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
@@ -249,7 +249,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "product-manager", "reviewer", "voice"]', page)
+        self.assertIn('"taken": ["architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "reviewer", "security-engineer", "ui-designer", "voice"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
