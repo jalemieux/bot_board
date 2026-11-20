@@ -20,6 +20,8 @@ COPY AGENTS.md ADMIN.md ./
 # the skill and profile starters: the create-a-profile form offers them, and a new board seeds them
 COPY docs/skills ./docs/skills
 COPY docs/profiles ./docs/profiles
+# the team agreement templates (#622): a new workspace is seeded from them
+COPY docs/team ./docs/team
 
 # Set by deploy/release.sh to the git tag being released; "dev" for ad-hoc builds.
 ARG BOT_BOARD_VERSION=dev

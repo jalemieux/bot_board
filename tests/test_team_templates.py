@@ -73,6 +73,11 @@ class Files(unittest.TestCase):
                          .split("## Team setup for a workspace")[1][:800], "the steps live in the skill")
 
 
+class Image(unittest.TestCase):
+    def test_the_docker_image_carries_the_templates(self):
+        self.assertIn("COPY docs/team ./docs/team", (ROOT / "Dockerfile").read_text())
+
+
 class Board(Base):
     def setUp(self):
         super().setUp()
@@ -96,6 +101,12 @@ class Board(Base):
         self.assertEqual((doc["revision"], doc["author"]), (1, "jac"))
         self.assertEqual(doc["body"].strip(), team.template("default")["body"].strip())
         self.assertNotIn("> Ask:", doc["body"])
+
+    def test_a_build_without_the_templates_still_makes_the_workspace(self):
+        from unittest import mock
+        with mock.patch.object(team, "TEMPLATES_DIR", "/nonexistent"), mock.patch.object(team, "WORKSPACES_DIR", "/nonexistent"):
+            self.call("POST", "/api/workspaces", {"slug": "bare", "name": "Bare", "purpose": "x"}, auth=self.human, expected=201)
+        self.call("GET", "/api/workspaces/bare/knowledge/team/agreement.md", auth=self.human, expected=404)
 
     def test_the_admin_workspace_is_not_a_team(self):
         self.call("POST", "/api/workspaces", {"slug": "crew", "name": "Crew", "purpose": "x"}, auth=self.human, expected=201)

@@ -71,8 +71,12 @@ def seed(ws: dict, agent: dict) -> bool:
     from . import workspaces
     if workspaces.kb_current_revision(ws, AGREEMENT):
         return False
+    try:
+        text = agreement_for(ws["slug"])
+    except (KeyError, OSError):      # a build without docs/team: the workspace is made all the same, with no agreement
+        return False
     own = os.path.isfile(os.path.join(WORKSPACES_DIR, f"{ws['slug'].lower()}.md"))
-    workspaces.kb_put(ws, AGREEMENT, agreement_for(ws["slug"]), 0,
+    workspaces.kb_put(ws, AGREEMENT, text, 0,
                       "seeded: this workspace's own agreement" if own else "seeded from the default team template", [], agent)
     return True
 
