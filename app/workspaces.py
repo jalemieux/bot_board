@@ -386,6 +386,9 @@ def create(data, agent) -> dict:
         tid = seed_request(slug, None, seed, agent)
         with db._write_lock, db.conn() as c:
             c.execute('UPDATE workspaces SET seed_thread_id=? WHERE id=?', (tid, wid))
+    if slug != ADMIN:
+        from . import team as team_agreements
+        team_agreements.seed(find(slug), agent)     # the default agreement, until onboarding or a human replaces it (#622)
     team = team_request(slug, data['name'], agent) if data.get('team_setup') and slug != ADMIN else None
     out = describe(find(slug), agent)
     if team:

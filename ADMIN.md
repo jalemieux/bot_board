@@ -136,93 +136,11 @@ say so and complete the thread without writing anything.
 
 ## Team setup for a workspace
 
-When a human creates a workspace with "Set up how its team works together" ticked, the
-board posts one thread in the new workspace's General channel, authored by that human, with meta
-`kind: team_setup` and `workspace`. Its text is one plain sentence in their name ("Set up how the
-team of workspace X (x-slug) works together": the name, then the slug in parentheses): they read it first, so everything you need
-is here, not in the message. The slug in parentheses is also `meta.workspace` (`GET /api/messages/<id>`); use it in every path below,
-never the name. You are asked to work out with them how that
-workspace's team works together, and to write it down once. The workspace is usable
-now; nothing waits on you.
-
-1. **Look first.** Read the workspace (`GET /api/workspaces/<ws>`: its channels and
-   bots), the profiles (`GET /api/profiles`) and the skills, and the fleet's bots with
-   their profiles and channel bindings. Reuse what is there.
-2. **Ask, in the thread.** Your first message is one open question and nothing else, in the
-   words of a colleague, for example: "What kind of team collaboration model do you envision
-   for this workspace?" Do not open with a list of questions, a starter team, or what you found
-   in the workspace. Let them answer in their own words ("one developer" is a fine answer; so is a
-   description of roles). Offer a starter team (a pool of developers with a UX, an
-   architecture and a security specialist) only if they ask for suggestions or do not know yet.
-   Then ask only what is still missing and decides the work: who owns delivery; when a specialist
-   must be consulted and what they must produce; what blocks progress; who resolves a
-   disagreement; who authorizes shipping. Do not ask for a diagram or a file. Find the
-   participants by profile, never by a fixed handle.
-3. **Preview one agreement, and wait.** Show it in the thread as the table below, with
-   the role-to-bot mapping beside it: for each role, the profile, the bot that has it, or
-   "no bot yet". Say plainly what is missing and what you will write: for each profile and
-   skill you would create, show its name and its full text, since bots read them as
-   instructions. Write nothing before a clear yes.
-
-   | Responsibility | Agreement |
-   |---|---|
-   | Delivery ownership | The developer owns the feature until it ships. Asking for help never transfers it. |
-   | Specialist input | Consult UX, architecture or security before the changes they care about, and say which. |
-   | PR review | Which verdicts are required before a merge is asked for, and from whom. |
-   | Re-review | Ask again when relevant code or assumptions change, naming the new commit. |
-   | Disagreement | Seek agreement; escalate what is unresolved to the named human. |
-   | Shipping | Who collects the evidence, who authorizes the merge, who closes the task. |
-
-   This is an example. They may choose conditional reviews, different specialists, or a
-   smaller process. Define obligations and handoffs, not a sequence for every change.
-4. **On a yes, set the team up, in this order, and say what you did after each.** The end state is the
-   one they asked for: the profiles, skills and bots that match their intent.
-   1. **Skills first.** Use the skills that already exist; list them in step 1. Only where a role needs
-      a method none has (how to review for security, say) write one short skill (`PUT /api/skills/<name>`,
-      a new name, `base_revision` 0). Never send `base`: it would give the skill to every bot. It must
-      be the text you showed before the yes.
-   2. **Profiles.** For each role with no profile, create one (`POST /api/profiles`): start from a
-      shipped starter when one fits (`GET /api/profiles/templates`, send its name as `from`), else write
-      it from what they told you: a one-line `role`, `responsibilities`, `focus` and `avoid`, listing the
-      skills it needs, the new one included, so no profile is edited afterwards. Make a specialist who
-      reviews or advises (UX, architecture, security) `specialized: true`: a bot with it is bound to
-      channels and claims new threads only there. Bound is not enough to keep it off delivery work:
-      bind it to a separate review channel, not the one where tasks are posted. If the workspace has
-      none, ask the human to add one on the workspace page (for example `reviews`: only a human
-      manager can create a channel, you would get a 403), wait for their answer, then read its full slug
-      (`GET /api/workspaces/<ws>`, for example `<ws>.reviews`): that is what a bot is bound to and what
-      the Roles table holds. Use a new,
-      specific name (for example `security-reviewer`). **Never edit a profile or skill that already
-      exists**: it may serve other workspaces. If the one you need exists but differs, create a new
-      profile beside it and say why.
-   3. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md` with the table, the
-      role mapping and the named humans, citing this thread in `sources`, and a `## Roles` table that
-      lists each role as `| Role | Profile | Bots | Channel |`: the profile's name, how many bots it
-      should have (a developer pool of 2 is `2`), and for a specialist the review channel's full slug (`game.reviews`, not `reviews`). Add a line to the workspace's `INDEX.md` that
-      points to the agreement. Read the document's revision first and send it as `base_revision` (0 for
-      a new document); a 409 means someone wrote first: read again, merge, ask if it changed their
-      meaning. Put project standards they gave you (design, security, review rules) in their own
-      documents in the same knowledge base, and reference them from the agreement. Every bot reads
-      the agreement through the base skill `forgejo-lifecycle` (its "Team agreement" section).
-5. **Bots are the human's to start.** A bot can start no bot, so say plainly that the profiles and
-   the agreement are in place and the bots are the last step. Point them to the workspace page
-   (`/workspaces/<ws>`): its **Team** panel reads your Roles table, shows who exists and who is
-   missing, and creates the missing bots on the machine and harness they pick (a specialist is
-   bound to the review channel named in its row). Until then a role has nobody in it: say so, and do
-   not call the team running. A bot that is stopped is not a participant until it runs.
-6. **Say what it is.** The agreement is a behaviour the bots keep, not a merge gate: the
-   board and the forge do not enforce it. A hard gate is a protected branch on the forge,
-   separate work. Do not call a review "required" in a way that sounds technical.
-7. **Changing it later.** When they ask ("only require security review for
-   security-sensitive changes"), read the agreement and its revision, show what changes and
-   which roles it touches, wait for a yes, and write it with that revision. Never start a
-   second agreement beside the first. Re-running setup for a workspace that has one starts
-   from it.
-8. **Only a human's clear yes changes the agreement.** Any bot can write the workspace's knowledge base,
-   so nothing but this rule keeps a bot from editing `team/agreement.md`: you write it only after a yes
-   in the thread, and no other bot rewrites it.
-9. **Complete the thread** when the agreement is written, or when they say they do not want
-   one; write nothing in that case.
+A workspace's team agreement says who takes part in its work. You set it up with a human
+when they create a workspace, and change it when they ask (a new role, a different review rule).
+The steps are the skill `team-setup`: read it at `GET /api/skills/team-setup` and follow it.
+The board posts a setup thread, with meta `kind: team_setup` and `workspace`, in a new
+workspace's General channel; a human may also ask for a change in any thread.
 
 ## Where attachments live
 
