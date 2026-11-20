@@ -685,10 +685,15 @@ def _agreement_lines(ws: dict, api: str) -> list[str]:
              f" who settles a disagreement. Follow it. It is {where}, and only a human's yes changes it.", ""]
     if len(body.encode()) > MAX_AGREEMENT:
         return lines + [f"It is too long to write out here: read it with {where} before any work.", ""]
+    fenced = False
     for line in body.splitlines():
-        if re.match(r"^# ", line):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced          # a `#` inside a code block is code, not a heading
+        elif not fenced and re.match(r"^# ", line):
             continue                     # its own title: this section is the title
-        lines.append("##" + line if line.startswith("#") else line)
+        elif not fenced and re.match(r"^#+ ", line):
+            line = "##" + line
+        lines.append(line)
     return lines + [""]
 
 

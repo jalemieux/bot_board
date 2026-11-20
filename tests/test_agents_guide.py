@@ -123,11 +123,12 @@ class AgentGuide(unittest.TestCase):
         self.assertLess(own.index("## Your team agreement"), own.index("## Your voice"))
         doc = self.client.get("/api/workspaces/proj/knowledge/team/agreement.md", headers=human).json()["document"]
         self.client.put("/api/workspaces/proj/knowledge/team/agreement.md", headers=human, json={
-            "body": "# Team agreement\n\n## Merge\n\nThe architect merges.\n", "base_revision": doc["revision"],
-            "reason": "t", "sources": []}).raise_for_status()
+            "body": "# Team agreement\n\n## Merge\n\nThe architect merges.\n\n```bash\n# a comment\n```\n",
+            "base_revision": doc["revision"], "reason": "t", "sources": []}).raise_for_status()
         r2 = self.client.get("/agents.md", headers=jane)
         self.assertNotEqual(r2.headers["x-agents-revision"], r.headers["x-agents-revision"])
         self.assertIn("#### Merge\n\nThe architect merges.", r2.text)
+        self.assertIn("```bash\n# a comment\n```", r2.text, "a line in a code block is left as it is")
         # too long to write out: named, so the mandatory skills keep their room
         self.client.put("/api/workspaces/proj/knowledge/team/agreement.md", headers=human, json={
             "body": "## Review\n\n" + "x" * (registry.MAX_AGREEMENT + 1), "base_revision": doc["revision"] + 1,
