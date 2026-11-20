@@ -244,8 +244,16 @@ def _settle_merge_asks(tid: int, number, merge_id: int, by: int) -> None:
 def deliver(name: str, raw: bytes, headers) -> dict:
     """Check the signature, find the thread, post the line. Returns {"status", ...} for the
     response: 201 posted, 200 replayed (the same delivery again), 202 ignored (why).
-    Raises Refused for a delivery the board will not take."""
-    verify(name, raw, headers)
+    Raises Refused for a delivery the board will not take. A refusal is recorded as the last delivery too
+    (#635), without its repository, since an unsigned body is not to be believed: a wrong secret then shows up
+    in GET /api/hooks/forgejo instead of looking like silence."""
+    try:
+        verify(name, raw, headers)
+    except Refused as exc:
+        if _secret(name) is not None:
+            _record(name, _header(headers, TYPE_HEADERS) or _header(headers, EVENT_HEADERS) or "?",
+                    f"refused ({exc.status}): {exc.reason}")
+        raise
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
