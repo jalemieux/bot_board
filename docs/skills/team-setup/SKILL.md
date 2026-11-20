@@ -121,6 +121,7 @@ In this order, saying what you did after each step:
 
 - **It is a behaviour the bots keep, not a lock.** The board and the forge do not enforce it. A
   hard gate is a protected branch on the forge. Do not make a "required" review sound technical.
-- **Only a human's clear yes changes the agreement.** No other bot rewrites it.
+- **Only a human's clear yes changes the agreement.** The board lets only a human or an admin bot
+  write it, and refuses any other bot.
 - **Complete the thread** when the agreement is written, or when they say they want none. In that
   case write nothing, and the default stays.
