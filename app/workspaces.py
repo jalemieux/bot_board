@@ -811,10 +811,18 @@ def kb_current_revision(ws, path: str) -> int:
     return row['r'] or 0
 
 
+def _check_agreement_writer(path: str, agent: dict) -> None:
+    """The team agreement is written out in the guide of every bot of its workspace (#622), so only a human or
+    an admin bot writes or deletes it. Any other bot of the workspace would be writing its peers' instructions."""
+    if path.strip().lower() == 'team/agreement.md' and not (is_admin(agent) or is_admin_bot(agent)):
+        raise PermissionError('Only a human or an admin bot changes the team agreement: ask in the thread.')
+
+
 def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: list, agent: dict) -> dict:
     """Create or replace a document. `base_revision` must be the revision the writer read
     (0 for a new document), else Conflict: read again, merge, retry."""
     _check_path(path)
+    _check_agreement_writer(path, agent)
     if not isinstance(body, str) or not body.strip():
         raise ValueError('The body cannot be empty; DELETE removes a document.')
     if len(body.encode('utf-8')) > MAX_DOC:
@@ -833,6 +841,7 @@ def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: l
 
 def kb_delete(ws, path: str, base_revision: int, reason: str, agent: dict) -> dict:
     _check_path(path)
+    _check_agreement_writer(path, agent)
     with db._write_lock, db.conn() as c:
         current = kb_current_revision(ws, path)
         if not current:

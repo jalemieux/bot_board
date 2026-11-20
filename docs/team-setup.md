@@ -29,8 +29,8 @@ The agreement is then written down, and every bot follows it.
    mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one bot's mode on `/fleet`.
 
 Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
-That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
-before they ask for a review or hand work on.
+That is all. The agreement is saved in the workspace as `team/agreement.md`. Every bot in the
+workspace has it in its guide, and gets the new text when it changes.
 
 ## Example
 

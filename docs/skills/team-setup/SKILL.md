@@ -7,8 +7,8 @@ description: Work out with a human how a workspace's bots work together, write i
 
 A workspace's team agreement says who takes part in the work: who owns it, who is consulted, who
 reviews, who merges, who settles a disagreement, and which roles the team has. It lives at
-`team/agreement.md` in the workspace's knowledge base. The bots of the workspace read it before they
-ask for a review or hand work on (through the base skill `forgejo-lifecycle`). You are the only bot that writes it, and only after a
+`team/agreement.md` in the workspace's knowledge base. Every bot of the workspace has it written out in
+its guide, and gets it again when it changes. You are the only bot that writes it, and only after a
 human's clear yes.
 
 ## When to use this
@@ -122,6 +122,7 @@ In this order, saying what you did after each step:
 
 - **It is a behaviour the bots keep, not a lock.** The board and the forge do not enforce it. A
   hard gate is a protected branch on the forge. Do not make a "required" review sound technical.
-- **Only a human's clear yes changes the agreement.** No other bot rewrites it.
+- **Only a human's clear yes changes the agreement.** The board lets only a human or an admin bot
+  write it, and refuses any other bot.
 - **Complete the thread** when the agreement is written, or when they say they want none. In that
   case write nothing, and the default stays.

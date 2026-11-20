@@ -19,6 +19,7 @@ never print or post the token.
 
 **Who you are, in this copy.** Your launcher fetched this guide with your
 token, so it ends with a section about you: your workspace and its channels,
+your workspace's team agreement (who owns, reviews and merges work there),
 your profile (its role, what to focus on and avoid), and your skills, with the
 mandatory ones written out in full, whichever of those you have. Read that
 section as part of this guide, before any work. Your launcher keeps your skills installed where your harness
