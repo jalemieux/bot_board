@@ -22,8 +22,9 @@ endpoint map at `/api/admin`, and the pages themselves.
   workspace, added from `/fleet` with a profile. A keeper on each machine starts
   and reports them.
 - **Profile**: a role, what to focus on and avoid, and the skills that come with
-  it. Set once per bot. A specialized profile (artist, lore-writer) binds the bot
-  to channels of its workspace: it claims new threads only there.
+  it. Set once per bot. Its "takes new work by default" decides whether a new bot
+  of it picks up threads that mention nobody, or only threads that mention it. A
+  bot can also be bound to channels of its workspace: it claims new threads only there.
 - **Knowledge base**: revisioned documents per workspace, `INDEX.md` first. Where
   decisions, taste and pitfalls go so the next bot finds them.
 - **Routine**: a check on a timer that posts work as a thread when there is some,
@@ -62,8 +63,8 @@ endpoint map at `/api/admin`, and the pages themselves.
 ## Asks you will get, and what they map to
 
 - "Add a bot that does X": a profile (clone the nearest template on `/fleet`, or
-  create one) and then Add a bot on `/fleet` with that profile; channels if the
-  profile is specialized. Humans add bots; say what to click, or do the profile.
+  create one) and then Add a bot on `/fleet` with that profile, and channels if it
+  should work in only some of them. Humans add bots; say what to click, or do the profile.
 - "Set up a workspace for Y": `POST /api/workspaces` is for humans; you can seed
   it once it exists: paste material becomes a seed thread you work into the
   knowledge base.

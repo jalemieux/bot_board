@@ -2461,8 +2461,8 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
                   f' data-profile="{e(b.get("profile") or "")}">role…</button>')
         mode = "mentioned" if b.get("claims") == "mentioned" else "open"
         chans += (f'<button type="button" class="act claims-edit needs-me" data-handle="{e(b["handle"])}" data-claims="{mode}"'
-                  f' title="{"works only when a thread names it: click to have it take new asks" if mode == "mentioned" else "takes new asks: click to have it work only when mentioned"}">'
-                  f'{"only when mentioned" if mode == "mentioned" else "takes new asks"}</button>')
+                  f' title="{"works only when a thread mentions it: click to have it take new work" if mode == "mentioned" else "takes new work: click to have it work only when mentioned"}">'
+                  f'{"only when mentioned" if mode == "mentioned" else "takes new work"}</button>')
     # last active: the keeper knows its last harness run, the board its last post
     last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
     # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
@@ -3037,16 +3037,15 @@ document.addEventListener('submit', function (ev) {
   ev.preventDefault();
   var picked = Array.prototype.map.call(f.querySelectorAll('input[name="channels"]:checked'), function (o) { return o.value; });
   var prof = f.elements.profile.selectedOptions[0];
-  if (prof && prof.dataset.specialized && f.elements.claims.value === 'open' && !picked.length) { alert(prof.value + ' is a specialized profile: pick at least one channel for the bot, or have it work only when mentioned.'); return; }
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
       f.elements.harness.value, false, f.elements.workspace.value, null, f.elements.profile.value, picked.length ? picked : null,
       f.elements.voice.value.trim(), f.elements.personality.value.trim(), f.elements.claims.value);
 });
-// The box is set from the role: a specialized one works when mentioned, any other takes new asks (#622); the person may change it.
+// The box is set from the role's "takes new work by default" (#627); the person may change it.
 document.addEventListener('change', function (ev) {
   var f = ev.target.closest('form.newbot-top'); if (!f || ev.target.name !== 'profile') return;
   var o = f.elements.profile.selectedOptions[0];
-  f.elements.claims.value = o && o.dataset.specialized ? 'mentioned' : 'open';
+  f.elements.claims.value = o && o.dataset.mentioned ? 'mentioned' : 'open';
 });
 // A bot's voice and personality: Edit turns the two texts into fields, built only then, so a
 // closed editor leaves nothing for the page's reload to wait on.
@@ -3714,8 +3713,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
                    or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
         profile_opts = ('<option value="">none</option>'
-                        + "".join(f'<option value="{e(p["name"])}"{" data-specialized=1" if p.get("specialized") else ""}>'
-                                  f'{e(p["name"])}{" · specialized" if p.get("specialized") else ""} · {e(p["role"][:60])}</option>'
+                        + "".join(f'<option value="{e(p["name"])}"{"" if p.get("takes_new_work", True) else " data-mentioned=1"}>'
+                                  f'{e(p["name"])}{"" if p.get("takes_new_work", True) else " · when mentioned"} · {e(p["role"][:60])}</option>'
                                   for p in profiles))
         channels_json = json.dumps(channels or {}).replace("<", "\\u003c")
         add_bot = ('<button type="button" class="addbot-btn addbot-cta" aria-controls="addbot" aria-expanded="false">'
@@ -3727,9 +3726,9 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <fieldset class="fld"><legend><b>Harness</b></legend><div class="seg" role="radiogroup" aria-label="harness">{harness_opts}</div></fieldset>
 <label class="fld"><span><b>Workspace</b></span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
 <label class="fld span2"><span><b>Role</b> <small>its profile; changed later from its row</small></span><select name="profile" aria-label="the profile the bot is added with">{profile_opts}</select></label>
-<label class="fld"><span><b>New threads</b> <small>set from its role</small></span><select name="claims" aria-label="how the bot takes new threads"><option value="open">takes new asks</option><option value="mentioned">only when mentioned</option></select></label>
+<label class="fld"><span><b>Takes new work</b> <small>set from its role</small></span><select name="claims" aria-label="whether the bot takes new work"><option value="open">yes: new threads that mention nobody</option><option value="mentioned">no: only threads that mention it</option></select></label>
 <label class="fld"><span><b>Name</b> <small>optional</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
-<fieldset class="fld span3"><legend><b>Channels</b> <small>where it claims new threads; empty means any. A specialized role that takes new asks needs at least one.</small></legend><div class="chan-chips" id="newbot-channels" aria-label="channels of the workspace the bot claims new threads in"></div></fieldset>
+<fieldset class="fld span3"><legend><b>Channels</b> <small>where it claims new threads; empty means any.</small></legend><div class="chan-chips" id="newbot-channels" aria-label="channels of the workspace the bot claims new threads in"></div></fieldset>
 <label class="fld span3"><span><b>Voice</b> <small>optional; how it writes to people. Empty, it gets the fleet default shown here</small></span><textarea name="voice" rows="2" maxlength="2000" aria-label="voice" placeholder="{e(registry.DEFAULT_VOICE)}"></textarea></label>
 <label class="fld span3"><span><b>Personality</b> <small>optional; who it is, expression only, the rules still win. Empty, it gets the fleet default shown here</small></span><textarea name="personality" rows="2" maxlength="2000" aria-label="personality" placeholder="{e(registry.DEFAULT_PERSONALITY)}"></textarea></label>
 </div>

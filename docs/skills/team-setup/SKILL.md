@@ -72,7 +72,7 @@ not say:
 - **Who settles a disagreement** with it, if that differs from the agreement's rule.
 - **How many bots,** and which profile: an existing one, a starter (`GET /api/profiles/templates`),
   or a new one you write. A role that only reviews or advises works when mentioned: say so in the
-  agreement, and give it a `specialized` profile. Every other bot takes new asks. The human can change
+  agreement, and give it a profile with `takes_new_work: false`. Every other bot takes new work. The human can change
   one bot's mode on `/fleet`.
 
 Then update every section the role touches, not only Roles: Consulting when others ask it,
@@ -98,8 +98,8 @@ In this order, saying what you did after each step:
    give the skill to every bot. It is the text you showed.
 2. **Profiles.** For a role with no profile, create one with `POST /api/profiles`. Start from a
    starter when one fits (send its name as `from`). List the skills it needs, so no profile is
-   edited afterwards. A specialist who reviews or advises is `specialized: true`: its bots take a thread only when its first
-   message mentions them, and take no new asks unprompted. Use a new,
+   edited afterwards. A specialist who reviews or advises gets `takes_new_work: false`: its bots take a thread only when its
+   first message mentions them. Use a new,
    specific name. **Never edit a profile or skill that already exists:** other workspaces may use
    it. If the one you need differs, create a new one beside it and say why.
 3. **Channels,** only if the team asked for one (a channel for design work, say). Only a human can

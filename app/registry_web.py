@@ -183,7 +183,7 @@ def profiles_section(profiles: list, orphans: list) -> str:
                   if p.get("from") and p["from"].lower() != p["name"].lower() else "")
         acts = (f'<a class="act" href="{page}">view</a><a class="act" href="/fleet/profiles/new?from={e(p["name"])}">clone</a>'
                 + (f'<button type="button" class="act del-profile" data-name="{e(p["name"])}">delete</button>' if not bots else ""))
-        spec = ' <span class="chip" title="bound to channels when added">specialized</span>' if p.get("specialized") else ""
+        spec = '' if p.get("takes_new_work", True) else ' <span class="chip" title="a new bot of it works only when a thread mentions it">when mentioned</span>'
         rows.append(f'<tr id="profile-{e(p["name"])}"><td class="who"><a href="{page}">{e(p["name"])}</a>{spec}'
                     f'<div class="by desc">{e(p["role"])}</div>{origin}</td>'
                     f'<td data-label="skills"><div class="chips">{chips}</div></td>'
@@ -557,14 +557,14 @@ def profile_page(board_name: str, profile: dict, bots: list, history: list, skil
 <div class="reg-head"><h1>{name}</h1>
 <div class="right">rev {profile["revision"]} · {e(ago(latest["updated_at"]))} · {e(latest["author"])} · <a class="addbot-btn needs-me" href="/fleet/profiles/new?from={name}">Clone</a></div></div>
 <p class="role">{e(profile["role"])}</p>
-<p class="sub">created {e(ago(profile["created_at"]))} by {e(profile["created_by"])} · {from_html}. Edited in place: a change reaches the bots that carry it at their next prompt, with no new session. Clone makes a variant under another name.{" <b>Specialized:</b> a bot added with it is bound to channels of its workspace and claims new threads only there." if profile.get("specialized") else ""}</p>
+<p class="sub">created {e(ago(profile["created_at"]))} by {e(profile["created_by"])} · {from_html}. Edited in place: a change reaches the bots that carry it at their next prompt, with no new session. Clone makes a variant under another name.{"" if profile.get("takes_new_work", True) else " <b>Works when mentioned:</b> a new bot of it takes a thread only when its first message mentions it."}</p>
 <div class="two"><div>
 <form class="card reg-form" id="profile-edit" style="gap:12px"><h2>What it says</h2>
 <label class="fld"><span>Role <small>· one line: what this bot is</small></span><input name="role" required maxlength="4000" value="{e(profile["role"])}" autocomplete="off"></label>
 <label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000">{e(profile.get("responsibilities") or "")}</textarea></label>
 <label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000">{e(profile.get("focus") or "")}</textarea></label>
 <label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000">{e(profile.get("avoid") or "")}</textarea></label>
-<label class="fld"><span><input type="checkbox" name="specialized"{" checked" if profile.get("specialized") else ""}> Specialized <small>· one kind of work: a bot added with it is bound to channels of its workspace and claims new threads only there. Refused while a bot that carries it is bound to no channel.</small></span></label>
+<label class="fld"><span><input type="checkbox" name="takes_new_work"{" checked" if profile.get("takes_new_work", True) else ""}> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row.</small></span></label>
 <div><h2 style="margin-bottom:6px">Skills · {len(own)}</h2>{skills_html}
 <p class="sub" style="margin:8px 0 0">A skill dropped here leaves its bots' skill directories at their next prompt; one added arrives there.</p></div>
 <label class="fld"><span>Reason for this change <small>· required, as in a knowledge write; it shows in History</small></span>
@@ -616,7 +616,7 @@ PROFILE_PAGE_JS = r"""
     msg.className = 'status-line'; msg.textContent = 'Saving…';
     call('PUT', '/api/profiles/' + encodeURIComponent(P.name),
          {role: f.role.value.trim(), responsibilities: f.responsibilities.value.trim(), focus: f.focus.value.trim(), avoid: f.avoid.value.trim(),
-          skills: skills, specialized: f.specialized.checked, base_revision: P.revision, reason: f.reason.value.trim()})
+          skills: skills, takes_new_work: f.takes_new_work.checked, base_revision: P.revision, reason: f.reason.value.trim()})
     .then(function (d) {
       msg.className = 'status-line ok';
       msg.textContent = 'Saved as rev ' + d.profile.revision + '. ' + (P.bots.length ? P.bots.length + ' bot' + (P.bots.length === 1 ? '' : 's') + ' on it read it at their next prompt.' : 'No bot carries it yet.');
@@ -653,10 +653,10 @@ PROFILE_PAGE_JS = r"""
 
 def profile_new_page(board_name: str, templates: list, profiles: list, skills: list, start: str | None) -> str:
     starters = ([{"key": "", "label": "Blank", "kind": "blank", "data": {"name": "", "role": "", "responsibilities": "",
-                                                                          "focus": "", "avoid": "", "skills": [], "specialized": False}}]
+                                                                          "focus": "", "avoid": "", "skills": [], "takes_new_work": True}}]
                 + [{"key": "template:" + t["name"], "label": t["name"], "kind": "template", "data": t} for t in templates]
                 + [{"key": p["name"], "label": p["name"], "kind": "profile",
-                    "data": {k: p.get(k) for k in ("name", "role", "responsibilities", "focus", "avoid", "skills", "specialized")}}
+                    "data": {k: p.get(k) for k in ("name", "role", "responsibilities", "focus", "avoid", "skills", "takes_new_work")}}
                    for p in profiles])
     keys = [s["key"] for s in starters]
     # ?from= names a profile (Clone) or a template; the default is the developer starter
@@ -695,7 +695,7 @@ def profile_new_page(board_name: str, templates: list, profiles: list, skills: l
 <label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000"></textarea></label>
 <label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000"></textarea></label>
 <label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000"></textarea></label>
-<label class="fld"><span><input type="checkbox" name="specialized"> Specialized <small>· one kind of work (an artist, a lore writer): a bot added with it is bound to channels of its workspace and claims new threads only there. Leave it off for a profile that drives anything, such as a developer.</small></span></label>
+<label class="fld"><span><input type="checkbox" name="takes_new_work" checked> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row. Turn it off for a reviewer or an adviser, such as a security engineer.</small></span></label>
 <div><h2 style="margin-bottom:6px">Skills</h2>{skills_html}</div>
 <div class="row needs-me"><button type="submit" class="addbot-go" id="create-go">Create</button><span class="note" id="create-note"></span></div>
 <p class="status-line" role="status" aria-live="polite"></p>
@@ -722,7 +722,7 @@ NEW_PROFILE_JS = r"""
     document.querySelectorAll('#starters button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.key === key)); });
     form.elements.name.value = s.kind === 'blank' ? '' : (D.taken.indexOf(s.data.name) >= 0 ? s.data.name + '-2' : s.data.name);
     ['role', 'responsibilities', 'focus', 'avoid'].forEach(function (k) { form.elements[k].value = s.data[k] || ''; });
-    form.elements.specialized.checked = !!s.data.specialized;
+    form.elements.takes_new_work.checked = s.data.takes_new_work !== false;
     var picked = {}; (s.data.skills || []).forEach(function (x) { picked[x.name] = !!x.mandatory; });
     form.querySelectorAll('input[name=skill]:not(:disabled)').forEach(function (c) { c.checked = c.value in picked; });
     form.querySelectorAll('input[name=mandatory]:not(:disabled)').forEach(function (c) { c.checked = !!picked[c.value]; });
@@ -739,7 +739,6 @@ NEW_PROFILE_JS = r"""
   function render() {
     var f = form.elements, name = f.name.value.trim() || '<name>';
     var lines = ['# Your profile: ' + name, '', '**Role.** ' + f.role.value.trim(), ''];
-    if (f.specialized.checked) lines.push('**Specialized.** This profile is for one kind of work. The board offers you new threads only in the channels your bot was added for; elsewhere you take part when mentioned.', '');
     [['responsibilities', 'Responsibilities'], ['focus', 'Focus'], ['avoid', 'Avoid']].forEach(function (p) {
       if (f[p[0]].value.trim()) lines.push('## ' + p[1], '', f[p[0]].value.trim(), '');
     });
@@ -772,7 +771,7 @@ NEW_PROFILE_JS = r"""
     fetch('/api/profiles', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
       body: JSON.stringify({name: name, role: f.role.value.trim(), responsibilities: f.responsibilities.value.trim(),
                             focus: f.focus.value.trim(), avoid: f.avoid.value.trim(), skills: skills(),
-                            specialized: f.specialized.checked,
+                            takes_new_work: f.takes_new_work.checked,
                             from: current && current.kind !== 'blank' ? current.data.name : null})})
     .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
       if (!r.ok) { msg.textContent = d.error || d.detail || ('refused: ' + r.status); return; }

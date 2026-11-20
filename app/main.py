@@ -404,7 +404,7 @@ API_MAP = {
         "PUT /api/fleet/bots/{handle}/claims": "a human sets how a bot takes new threads {claims: open|mentioned}: open takes"
                                                " any that mention nobody; mentioned only those whose first message names it",
         "PUT /api/fleet/bots/{handle}/channels": "a human binds a bot to channels of its workspace {channels}: it claims"
-                                                " new threads only there; [] unbinds, unless its profile is specialized",
+                                                " new threads only there; [] unbinds",
         "PUT /api/fleet/bots/{handle}/profile": "a human moves a bot to another profile {profile}, leaving the"
                                                 " rest of what was asked for it as it is; its next prompt carries the new guide",
         "PUT /api/fleet/bots/{handle}/voice": "a human sets how a bot writes and who it is {voice, personality}; empty"
@@ -448,7 +448,7 @@ API_MAP = {
         "GET /api/profiles/{name}": "one profile, with the text a bot of it reads; base_skills: what its bots also have",
         "POST /api/profiles": "humans and admin bots create a profile {name, role, responsibilities, focus, avoid,"
                               " skills: [{name, mandatory}], from?}",
-        "PUT /api/profiles/{name}": "edit a profile in place {role, responsibilities, focus, avoid, skills, specialized?,"
+        "PUT /api/profiles/{name}": "edit a profile in place {role, responsibilities, focus, avoid, skills, takes_new_work?,"
                                     " base_revision, reason}: humans and admin bots; 409 when base_revision is stale;"
                                     " its bots get the new text at their next prompt, no new session",
         "GET /api/profiles/{name}/history": "every revision of a profile, newest first",
@@ -951,7 +951,7 @@ class FleetWantIn(BaseModel):
                                                          " open, or mentioned (only a thread whose first message"
                                                          " mentions it). A new bot gets its profile's default.")
     channels: list[str] | None = Field(default=None, max_length=50, description="The channels of its workspace the"
-                                       " bot claims new threads in. Required with a specialized profile; empty"
+                                       " bot claims new threads in. Never required; empty"
                                        " means any channel. Changed later with PUT /api/fleet/bots/{handle}/channels.")
     voice: str | None = Field(default=None, max_length=MAX_VOICE, description="How the bot writes to people. Changed"
                               " later with PUT /api/fleet/bots/{handle}/voice.")
@@ -1098,8 +1098,7 @@ def fleet_claims(handle: str, body: FleetClaimsIn, agent: dict = Depends(current
 @app.put("/api/fleet/bots/{handle}/channels", tags=["fleet"])
 def fleet_channels(handle: str, body: FleetChannelsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human binds a fleet bot to channels of its workspace: it then claims new threads
-    only there, and takes part elsewhere when mentioned. An empty list unbinds it, unless
-    its profile is specialized. Takes effect at the bot's next claim; threads it holds stay."""
+    only there, and takes part elsewhere when mentioned. An empty list unbinds it. Takes effect at the bot's next claim; threads it holds stay."""
     if agent["kind"] != "human":
         raise HTTPException(403, "only a human binds a bot to channels")
     why = fleet.set_channels(handle, [c.strip().lower() for c in body.channels if c.strip()])
@@ -1150,11 +1149,10 @@ class FleetNewIn(BaseModel):
     profile: str | None = Field(default=None, max_length=64, description="The profile it is added with;"
                                    " changed later with PUT /api/fleet/bots/{handle}.")
     channels: list[str] | None = Field(default=None, max_length=50, description="The channels of the workspace it"
-                                       " claims new threads in; required with a specialized profile that takes new"
-                                       " threads (claims open).")
+                                       " claims new threads in; never required.")
     claims: Literal["open", "mentioned"] | None = Field(default=None, description="open: it takes new threads that"
                                                          " mention nobody. mentioned: only a thread whose first message"
-                                                         " mentions it. Default: its profile's (mentioned when specialized).")
+                                                         " mentions it. Default: its profile's takes_new_work.")
     voice: str | None = Field(default=None, max_length=MAX_VOICE, description="How the bot writes to people.")
     personality: str | None = Field(default=None, max_length=MAX_VOICE, description="Who the bot is, expression only.")
 
@@ -1404,8 +1402,10 @@ class ProfileIn(BaseModel):
     focus: str = Field(default="", max_length=4000)
     avoid: str = Field(default="", max_length=4000)
     skills: list[SkillRef] = Field(default_factory=list, max_length=50)
-    specialized: bool = Field(default=False, description="One kind of work (an artist, a lore writer): a bot added"
-                              " with it is bound to channels of its workspace and claims new threads only there.")
+    takes_new_work: bool | None = Field(default=None, description="Takes new work by default (#627): a new bot of"
+                                        " it takes new threads that mention nobody (true), or only threads whose first"
+                                        " message mentions it (false). Left out: its `from` template or profile's, else true.")
+    specialized: bool | None = Field(default=None, description="Before #627: true is takes_new_work false.")
     origin: str | None = Field(default=None, max_length=64, description="Sent as `from`: the template or profile"
                                " this one started from, for its lineage.")
 
@@ -1423,8 +1423,8 @@ class ProfileUpdateIn(BaseModel):
     focus: str = Field(default="", max_length=4000)
     avoid: str = Field(default="", max_length=4000)
     skills: list[SkillRef] = Field(default_factory=list, max_length=50)
-    specialized: bool | None = Field(default=None, description="Left out: unchanged. Refused while a bot that carries"
-                                     " the profile is bound to no channel.")
+    takes_new_work: bool | None = Field(default=None, description="Takes new work by default (#627); left out: unchanged.")
+    specialized: bool | None = Field(default=None, description="Before #627: true is takes_new_work false.")
     base_revision: int = Field(ge=1, description="The revision you read.")
     reason: str = Field(default="", max_length=500)
 

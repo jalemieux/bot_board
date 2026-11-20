@@ -89,23 +89,27 @@ def init() -> None:
     c = db.conn()
     with db._write_lock:
         c.executescript(SCHEMA)
-        # specialized: a profile for one kind of work; a bot added with it is bound to channels
+        # specialized: before #627, a profile whose bots were bound to channels; kept in the table, no longer read
         cols = {r["name"] for r in c.execute("PRAGMA table_info(profiles)")}
         if "specialized" not in cols:
             c.execute("ALTER TABLE profiles ADD COLUMN specialized INTEGER NOT NULL DEFAULT 0")
         # revision: moves at every edit (#397); a board from before had every profile at 1
         if "revision" not in cols:
             c.execute("ALTER TABLE profiles ADD COLUMN revision INTEGER NOT NULL DEFAULT 1")
-        # a board seeded before the flag existed, or before its template carried it: the profile seeded
-        # from a template takes the template's word while nobody has edited it (board thread 8378).
-        # Every start, as the column may predate the flag on the template.
-        for t in templates():
-            if t.get("specialized"):
-                c.execute("UPDATE profiles SET specialized=1 "
-                          "WHERE name=? AND lower(origin)=lower(name) AND specialized=0 AND revision=1", (t["name"],))
+        # takes_new_work (#627): whether a new bot of the profile takes new threads that mention nobody, or
+        # works only when a thread's first message mentions it. It replaces `specialized`, which is kept in the
+        # table and no longer read. Every profile a board had takes new work, as its bots did, except the ones
+        # started from a starter that does not.
+        for table in ("profiles", "profile_history"):
+            if "takes_new_work" not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN takes_new_work INTEGER NOT NULL DEFAULT 1")
+                if table == "profiles":
+                    off = [t["name"] for t in templates() if not t["takes_new_work"]]
+                    for name in off:
+                        c.execute("UPDATE profiles SET takes_new_work=0 WHERE lower(name)=? OR lower(origin)=?", (name, name))
         # a profile from before history was kept: its current text is its first revision
-        c.execute("INSERT INTO profile_history(name,revision,role,responsibilities,focus,avoid,skills,specialized,reason,"
-                  "author_id,created_at) SELECT name,revision,role,responsibilities,focus,avoid,skills,specialized,"
+        c.execute("INSERT INTO profile_history(name,revision,role,responsibilities,focus,avoid,skills,takes_new_work,reason,"
+                  "author_id,created_at) SELECT name,revision,role,responsibilities,focus,avoid,skills,takes_new_work,"
                   "'created',created_by,created_at FROM profiles p"
                   " WHERE NOT EXISTS (SELECT 1 FROM profile_history h WHERE h.name=p.name)")
         c.commit()
@@ -375,7 +379,7 @@ def _profile(row, bots: dict | None = None, clones: dict | None = None) -> dict:
     out = {"name": row["name"], "role": row["role"], "responsibilities": row["responsibilities"],
            "focus": row["focus"], "avoid": row["avoid"], "skills": json.loads(row["skills"] or "[]"),
            "from": row["origin"], "created_by": row["creator"] or "board", "created_at": row["created_at"],
-           "specialized": bool(row["specialized"]), "revision": row["revision"]}
+           "takes_new_work": bool(row["takes_new_work"]), "revision": row["revision"]}
     key = row["name"].lower()
     out["bots"] = (bots if bots is not None else bots_by_profile()).get(key, [])
     out["clones"] = (clones if clones is not None else _clones()).get(key, [])
@@ -458,12 +462,22 @@ def _clean_fields(data: dict) -> dict:
     return fields
 
 
-def _record(c, name: str, revision: int, fields: dict, skills: list, specialized: bool, reason: str,
+def _takes_new_work(data: dict, current: bool | None = True) -> bool | None:
+    """`takes_new_work` as sent; else the old `specialized` flag, which meant a bot that works when mentioned;
+    else `current`."""
+    if data.get("takes_new_work") is not None:
+        return data.get("takes_new_work") is not False
+    if data.get("specialized") is not None:
+        return data.get("specialized") is not True
+    return current
+
+
+def _record(c, name: str, revision: int, fields: dict, skills: list, takes_new_work: bool, reason: str,
             agent: dict | None, at: str) -> None:
-    c.execute("INSERT INTO profile_history(name,revision,role,responsibilities,focus,avoid,skills,specialized,reason,"
+    c.execute("INSERT INTO profile_history(name,revision,role,responsibilities,focus,avoid,skills,takes_new_work,reason,"
               "author_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
               (name, revision, fields["role"], fields["responsibilities"], fields["focus"], fields["avoid"],
-               json.dumps(skills), int(specialized), (reason or "")[:500], agent["id"] if agent else None, at))
+               json.dumps(skills), int(takes_new_work), (reason or "")[:500], agent["id"] if agent else None, at))
 
 
 def create_profile(data: dict, agent: dict | None) -> dict:
@@ -473,46 +487,33 @@ def create_profile(data: dict, agent: dict | None) -> dict:
     fields = _clean_fields(data)
     skills = _clean_skills(data.get("skills"))
     origin = str(data.get("from") or "").strip().lower()
-    specialized = data.get("specialized") is True
+    takes_new_work = _takes_new_work(data, None)
+    if takes_new_work is None:       # left out: as the template or profile it starts from
+        start = next((t for t in templates() if t["name"] == origin), None)
+        takes_new_work = start["takes_new_work"] if start else takes_new_work_of(origin)
     with db._write_lock, db.conn() as c:
         if c.execute("SELECT 1 FROM profiles WHERE name=?", (name,)).fetchone():
             raise Conflict(f"the profile name {name} is taken: profiles are never renamed,"
                            " and a deleted one keeps its name. Pick another")
         now = db.now()
         c.execute("INSERT INTO profiles(name,role,responsibilities,focus,avoid,skills,origin,created_by,created_at,"
-                  "specialized,revision) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
+                  "takes_new_work,revision) VALUES (?,?,?,?,?,?,?,?,?,?,1)",
                   (name, fields["role"], fields["responsibilities"], fields["focus"], fields["avoid"],
-                   json.dumps(skills), origin, agent["id"] if agent else None, now, int(specialized)))
-        _record(c, name, 1, fields, skills, specialized, str(data.get("reason") or "created"), agent, now)
+                   json.dumps(skills), origin, agent["id"] if agent else None, now, int(takes_new_work)))
+        _record(c, name, 1, fields, skills, takes_new_work, str(data.get("reason") or "created"), agent, now)
     return get_profile(name)
-
-
-def _unbound_bots(name: str) -> list[str]:
-    """The bots that carry the profile and are bound to no channel: what a specialized
-    profile cannot have (fleet._channels_problem keeps a bot from starting that way)."""
-    try:
-        rows = db.conn().execute("SELECT handle, channels FROM fleet_bots WHERE lower(profile)=? ORDER BY handle",
-                                 (name.lower(),)).fetchall()
-    except db.sqlite3.OperationalError:
-        return []
-    return [r["handle"] for r in rows if not json.loads(r["channels"] or "[]")]
 
 
 def update_profile(name: str, data: dict, base_revision: int, reason: str, agent: dict | None) -> dict:
     """Edit a profile in place (#397): role, responsibilities, focus, avoid, skills and
-    specialized (left out: unchanged). `base_revision` is the revision the writer read;
+    takes_new_work (left out: unchanged). `base_revision` is the revision the writer read;
     anything else is a Conflict. The bots that carry it get the new text at their next
     prompt, through the AGENTS.md the board composes for them; no new session."""
     current = get_profile(name)
     name = current["name"]
     fields = _clean_fields(data)
     skills = _clean_skills(data.get("skills"))
-    specialized = current["specialized"] if data.get("specialized") is None else data.get("specialized") is True
-    if specialized:
-        unbound = _unbound_bots(name)
-        if unbound:
-            raise Conflict(f"{name} cannot be specialized while {', '.join(unbound)} carr{'y' if len(unbound) != 1 else 'ies'}"
-                           " it bound to no channel: bind them to channels of their workspace first (the fleet page)")
+    takes_new_work = _takes_new_work(data, current["takes_new_work"])
     with db._write_lock, db.conn() as c:
         row = c.execute("SELECT revision FROM profiles WHERE name=? AND deleted=0", (name,)).fetchone()
         if row is None:
@@ -520,10 +521,10 @@ def update_profile(name: str, data: dict, base_revision: int, reason: str, agent
         if base_revision != row["revision"]:
             raise Conflict(f"{name} is at revision {row['revision']}, not {base_revision}: read it again, merge, and retry")
         revision, now = row["revision"] + 1, db.now()
-        c.execute("UPDATE profiles SET role=?, responsibilities=?, focus=?, avoid=?, skills=?, specialized=?, revision=?"
+        c.execute("UPDATE profiles SET role=?, responsibilities=?, focus=?, avoid=?, skills=?, takes_new_work=?, revision=?"
                   " WHERE name=?", (fields["role"], fields["responsibilities"], fields["focus"], fields["avoid"],
-                                    json.dumps(skills), int(specialized), revision, name))
-        _record(c, name, revision, fields, skills, specialized, reason, agent, now)
+                                    json.dumps(skills), int(takes_new_work), revision, name))
+        _record(c, name, revision, fields, skills, takes_new_work, reason, agent, now)
     return get_profile(name)
 
 
@@ -533,7 +534,7 @@ def profile_history(name: str, limit: int = 50) -> list[dict]:
     rows = db.conn().execute("SELECT h.*, a.handle author FROM profile_history h LEFT JOIN agents a ON a.id=h.author_id"
                              " WHERE h.name=? ORDER BY h.revision DESC LIMIT ?", ((name or "").strip(), limit)).fetchall()
     return [{"revision": r["revision"], "role": r["role"], "responsibilities": r["responsibilities"], "focus": r["focus"],
-             "avoid": r["avoid"], "skills": json.loads(r["skills"] or "[]"), "specialized": bool(r["specialized"]),
+             "avoid": r["avoid"], "skills": json.loads(r["skills"] or "[]"), "takes_new_work": bool(r["takes_new_work"]),
              "reason": r["reason"], "author": r["author"] or "board", "updated_at": r["created_at"]} for r in rows]
 
 
@@ -578,11 +579,12 @@ def roles_of_profiles() -> dict[str, str]:
     return {r["name"].lower(): r["role"] for r in db.conn().execute("SELECT name, role FROM profiles WHERE deleted=0")}
 
 
-def is_specialized(name: str | None) -> bool:
+def takes_new_work_of(name: str | None) -> bool:
+    """Whether a new bot of this profile takes new threads by default (#627). No profile: it does."""
     if not name:
-        return False
-    row = db.conn().execute("SELECT specialized FROM profiles WHERE name=? AND deleted=0", (name,)).fetchone()
-    return bool(row and row["specialized"])
+        return True
+    row = db.conn().execute("SELECT takes_new_work FROM profiles WHERE name=? AND deleted=0", (name,)).fetchone()
+    return bool(row["takes_new_work"]) if row else True
 
 
 def profiles_of_handles() -> dict[str, str]:
@@ -697,6 +699,21 @@ def _agreement_lines(ws: dict, api: str) -> list[str]:
     return lines + [""]
 
 
+def _new_work_lines(handle: str) -> list[str]:
+    """What limits the new threads this bot takes (#627): its channels, and whether it takes new work at all.
+    Nothing when it takes any new thread in its workspace."""
+    bound = ", ".join(f"`#{c}`" for c in db.bot_channels(handle))
+    if db.bot_claims(handle) == "mentioned":
+        where = f" and only in {bound}" if bound else ""
+        line = (f"You take a new thread only when its first message mentions you{where}. A thread that mentions"
+                " nobody is for the bots that take new work. Elsewhere you take part when mentioned.")
+    elif bound:
+        line = f"You take new threads only in {bound}. Elsewhere you take part when mentioned."
+    else:
+        return []
+    return ["## How you get work", "", line, ""]
+
+
 def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
     """The section about one bot that the board appends to AGENTS.md when the bot's own
     token fetches it (#344): its workspace and channels, its team agreement (#622), its profile, and its skills, each as
@@ -723,12 +740,10 @@ def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
         lines += ["", f"Its shared memory starts at `GET {api}/knowledge/INDEX.md`; a channel's references"
                   " (`GET " + api + "/channels/<slug>`) say what to read there.", ""]
         lines += _agreement_lines(ws, api)
+    lines += _new_work_lines(agent["handle"])
     profile = profile_of(agent["handle"])
     if profile is not None:
         lines += [f"## Your profile: {profile['name']}", "", f"**Role.** {profile['role']}", ""]
-        if profile.get("specialized"):
-            lines += ["**Specialized.** This profile is for one kind of work. The board offers you new threads only"
-                      " in the channels your bot was added for; elsewhere you take part when mentioned.", ""]
         for key, title in (("responsibilities", "Responsibilities"), ("focus", "Focus"), ("avoid", "Avoid")):
             if profile.get(key):
                 lines += [f"### {title}", "", profile[key].strip(), ""]
@@ -791,9 +806,6 @@ def profile_text(profile: dict | None, base: str = "") -> str:
             return NO_PROFILE
         return "You have no profile: work the threads you are given, in your workspace, as the guide says.\n\n" + _skill_lines(skills, api)
     lines = [f"# Your profile: {profile['name']}", "", f"**Role.** {profile['role']}", ""]
-    if profile.get("specialized"):
-        lines += ["**Specialized.** This profile is for one kind of work. The board offers you new threads only"
-                  " in the channels your bot was added for; elsewhere you take part when mentioned.", ""]
     for key, title in (("responsibilities", "Responsibilities"), ("focus", "Focus"), ("avoid", "Avoid")):
         if profile.get(key):
             lines += [f"## {title}", "", profile[key].strip(), ""]
@@ -823,7 +835,7 @@ def _template(path: str) -> dict:
     # the files are wrapped at 80 columns for reading; a bot gets paragraphs
     unwrap = lambda v: "\n\n".join(" ".join(p.split()) for p in re.split(r"\n\s*\n", v.strip()) if p.strip())
     return {"name": name, "role": str(front.get("role") or "").strip(), **{k: unwrap(v) for k, v in sections.items()},
-            "skills": front.get("skills", []), "specialized": front.get("specialized") is True}
+            "skills": front.get("skills", []), "takes_new_work": front.get("takes_new_work") is not False}
 
 
 def templates() -> list[dict]:
