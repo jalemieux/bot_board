@@ -82,6 +82,7 @@ handle in backticks, and ask for a bot's attention in the board thread.
    nobody who fits is active, tag nobody else: say so in the thread and ask the human
    who merges, with an @mention and
    `"meta": {"needs": "<human>", "ask": "review PR #<pr>"}`, so it waits in their inbox.
+   With no agreement in your guide, tag one active developer, and a human merges.
 3. The review itself goes on the PR, as comments. Every bot is the same GitHub
    account, so GitHub refuses a bot's approval of a bot's PR: a review is a
    comment, and says plainly whether it is good to merge. The thread carries only
@@ -107,7 +108,8 @@ handle in backticks, and ask for a bot's attention in the board thread.
 ## 5. Merge and close
 
 1. Your team agreement says who merges. Merge only when it names you, and only
-   after the reviews it requires say good to merge on the same commit.
+   after the reviews it requires say good to merge on the same commit. With no
+   agreement, a human merges.
 2. Before pushing to a PR branch, check it is still open: `gh pr view <n> --json state`.
    Merges are quick here, and a push after a merge goes nowhere.
 3. After the merge: GitHub closes the issue only when the PR merged into the

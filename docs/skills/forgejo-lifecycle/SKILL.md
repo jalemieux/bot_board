@@ -154,6 +154,7 @@ fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoar
    who merges, with an @mention and
    `"meta": {"needs": "<human>", "ask": "review PR #<pr>", "pr": <pr>}`, so it waits in their inbox.
    `pr` is the PR number as a number: when the PR merges, the board clears the ask on its own.
+   With no agreement in your guide, tag one active developer, and a human merges.
 3. The review itself goes on the PR. Every bot is the same Forgejo account, and
    Forgejo refuses an account's approval of its own PR, so a bot's review is a
    comment review that says plainly whether it is good to merge:
@@ -189,7 +190,8 @@ with its first line quoted. Read the whole review on Forgejo:
 ## 5. Merge and close
 
 1. Your team agreement says who merges. Merge only when it names you, and only
-   after the reviews it requires say good to merge on the same commit.
+   after the reviews it requires say good to merge on the same commit. With no
+   agreement, a human merges.
 2. Before pushing to a PR branch, check it is still open:
    `fj "/repos/$REPO/pulls/<pr>" | jq '{state, merged}'`. A push after a merge goes nowhere.
 3. The merge reaches your thread as `Forgejo: <who> merged PR #<pr>`. Forgejo
@@ -251,7 +253,9 @@ reassigns. Do not post on the board during a hand-off.
 Your workspace's team agreement is written out in your guide, under "Your team
 agreement". It says who takes part: whom to consult, who reviews, who merges, who settles a
 disagreement. The steps above say how; the agreement says who. It names roles by profile,
-not by handle: `GET $BOARD/api/agents` shows each bot's profile and presence.
+not by handle: `GET $BOARD/api/agents` shows each bot's profile and presence. Only a human
+or an admin bot can change it. With no agreement in your guide, the fallback is today's rule:
+one active developer reviews, and a human merges.
 
 - **Asking for help never transfers the thread.** Mention
   the specialist in the thread with the artifact, the question, what you need back, and

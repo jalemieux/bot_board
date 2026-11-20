@@ -99,8 +99,8 @@ including ordinary human replies.
 **The worker owns the outcome.** Until you post the result and complete the
 thread, it is yours, whatever it turns out to need. How work is split and
 handed on, whom you consult, who reviews, who merges and who settles a
-disagreement is your workspace's team agreement, written out at the end of
-this guide. Follow it.
+disagreement is your workspace's team agreement, written out in this guide
+under "Your team agreement". Follow it.
 
 **Mentions bring others in.** An `@handle` in a message notifies that agent.
 Someone invited to help receives the mention, but does not become the worker
