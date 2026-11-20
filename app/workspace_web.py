@@ -227,19 +227,19 @@ function botsSection(w) {
   return sec;
 }
 // The team the agreement asks for (#600): its Roles table against the bots that exist. One press creates the
-// missing bots on the machine picked; a reviewing specialist is bound to the review channel its row names.
+// missing bots on the machine picked; a bot works when mentioned or takes new asks, as its profile says.
 function teamSection(w) {
   return Promise.all([api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team'), api('GET', '/api/fleet')]).then(function (r) {
     var t = r[0].team, hosts = (r[1].hosts || []).filter(function (x) { return x.reporting; });
-    var roles = t.roles.filter(function (x) { return x.exists; }), todo = roles.filter(function (x) { return x.missing && (!x.specialized || x.channel); });
+    var roles = t.roles.filter(function (x) { return x.exists; }), todo = roles.filter(function (x) { return x.missing; });
     if (!t.roles.length) return null;
     var out = h('p'), sec = h('section', null, h('h2', {text: 'Team'}),
       h('p', {'class': 'sub', text: 'From team/agreement.md. A role whose profile does not exist yet is made by the admin bot first.'}));
     t.roles.forEach(function (x) {
       sec.appendChild(h('p', {'class': 'sub'}, x.role + ': ', h('b', {text: x.profile}),
-        x.exists ? ' ' + x.have.length + ' of ' + x.want + ' bots' + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.specialized ? (x.channel ? ', claims only in #' + x.channel : ', its review channel does not exist (the row names none, or a wrong one)') : '') : ' (no such profile yet)'));
+        x.exists ? ' ' + x.have.length + ' of ' + x.want + ' bots' + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.claims === 'mentioned' ? ', works when mentioned' : ', takes new asks') : ' (no such profile yet)'));
     });
-    if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: t.roles.every(function (x) { return x.exists && !x.missing; }) ? 'Every role has its bots.' : 'Nothing to create yet; the roles above wait for a profile or a review channel.'})); return sec; }
+    if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: t.roles.every(function (x) { return x.exists && !x.missing; }) ? 'Every role has its bots.' : 'Nothing to create yet; the roles above wait for a profile.'})); return sec; }
     if (!hosts.length) { sec.appendChild(h('p', {'class': 'sub'}, 'No machine is reporting. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), '.')); return sec; }
     var n = todo.reduce(function (a, x) { return a + x.missing; }, 0);
     var host = h('select', {name: 'host'}, hosts.map(function (x) { return h('option', {value: x.name, text: x.name}); }));
@@ -251,7 +251,7 @@ function teamSection(w) {
       var jobs = [];
       todo.forEach(function (x) {
         for (var i = 0; i < x.missing; i++) jobs.push({host: host.value, harness: harness.value, workspace: w.slug, profile: x.profile,
-          channels: x.specialized ? [x.channel] : []});
+          claims: x.claims});
       });
       jobs.reduce(function (p, j) { return p.then(function () { return api('POST', '/api/fleet/bots', j); }); }, Promise.resolve())
         .then(function () { note(out, 'Asked for ' + jobs.length + '. The keeper on ' + host.value + ' starts them within a few seconds.', true); setTimeout(function () { location.reload(); }, 2500); })

@@ -401,6 +401,8 @@ API_MAP = {
         "PUT /api/threads/{tid}/hidden": "a human hides a thread from the channel views, for every human; it stays in"
                                          " search and at its link, and bots still see it. DELETE brings it back",
         "PUT /api/fleet/hosts/{name}/host-bots": "a human allows host bots on a Mac, or not {on}; the host bots on it run in a container again at their next start when it is off (#595)",
+        "PUT /api/fleet/bots/{handle}/claims": "a human sets how a bot takes new threads {claims: open|mentioned}: open takes"
+                                               " any that mention nobody; mentioned only those whose first message names it",
         "PUT /api/fleet/bots/{handle}/channels": "a human binds a bot to channels of its workspace {channels}: it claims"
                                                 " new threads only there; [] unbinds, unless its profile is specialized",
         "PUT /api/fleet/bots/{handle}/profile": "a human moves a bot to another profile {profile}, leaving the"
@@ -761,7 +763,8 @@ def _roster(rows: list[dict]) -> list[dict]:
     host bot (#595) while the board says it runs on its host, else None."""
     profiles, roles, boxes = registry.profiles_of_handles(), registry.roles_of_profiles(), fleet.machines()
     hosts = fleet.host_operators()
-    return [{**db.public_agent(a), "profile": profiles.get(a["handle"].lower()),
+    return [{**db.public_agent(a), "claims": None if a["kind"] in db.UNSCOPED_KINDS or a.get("interactive") else db.bot_claims(a["handle"]),
+             "profile": profiles.get(a["handle"].lower()),
              "role": roles.get((profiles.get(a["handle"].lower()) or "").lower()),
              "channels": db.bot_channels(a["handle"]), "machine": boxes.get(a["handle"].lower(), (None, None))[0],
              "activity": boxes.get(a["handle"].lower(), (None, None))[1],
@@ -822,6 +825,7 @@ def agent_profile(handle: str, agent: dict | None = Depends(optional_agent)) -> 
         # running: whether it works now (the fleet's word, else presence), as an owner's first claim needs (#225)
         "agent": {**db.public_agent(a), "running": db.mention_state(a["kind"], a["last_seen_at"],
                                                                      run["run"] if run else None) is None,
+                  "claims": None if a["kind"] in db.UNSCOPED_KINDS or a.get("interactive") else db.bot_claims(a["handle"]),
                   "profile": registry.profiles_of_handles().get(a["handle"].lower())},
         "recent": db.list_messages(author=a["handle"], limit=20, order="desc", workspace_id=db.scope(agent)),
     }
@@ -943,6 +947,9 @@ class FleetWantIn(BaseModel):
     profile: str | None = Field(default=None, max_length=64, description="The profile it is added with"
                                 " (GET /api/profiles), or another for a bot that has one: it keeps its handle, token,"
                                 " channels and voice, and its next prompt carries the new guide and skills.")
+    claims: Literal["open", "mentioned"] | None = Field(default=None, description="How the bot takes new threads (#622):"
+                                                         " open, or mentioned (only a thread whose first message"
+                                                         " mentions it). A new bot gets its profile's default.")
     channels: list[str] | None = Field(default=None, max_length=50, description="The channels of its workspace the"
                                        " bot claims new threads in. Required with a specialized profile; empty"
                                        " means any channel. Changed later with PUT /api/fleet/bots/{handle}/channels.")
@@ -961,6 +968,11 @@ class FleetWantIn(BaseModel):
 class FleetHostBotsIn(BaseModel):
     on: bool = Field(description="true: a human allows host bots on this Mac. false: every host bot on it goes"
                      " back to a container at its next start (they keep their flag, so on again brings them back).")
+
+
+class FleetClaimsIn(BaseModel):
+    claims: Literal["open", "mentioned"] = Field(description="open: the bot takes new threads that mention nobody."
+                                                  " mentioned: only a thread whose first message mentions it.")
 
 
 class FleetChannelsIn(BaseModel):
@@ -1026,7 +1038,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
                      profile=(body.profile or "").strip().lower() or None,
                      channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None,
                      voice=_text_or_none(body.voice), personality=_text_or_none(body.personality),
-                     host_reason=body.host_reason, host_apps=body.host_apps)
+                     host_reason=body.host_reason, host_apps=body.host_apps, claims=body.claims)
     if why:
         raise HTTPException(409, why)
     return {"ok": True}
@@ -1068,6 +1080,19 @@ def fleet_host_bots(name: str, body: FleetHostBotsIn, agent: dict = Depends(curr
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "host_bots": body.on}
+
+
+@app.put("/api/fleet/bots/{handle}/claims", tags=["fleet"])
+def fleet_claims(handle: str, body: FleetClaimsIn, agent: dict = Depends(current_agent)) -> dict:
+    """A human sets how a fleet bot takes new threads (#622): open, or only when its first message mentions it."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human sets how a bot takes new threads")
+    if not db.HANDLE_RE.fullmatch(handle):
+        raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    why = fleet.set_claims(handle, body.claims)
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
 
 
 @app.put("/api/fleet/bots/{handle}/channels", tags=["fleet"])
@@ -1125,7 +1150,11 @@ class FleetNewIn(BaseModel):
     profile: str | None = Field(default=None, max_length=64, description="The profile it is added with;"
                                    " changed later with PUT /api/fleet/bots/{handle}.")
     channels: list[str] | None = Field(default=None, max_length=50, description="The channels of the workspace it"
-                                       " claims new threads in; required with a specialized profile.")
+                                       " claims new threads in; required with a specialized profile that takes new"
+                                       " threads (claims open).")
+    claims: Literal["open", "mentioned"] | None = Field(default=None, description="open: it takes new threads that"
+                                                         " mention nobody. mentioned: only a thread whose first message"
+                                                         " mentions it. Default: its profile's (mentioned when specialized).")
     voice: str | None = Field(default=None, max_length=MAX_VOICE, description="How the bot writes to people.")
     personality: str | None = Field(default=None, max_length=MAX_VOICE, description="Who the bot is, expression only.")
 
@@ -1140,7 +1169,7 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower(),
                      profile=(body.profile or "").strip().lower() or None,
                      channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None,
-                     voice=_text_or_none(body.voice), personality=_text_or_none(body.personality))
+                     voice=_text_or_none(body.voice), personality=_text_or_none(body.personality), claims=body.claims)
     if why:
         raise HTTPException(409, why)
     return {"ok": True, "handle": handle}
@@ -2146,7 +2175,10 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
             async with _new_message:
                 _new_message.notify_all()
     # an @mention of a stopped or away agent reaches nobody: say so to the sender (#216)
-    return {"message": msg, "url": url, **({"warnings": w} if (w := [u for u in msg.get("unreachable", []) if u["state"] != "bound"]) else {})}
+    w = [u for u in msg.get("unreachable", []) if u["state"] != "bound"]
+    if await asyncio.to_thread(db.nobody_takes_unmentioned, msg):     # a thread no running bot here takes without being named (#622)
+        w.append({"mention": None, "state": "unclaimed", "text": "no bot here takes unmentioned asks: mention one"})
+    return {"message": msg, "url": url, **({"warnings": w} if w else {})}
 
 
 @app.get("/api/messages/{mid}/image", tags=["messages"], response_class=Response)
