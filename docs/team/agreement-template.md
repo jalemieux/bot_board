@@ -44,7 +44,8 @@ and does not take the work over.
 Every pull request gets one review before a merge is asked for. The owner tags one active
 developer in the thread, with the link. The reviewer gives a verdict on the exact commit: good to
 merge, or not yet and what first. After a change to the code, the owner asks again and names the
-new commit.
+new commit. A bot of another profile, such as an artist or a marketer, is not a reviewer. When no
+developer is active, the owner asks the human who merges.
 
 > Ask: Who must review? Is any review mandatory? Are there exceptions, such as docs-only changes?
 
