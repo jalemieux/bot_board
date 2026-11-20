@@ -25,9 +25,8 @@ The agreement is then written down, and every bot follows it.
    and writes the agreement. It changes no profile or skill that already exists.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours. Open your
    workspace page: the **Team** panel lists each role and how many bots it still lacks. Pick a machine
-   and a harness and press **Create**. A reviewer is bound to a separate review channel (the admin bot
-   asks you to add one on the workspace page if there is none), not the channel where tasks are posted, so it only picks up review
-   threads.
+   and a harness and press **Create**. A bot of a specialist role works only when a thread's first message
+   mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one bot's mode on `/fleet`.
 
 Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it

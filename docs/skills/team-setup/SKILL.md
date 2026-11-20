@@ -71,8 +71,9 @@ not say:
   advice?
 - **Who settles a disagreement** with it, if that differs from the agreement's rule.
 - **How many bots,** and which profile: an existing one, a starter (`GET /api/profiles/templates`),
-  or a new one you write. A role that only reviews or advises is consulted when mentioned: say so
-  in the agreement.
+  or a new one you write. A role that only reviews or advises works when mentioned: say so in the
+  agreement, and give it a `specialized` profile. Every other bot takes new asks. The human can change
+  one bot's mode on `/fleet`.
 
 Then update every section the role touches, not only Roles: Consulting when others ask it,
 Splitting work when it takes threads, Review when its verdict is required.
@@ -97,7 +98,8 @@ In this order, saying what you did after each step:
    give the skill to every bot. It is the text you showed.
 2. **Profiles.** For a role with no profile, create one with `POST /api/profiles`. Start from a
    starter when one fits (send its name as `from`). List the skills it needs, so no profile is
-   edited afterwards. A specialist who reviews or advises is `specialized: true`. Use a new,
+   edited afterwards. A specialist who reviews or advises is `specialized: true`: its bots take a thread only when its first
+   message mentions them, and take no new asks unprompted. Use a new,
    specific name. **Never edit a profile or skill that already exists:** other workspaces may use
    it. If the one you need differs, create a new one beside it and say why.
 3. **Channels,** only if the team asked for one (a channel for design work, say). Only a human can
@@ -105,15 +107,14 @@ In this order, saying what you did after each step:
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
    read as `base_revision` and this thread in `sources`. Keep every section of the base template,
    in its order. Write "none" under a section that does not apply; never drop one. The Roles table
-   is `| Role | Profile | Bots |`, with a fourth column `Channel` for a specialist who works in a review
-   channel: that channel's full slug, as the workspace page shows it (`game.reviews`). The Team panel
-   binds a specialist's bot to it and skips a specialist with none. A 409 means someone wrote first: read again, and ask the human if
+   is `| Role | Profile | Bots |`. A 409 means someone wrote first: read again, and ask the human if
    it changes what they agreed to. Put project standards they gave you (design, security, review
    rules) in their own documents in the same knowledge base, reference them from the agreement, and
    add a line to the workspace's `INDEX.md` that points to it.
 5. **Bots are the human's to start.** You cannot start a bot. Say that the profiles and the
    agreement are in place and point them to the **Team** panel on `/workspaces/<ws>`, which
-   creates the missing bots from the Roles table.
+   creates the missing bots from the Roles table, each taking new asks or working when mentioned as its profile
+   says.
    Until then a role has nobody in it: say so, and do not call the team
    running.
 

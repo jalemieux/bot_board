@@ -63,7 +63,7 @@ class Files(unittest.TestCase):
         front, body = registry.parse_front(skill)
         self.assertEqual(front["name"], "team-setup")
         for needle in ("GET /api/team/template", "GET /api/team/templates", "Never edit a profile or skill that already exists",
-                       "Only a human's clear yes", "a fourth column `Channel`", "through the base skill `forgejo-lifecycle`"):
+                       "Only a human's clear yes", "through the base skill `forgejo-lifecycle`"):
             self.assertIn(needle, body)
         admin = [t for t in registry.templates() if t["name"] == "admin"]
         self.assertEqual([s["name"] if isinstance(s, dict) else s for s in admin[0]["skills"]], ["team-setup"])

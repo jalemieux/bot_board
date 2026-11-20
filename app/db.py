@@ -298,6 +298,16 @@ def set_agent_interactive(agent_id: int, interactive: bool) -> dict:
     return get_agent_by_id(agent_id)
 
 
+def bot_claims(handle: str) -> str:
+    """How a fleet bot takes new threads (#622): "open" (any new thread that mentions nobody) or "mentioned" (only
+    a thread whose first message mentions it). A bot with no fleet row, or none recorded, is open."""
+    try:
+        row = conn().execute("SELECT claims FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    except sqlite3.OperationalError:
+        return "open"
+    return "mentioned" if row and row["claims"] == "mentioned" else "open"
+
+
 def bot_channels(handle: str) -> list[str]:
     """The channels a fleet bot was bound to when it was added (fleet_bots.channels), lower
     case; empty when it may claim anywhere, or the board has no fleet table yet."""
@@ -804,6 +814,33 @@ def mention_state(kind: str, last_seen_at: str | None, run: int | None) -> str |
     return "away" if presence(last_seen_at) == "away" else None
 
 
+def nobody_takes_unmentioned(msg: dict) -> bool:
+    """True when this new thread, which mentions nobody, can be taken by no bot (#622): every bot of its workspace
+    that is running and not bound elsewhere takes only threads that mention it, or there is none. A reply, a
+    conversation, a thread that names someone and the admin workspace's own threads are not asked about."""
+    if msg.get("reply_to") is not None or msg.get("mentions") or msg.get("kind") != "channel":
+        return False
+    board = get_board(msg["board"])
+    wid = board.get("workspace_id") if board else None
+    if not wid:
+        return False
+    try:
+        rows = conn().execute(
+            "SELECT a.handle, a.kind, a.interactive, a.last_seen_at, fb.run AS run, fb.claims AS claims FROM agents a"
+            " LEFT JOIN fleet_bots fb ON fb.handle=a.handle WHERE a.workspace_id=? AND a.retired_at IS NULL", (wid,)).fetchall()
+    except sqlite3.OperationalError:
+        return False
+    for r in rows:
+        if r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["claims"] == "mentioned":
+            continue
+        bound = bot_channels(r["handle"])
+        if bound and board["slug"].lower() not in bound:
+            continue
+        if mention_state(r["kind"], r["last_seen_at"], r["run"]) is None:
+            return False
+    return True
+
+
 def _mention_elsewhere(r) -> str | None:
     """"elsewhere" when the mentioned bot's scope does not include the message's channel
     (#319): a mention from the admin channel never reaches a project bot, so the sender
@@ -1044,6 +1081,9 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict) -> dict:
     # it for that bot left the thread with no possible worker (thread 15125: `pia`, bound to one channel, named in
     # a thread in #bot_board).
     mentioned = _mention_rows([tid], "?")
+    if bot_claims(agent["handle"]) == "mentioned" and agent["handle"].lower() not in {
+            r["handle"].lower() for r in mentioned if not r["self_mention"]}:
+        raise PermissionError(f"@{agent['handle']} takes a thread only when its first message mentions it")
 
     reserved = {r["handle"].lower() for r in mentioned if not (
         r["self_mention"] or r["kind"] in UNSCOPED_KINDS or r["interactive"] or r["run"] == 0

@@ -108,9 +108,9 @@ class WhoMayClaim(Base):
     def test_a_specialized_profile_needs_a_channel(self):
         self.report("lena", "waiting")
         self.assertTrue(self.client.get("/api/profiles/artist").json()["profile"]["specialized"])
-        r = self.add("lena", expected=409, profile="artist")
+        r = self.add("lena", expected=409, profile="artist", claims="open")      # one that takes new asks needs its channels (#622)
         self.assertIn("specialized profile", r.text)
-        self.add("lena", profile="artist", channels=[self.art])
+        self.add("lena", profile="artist", channels=[self.art], claims="open")
         r = self.client.put("/api/fleet/bots/lena/channels", headers=self.human, json={"channels": []})
         self.assertEqual(r.status_code, 409, r.text)      # cannot unbind a specialized bot
         self.assertIn("Specialized", self.client.get("/fleet/profiles/artist").text)

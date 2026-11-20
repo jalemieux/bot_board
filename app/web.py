@@ -1159,7 +1159,8 @@ function hostMark(a){      // a bot that runs outside its container, as the user
 }
 function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
   return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) + '</div>' +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) +
+    (a.claims === 'mentioned' ? '<span class="prof" title="takes a new thread only when its first message mentions it">only when mentioned</span>' : '') + '</div>' +
     (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
     (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
 }
@@ -2458,6 +2459,10 @@ def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
                  f' data-workspace="{e(b.get("workspace") or "")}" data-channels="{e(", ".join(bound))}">channels…</button>')
         chans += (f'<button type="button" class="act role-edit needs-me" data-handle="{e(b["handle"])}"'
                   f' data-profile="{e(b.get("profile") or "")}">role…</button>')
+        mode = "mentioned" if b.get("claims") == "mentioned" else "open"
+        chans += (f'<button type="button" class="act claims-edit needs-me" data-handle="{e(b["handle"])}" data-claims="{mode}"'
+                  f' title="{"works only when a thread names it: click to have it take new asks" if mode == "mentioned" else "takes new asks: click to have it work only when mentioned"}">'
+                  f'{"only when mentioned" if mode == "mentioned" else "takes new asks"}</button>')
     # last active: the keeper knows its last harness run, the board its last post
     last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
     # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
@@ -2823,15 +2828,16 @@ machineCopy.addEventListener('click', async function () {
     machineStatus.textContent = 'Clipboard unavailable. Select and copy the command manually.';
   }
 });
-function ask(handle, host, run, harness, kill, workspace, threads, profile, channels, voice, personality) {   // no handle: a new bot, named by the board
+function ask(handle, host, run, harness, kill, workspace, threads, profile, channels, voice, personality, claims) {   // no handle: a new bot, named by the board
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch('/api/fleet/bots' + (handle ? '/' + encodeURIComponent(handle) : ''), {method: handle ? 'PUT' : 'POST',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
     body: JSON.stringify(handle ? {host: host, run: run, harness: harness || null, kill: !!kill, workspace: workspace || null,
                                    threads: threads || null, profile: profile || null, channels: channels || null,
-                                   voice: voice || null, personality: personality || null}
+                                   voice: voice || null, personality: personality || null, claims: claims || null}
                                 : {host: host, harness: harness, workspace: workspace || null, profile: profile || null,
-                                   channels: channels || null, voice: voice || null, personality: personality || null})})
+                                   channels: channels || null, voice: voice || null, personality: personality || null,
+                                   claims: claims || null})})
   .then(function (r) { return r.json().then(function (d) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
@@ -3031,10 +3037,16 @@ document.addEventListener('submit', function (ev) {
   ev.preventDefault();
   var picked = Array.prototype.map.call(f.querySelectorAll('input[name="channels"]:checked'), function (o) { return o.value; });
   var prof = f.elements.profile.selectedOptions[0];
-  if (prof && prof.dataset.specialized && !picked.length) { alert(prof.value + ' is a specialized profile: pick at least one channel for the bot.'); return; }
+  if (prof && prof.dataset.specialized && f.elements.claims.value === 'open' && !picked.length) { alert(prof.value + ' is a specialized profile: pick at least one channel for the bot, or have it work only when mentioned.'); return; }
   ask(f.elements.handle.value.trim().replace(/^@/, ''), f.elements.host.value, true,
       f.elements.harness.value, false, f.elements.workspace.value, null, f.elements.profile.value, picked.length ? picked : null,
-      f.elements.voice.value.trim(), f.elements.personality.value.trim());
+      f.elements.voice.value.trim(), f.elements.personality.value.trim(), f.elements.claims.value);
+});
+// The box is set from the role: a specialized one works when mentioned, any other takes new asks (#622); the person may change it.
+document.addEventListener('change', function (ev) {
+  var f = ev.target.closest('form.newbot-top'); if (!f || ev.target.name !== 'profile') return;
+  var o = f.elements.profile.selectedOptions[0];
+  f.elements.claims.value = o && o.dataset.specialized ? 'mentioned' : 'open';
 });
 // A bot's voice and personality: Edit turns the two texts into fields, built only then, so a
 // closed editor leaves nothing for the page's reload to wait on.
@@ -3097,6 +3109,16 @@ document.addEventListener('click', function (ev) {
   var chans = v.split(',').map(function (x) { return x.trim(); }).filter(Boolean);
   fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/channels', {method: 'PUT',
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: JSON.stringify({channels: chans})})
+  .then(function (r) { return r.json().then(function (d) { if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
+  .catch(function () { alert('could not reach the board'); });
+});
+// How a bot takes new threads (#622): the button names the mode it is in and flips it.
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('button.claims-edit'); if (!b) return;
+  if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+  var to = b.dataset.claims === 'mentioned' ? 'open' : 'mentioned';
+  fetch('/api/fleet/bots/' + encodeURIComponent(b.dataset.handle) + '/claims', {method: 'PUT',
+    headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: JSON.stringify({claims: to})})
   .then(function (r) { return r.json().then(function (d) { if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 });
@@ -3705,8 +3727,9 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <fieldset class="fld"><legend><b>Harness</b></legend><div class="seg" role="radiogroup" aria-label="harness">{harness_opts}</div></fieldset>
 <label class="fld"><span><b>Workspace</b></span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
 <label class="fld span2"><span><b>Role</b> <small>its profile; changed later from its row</small></span><select name="profile" aria-label="the profile the bot is added with">{profile_opts}</select></label>
+<label class="fld"><span><b>New threads</b> <small>set from its role</small></span><select name="claims" aria-label="how the bot takes new threads"><option value="open">takes new asks</option><option value="mentioned">only when mentioned</option></select></label>
 <label class="fld"><span><b>Name</b> <small>optional</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
-<fieldset class="fld span3"><legend><b>Channels</b> <small>where it claims new threads; empty means any. A specialized role needs at least one.</small></legend><div class="chan-chips" id="newbot-channels" aria-label="channels of the workspace the bot claims new threads in"></div></fieldset>
+<fieldset class="fld span3"><legend><b>Channels</b> <small>where it claims new threads; empty means any. A specialized role that takes new asks needs at least one.</small></legend><div class="chan-chips" id="newbot-channels" aria-label="channels of the workspace the bot claims new threads in"></div></fieldset>
 <label class="fld span3"><span><b>Voice</b> <small>optional; how it writes to people. Empty, it gets the fleet default shown here</small></span><textarea name="voice" rows="2" maxlength="2000" aria-label="voice" placeholder="{e(registry.DEFAULT_VOICE)}"></textarea></label>
 <label class="fld span3"><span><b>Personality</b> <small>optional; who it is, expression only, the rules still win. Empty, it gets the fleet default shown here</small></span><textarea name="personality" rows="2" maxlength="2000" aria-label="personality" placeholder="{e(registry.DEFAULT_PERSONALITY)}"></textarea></label>
 </div>
