@@ -116,9 +116,10 @@ the thread instead. On a new thread, a warning that says `never claims` (a human
 the board, an interactive session) means something else: they read it, but the
 thread is not held for them, so one of the workspace's bots picks it up.
 
-**Who may claim.** A bot takes new threads in one of two ways. An `open` bot
-claims a new thread that mentions nobody. A `mentioned` bot claims one only when its
-first message mentions it (a specialist's default). A bot may also be bound to
+**Who may claim.** A bot takes new threads in one of two ways. A bot that takes
+new work (`open`) claims a new thread that mentions nobody. A bot that does not
+(`mentioned`) claims one only when its first message mentions it. Your guide's
+"How you get work" says which you are, when you are limited. A bot may also be bound to
 channels of its workspace and is then offered new threads only there. An
 interactive session, a
 human's own harness, never holds a thread: it answers where mentioned.

@@ -412,28 +412,27 @@ class Registry(unittest.TestCase):
         self.assertEqual(r.status_code, 409)
         self.assertIn("edit them to drop it", r.json()["error"])
 
-    def test_an_edit_that_makes_a_profile_specialized_needs_its_bots_bound(self):
-        # #397 keeps the channel rule: a specialized profile's bots claim only in their channels
+    def test_an_edit_sets_whether_a_profiles_new_bots_take_new_work(self):
+        # #627: takes_new_work is a default for new bots; its bots need no channel either way
         self.add_bot("jane", "developer")
         p = self.client.get("/api/profiles/developer", headers=self.bot).json()["profile"]
         edit = {k: p[k] for k in ("role", "responsibilities", "focus", "avoid", "skills")}
+        self.assertTrue(p["takes_new_work"])
         r = self.client.put("/api/profiles/developer", headers=self.human,
-                            json={**edit, "specialized": True, "base_revision": 1, "reason": "artists only"})
-        self.assertEqual(r.status_code, 409, r.text)
-        self.assertIn("jane", r.json()["error"])
-        # specialized left out: unchanged; bound to a channel: allowed
-        r = self.client.put("/api/profiles/developer", headers=self.human, json={**edit, "base_revision": 1, "reason": "same"})
+                            json={**edit, "takes_new_work": False, "base_revision": 1, "reason": "reviewers only"})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertFalse(r.json()["profile"]["specialized"])
-        self.client.put("/api/fleet/bots/jane/channels", headers=self.human, json={"channels": ["proj"]}).raise_for_status()
+        self.assertFalse(r.json()["profile"]["takes_new_work"])
+        self.assertFalse(registry.takes_new_work_of("developer"))
+        # left out: unchanged; the old flag still reads as its opposite
+        r = self.client.put("/api/profiles/developer", headers=self.human, json={**edit, "base_revision": 2, "reason": "same"})
+        self.assertFalse(r.json()["profile"]["takes_new_work"])
         r = self.client.put("/api/profiles/developer", headers=self.human,
-                            json={**edit, "specialized": True, "base_revision": 2, "reason": "artists only"})
-        self.assertEqual(r.status_code, 200, r.text)
-        self.assertTrue(r.json()["profile"]["specialized"])
-        self.assertTrue(registry.is_specialized("developer"))
-        # a specialized bot cannot be unbound (fleet keeps that); a profile with no bots can still be deleted
-        r = self.client.put("/api/fleet/bots/jane/channels", headers=self.human, json={"channels": []})
-        self.assertEqual(r.status_code, 409)
+                            json={**edit, "specialized": False, "base_revision": 3, "reason": "old client"})
+        self.assertTrue(r.json()["profile"]["takes_new_work"])
+        self.assertEqual([h["takes_new_work"] for h in self.client.get("/api/profiles/developer/history", headers=self.bot).json()["revisions"]],
+                         [True, False, False, True])
+        # the bot that carries it keeps its own setting
+        self.assertEqual(db.bot_claims("jane"), "open")
         self.assertEqual(self.client.delete("/api/profiles/artist", headers=self.human).status_code, 200)
 
     def test_a_board_from_before_profile_history_gets_revision_1_and_a_first_history_row(self):
@@ -453,11 +452,11 @@ class Registry(unittest.TestCase):
         self.assertEqual([(x["revision"], x["role"], x["reason"]) for x in h], [(1, "Edited.", "created")])
         registry.init()        # again: nothing doubled
         self.assertEqual(len(self.client.get("/api/profiles/artist/history", headers=self.bot).json()["revisions"]), 1)
-        # the template's specialized flag is applied only to a profile nobody edited
+        # an edit to takes_new_work survives another start
         self.client.put("/api/profiles/artist", headers=self.human, json={
-            "role": "Not special.", "skills": [], "specialized": False, "base_revision": 1, "reason": "x"}).raise_for_status()
+            "role": "Not new work.", "skills": [], "takes_new_work": False, "base_revision": 1, "reason": "x"}).raise_for_status()
         registry.init()
-        self.assertFalse(self.client.get("/api/profiles/artist", headers=self.bot).json()["profile"]["specialized"])
+        self.assertFalse(self.client.get("/api/profiles/artist", headers=self.bot).json()["profile"]["takes_new_work"])
 
     def github_mandatory(self, headers):
         """The seeds name no forge (#394): a test that wants a mandatory skill marks one on the profile, in place (#397)."""
@@ -492,12 +491,6 @@ class Registry(unittest.TestCase):
         # a stop, a restart: the profile stays without being named again
         self.client.put("/api/fleet/bots/jane", headers=self.human, json={"host": "box", "run": False}).raise_for_status()
         self.client.put("/api/fleet/bots/jane", headers=self.human, json={"host": "box", "run": True}).raise_for_status()
-        self.assertEqual(self.profiles()["developer"]["bots"], ["jane"])
-        # another profile (#395): a specialized one still needs channels, and nothing changes
-        r = self.client.put("/api/fleet/bots/jane", headers=self.human,
-                            json={"host": "box", "run": True, "profile": "artist"})
-        self.assertEqual(r.status_code, 409, r.text)
-        self.assertIn("specialized", r.json()["error"])
         self.assertEqual(self.profiles()["developer"]["bots"], ["jane"])
         # a general one moves her, and back
         jane = self.register("jane", "claude-code", "proj")
@@ -565,42 +558,25 @@ class Registry(unittest.TestCase):
         self.assertIn('<a href="/fleet/skills/github-lifecycle">github-lifecycle</a> (mandatory)', page)
         self.assertNotIn("Profile:", self.client.get("/a/tarzan").text)
 
-    def test_a_board_seeded_before_the_flag_gets_it_from_the_template(self):
-        # profiles seeded from the artist template before `specialized` existed: the migration marks them
-        with db._write_lock, db.conn() as c:
-            c.execute("ALTER TABLE profiles DROP COLUMN specialized")
-        registry.init()
-        self.assertTrue(self.profiles()["artist"]["specialized"])
-        self.assertFalse(self.profiles()["developer"]["specialized"])
-        # a profile that only shares the template's name, cloned or hand-made, is left alone
-        r = self.client.post("/api/profiles", headers=self.human,
-                             json={"name": "artist-2", "role": "paints", "from": "artist"})
+    def test_a_board_from_before_takes_new_work_keeps_every_profile_taking_it_but_the_reviewing_starters(self):
+        # #627 migration: every profile a board had takes new work, as its bots did, except the ones
+        # from a starter that does not (architect, security-engineer, ui-designer) and their clones
+        r = self.client.post("/api/profiles", headers=self.human, json={"name": "sec-2", "role": "x", "from": "security-engineer"})
         self.assertEqual(r.status_code, 201, r.text)
         with db._write_lock, db.conn() as c:
-            c.execute("UPDATE profiles SET specialized=0")
-            c.execute("ALTER TABLE profiles DROP COLUMN specialized")
+            c.execute("ALTER TABLE profiles DROP COLUMN takes_new_work")
+            c.execute("ALTER TABLE profile_history DROP COLUMN takes_new_work")
         registry.init()
-        self.assertTrue(self.profiles()["artist"]["specialized"])
-        self.assertFalse(self.profiles()["artist-2"]["specialized"])
-
-    def test_a_board_with_the_column_but_not_the_flag_gets_it_too(self):
-        # the column arrived (#270) before the template said specialized: the next start still marks it
-        with db._write_lock, db.conn() as c:
-            c.execute("UPDATE profiles SET specialized=0")
-        self.assertFalse(self.profiles()["artist"]["specialized"])
-        registry.init()
-        self.assertTrue(self.profiles()["artist"]["specialized"])
-        self.assertFalse(self.profiles()["developer"]["specialized"])
+        got = {n: p["takes_new_work"] for n, p in self.profiles().items()}
+        self.assertEqual({n for n, v in got.items() if not v}, {"architect", "security-engineer", "ui-designer", "sec-2"})
+        self.assertTrue(got["artist"] and got["reviewer"] and got["developer"])
+        registry.init()       # again: nothing changes
+        self.assertEqual({n: p["takes_new_work"] for n, p in self.profiles().items()}, got)
 
     def test_a_new_unnamed_bot_takes_a_profile_too(self):
-        # artist is specialized: it needs the channels it will claim in (board thread 8378)
+        # an artist takes new work, and needs no channel to (#627)
         r = self.client.post("/api/fleet/bots", headers=self.human,
-                             json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist", "claims": "open"})
-        self.assertEqual(r.status_code, 409, r.text)
-        self.assertIn("specialized profile", r.text)
-        r = self.client.post("/api/fleet/bots", headers=self.human,
-                             json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist",
-                                   "channels": ["proj"], "claims": "open"})
+                             json={"host": "box", "harness": "claude", "workspace": "proj", "profile": "artist"})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.profiles()["artist"]["bots"], [r.json()["handle"]])
 

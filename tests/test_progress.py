@@ -105,22 +105,25 @@ class WhoMayClaim(Base):
         self.assertEqual(self.client.put("/api/fleet/bots/edie/channels", headers=self.bot,
                                          json={"channels": []}).status_code, 403)
 
-    def test_a_specialized_profile_needs_a_channel(self):
+    def test_a_channel_is_never_required_and_a_profile_says_whether_its_bots_take_new_work(self):
+        # #627: binding and taking new work are two settings; "specialized" decides nothing
         self.report("lena", "waiting")
-        self.assertTrue(self.client.get("/api/profiles/artist").json()["profile"]["specialized"])
-        r = self.add("lena", expected=409, profile="artist", claims="open")      # one that takes new asks needs its channels (#622)
-        self.assertIn("specialized profile", r.text)
+        self.assertTrue(self.client.get("/api/profiles/artist").json()["profile"]["takes_new_work"])
+        self.add("lena", profile="artist", claims="open")                     # no channel: fine
         self.add("lena", profile="artist", channels=[self.art], claims="open")
         r = self.client.put("/api/fleet/bots/lena/channels", headers=self.human, json={"channels": []})
-        self.assertEqual(r.status_code, 409, r.text)      # cannot unbind a specialized bot
-        self.assertIn("Specialized", self.client.get("/fleet/profiles/artist").text)
-        # a new profile can be created specialized, and a developer is not
-        r = self.client.post("/api/profiles", headers=self.human,
-                             json={"name": "sound", "role": "sounds", "specialized": True})
-        self.assertEqual(r.status_code, 201, r.text)
-        self.assertTrue(r.json()["profile"]["specialized"])
-        self.assertFalse(self.client.get("/api/profiles/developer").json()["profile"]["specialized"])
-        self.assertIn("**Specialized.**", self.client.get("/api/profiles/sound").json()["profile"]["text"])
+        self.assertEqual(r.status_code, 200, r.text)                           # unbinding is fine too
+        self.assertIn("Takes new work by default", self.client.get("/fleet/profiles/artist").text)
+        self.assertNotIn("Specialized", self.client.get("/fleet/profiles/artist").text)
+        # a new profile that takes no new work; the old flag still means the same on write
+        for name, body in (("sound", {"takes_new_work": False}), ("sec", {"specialized": True}), ("plain", {})):
+            r = self.client.post("/api/profiles", headers=self.human, json={"name": name, "role": "x", **body})
+            self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual([self.client.get(f"/api/profiles/{n}").json()["profile"]["takes_new_work"] for n in ("sound", "sec", "plain")],
+                         [False, False, True])
+        # left out, a clone takes the default of the starter it begins from
+        r = self.client.post("/api/profiles", headers=self.human, json={"name": "sec2", "role": "x", "from": "security-engineer"})
+        self.assertFalse(r.json()["profile"]["takes_new_work"])
 
     def test_an_interactive_session_never_claims(self):
         me = self.register("wren", "claude-code", "sg", interactive=True)

@@ -265,7 +265,7 @@ def team(ws) -> dict:
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
         want = min(int(cells[2]), 10)
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
-                      'specialized': bool(prof and prof.get('specialized')), 'want': want, 'have': have, 'starting': starting,
+                      'want': want, 'have': have, 'starting': starting,
                       'claims': (fleet.default_claims(cells[1]) if prof else ''),
                       'missing': max(want - len(have) - len(starting), 0) if prof else 0})
     return {'roles': roles, 'agreement': True}

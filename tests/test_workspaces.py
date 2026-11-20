@@ -153,7 +153,7 @@ class Workspaces(Base):
         roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
         self.assertEqual([(r['profile'], r['want'], r['exists']) for r in roles], [('developer', 2, True), ('no-such-profile', 1, False), ('security-engineer', 1, True)])
         self.assertEqual([r['missing'] for r in roles], [2, 0, 1], 'a profile that does not exist is the admin bot\'s to make first')
-        self.assertEqual([r['claims'] for r in roles], ['open', '', 'mentioned'], 'a specialized profile works when mentioned')
+        self.assertEqual([r['claims'] for r in roles], ['open', '', 'mentioned'], 'a profile that takes no new work by default works when mentioned')
         db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile) VALUES('newdev','b','claude',1,'jac','now','game','developer')")
         db.conn().commit()
         r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]

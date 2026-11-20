@@ -87,7 +87,7 @@ HOST_COLUMNS = ("onhost", "host_box", "host_reason", "host_by", "host_at", "host
 EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "restart", "deleted", "claims") + HOST_COLUMNS
 THREADS = ("keep", "handoff", "retire")
 # claims: how a bot takes new threads (#622). open: any new thread that mentions nobody, as before. mentioned: only a
-# thread whose first message mentions it. A new bot gets it from its profile (a specialized one is mentioned);
+# thread whose first message mentions it. A new bot gets it from its profile's "takes new work by default" (#627);
 # a bot that existed before the column is open, as it was.
 CLAIMS = ("open", "mentioned")
 # A keeper reports several times a minute; a box silent for this long is shown as not reporting.
@@ -343,16 +343,15 @@ def _set_want(c, handle, host, harness, run, by, now, kill=False, workspace=None
 
 
 def default_claims(profile: str | None) -> str:
-    """How a new bot of this profile takes new threads (#622): a specialized profile works when mentioned."""
+    """How a new bot of this profile takes new threads (#622): as its profile's "takes new work by default" says (#627)."""
     from . import registry
-    return "mentioned" if profile and registry.is_specialized(profile) else "open"
+    return "open" if registry.takes_new_work_of(profile) else "mentioned"
 
 
 def _channels_problem(workspace: str | None, profile: str | None, channels: list[str] | None,
                       stored: str | None, run: bool, claims: str = "open") -> str | None:
-    """Why these channels will not do: one is not a channel of the bot's workspace, or the
-    profile is specialized, the bot takes new threads (claims open) and would start bound to nothing."""
-    from . import registry, workspaces
+    """Why these channels will not do: one is not a channel of the bot's workspace. Binding is never required (#627)."""
+    from . import workspaces
     if channels is not None:
         if not workspace:
             return "say which workspace the bot belongs to before binding it to channels"
@@ -364,9 +363,6 @@ def _channels_problem(workspace: str | None, profile: str | None, channels: list
         bad = [ch for ch in channels if ch.lower() not in known]
         if bad:
             return f"not a channel of {workspace}: {', '.join(bad)}"
-    bound = channels if channels is not None else (json.loads(stored) if stored else [])
-    if run and not bound and claims == "open" and registry.is_specialized(profile):
-        return f"{profile} is a specialized profile: pick at least one channel of its workspace for the bot"
     return None
 
 
@@ -383,7 +379,7 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     retire (hand off, and drop it from the stopped list). profile: the profile it is added
     with, or another one for a bot that has one (#395): it keeps its handle, token, box,
     channels and voice, and its next prompt carries the new guide and skills. channels: the channels of its
-    workspace it claims new threads in; required for a specialized profile, and changed any
+    workspace it claims new threads in; never required (#627), and changed any
     time with set_channels. voice, personality: how it writes and who it is, changed any time
     with set_voice; None leaves them as they are. host_reason, host_apps: the bot is a host bot (#595), run outside a
     container as the operator; refused unless it is a new bot, run is true, the box reported macOS and its host
@@ -610,7 +606,7 @@ def _deleted(handle: str) -> bool:
 
 def set_channels(handle: str, channels: list[str]) -> str | None:
     """Bind a fleet bot to these channels of its workspace, or to none (an empty list: it
-    claims anywhere, unless its profile is specialized). Returns None, or why not."""
+    claims anywhere). Returns None, or why not."""
     c = db.conn()
     row = c.execute("SELECT workspace, profile, run, claims FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
     if row is None:
@@ -628,7 +624,7 @@ def set_channels(handle: str, channels: list[str]) -> str | None:
 
 def set_claims(handle: str, claims: str) -> str | None:
     """How a fleet bot takes new threads (#622): open, or only those whose first message mentions it. A bot of a
-    specialized profile made open must be bound to a channel first. Returns None, or why not."""
+    Returns None, or why not."""
     if claims not in CLAIMS:
         return f"claims: one of {', '.join(CLAIMS)}"
     c = db.conn()

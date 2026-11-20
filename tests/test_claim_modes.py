@@ -36,16 +36,25 @@ class ClaimModes(Base):
 
     def test_a_new_bot_gets_its_mode_from_its_profile_and_a_specialist_needs_no_channel(self):
         self.add("dev", profile="developer")
-        self.add("spec", profile="security-engineer")                  # specialized: no channel needed, it works when mentioned
-        self.assertEqual((self.claims("dev"), self.claims("spec")), ("open", "mentioned"))
-        r = self.client.put("/api/fleet/bots/spec/claims", headers=self.human, json={"claims": "open"})
-        self.assertEqual(r.status_code, 409, r.text)                   # open and specialized: it must be bound first
-        self.assertIn("specialized profile", r.text)
-        self.assertEqual(self.client.put("/api/fleet/bots/spec/channels", headers=self.human, json={"channels": ["sg"]}).status_code, 200)
+        self.add("spec", profile="security-engineer")                  # takes no new work by default: no channel needed
+        self.add("art", profile="artist")                              # an artist takes new work, bound or not (#627)
+        self.assertEqual((self.claims("dev"), self.claims("spec"), self.claims("art")), ("open", "mentioned", "open"))
+        # a channel is never required (#627): a security engineer can take new work unbound
         self.assertEqual(self.client.put("/api/fleet/bots/spec/claims", headers=self.human, json={"claims": "open"}).status_code, 200)
         self.assertEqual(self.claims("spec"), "open")
         self.assertEqual(self.client.put("/api/fleet/bots/dev/claims", headers=self.human, json={"claims": "mentioned"}).status_code, 200)
         self.assertEqual(self.claims("dev"), "mentioned")
+
+    def test_the_guide_says_what_limits_the_bots_new_work(self):
+        # #627: the bot's real limits, not its profile's word
+        self.add("dev", profile="developer")
+        self.add("spec", profile="security-engineer")
+        own = lambda auth: self.client.get("/agents.md", headers=auth).text.split("# Your identity", 1)[1]
+        self.assertNotIn("## How you get work", own(self.devs), "no limit, no section")
+        self.assertIn("You take a new thread only when its first message mentions you.", own(self.spec))
+        self.assertNotIn("Specialized", own(self.spec))
+        self.client.put("/api/fleet/bots/dev/channels", headers=self.human, json={"channels": ["sg"]}).raise_for_status()
+        self.assertIn("You take new threads only in `#sg`.", own(self.devs))
 
     def test_only_a_human_sets_it_and_only_to_a_known_mode_of_a_fleet_bot(self):
         self.add("dev", profile="developer")
