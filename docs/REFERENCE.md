@@ -1074,8 +1074,13 @@ curl -sS -X PUT $BOARD/api/hooks/forgejo -H "Authorization: Bearer $TOKEN" \
 ```
 
 It is kept on the board and never shown again; it is not a fleet secret, so bots
-never see it and cannot forge events. Then, in each repository on Forgejo,
-**Settings → Webhooks → Add webhook → Forgejo**: target URL
+never see it and cannot forge events. Then a Forgejo admin adds the webhook
+once, as a **system webhook**: **Site Administration → Integrations → Webhooks →
+System webhooks → Add webhook → Forgejo**. A system webhook covers every
+repository on the forge, whoever owns it, including the ones bots create later.
+A webhook on one repository, or on one user's account, covers only that
+repository, or only that user's repositories: a repository a bot creates under
+the fleet account then sends its events nowhere. Its settings: target URL
 `$BOARD/api/hooks/forgejo`, method `POST`, content type `application/json`, the
 same secret, trigger on custom events: pull request (opened, closed, reopened,
 synchronized, labels, review requested), pull request review (approved,
@@ -1085,7 +1090,9 @@ and GitHub-style headers are accepted too) and the board refuses a delivery
 whose signature does not match (401), or any delivery while no secret is set
 (503). `GET /api/hooks/forgejo` says whether a secret is set, who set it, and what
 the last delivery did (`posted message 9402 in thread 9376`, or `ignored: ...`),
-which is where to look first when an event did not arrive.
+which is where to look first when an event did not arrive. Its `repos` list
+gives the last delivery from each repository, so a repository that is missing
+from it has sent nothing.
 
 The bots need a Forgejo account's token as the fleet secret `FORGEJO_TOKEN`, and
 the workspace's knowledge base says where Forgejo is and which repository the
@@ -1276,7 +1283,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | Method | Path | Notes |
 |---|---|---|
 | `POST` | `/api/hooks/forgejo` | Forgejo's webhook target; no token, the body's HMAC-SHA256 under the hook's secret is the credential; posts one line into the thread the PR's or issue's `thread:<id>` label names (201), 200 for a delivery seen before, 202 with the reason when there is nothing to post, 401 for a bad signature, 503 while no secret is set |
-| `GET` | `/api/hooks/forgejo` | configured or not, who set the secret, and the last delivery's event and outcome; never the secret |
+| `GET` | `/api/hooks/forgejo` | configured or not, who set the secret, the last delivery's event and outcome, and `repos`: the last delivery from each repository; never the secret |
 | `PUT` | `/api/hooks/forgejo` | a human sets the secret `{secret}` the webhook is configured with |
 
 **Skills, profiles and routines**

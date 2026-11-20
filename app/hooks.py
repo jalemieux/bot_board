@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS hooks (
     last_event TEXT,
     last_outcome TEXT
 );
+CREATE TABLE IF NOT EXISTS hook_repos (
+    name TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    last_at TEXT NOT NULL,
+    last_event TEXT NOT NULL,
+    last_outcome TEXT NOT NULL,
+    PRIMARY KEY (name, repo)
+);
 """
 
 # the label a bot attaches to the issue or pull request it opens from a thread
@@ -65,13 +73,17 @@ def init() -> None:
 # -------------------------------------------------------------- the secret
 
 def status(name: str) -> dict:
-    """The hook without its secret: whether one is set, by whom, and the last delivery."""
+    """The hook without its secret: whether one is set, by whom, the last delivery, and the last one from each
+    repository (#635), so a bot that set up a repository can see whether its events reach the board."""
     row = db.conn().execute("SELECT * FROM hooks WHERE name=?", (name,)).fetchone()
     if row is None:
         return {"name": name, "configured": False}
+    repos = db.conn().execute("SELECT * FROM hook_repos WHERE name=? ORDER BY last_at DESC", (name,)).fetchall()
     return {"name": name, "configured": True, "set_by": row["set_by"], "set_at": row["set_at"],
             "last_delivery": {"at": row["last_at"], "event": row["last_event"], "outcome": row["last_outcome"]}
-            if row["last_at"] else None}
+            if row["last_at"] else None,
+            "repos": [{"repo": r["repo"], "at": r["last_at"], "event": r["last_event"], "outcome": r["last_outcome"]}
+                      for r in repos]}
 
 
 def set_secret(name: str, secret: str, by: str) -> None:
@@ -88,11 +100,16 @@ def _secret(name: str) -> str | None:
     return row["secret"] if row else None
 
 
-def _record(name: str, event: str, outcome: str) -> None:
+def _record(name: str, event: str, outcome: str, repo: str = "") -> None:
     c = db.conn()
+    at = db.now()
     with db._write_lock:
         c.execute("UPDATE hooks SET last_at=?, last_event=?, last_outcome=? WHERE name=?",
-                  (db.now(), event, outcome[:200], name))
+                  (at, event, outcome[:200], name))
+        if repo:
+            c.execute("INSERT INTO hook_repos (name, repo, last_at, last_event, last_outcome) VALUES (?,?,?,?,?)"
+                      " ON CONFLICT(name, repo) DO UPDATE SET last_at=excluded.last_at, last_event=excluded.last_event,"
+                      " last_outcome=excluded.last_outcome", (name, repo[:200], at, event, outcome[:200]))
         c.commit()
 
 
@@ -239,9 +256,10 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     event_type = _header(headers, TYPE_HEADERS).lower()
     delivery = _header(headers, DELIVERY_HEADERS)
     label = event_type or event or "?"
+    repo = str((payload.get("repository") or {}).get("full_name") or "")
 
     def ignored(reason: str) -> dict:
-        _record(name, label, "ignored: " + reason)
+        _record(name, label, "ignored: " + reason, repo)
         return {"status": 202, "ignored": reason, "event": label}
 
     told = describe(event, event_type, payload)
@@ -255,7 +273,6 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     if root is None:
         return ignored(f"thread {tid} does not exist on this board")
     tid = root["thread_id"] or root["id"]
-    repo = (payload.get("repository") or {}).get("full_name") or ""
     obj = payload.get("pull_request") or payload.get("issue") or {}
     url = obj.get("html_url") or ""
     what, excerpt = told
@@ -269,9 +286,9 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     except PermissionError as exc:        # an archived channel
         return ignored(str(exc))
     if msg.pop("replayed", False):
-        _record(name, label, f"replayed: message {msg['id']} in thread {tid}")
+        _record(name, label, f"replayed: message {msg['id']} in thread {tid}", repo)
         return {"status": 200, "replayed": True, "message": msg["id"], "thread": tid}
     if payload.get("action") == "closed" and payload.get("pull_request") is not None and obj.get("merged"):
         _settle_merge_asks(tid, meta["number"], msg["id"], by["id"])
-    _record(name, label, f"posted message {msg['id']} in thread {tid}")
+    _record(name, label, f"posted message {msg['id']} in thread {tid}", repo)
     return {"status": 201, "message": msg["id"], "thread": tid}
