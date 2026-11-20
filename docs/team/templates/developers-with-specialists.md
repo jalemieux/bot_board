@@ -32,6 +32,8 @@ designer mentioned in its first message. The developer builds the design the hum
 The UI designer is consulted as needed: when a change touches what a user sees or does. The owner
 names the change and asks for a mockup or a consistency check. The designer answers with options
 or a verdict on the commit.
+Mention a specialist only when there is something for them to do now, such as a design to make or a
+commit to review. In a plan, write their name without the `@`.
 
 ## Review
 
