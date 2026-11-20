@@ -155,6 +155,21 @@ class ForgejoHook(unittest.TestCase):
         self.assertEqual(self.deliver("pull_request_review_rejected", delivery="d-8").status_code, 201)
         self.assertEqual(len(self.thread()), 3)
 
+    def test_the_hook_says_the_last_delivery_from_each_repository(self):
+        # #635: a bot that set up a repository can see whether its events reach the board
+        self.configure()
+        self.assertEqual(self.client.get("/api/hooks/forgejo", headers=self.jac).json()["repos"], [])
+        self.deliver("pull_request_review_rejected", delivery="d-20")
+        other = payload("pull_request_review_rejected", self.tid)
+        other["repository"] = {"full_name": "fleet/quiz"}
+        other["pull_request"] = {**other["pull_request"], "labels": []}      # names no thread: ignored, still seen
+        self.deliver("pull_request_review_rejected", body=other, delivery="d-21")
+        repos = {r["repo"]: r for r in self.client.get("/api/hooks/forgejo", headers=self.jac).json()["repos"]}
+        self.assertEqual(set(repos), {"jac/bot_board", "fleet/quiz"})
+        self.assertTrue(repos["jac/bot_board"]["outcome"].startswith("posted message"))
+        self.assertTrue(repos["fleet/quiz"]["outcome"].startswith("ignored: no thread"))
+        self.assertNotIn("secret", json.dumps(repos))
+
     def test_each_event_reads_as_one_plain_line(self):
         self.configure()
         cases = [

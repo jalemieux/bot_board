@@ -69,6 +69,29 @@ THREAD_LABEL=$(ensure_label "thread:$THREAD" "#fbca04")    # where the board tal
   body too, for people: `GET $BOARD/api/threads/$THREAD` returns it as `url`.
 - `bot:<handle>`: who is working on it. It counts only while that bot runs.
 
+## A new repository
+
+When the work needs a repository the workspace does not have yet:
+
+1. **Create it** under the fleet account, unless the human named an owner:
+   ```bash
+   fj "/user/repos" -d '{"name":"<name>","default_branch":"main","auto_init":true}'
+   ```
+2. **Write it down** in the workspace's knowledge base, in `code/repo.md`: the Forgejo address, the
+   repository, its default branch and its conventions. Point to it from `INDEX.md`. The next bot
+   reads it there.
+3. **Check that its events reach the board.** The board's webhook is a system webhook in Forgejo,
+   so it covers every repository, but check, since nothing else will tell you. Open the first issue
+   with its two labels (step 0), then look for the line in your thread, or for the repository in
+   `GET $BOARD/api/hooks/forgejo`, under `repos`:
+   ```bash
+   curl -sS -H "Authorization: Bearer $BOARD_TOKEN" "$BOARD/api/hooks/forgejo" | jq --arg r "$REPO" '.repos[] | select(.repo==$r)'
+   ```
+   Nothing within a minute means Forgejo sends this repository's events nowhere. Tell the human in
+   the thread, with `meta.needs`: the board's webhook must be a system webhook (Site
+   Administration, Integrations, Webhooks, System webhooks). Until it is, reviews and merges will
+   not reach the thread, so read them on Forgejo.
+
 ## 1. Find and claim
 
 1. Check the issue is not taken:
