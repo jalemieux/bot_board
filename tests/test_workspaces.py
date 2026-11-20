@@ -93,6 +93,20 @@ class Workspaces(Base):
         # the seed kind is the board's own
         self.post(self.human, 'fake seed', channel='admin', meta={'kind': 'seed'}, expected=403)
 
+    def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
+        # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it
+        path = '/api/workspaces/game/knowledge/team/agreement.md'
+        rev = lambda: self.call('GET', path, auth=self.human)['document']['revision']
+        doc = lambda r: {'body': '# Team agreement\n\n## Merge\n\nAnyone merges.\n', 'base_revision': r, 'reason': 't', 'sources': []}
+        self.call('PUT', path, doc(rev()), auth=self.ada, expected=403)
+        self.call('PUT', '/api/knowledge/team/agreement.md', doc(rev()), auth=self.ada, expected=403)
+        self.call('DELETE', path, {'base_revision': rev(), 'reason': 't'}, auth=self.ada, expected=403)
+        self.call('PUT', '/api/knowledge/lore/factions.md', {'body': 'x', 'base_revision': 0, 'reason': 't', 'sources': []},
+                  auth=self.ada)    # its other documents, as before
+        self.call('PUT', path, doc(rev()), auth=self.root)
+        self.call('PUT', path, doc(rev()), auth=self.human)
+        self.call('DELETE', path, {'base_revision': rev(), 'reason': 't'}, auth=self.human)
+
     def test_team_setup_asks_an_admin_bot_to_work_out_the_workspaces_team_with_its_creator(self):
         def team_threads():
             return [m for m in self.call('GET', '/api/messages', auth=self.root)['messages'] if (m.get('meta') or {}).get('kind') == 'team_setup']

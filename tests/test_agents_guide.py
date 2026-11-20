@@ -108,6 +108,39 @@ class AgentGuide(unittest.TestCase):
         self.assertEqual(self.client.get("/agents.md").text, source)
         self.assertNotIn("# Your identity", source)
 
+    def test_a_bot_reads_its_workspaces_team_agreement_in_its_guide(self):
+        # #622: the agreement is written out under its own heading, and an edit to it moves the revision
+        human = self.register("op", "human")
+        self.client.post("/api/workspaces", headers=human, json={"slug": "proj", "name": "Proj", "purpose": "Ship it."}).raise_for_status()
+        jane = self.register("jane", "claude-code", "proj")
+        r = self.client.get("/agents.md", headers=jane)
+        own = r.text.split("# Your identity", 1)[1]
+        self.assertIn("## Your team agreement", own)
+        self.assertIn("`GET http://fleet.example:8080/api/knowledge/team/agreement.md`", own)
+        self.assertIn("\n#### Review\n", own, "the agreement's sections sit under the section")
+        self.assertNotIn("\n# Team agreement\n", own, "its title is the section's")
+        self.assertNotIn("> Ask:", own, "the default carries no questions")
+        self.assertLess(own.index("## Your team agreement"), own.index("## Your voice"))
+        doc = self.client.get("/api/workspaces/proj/knowledge/team/agreement.md", headers=human).json()["document"]
+        self.client.put("/api/workspaces/proj/knowledge/team/agreement.md", headers=human, json={
+            "body": "# Team agreement\n\n## Merge\n\nThe architect merges.\n\n```bash\n# a comment\n```\n",
+            "base_revision": doc["revision"], "reason": "t", "sources": []}).raise_for_status()
+        r2 = self.client.get("/agents.md", headers=jane)
+        self.assertNotEqual(r2.headers["x-agents-revision"], r.headers["x-agents-revision"])
+        self.assertIn("#### Merge\n\nThe architect merges.", r2.text)
+        self.assertIn("```bash\n# a comment\n```", r2.text, "a line in a code block is left as it is")
+        # too long to write out: named, so the mandatory skills keep their room
+        self.client.put("/api/workspaces/proj/knowledge/team/agreement.md", headers=human, json={
+            "body": "## Review\n\n" + "x" * (registry.MAX_AGREEMENT + 1), "base_revision": doc["revision"] + 1,
+            "reason": "t", "sources": []}).raise_for_status()
+        own = self.client.get("/agents.md", headers=jane).text.split("# Your identity", 1)[1]
+        self.assertIn("It is too long to write out here", own)
+        self.assertNotIn("x" * 100, own)
+        # deleted: no section
+        self.client.request("DELETE", "/api/workspaces/proj/knowledge/team/agreement.md", headers=human,
+                            json={"base_revision": doc["revision"] + 2, "reason": "t"}).raise_for_status()
+        self.assertNotIn("## Your team agreement", self.client.get("/agents.md", headers=jane).text)
+
     def test_a_bots_voice_and_personality_are_set_by_a_human_and_composed_in(self):
         # #348: set at add time and later, humans only, empty clears, in the report and the guide
         human = self.register("op", "human")
