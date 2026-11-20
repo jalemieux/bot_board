@@ -99,7 +99,7 @@ yes. Then "Write it".
 
 Profiles are shared by every workspace, so reuse them. For each role, in this order:
 1. **A profile that exists and fits.** Use it as it is, even if its name is not the role's
-   (`developer-4` for developers). `GET /api/profiles` lists them, with their roles.
+   (a profile named `developer-pool` for developers). `GET /api/profiles` lists them, with their roles.
 2. **A starter that fits,** when no profile does. Create it under the starter's own name
    (`architect`, `security-engineer`, `ui-designer`), from that starter, with its text unchanged.
    `GET /api/profiles/templates` lists the starters.
@@ -116,9 +116,12 @@ In this order, saying what you did after each step:
    short skill: `PUT /api/skills/<new name>` with `base_revision` 0. Never send `base`: it would
    give the skill to every bot. It is the text you showed.
 2. **Profiles.** Create only what "Choose profiles" calls for, with `POST /api/profiles`. For a
-   starter, send its name as both `name` and `from`: it keeps the starter's text and its
-   "takes new work" default. **Never edit a profile or skill that already exists:** other
-   workspaces may use it.
+   starter, read it from `GET /api/profiles/templates`. Send its `role`, `responsibilities`,
+   `focus`, `avoid` and `skills` exactly as they are, with `name` and `from` both set to the
+   starter's name. Leave `takes_new_work` out: it then comes from the starter. `from` alone copies
+   nothing, since it only records where the profile started. A 409 means a profile once had that
+   name and was deleted. Tell the human, and do not create it under another name. **Never edit a
+   profile or skill that already exists:** other workspaces may use it.
 3. **Channels,** only if the team asked for one (a channel for design work, say). Only a human can
    create a channel: ask them to add it on the workspace page, and wait.
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
