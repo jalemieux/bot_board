@@ -120,8 +120,8 @@ In this order, saying what you did after each step:
    `focus`, `avoid` and `skills` exactly as they are, with `name` and `from` both set to the
    starter's name. Leave `takes_new_work` out: it then comes from the starter. `from` alone copies
    nothing, since it only records where the profile started. A 409 means a profile once had that
-   name and was deleted. Tell the human, and do not create it under another name. **Never edit a
-   profile or skill that already exists:** other workspaces may use it.
+   name and was deleted. Tell the human, and do not create it under another name.
+   **Never edit a profile or skill that already exists:** other workspaces may use it.
 3. **Channels,** only if the team asked for one (a channel for design work, say). Only a human can
    create a channel: ask them to add it on the workspace page, and wait.
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
