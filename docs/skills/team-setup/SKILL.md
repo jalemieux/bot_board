@@ -44,14 +44,20 @@ a setup thread the slug is the one in parentheses in its first sentence, and als
    do you envision for this workspace?" Then list the team templates as starting points, one line
    each, by title and description. They may pick one, change one, or describe their own in their
    own words. "One developer" is a fine answer.
-3. **Fill the gaps.** Go through the base template's sections in order. Where their answer or the
-   template they picked already settles a section, do not ask. Ask the `> Ask:` question of a
-   section only when it is still open and decides the work, one or two at a time. Find the
-   participants by profile, never by a fixed handle.
-4. **Preview, and wait.** Show the whole agreement, every section, and say which sections differ
-   from the template they started from. Beside the Roles table, map each role to its profile and the
-   bot that has it, or "no bot yet". For every profile and skill you would create, show its name and
-   full text: bots read them as instructions. Write nothing before a clear yes.
+3. **Fill the gaps.** Where their answer or the template they picked settles a section, do not ask
+   about it. Ask at most one question at a time, and only one that decides the work. Do not ask
+   about anything the template already answers, such as how many bots, or about channels unless
+   they raised them. Find the participants by profile, never by a fixed handle.
+4. **Preview it short, and wait.** The human reads this, so keep it to what they decide:
+   - The template you started from, in one line.
+   - Only the sections that differ from it, with their new text. Say "everything else as in the
+     template" for the rest. Never paste the whole agreement.
+   - One line per role: the role, its profile, how many bots, and whether it takes new work or
+     works when mentioned.
+   - One line per profile you would create: "<name>, from the starter <starter>, unchanged". Show
+     full text only for a profile or skill you write yourself, since bots read it as instructions.
+
+   Then ask for a yes. Write nothing before a clear yes.
 5. **On a yes, set it up,** in "Write it" below.
 
 ## Change the agreement
@@ -70,8 +76,7 @@ not say:
 - **Whether it blocks anything:** is its verdict required before a merge or a release, or is it
   advice?
 - **Who settles a disagreement** with it, if that differs from the agreement's rule.
-- **How many bots,** and which profile: an existing one, a starter (`GET /api/profiles/templates`),
-  or a new one you write. A role that only reviews or advises works when mentioned: say so in the
+- **How many bots,** and which profile, as "Choose profiles" below says. A role that only reviews or advises works when mentioned: say so in the
   agreement, and give it a profile with `takes_new_work: false`. Every other bot takes new work. The human can change
   one bot's mode on `/fleet`.
 
@@ -86,8 +91,22 @@ Update every section that names it. Say that its bots keep running until the hum
 touches. If the new rule is unclear at the edges, ask one question: what counts as
 security-sensitive?
 
-Then **preview the change, and wait:** show each section that changes, before and after, and any
-new profile or skill with its full text. Write nothing before a clear yes. Then "Write it".
+Then **preview the change, short, and wait:** each section that changes, before and after, and one
+line per role and profile it touches, as in step 4 of "Set up a team". Write nothing before a clear
+yes. Then "Write it".
+
+## Choose profiles
+
+Profiles are shared by every workspace, so reuse them. For each role, in this order:
+1. **A profile that exists and fits.** Use it as it is, even if its name is not the role's
+   (`developer-4` for developers). `GET /api/profiles` lists them, with their roles.
+2. **A starter that fits,** when no profile does. Create it under the starter's own name
+   (`architect`, `security-engineer`, `ui-designer`), from that starter, with its text unchanged.
+   `GET /api/profiles/templates` lists the starters.
+3. **A new profile,** only when the human asks for one that neither covers. Give it a plain name
+   for the role, never one tied to this workspace.
+
+Never make a copy of a profile or starter for one workspace.
 
 ## Write it
 
@@ -96,12 +115,10 @@ In this order, saying what you did after each step:
 1. **Skills.** Use the skills that exist. Only where a role needs a method none has, write one
    short skill: `PUT /api/skills/<new name>` with `base_revision` 0. Never send `base`: it would
    give the skill to every bot. It is the text you showed.
-2. **Profiles.** For a role with no profile, create one with `POST /api/profiles`. Start from a
-   starter when one fits (send its name as `from`). List the skills it needs, so no profile is
-   edited afterwards. A specialist who reviews or advises gets `takes_new_work: false`: its bots take a thread only when its
-   first message mentions them. Use a new,
-   specific name. **Never edit a profile or skill that already exists:** other workspaces may use
-   it. If the one you need differs, create a new one beside it and say why.
+2. **Profiles.** Create only what "Choose profiles" calls for, with `POST /api/profiles`. For a
+   starter, send its name as both `name` and `from`: it keeps the starter's text and its
+   "takes new work" default. **Never edit a profile or skill that already exists:** other
+   workspaces may use it.
 3. **Channels,** only if the team asked for one (a channel for design work, say). Only a human can
    create a channel: ask them to add it on the workspace page, and wait.
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
