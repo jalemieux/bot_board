@@ -34,8 +34,6 @@ class Files(unittest.TestCase):
         self.assertEqual(sections(team.base()), list(team.SECTIONS))
         for t in team.templates():
             self.assertEqual(sections(team.template(t["name"])["body"]), list(team.SECTIONS), t["name"])
-        for slug in sorted(f[:-3] for f in os.listdir(team.WORKSPACES_DIR)):
-            self.assertEqual(sections(team.agreement_for(slug)), list(team.SECTIONS), slug)
 
     def test_each_base_section_ends_with_the_question_to_ask(self):
         parts = re.split(r"^## ", team.base(), flags=re.M)[1:]
@@ -65,7 +63,7 @@ class Files(unittest.TestCase):
         front, body = registry.parse_front(skill)
         self.assertEqual(front["name"], "team-setup")
         for needle in ("GET /api/team/template", "GET /api/team/templates", "Never edit a profile or skill that already exists",
-                       "Only a human's clear yes"):
+                       "Only a human's clear yes", "a fourth column `Channel`", "through the base skill `forgejo-lifecycle`"):
             self.assertIn(needle, body)
         admin = [t for t in registry.templates() if t["name"] == "admin"]
         self.assertEqual([s["name"] if isinstance(s, dict) else s for s in admin[0]["skills"]], ["team-setup"])
@@ -104,7 +102,7 @@ class Board(Base):
 
     def test_a_build_without_the_templates_still_makes_the_workspace(self):
         from unittest import mock
-        with mock.patch.object(team, "TEMPLATES_DIR", "/nonexistent"), mock.patch.object(team, "WORKSPACES_DIR", "/nonexistent"):
+        with mock.patch.object(team, "TEMPLATES_DIR", "/nonexistent"):
             self.call("POST", "/api/workspaces", {"slug": "bare", "name": "Bare", "purpose": "x"}, auth=self.human, expected=201)
         self.call("GET", "/api/workspaces/bare/knowledge/team/agreement.md", auth=self.human, expected=404)
 
@@ -114,7 +112,7 @@ class Board(Base):
         self.assertEqual(workspaces.kb_current_revision(admin, team.AGREEMENT), 0)
 
     def test_the_backfill_gives_old_workspaces_an_agreement_once(self):
-        for slug in ("old", "bot_board", "kept"):
+        for slug in ("old", "bot_board", "kept"):     # a workspace named for the product gets the default like any other
             self.call("POST", "/api/workspaces", {"slug": slug, "name": slug, "purpose": "x"}, auth=self.human, expected=201)
         c = db.conn()
         for slug in ("old", "bot_board"):                 # as a workspace made before this change: no agreement at all
@@ -124,9 +122,9 @@ class Board(Base):
         kept = self.agreement("kept")["body"]
         self.assertEqual(team.backfill(), 2, "the two without one; the third has its own")
         self.assertEqual(self.agreement("old")["body"].strip(), team.template("default")["body"].strip())
-        own = self.agreement("bot_board")
-        self.assertIn("jade-dc77", own["body"], "bot_board has its own agreement")
-        self.assertIn("own agreement", own["reason"])
+        named = self.agreement("bot_board")
+        self.assertEqual(named["body"].strip(), team.template("default")["body"].strip())
+        self.assertNotIn("jade-dc77", named["body"], "no board's people are shipped in the product")
         self.assertEqual(self.agreement("kept")["body"], kept)
         # a human deletes one: the backfill does not bring it back
         self.call("DELETE", "/api/workspaces/old/knowledge/team/agreement.md", {"base_revision": 1, "reason": "no"}, auth=self.human)

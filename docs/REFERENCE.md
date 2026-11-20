@@ -245,8 +245,8 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
   one the form shows *No moderator* and nobody answers.
 - **The agreement a workspace starts with.** Every new workspace is given a default `team/agreement.md` (today's
   fleet behaviour), and every existing one gets it once, at the first start of a board with this change; the
-  admin workspace is not a team. A file under `docs/team/workspaces/<slug>.md` is the agreement of the
-  workspace with that slug (`bot_board` has one). The templates are under `docs/team/`: the base template
+  admin workspace is not a team. A board's own people (who decides, who reviews) are not shipped: a human or
+  an admin bot writes them into the workspace's agreement. The templates are under `docs/team/`: the base template
   `agreement-template.md` (the eight sections every agreement keeps, each with the question to ask about it) and
   the team templates in `templates/` (complete agreements, with `name`, `title` and `description`). The board
   serves them at `GET /api/team/template`, `GET /api/team/templates` and `GET /api/team/templates/{name}`.

@@ -2,8 +2,8 @@
 
 A workspace's `team/agreement.md` says how its bots work together. The base template names the sections every
 agreement keeps and, under each, the question an admin bot asks about it. A team template is a complete agreement
-to start from. `default` is today's fleet behaviour, and is what a new workspace gets. A file under
-docs/team/workspaces/<slug>.md is the agreement of the workspace with that slug.
+to start from. `default` is today's fleet behaviour, and is what every workspace gets, whatever its name: an agreement
+that names people belongs to one board and is written there, through the knowledge API.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 TEAM_DIR = os.path.join(ROOT, "docs", "team")
 BASE = os.path.join(TEAM_DIR, "agreement-template.md")
 TEMPLATES_DIR = os.path.join(TEAM_DIR, "templates")
-WORKSPACES_DIR = os.path.join(TEAM_DIR, "workspaces")
 AGREEMENT = "team/agreement.md"
 DEFAULT = "default"
 SECTIONS = ("People", "Ownership", "Splitting work", "Consulting", "Review", "Merge", "Disagreement", "Roles")
@@ -58,26 +57,16 @@ def template(name: str) -> dict:
             "description": str(front.get("description") or ""), "body": body.strip() + "\n"}
 
 
-def agreement_for(slug: str) -> str:
-    """The agreement a workspace starts with: its own file under docs/team/workspaces/ when it has one, else the default."""
-    own = os.path.join(WORKSPACES_DIR, f"{slug.lower()}.md")
-    if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", slug.lower()) and os.path.isfile(own):
-        return _read(own)
-    return template(DEFAULT)["body"]
-
-
 def seed(ws: dict, agent: dict) -> bool:
     """Write the workspace's agreement when it has none. True when it wrote one."""
     from . import workspaces
     if workspaces.kb_current_revision(ws, AGREEMENT):
         return False
     try:
-        text = agreement_for(ws["slug"])
+        text = template(DEFAULT)["body"]
     except (KeyError, OSError):      # a build without docs/team: the workspace is made all the same, with no agreement
         return False
-    own = os.path.isfile(os.path.join(WORKSPACES_DIR, f"{ws['slug'].lower()}.md"))
-    workspaces.kb_put(ws, AGREEMENT, text, 0,
-                      "seeded: this workspace's own agreement" if own else "seeded from the default team template", [], agent)
+    workspaces.kb_put(ws, AGREEMENT, text, 0, "seeded from the default team template", [], agent)
     return True
 
 

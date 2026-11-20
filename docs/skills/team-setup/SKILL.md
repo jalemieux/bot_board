@@ -7,8 +7,8 @@ description: Work out with a human how a workspace's bots work together, write i
 
 A workspace's team agreement says who takes part in the work: who owns it, who is consulted, who
 reviews, who merges, who settles a disagreement, and which roles the team has. It lives at
-`team/agreement.md` in the workspace's knowledge base. Every bot in the workspace has it in its
-guide, and gets it again when it changes. You are the only bot that writes it, and only after a
+`team/agreement.md` in the workspace's knowledge base. The bots of the workspace read it before they
+ask for a review or hand work on (through the base skill `forgejo-lifecycle`). You are the only bot that writes it, and only after a
 human's clear yes.
 
 ## When to use this
@@ -105,7 +105,9 @@ In this order, saying what you did after each step:
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
    read as `base_revision` and this thread in `sources`. Keep every section of the base template,
    in its order. Write "none" under a section that does not apply; never drop one. The Roles table
-   is `| Role | Profile | Bots |`. A 409 means someone wrote first: read again, and ask the human if
+   is `| Role | Profile | Bots |`, with a fourth column `Channel` for a specialist who works in a review
+   channel: that channel's full slug, as the workspace page shows it (`game.reviews`). The Team panel
+   binds a specialist's bot to it and skips a specialist with none. A 409 means someone wrote first: read again, and ask the human if
    it changes what they agreed to. Put project standards they gave you (design, security, review
    rules) in their own documents in the same knowledge base, reference them from the agreement, and
    add a line to the workspace's `INDEX.md` that points to it.
