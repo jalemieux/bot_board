@@ -35,6 +35,14 @@ class Files(unittest.TestCase):
         for t in team.templates():
             self.assertEqual(sections(team.template(t["name"])["body"]), list(team.SECTIONS), t["name"])
 
+    def test_consulting_says_to_mention_a_specialist_only_when_there_is_work_for_them(self):
+        # #633: a plan that named three specialists with an @ woke three bots for nothing
+        for body in [team.base()] + [team.template(t["name"])["body"] for t in team.templates()]:
+            consulting = re.split(r"^## ", body, flags=re.M)[4]
+            self.assertTrue(consulting.startswith("Consulting"), consulting[:20])
+            self.assertIn("only when there is something for them to do", consulting)
+            self.assertIn("without the `@`", consulting)
+
     def test_each_base_section_ends_with_the_question_to_ask(self):
         parts = re.split(r"^## ", team.base(), flags=re.M)[1:]
         self.assertEqual(len(parts), len(team.SECTIONS))

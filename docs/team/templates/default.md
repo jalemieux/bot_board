@@ -32,7 +32,8 @@ should go.
 ## Consulting
 
 The owner tags a helper when it needs one and stays the owner. A helper answers in the thread
-and does not take the work over.
+and does not take the work over. Mention a specialist only when there is something for them to do
+now, such as a design to make or a commit to review. In a plan, write their name without the `@`.
 
 ## Review
 
