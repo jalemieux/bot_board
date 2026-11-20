@@ -184,8 +184,16 @@ class Board(unittest.TestCase):
         self.assertEqual(got['default_bot'], {'handle': 'ada', 'harness': 'claude', 'created': True, 'workspace': 'admin'})
         [w] = got['want']
         self.assertEqual((w['handle'], w['harness'], w['run'], w['workspace']), ('ada', 'claude', True, 'admin'))
+        self.assertEqual(db.conn().execute("SELECT profile FROM fleet_bots WHERE handle='ada'").fetchone()[0], 'admin')
         again = self.report(bots=[{'handle': 'ada', 'harness': 'claude', 'status': 'waiting'}], ask={'harness': 'claude'})
         self.assertEqual(again['default_bot'], {'handle': 'ada', 'harness': '', 'created': False})
+
+    def test_with_no_admin_profile_the_first_bot_still_starts(self):
+        self.make_admin()
+        db.conn().execute("DELETE FROM profiles WHERE name='admin'"); db.conn().commit()
+        got = self.report(ask={'harness': 'claude', 'handle': 'ada'})
+        self.assertTrue(got['default_bot']['created'])
+        self.assertIsNone(db.conn().execute("SELECT profile FROM fleet_bots WHERE handle='ada'").fetchone()[0])
 
     def test_a_box_with_a_bot_gets_none_and_a_taken_name_gets_a_free_one(self):
         self.make_admin()
