@@ -15,8 +15,8 @@ The agreement is then written down, and every bot follows it.
    is free picks it up within a few seconds; if it is busy, it comes to it when its work ends.
 4. **Answer in the thread.** The admin bot asks one question: what kind of team collaboration
    you envision for the workspace. Answer in your own words. "One developer" is a fine answer. So is
-   "a developer, a UX designer, an architect and a security reviewer". Not sure yet? Ask it for
-   suggestions. It then asks only what it still needs.
+   "a developer, a UX designer, an architect and a security reviewer". Not sure yet? It offers a
+   few ready-made teams to start from, which you can change. It then asks only what it still needs.
 5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
    fills it, or *no bot yet*, and the full text of every new profile and skill it would create. Nothing is written until you say **yes**. Say what to change
    until it is right.
@@ -29,6 +29,7 @@ The agreement is then written down, and every bot follows it.
    asks you to add one on the workspace page if there is none), not the channel where tasks are posted, so it only picks up review
    threads.
 
+Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
 That is all. The agreement is saved in the workspace as `team/agreement.md`, and the bots read it
 before they ask for a review or hand work on.
 

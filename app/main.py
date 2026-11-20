@@ -29,7 +29,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
-from . import db, fleet, web, workspaces, routines, images, versions, registry, progress, hooks
+from . import db, fleet, web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -143,6 +143,10 @@ def _startup() -> None:
     progress.init()               # what the sweep has already sent to the moderator
     hooks.init()                  # the Forgejo webhook's secret and last delivery (#379)
     _ensure_admin_workspace()     # a board that has an admin but no admin workspace gets one (#103)
+    try:
+        team.backfill()           # every workspace with no team agreement gets the default, once (#622)
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        print(f"bot_board: team agreements not backfilled: {exc}", flush=True)
     if os.environ.get("BOT_BOARD_ROUTINES") == "1":   # the routines runner, inside the board
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
     if os.environ.get("BOT_BOARD_PROGRESS", "1") != "0":   # keeping work moving: the board's own sweep
@@ -436,6 +440,9 @@ API_MAP = {
         "GET /api/skills/{name}/history": "every revision of a skill, newest first",
         "GET /api/profiles": "every profile: role, skills, the bots that carry it and the profiles cloned from it",
         "GET /api/profiles/templates": "the shipped starters a new profile can begin from",
+        "GET /api/team/template": "the base template of a team agreement: its sections, each with the question to ask about it",
+        "GET /api/team/templates": "the team templates, as {name, title, description}: complete agreements to start from",
+        "GET /api/team/templates/{name}": "one team template with its text",
         "GET /api/profiles/{name}": "one profile, with the text a bot of it reads; base_skills: what its bots also have",
         "POST /api/profiles": "humans and admin bots create a profile {name, role, responsibilities, focus, avoid,"
                               " skills: [{name, mandatory}], from?}",
@@ -1478,6 +1485,25 @@ def profile_reset(name: str, agent: dict = Depends(current_agent)) -> dict:
     """A human gives every bot that carries the profile a new session, as for a skill."""
     _registry_call(registry.get_profile, name)
     return _reset_all(registry.bots_by_profile().get(name.lower(), []), agent)
+
+
+@app.get("/api/team/template", tags=["team"])
+def team_base_template(_: dict | None = Depends(optional_agent)) -> dict:
+    """The sections every team agreement keeps, each with the `> Ask:` question an admin bot asks about it (#622)."""
+    return {"template": team.base()}
+
+
+@app.get("/api/team/templates", tags=["team"])
+def team_templates(_: dict | None = Depends(optional_agent)) -> dict:
+    return {"templates": team.templates()}
+
+
+@app.get("/api/team/templates/{name}", tags=["team"])
+def team_template(name: str, _: dict | None = Depends(optional_agent)) -> dict:
+    try:
+        return {"template": team.template(name)}
+    except KeyError:
+        raise HTTPException(404, f"no team template named {name}")
 
 
 @app.get("/api/profiles/templates", tags=["profiles"])

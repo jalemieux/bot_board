@@ -136,7 +136,7 @@ class Workspaces(Base):
                  '| Architect | no-such-profile | 1 | reviews |\n| Security | developer | 1 | reviews |\n'
                  '| Ux | developer | 1 | game.nothing |\n| Full | developer | 1 | game.reviews |\n\n## Other\n\n| x | y | 9 | |\n')
         self.assertEqual(self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'], [], 'no agreement yet')
-        self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 0, 'reason': 't', 'sources': []}, auth=self.human)
+        self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 1, 'reason': 't', 'sources': []}, auth=self.human)    # over the seeded revision 1
         self.call('POST', '/api/workspaces/game/channels', {'slug': 'reviews', 'name': 'Reviews'}, auth=self.human, expected=201)
         roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
         self.assertEqual([(r['profile'], r['want'], r['exists']) for r in roles][:2], [('developer', 2, True), ('no-such-profile', 1, False)])
@@ -272,16 +272,16 @@ class Workspaces(Base):
         self.assertEqual(self.call('GET', '/api/knowledge/INDEX.md?revision=1', auth=self.ada)['document']['body'], '# Game\n\n- lore/factions.md')
         hist = self.call('GET', '/api/knowledge/INDEX.md/history', auth=self.ada)
         self.assertEqual([r['revision'] for r in hist['revisions']], [2, 1])
-        self.assertEqual([d['path'] for d in self.call('GET', '/api/knowledge', auth=self.ada)['documents']], ['INDEX.md', 'lore/factions.md'])
+        self.assertEqual([d['path'] for d in self.call('GET', '/api/knowledge', auth=self.ada)['documents']], ['INDEX.md', 'lore/factions.md', 'team/agreement.md'])
         found = self.call('GET', '/api/knowledge?q=traders', auth=self.ada)['documents']
         self.assertEqual([d['path'] for d in found], ['lore/factions.md'])
         self.assertIn('traders', found[0]['snippet'])
         # another workspace's bot has its own, empty, knowledge base
-        self.assertEqual(self.call('GET', '/api/knowledge', auth=self.milo)['documents'], [])
+        self.assertEqual([d['path'] for d in self.call('GET', '/api/knowledge', auth=self.milo)['documents']], ['team/agreement.md'], 'only the seeded agreement')
         self.call('GET', '/api/knowledge/INDEX.md', auth=self.milo, expected=404)
         self.call('GET', '/api/workspaces/game/knowledge', auth=self.milo, expected=403)
         # admin bots and humans reach it by name
-        self.assertEqual(len(self.call('GET', '/api/workspaces/game/knowledge', auth=self.root)['documents']), 2)
+        self.assertEqual(len(self.call('GET', '/api/workspaces/game/knowledge', auth=self.root)['documents']), 3)
         self.call('PUT', '/api/workspaces/game/knowledge/decisions/decisions.md',
                   {'body': 'Teal and rust palette.', 'base_revision': 0, 'reason': 'seeded'}, auth=self.root)
         self.assertEqual(self.call('GET', '/api/knowledge/decisions/decisions.md', auth=self.ada)['document']['author'], 'root')
@@ -290,10 +290,10 @@ class Workspaces(Base):
         self.call('DELETE', '/api/knowledge/lore/factions.md', {'base_revision': 1, 'reason': 'merged'}, auth=self.ada)
         self.call('GET', '/api/knowledge/lore/factions.md', auth=self.ada, expected=404)
         self.assertEqual(len(self.call('GET', '/api/knowledge/lore/factions.md/history', auth=self.ada)['revisions']), 2)
-        self.assertEqual([d['path'] for d in self.call('GET', '/api/knowledge', auth=self.ada)['documents']], ['INDEX.md', 'decisions/decisions.md'])
+        self.assertEqual([d['path'] for d in self.call('GET', '/api/knowledge', auth=self.ada)['documents']], ['INDEX.md', 'decisions/decisions.md', 'team/agreement.md'])
         self.call('PUT', '/api/knowledge/bad path', {'body': 'x', 'base_revision': 0}, auth=self.ada, expected=422)
         self.call('PUT', '/api/knowledge/empty.md', {'body': '  ', 'base_revision': 0}, auth=self.ada, expected=422)
-        self.assertEqual(self.call('GET', '/api/workspaces/game', auth=self.human)['workspace']['documents'], 2)
+        self.assertEqual(self.call('GET', '/api/workspaces/game', auth=self.human)['workspace']['documents'], 3)
 
     def test_the_guide_depends_on_who_asks(self):
         self.assertIn('fleet message board', self.client.get('/agents.md', headers=self.ada).text)
@@ -430,7 +430,7 @@ class Migration(Base):
         self.assertIsNone(db.get_agent_by_handle('free')['workspace_id'])
         self.assertEqual(workspaces.kb_get(ws, 'INDEX.md')['body'], 'Project context v2')
         self.assertEqual(workspaces.kb_get(ws, 'art/INDEX.md')['body'], 'Palette: teal and rust.')
-        self.assertEqual([d['path'] for d in workspaces.kb_list(ws)['documents']], ['INDEX.md', 'art/INDEX.md'])
+        self.assertEqual([d['path'] for d in workspaces.kb_list(ws)['documents']], ['INDEX.md', 'art/INDEX.md', 'team/agreement.md'])
         # fleet channels are left as they were, attached to no workspace: no bot sees them
         self.assertIsNone(db.get_board('lobby')['workspace_id'])
         self.assertTrue(workspaces.is_admin(db.get_agent_by_handle('jac')))
