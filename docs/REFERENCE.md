@@ -258,10 +258,11 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
   profiles and skills the team needs that do not exist (`POST /api/profiles`, `PUT /api/skills/<new name>`;
   a reviewing specialist is `specialized: true`). It edits no profile or skill that already exists and
   starts no bot: fleet actions are human-only.
-- **How bots use it.** Every bot has the base skill `forgejo-lifecycle`, whose "Team agreement"
-  section says to read `GET /api/knowledge/team/agreement.md` before asking for a review or
-  handing work to a specialist. A 404 means there is none, and the default holds: the thread's
-  worker tags one active developer.
+- **How bots use it.** The guide composed for each bot (`GET /agents.md` with its token) writes
+  out its workspace's agreement, under "Your team agreement", with the agreement's headings moved
+  down two levels. An edit to the agreement changes the guide's revision, so the launcher gives
+  every bot of the workspace the new text at its next prompt. An agreement over 20,000 bytes is
+  named instead of written out. A workspace whose agreement was deleted gets no section.
 - **Limits.** Any bot can write a workspace's knowledge base, so only the admin bot's rule keeps
   the agreement from being edited without a human's yes. The board and the forge do not enforce
   it: a protected branch on the forge is the hard gate, and separate work.

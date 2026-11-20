@@ -666,9 +666,35 @@ def effective_voice(handle: str) -> tuple[str, str, bool, bool]:
     return voice or DEFAULT_VOICE, personality or DEFAULT_PERSONALITY, not voice, not personality
 
 
+# An agreement longer than this is named, not written out: it would crowd the mandatory skills out of a prompt.
+MAX_AGREEMENT = 20_000
+
+
+def _agreement_lines(ws: dict, api: str) -> list[str]:
+    """The workspace's team agreement, written out (#622): every bot of the workspace has it before any work, and
+    an edit to it moves the guide's hash, so the launcher gives the bot the new text. Its headings move down two
+    levels to sit under this section. No agreement, no section."""
+    from . import team, workspaces
+    try:
+        body = workspaces.kb_get(ws, team.AGREEMENT)["body"].strip()
+    except (KeyError, ValueError):
+        return []
+    where = f"`GET {api}/knowledge/{team.AGREEMENT}`"
+    lines = ["## Your team agreement", "",
+             "How the bots of your workspace work together: who owns work, who is consulted, who reviews, who merges,"
+             f" who settles a disagreement. Follow it. It is {where}, and only a human's yes changes it.", ""]
+    if len(body.encode()) > MAX_AGREEMENT:
+        return lines + [f"It is too long to write out here: read it with {where} before any work.", ""]
+    for line in body.splitlines():
+        if re.match(r"^# ", line):
+            continue                     # its own title: this section is the title
+        lines.append("##" + line if line.startswith("#") else line)
+    return lines + [""]
+
+
 def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
     """The section about one bot that the board appends to AGENTS.md when the bot's own
-    token fetches it (#344): its workspace and channels, its profile, and its skills, each as
+    token fetches it (#344): its workspace and channels, its team agreement (#622), its profile, and its skills, each as
     name@revision, with the text of every mandatory one. The launcher puts the whole document
     in the session's first prompt, and again in a wake prompt when the hash moves; the model
     fetches none of it. Skill bodies on disk are the launcher's (block 2, #346). `used` is the
@@ -691,6 +717,7 @@ def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
             lines.append(f"- `#{ch['slug']}`" + (" (General)" if ch["home"] else "") + (f": {what}" if what else ""))
         lines += ["", f"Its shared memory starts at `GET {api}/knowledge/INDEX.md`; a channel's references"
                   " (`GET " + api + "/channels/<slug>`) say what to read there.", ""]
+        lines += _agreement_lines(ws, api)
     profile = profile_of(agent["handle"])
     if profile is not None:
         lines += [f"## Your profile: {profile['name']}", "", f"**Role.** {profile['role']}", ""]

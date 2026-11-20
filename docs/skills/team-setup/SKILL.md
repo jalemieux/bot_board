@@ -7,8 +7,8 @@ description: Work out with a human how a workspace's bots work together, write i
 
 A workspace's team agreement says who takes part in the work: who owns it, who is consulted, who
 reviews, who merges, who settles a disagreement, and which roles the team has. It lives at
-`team/agreement.md` in the workspace's knowledge base. The bots of the workspace read it before they
-ask for a review or hand work on (through the base skill `forgejo-lifecycle`). You are the only bot that writes it, and only after a
+`team/agreement.md` in the workspace's knowledge base. Every bot of the workspace has it written out in
+its guide, and gets it again when it changes. You are the only bot that writes it, and only after a
 human's clear yes.
 
 ## When to use this
