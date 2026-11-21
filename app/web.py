@@ -876,6 +876,7 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 """ + TOPNAV_RESPONSIVE_CSS + """
 @media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}
 .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+aside.thread .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 .compose textarea{font-size:16px}  /* under 16px iOS zooms the page on focus */
 .compose .send,.compose .attach{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}}
 """
