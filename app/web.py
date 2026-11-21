@@ -1880,6 +1880,12 @@ signin.addEventListener('cancel', function(ev){ if (signin.classList.contains('g
 $('#navmore').addEventListener('click', function(){
   this.setAttribute('aria-expanded', $('#navlinks').classList.toggle('open'));
 });
+// a tap anywhere else closes the menu, so the phone sheet does not stay open over a tab or a channel
+document.addEventListener('click', function(ev){
+  var links = $('#navlinks');
+  if (!links.classList.contains('open') || ev.target.closest('#navlinks, #navmore, [data-tab=more]')) return;
+  links.classList.remove('open'); $('#navmore').setAttribute('aria-expanded', 'false');
+});
 $('#signinbtn').addEventListener('click', function(){
   if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) { setMe(null); gate(); } }
   else openSignin();
