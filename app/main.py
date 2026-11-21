@@ -490,7 +490,7 @@ API_MAP = {
         "DELETE /api/workspaces/{slug}[/channels/{channel}]": "a human deletes an archived workspace (no bots left) or channel"
                                                               " {confirm: <slug>}; GET .../deletion first says what goes",
         "GET /api/workspaces/{slug}/team": "the `## Roles` table of the team agreement against the workspace's bots:"
-                                           " per role its profile, how many bots, who has it, how many are missing",
+                                           " per role its profile, how it takes work, who has it, whether it still lacks a bot, and bots set otherwise (off)",
         "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
                                                  " paths and verbs as /api/knowledge",
         "GET /api/conversations": "conversations you are in (all=true for every one);"

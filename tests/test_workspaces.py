@@ -146,22 +146,34 @@ class Workspaces(Base):
 
     def test_the_team_panel_reads_the_roles_table_against_the_bots_that_exist(self):
         from app import workspace_web
-        table = ('# Team\n\n## Roles\n\n| Role | Profile | Bots |\n|---|---|---|\n| Developer | developer | 2 |\n'
-                 '| Architect | no-such-profile | 1 |\n| Security | security-engineer | 1 |\n\n## Other\n\n| x | y | 9 |\n')
+        table = ('# Team\n\n## Roles\n\n| Role | Profile |\n|---|---|\n| Developer | developer |\n'
+                 '| Architect | no-such-profile |\n| Security | security-engineer | 3 |\n\n## Other\n\n| x | y |\n')   # an older Bots column is ignored
         self.assertEqual(self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'], [], 'seeded default has no roles yet')
         self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 1, 'reason': 't', 'sources': []}, auth=self.human)    # over the seeded revision 1
         roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
-        self.assertEqual([(r['profile'], r['want'], r['exists']) for r in roles], [('developer', 2, True), ('no-such-profile', 1, False), ('security-engineer', 1, True)])
-        self.assertEqual([r['missing'] for r in roles], [2, 0, 1], 'a profile that does not exist is the admin bot\'s to make first')
+        self.assertEqual([(r['profile'], r['want'], r['exists']) for r in roles], [('developer', 1, True), ('no-such-profile', 1, False), ('security-engineer', 1, True)], 'the agreement counts no bots: a role wants one')
+        self.assertEqual([r['missing'] for r in roles], [1, 0, 1], 'a profile that does not exist is the admin bot\'s to make first')
         self.assertEqual([r['claims'] for r in roles], ['open', '', 'mentioned'], 'a profile that takes no new work by default works when mentioned')
         db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile) VALUES('newdev','b','claude',1,'jac','now','game','developer')")
         db.conn().commit()
         r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]
-        self.assertEqual((r['starting'], r['missing']), (['newdev'], 1), 'a bot asked for and not yet registered counts')
+        self.assertEqual((r['starting'], r['missing']), (['newdev'], 0), 'a bot asked for and not yet registered counts')
         self.assertIn('t.roles.every(function (x) { return x.exists && !x.missing; })', workspace_web.WS_JS, 'done only when no role lacks a profile or a bot')
         for needle in ("'/team'", "'/api/fleet/bots'", 'claims: x.claims'):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn('channels:', workspace_web.WS_JS.split('function teamSection')[1].split('function knowledgeNote')[0], 'the panel binds no channels')
+
+    def test_the_agreement_says_how_a_role_takes_work_and_the_panel_flags_bots_set_otherwise(self):
+        from app import workspace_web
+        table = ('## Roles\n\n| Role | Profile | Takes work |\n|---|---|---|\n| Developer | developer | new asks |\n'
+                 '| Marketer | security-engineer | when mentioned |\n')
+        self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 1, 'reason': 't', 'sources': []}, auth=self.human)
+        db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile,claims) VALUES('ada','b','claude',1,'jac','now','game','developer','mentioned')")
+        db.conn().commit()
+        roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
+        self.assertEqual([r['claims'] for r in roles], ['open', 'mentioned'], 'the agreement, not the profile, says how a role takes work')
+        self.assertEqual((roles[0]['have'], roles[0]['off']), (['ada'], ['ada']), 'a bot set to another mode than its role is flagged')
+        self.assertIn('x.off.join', workspace_web.WS_JS)
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']

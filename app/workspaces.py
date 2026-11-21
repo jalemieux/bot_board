@@ -241,8 +241,11 @@ def bots_of(ws) -> list[str]:
 
 
 def team(ws) -> dict:
-    """What the agreement's `## Roles` table asks for, against what exists: each role's profile and how many
-    bots it should have, which of the workspace's bots carry it, and what is still to create (#600).
+    """What the agreement's `## Roles` table asks for, against what exists: each role's profile, which of the
+    workspace's bots carry it, and what is still to create (#600). The agreement names roles, not how many
+    bots fill them: a role with no bot is missing one, and starting more is the human's call on /fleet.
+    An optional third column says how the role takes work ("new asks" or "when mentioned"); without it the
+    profile's default holds. A bot whose own mode differs from its role's is listed under `off`.
     A table that is not there gives no roles; the human reads the agreement."""
     from . import fleet, registry
     try:
@@ -255,18 +258,21 @@ def team(ws) -> dict:
     roles = []
     for line in (section.group(1) if section else '').splitlines():
         cells = [c.strip().strip('`') for c in line.strip().strip('|').split('|')]
-        if len(cells) < 3 or not cells[2].isdigit() or not line.strip().startswith('|'):
-            continue            # the header, the rule line, prose
+        if (len(cells) < 2 or not line.strip().startswith('|') or not cells[1]
+                or cells[0].lower() == 'role' or set(line) <= set('|-: \t')):
+            continue            # the header, the rule line, prose; a Bots column from an older agreement is ignored
         prof = profiles.get(cells[1].lower())
         have = [b for b in (prof['bots'] if prof else []) if b.lower() in mine]
         # a bot asked for on /fleet is only a fleet row until its launcher registers it: count it, or Create twice makes two more
         asked = [r['handle'] for r in db.conn().execute(
             "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
-        want = min(int(cells[2]), 10)
+        want = 1
+        mode = cells[2].lower() if len(cells) > 2 and not cells[2].isdigit() else ''    # a number is an old Bots column
+        claims = ('mentioned' if 'mention' in mode else 'open') if mode else (fleet.default_claims(cells[1]) if prof else '')
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
-                      'want': want, 'have': have, 'starting': starting,
-                      'claims': (fleet.default_claims(cells[1]) if prof else ''),
+                      'want': want, 'have': have, 'starting': starting, 'claims': claims,
+                      'off': [b for b in have if prof and db.bot_claims(b) != claims],
                       'missing': max(want - len(have) - len(starting), 0) if prof else 0})
     return {'roles': roles, 'agreement': True}
 
