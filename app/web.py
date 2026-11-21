@@ -115,7 +115,8 @@ def theme_css(dark: str) -> str:
 
 
 # Runs before the page paints, so a chosen theme shows without a flash of the other one.
-THEME_HEAD = ("<script>try{var t=localStorage.getItem('bb.theme');"
+THEME_HEAD = ('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+              "<script>try{var t=localStorage.getItem('bb.theme');"
               "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
 # The switch: Auto (the operating system decides), Light, Dark, in that order. The choice is kept in this browser.
 THEME_JS = """
@@ -601,7 +602,7 @@ overflow-x:auto;font:12px/1.5 var(--mono);white-space:pre}
 pre code{background:none;padding:0;font-size:inherit}
 button{font:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);grid-template-rows:auto minmax(0,1fr);height:100vh}
+.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);grid-template-rows:auto minmax(0,1fr);height:100vh;height:100dvh}
 .app.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
 .app.thread-closed aside.thread{display:none}
 .app.wide{grid-template-columns:248px minmax(0,1fr)}
@@ -873,7 +874,11 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 .app.thread-closed aside.thread{display:none}
 .app.solo aside.thread{position:relative;inset:auto;width:auto;box-shadow:none}}   /* the popout has no main area to overlay: it fills the window */
 """ + TOPNAV_RESPONSIVE_CSS + """
-@media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
+@media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}
+.compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+aside.thread .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+.compose textarea{font-size:16px}  /* under 16px iOS zooms the page on focus */
+.compose .send,.compose .attach{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}}
 """
 
 APP_JS = r"""
