@@ -892,6 +892,9 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 .tabbar .badge{position:absolute;top:4px;left:calc(50% + 6px);background:var(--accent);color:#fff;border-radius:10px;font:600 11px/1 var(--mono);padding:3px 6px;min-width:20px;text-align:center;box-sizing:border-box}
 .tabbar .badge.m{background:var(--dim)}
 .tabbar [hidden]{display:none}
+/* More opens the page links as a sheet above the tab bar, near the thumb that tapped it */
+.topnav .links{position:fixed;top:auto;left:8px;right:8px;bottom:calc(60px + env(safe-area-inset-bottom));z-index:6}
+.topnav .links a{min-height:44px;display:flex;align-items:center}
 .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 aside.thread .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 .compose textarea{font-size:16px}  /* under 16px iOS zooms the page on focus */
