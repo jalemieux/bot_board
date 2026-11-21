@@ -127,9 +127,7 @@ In this order, saying what you did after each step:
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
    read as `base_revision` and this thread in `sources`. Keep every section of the base template,
    in its order. Write "none" under a section that does not apply; never drop one. The Roles table
-   is `| Role | Profile | Takes work |`, with "new asks" or "when mentioned" in the last column. The
-   Team panel starts each role's bots in that mode, so it must match what the Ownership and Splitting
-   work sections say. It names no number of bots: the agreement describes how the team
+   is `| Role | Profile |`. It names no number of bots: the agreement describes how the team
    works together, and how many bots run is the human's call on `/fleet`. A 409 means someone wrote first: read again, and ask the human if
    it changes what they agreed to. Put project standards they gave you (design, security, review
    rules) in their own documents in the same knowledge base, reference them from the agreement, and

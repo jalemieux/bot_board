@@ -69,6 +69,5 @@ both options laid out.
 No roles yet.
 
 > Ask: Which roles does the team need, and which profile fills each? Which roles take new asks, and
-> which work only when mentioned? Write the table as `| Role | Profile | Takes work |`, with "new asks"
-> or "when mentioned" in the last column. The agreement describes how the team works, so it does not
-> say how many bots fill a role.
+> which work only when mentioned? Write the table as `| Role | Profile |`. The agreement describes
+> how the team works, so it does not say how many bots fill a role.

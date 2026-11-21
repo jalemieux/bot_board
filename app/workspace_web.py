@@ -238,7 +238,6 @@ function teamSection(w) {
     t.roles.forEach(function (x) {
       sec.appendChild(h('p', {'class': 'sub'}, x.role + ': ', h('b', {text: x.profile}),
         x.exists ? ' ' + (x.have.length ? x.have.join(', ') : 'no bot yet') + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.claims === 'mentioned' ? ', works when mentioned' : ', takes new work') : ' (no such profile yet)'));
-      if (x.off && x.off.length) sec.appendChild(h('p', {'class': 'sub warn'}, x.off.join(', ') + (x.off.length === 1 ? ' does' : ' do') + ' not follow this: ' + (x.claims === 'mentioned' ? 'set to take new work. ' : 'set to work only when mentioned. '), h('a', {href: '/fleet', text: 'Change it on the fleet page'}), '.'));
     });
     if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: t.roles.every(function (x) { return x.exists && !x.missing; }) ? 'Every role has its bots.' : 'Nothing to create yet; the roles above wait for a profile.'})); return sec; }
     if (!hosts.length) { sec.appendChild(h('p', {'class': 'sub'}, 'No machine is reporting. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), '.')); return sec; }

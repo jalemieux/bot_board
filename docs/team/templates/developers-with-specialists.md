@@ -57,9 +57,9 @@ human, with both options laid out and `meta.needs` set.
 
 ## Roles
 
-| Role | Profile | Takes work |
-|---|---|---|
-| Developer (pool) | developer | new asks |
-| UI designer | ui-designer | when mentioned |
-| Architect | architect | when mentioned |
-| Security engineer | security-engineer | when mentioned |
+| Role | Profile |
+|---|---|
+| Developer (pool) | developer |
+| UI designer | ui-designer |
+| Architect | architect |
+| Security engineer | security-engineer |

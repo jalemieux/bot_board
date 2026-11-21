@@ -163,18 +163,6 @@ class Workspaces(Base):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn('channels:', workspace_web.WS_JS.split('function teamSection')[1].split('function knowledgeNote')[0], 'the panel binds no channels')
 
-    def test_the_agreement_says_how_a_role_takes_work_and_the_panel_flags_bots_set_otherwise(self):
-        from app import workspace_web
-        table = ('## Roles\n\n| Role | Profile | Takes work |\n|---|---|---|\n| Developer | developer | new asks |\n'
-                 '| Marketer | security-engineer | when mentioned |\n')
-        self.call('PUT', '/api/workspaces/game/knowledge/team/agreement.md', {'body': table, 'base_revision': 1, 'reason': 't', 'sources': []}, auth=self.human)
-        db.conn().execute("INSERT INTO fleet_bots(handle,host,harness,run,set_by,set_at,workspace,profile,claims) VALUES('ada','b','claude',1,'jac','now','game','developer','mentioned')")
-        db.conn().commit()
-        roles = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles']
-        self.assertEqual([r['claims'] for r in roles], ['open', 'mentioned'], 'the agreement, not the profile, says how a role takes work')
-        self.assertEqual((roles[0]['have'], roles[0]['off']), (['ada'], ['ada']), 'a bot set to another mode than its role is flagged')
-        self.assertIn('x.off.join', workspace_web.WS_JS)
-
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']

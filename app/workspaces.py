@@ -244,8 +244,6 @@ def team(ws) -> dict:
     """What the agreement's `## Roles` table asks for, against what exists: each role's profile, which of the
     workspace's bots carry it, and what is still to create (#600). The agreement names roles, not how many
     bots fill them: a role with no bot is missing one, and starting more is the human's call on /fleet.
-    An optional third column says how the role takes work ("new asks" or "when mentioned"); without it the
-    profile's default holds. A bot whose own mode differs from its role's is listed under `off`.
     A table that is not there gives no roles; the human reads the agreement."""
     from . import fleet, registry
     try:
@@ -268,11 +266,9 @@ def team(ws) -> dict:
             "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
         want = 1
-        mode = cells[2].lower() if len(cells) > 2 and not cells[2].isdigit() else ''    # a number is an old Bots column
-        claims = ('mentioned' if 'mention' in mode else 'open') if mode else (fleet.default_claims(cells[1]) if prof else '')
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
-                      'want': want, 'have': have, 'starting': starting, 'claims': claims,
-                      'off': [b for b in have if prof and db.bot_claims(b) != claims],
+                      'want': want, 'have': have, 'starting': starting,
+                      'claims': (fleet.default_claims(cells[1]) if prof else ''),
                       'missing': max(want - len(have) - len(starting), 0) if prof else 0})
     return {'roles': roles, 'agreement': True}
 
