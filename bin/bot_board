@@ -115,7 +115,7 @@ board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
 # as you, not in containers (#651). Linux only until Forgejo is installed natively on a Mac.
-forge_native() { [ -n "${FORGE_NATIVE:-}" ] || ! command -v "${DOCKER:-docker}" >/dev/null 2>&1; }
+forge_native() { local d=${DOCKER:-docker}; [ -n "${FORGE_NATIVE:-}" ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
   local tok i _pair native=
@@ -177,6 +177,7 @@ forge_install() {
   BOARD=$api BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install --no-bot
   if [ -n "$native" ]; then
     say "the board is at $api (sign in as $human), Forgejo at $(BOARD=$api bash "$SRC/deploy/forgejo-native" status | sed 's/.* at //'), and the first bot starts within a minute, running as you: watch $api/fleet"
+    say "the bots run as you, so they can read Forgejo's admin password in ~/.bot_board/forgejo-admin-password; a container install keeps them out of it"
   else
   say "the board is at $api (sign in as $human), Forgejo at http://${FORGEJO_HOST:-localhost}:3000, and the first bot starts in a container within a minute: watch $api/fleet"
   fi

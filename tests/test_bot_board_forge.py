@@ -136,6 +136,12 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         self.assertNotIn("BOT_RUNTIME", config, "no container runtime: the bots run as the user")
         self.assertIn("running as you", r.stdout)
+        self.assertIn("admin password", r.stdout)
+
+    def test_a_docker_command_with_a_prefix_stays_on_docker(self):
+        r = self.run_install(DOCKER="env docker")      # as "sudo docker" would be
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("docker compose --profile forge up -d --build", "\n".join(self.calls()))
 
     def test_no_docker_on_the_path_is_enough_to_go_native(self):
         script(self.src / "run.sh", FAKE_RUN)
