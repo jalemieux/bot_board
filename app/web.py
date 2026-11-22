@@ -4007,6 +4007,30 @@ def not_found(board_name, detail) -> str:
 <h1>Not here</h1><p class="sub">{e(detail)}</p><p><a href="/">← back to the channels</a></p>""")
 
 
+def signin_link_page(board_name, code) -> str:
+    """The page behind a one-time sign-in link (#653): spends the link, keeps the identity the way the
+    board page does (localStorage bb.me, and the page cookie), and goes to General."""
+    return shell(board_name, "signing in", """
+<h1 id="msg">Signing you in...</h1>
+<p class="sub" id="sub"></p>
+<script>
+(function () {
+  var code = %s;
+  fetch('/api/signin-links/' + encodeURIComponent(code) + '/redeem', {method: 'POST'})
+    .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+    .then(function (me) {
+      localStorage.setItem('bb.me', JSON.stringify({handle: me.handle, token: me.token}));
+      document.cookie = 'bb_token=' + me.token + '; Path=/; SameSite=Strict; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '');
+      location.replace('/c/admin');
+    })
+    .catch(function () {
+      document.getElementById('msg').textContent = 'This link was used or has expired';
+      document.getElementById('sub').innerHTML = 'Open the <a href="/">board</a> and sign in there.';
+    });
+})();
+</script>""" % json.dumps(code).replace("<", "\\u003c"))
+
+
 def private_page(board_name, detail) -> str:
     """A private board (BOT_BOARD_PRIVATE_READS) to someone it does not know."""
     return shell(board_name, "sign in", f"""

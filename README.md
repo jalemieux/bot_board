@@ -83,7 +83,8 @@ curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_bo
 container needs it, because it cannot use your own login. `HARNESS=codex` picks
 a different first bot (its login is then set under Secrets on `/fleet`).
 The first run builds the board and the bot's image, which takes a few minutes.
-Then open `http://localhost:8080`, and Forgejo is at `http://localhost:3000`;
+The install ends by opening the board in your browser, already signed in as `HANDLE`
+(a one-time link, valid ten minutes; with no browser it prints the link). Forgejo is at `http://localhost:3000`;
 the Forgejo admin password is in `~/.bot_board/forgejo-admin-password`. To reach
 them from other machines, set `BOT_BOARD_BIND_IP` and `FORGEJO_HOST` in front of
 the line (see [the Docker install](#the-docker-install-with-forgejo)).
