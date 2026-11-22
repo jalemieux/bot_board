@@ -20,6 +20,14 @@
 # BOARD_HUMAN_TOKEN (a human's, instead of signing in), INVITE (the board's invite code, if
 # it has one), FORGE (Forgejo as this box reaches it, default http://127.0.0.1:3000),
 # COMPOSE (default `docker compose --profile forge`; prefix sudo if docker needs it).
+#
+# A Forgejo that is not in Docker (#651): set FORGEJO_BIN to its binary and FORGEJO_WORK_PATH to its data
+# directory, and the accounts are made with that binary instead of `docker compose exec`. Then the
+# webhook address defaults to the board as this box reaches it (BOARD), not the compose name; HOOK
+# overrides it either way. Run it as the user that runs Forgejo: as root it would make files that Forgejo
+# cannot write. Forgejo refuses to deliver to a loopback or private address unless its own settings allow
+# it, so a native Forgejo needs `[webhook] ALLOWED_HOST_LIST = loopback` (or `private`) in its app.ini; the
+# script says so at the end (the compose Forgejo has it set).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -31,7 +39,10 @@ SCOPES=write:repository,write:issue,write:user,read:organization
 
 say() { echo "forge-setup: $*"; }
 die() { echo "forge-setup: $*" >&2; exit 1; }
-forgejo() { $COMPOSE exec -T -u 1000 forgejo forgejo "$@"; }
+forgejo() {
+  if [ -n "${FORGEJO_BIN:-}" ]; then "$FORGEJO_BIN" --work-path "${FORGEJO_WORK_PATH:?FORGEJO_BIN needs FORGEJO_WORK_PATH}" "$@"
+  else $COMPOSE exec -T -u 1000 forgejo forgejo "$@"; fi
+}
 board() {   # board METHOD PATH [JSON]: the answer's body; fails loudly on an error
   curl -fsS -X "$1" "$BOARD$2" -H "Authorization: Bearer $BOARD_TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
@@ -47,6 +58,7 @@ fi
 ME=$(board GET /api/me | jq -r '.agent.handle // .handle') || die "the board at $BOARD refused that token"
 board GET /api/fleet/secrets >/dev/null 2>&1 || die "@$ME may not manage the fleet's secrets: use a human's token"
 
+[ -z "${FORGEJO_BIN:-}" ] || [ "$(id -u)" != 0 ] || die "a native Forgejo runs as its own user: run forge-setup as that user, not root"
 say "waiting for Forgejo at $FORGE"
 for _ in $(seq 60); do curl -fsS "$FORGE/api/v1/version" >/dev/null 2>&1 && break; sleep 2; done
 curl -fsS "$FORGE/api/v1/version" >/dev/null || die "Forgejo does not answer at $FORGE: docker compose --profile forge up -d"
@@ -86,7 +98,7 @@ fi
 #    and the board has a secret. Otherwise that hook goes, and a new secret is set on the board
 #    before the hook that signs with it is made, so a failure half way is redone, not doubled.
 [ -s "$PWFILE" ] || die "the site webhook needs $ME's Forgejo password in $PWFILE"
-HOOK=http://bot_board:8080/api/hooks/forgejo
+HOOK=${HOOK:-$( [ -n "${FORGEJO_BIN:-}" ] && echo "$BOARD/api/hooks/forgejo" || echo http://bot_board:8080/api/hooks/forgejo )}
 IDFILE=$(dirname "$PWFILE")/forgejo-hook-id
 admin() { curl -fsS -u "$ME:$(cat "$PWFILE")" -H 'Content-Type: application/json' "$@"; }
 id=$(cat "$IDFILE" 2>/dev/null || true)
@@ -107,7 +119,8 @@ else
   say "site webhook made: every repository's events reach the board"
 fi
 
-host=$($COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
+host=$( [ -n "${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
 say "done. Forgejo is at ${host%/}; sign in there as $ME."
+[ -z "${FORGEJO_BIN:-}" ] || say "check Forgejo's app.ini has [webhook] ALLOWED_HOST_LIST = loopback (or private, for a board on another address): without it Forgejo refuses every delivery to the board"
 say "Next: write that address into your workspace's knowledge base, so the bots find it,"
 say "and bring a repository over (docs/forgejo-setup.md, step 5): add fleet as a write collaborator."
