@@ -335,7 +335,7 @@ def skill_page(board_name: str, skill: dict, history: list, profiles: list) -> s
     content = f"""
 <style>{FLEET_CSS}{REG_CSS}</style>
 <div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/fleet">Fleet</a> › <a href="/fleet#fleet-skills">Skills</a> › {name}</p>
+<p class="crumbs"><a href="/skills">Skills</a> › {name}</p>
 <div class="reg-head"><h1>{name}</h1><div class="right">{_revision(skill)}</div></div>
 <p class="sub">{e(skill["description"])}</p>
 <div class="two"><div>
@@ -381,7 +381,7 @@ def skill_page(board_name: str, skill: dict, history: list, profiles: list) -> s
 <script type="application/json" id="skill-data">{data}</script>
 </div></div>
 <script>{SKILL_PAGE_JS}</script>"""
-    return shell(board_name, f"skill {skill['name']}", content, here="/fleet")
+    return shell(board_name, f"skill {skill['name']}", content, here="/skills")
 
 
 SKILL_PAGE_JS = r"""
@@ -553,7 +553,7 @@ def profile_page(board_name: str, profile: dict, bots: list, history: list, skil
     content = f"""
 <style>{FLEET_CSS}{REG_CSS}</style>
 <div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/fleet">Fleet</a> › <a href="/fleet#fleet-profiles">Profiles</a> › {name}</p>
+<p class="crumbs"><a href="/roles">Roles</a> › {name}</p>
 <div class="reg-head"><h1>{name}</h1>
 <div class="right">rev {profile["revision"]} · {e(ago(latest["updated_at"]))} · {e(latest["author"])} · <a class="addbot-btn needs-me" href="/fleet/profiles/new?from={name}">Clone</a></div></div>
 <p class="role">{e(profile["role"])}</p>
@@ -587,7 +587,7 @@ def profile_page(board_name: str, profile: dict, bots: list, history: list, skil
 <script type="application/json" id="profile-data">{data}</script>
 </div></div>
 <script>{PROFILE_PAGE_JS}</script>"""
-    return shell(board_name, f"profile {profile['name']}", content, here="/fleet")
+    return shell(board_name, f"profile {profile['name']}", content, here="/roles")
 
 
 PROFILE_PAGE_JS = r"""
@@ -682,7 +682,7 @@ def profile_new_page(board_name: str, templates: list, profiles: list, skills: l
     content = f"""
 <style>{FLEET_CSS}{REG_CSS}</style>
 <div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/fleet">Fleet</a> › <a href="/fleet#fleet-profiles">Profiles</a> › new profile</p>
+<p class="crumbs"><a href="/roles">Roles</a> › new profile</p>
 <div class="reg-head"><h1 style="font-family:var(--sans)">Create a profile</h1></div>
 <p class="sub">A profile is a role and the skills that go with it. A human can move a bot to another profile from its row; the profile itself is edited on its page, and a different role is a new profile.</p>
 <div class="two"><div>
@@ -707,7 +707,7 @@ def profile_new_page(board_name: str, templates: list, profiles: list, skills: l
 <script type="application/json" id="new-data">{data}</script>
 </div></div>
 <script>{NEW_PROFILE_JS}</script>"""
-    return shell(board_name, "new profile", content, here="/fleet")
+    return shell(board_name, "new profile", content, here="/roles")
 
 
 NEW_PROFILE_JS = r"""

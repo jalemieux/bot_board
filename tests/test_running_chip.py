@@ -67,7 +67,7 @@ class RunningChip(unittest.TestCase):
         self.report()
         self.seen(['jac', 'keeper-box', 'routines'], db.now())
         page = self.client.get('/').text
-        self.assertIn('<a href="/fleet" class="tab"', page)       # the count sits in the Fleet tab (thread 9918)
+        self.assertIn('<a href="/machines" class="tab"', page)       # the count sits in the Machines tab (thread 9918, #644)
         self.assertIn('<span id="nag">2 running</span>', page)
         self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
         self.assertNotIn(' active</a>', page)
@@ -76,14 +76,27 @@ class RunningChip(unittest.TestCase):
         self.assertEqual(web.running_chip(None), '')
 
     def test_the_top_bar_has_tabs_not_a_manage_menu(self):
-        # thread 9918: Board, Fleet, Workspaces and Routines as tabs; the current page is marked
-        for path, current in (('/', '/'), ('/fleet', '/fleet'), ('/routines', '/routines'), ('/workspaces', '/workspaces')):
+        # thread 9918, #644: Board and the board-wide pages as tabs; the current page is marked
+        for path, current in (('/', '/'), ('/fleet', '/fleet'), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
+                              ('/skills', '/skills'), ('/routines', '/routines'), ('/workspaces', '/workspaces')):
             page = self.client.get(path).text
             self.assertNotIn('id="manage"', page, path)
             self.assertNotIn('id="navboard"', page, path)
-            for href in ('/', '/fleet', '/workspaces', '/routines'):
+            for href in ('/', '/workspaces', '/fleet', '/machines', '/configuration', '/roles', '/skills', '/routines'):
                 cur = ' aria-current="page"' if href == current else ''
                 self.assertRegex(page, f'<a href="{href}" class="tab" title="[^"]*"{cur}>', (path, href))
+
+    def test_the_old_fleet_page_is_now_one_page_per_subject(self):
+        # #644: Machines, Configuration, Roles and Skills each show only their own panes; Fleet is not a tab any more
+        panes = {'/fleet': 'tab-bots', '/machines': 'tab-machines tab-settings', '/configuration': 'tab-settings',
+                 '/roles': 'tab-roles', '/skills': 'tab-skills'}
+        for path, shown in panes.items():
+            page = self.client.get(path).text
+            self.assertIn(f'data-panes="{shown}"', page, path)
+            self.assertNotIn('class="fleet-tabs"', page, path)
+            self.assertNotIn('>Fleet</a>', page.split('</header>')[0], path)
+        self.assertIn('<h1>Machines</h1>', self.client.get('/machines').text)
+        self.assertNotIn('id="addbot"', self.client.get('/roles').text, 'adding a bot belongs to the bots page')
 
 
 if __name__ == '__main__':

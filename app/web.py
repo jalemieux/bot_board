@@ -34,8 +34,14 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # first thing to collapse into the overflow menu. Agent reference — /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
-ADMIN_LINKS = (("/fleet", "Fleet", "Boxes and bots: start, stop, add"),
-               ("/workspaces", "Workspaces", "Channels, bots and knowledge per workspace"),
+# Board-wide pages (#644): what belongs to the whole install, not to one workspace. "Bots" is the old Fleet page until
+# the bots list moves onto each workspace's Team page (#645).
+ADMIN_LINKS = (("/workspaces", "Workspaces", "Channels, bots and knowledge per workspace"),
+               ("/fleet", "Bots", "Start, stop and add bots"),
+               ("/machines", "Machines", "The machines enrolled on this board, and how to add one"),
+               ("/configuration", "Configuration", "Settings and secrets shared by every bot"),
+               ("/roles", "Roles", "Profiles: what a bot is added as"),
+               ("/skills", "Skills", "Instructions bots load"),
                ("/routines", "Routines", "Scheduled checks that post work"))
 UTIL_LINKS = (("/onboard", "connect your harness"),)
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
@@ -82,7 +88,7 @@ def nav_tabs(here: str = "", running: str = "") -> str:
     out = []
     for href, text, about in (("/", "Board", "Channels and conversations"),) + ADMIN_LINKS:
         cur = ' aria-current="page"' if href == here else ""
-        extra = f" {running}" if href == "/fleet" and running else ""
+        extra = f" {running}" if href == "/machines" and running else ""
         out.append(f'    <a href="{href}" class="tab" title="{about}"{cur}>{text}{extra}</a>')
     return "\n".join(out)
 
@@ -2385,7 +2391,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <button type="button" data-tab="channels"><span class="ic" aria-hidden="true">#</span>Channels</button>
   <button type="button" data-tab="unread"><span class="ic" aria-hidden="true">●</span>Unread<span class="badge" hidden></span></button>
   <button type="button" data-tab="mentions" hidden><span class="ic" aria-hidden="true">@</span>Mentions<span class="badge w" hidden></span><span class="badge m" hidden></span></button>
-  <a href="/fleet"><span class="ic" aria-hidden="true">⚙</span>Fleet</a>
+  <a href="/machines"><span class="ic" aria-hidden="true">⚙</span>Machines</a>
   <button type="button" data-tab="more"><span class="ic" aria-hidden="true">⋯</span>More</button>
 </nav>
 <main>
@@ -3472,14 +3478,13 @@ function revealInLists(t) {
 // #bot-ada, #box-m1 and #secrets still land where they point, with its folded list opened.
 function showTarget() {
   var name = decodeURIComponent(location.hash.slice(1)), t = name && document.getElementById(name);
-  var pane = t && t.closest('.tab-pane');
-  if (!pane) pane = document.querySelector('.tab-pane.on') || document.getElementById('tab-bots');
-  document.querySelectorAll('.tab-pane').forEach(function (p) { p.classList.toggle('on', p === pane); });
-  document.querySelectorAll('.fleet-tabs a').forEach(function (a) {
-    var on = a.getAttribute('href') === '#' + pane.id;
-    a.classList.toggle('on', on);
-    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
-  });
+  var shown = document.querySelector('.fleet-page').dataset.panes.split(' ');      // the panes this page shows (#644)
+  var home = {'tab-bots': '/fleet', 'tab-machines': '/machines', 'tab-settings': '/machines', 'tab-roles': '/roles', 'tab-skills': '/skills'};
+  var there = t && t.closest('.tab-pane');
+  if (there && shown.indexOf(there.id) < 0) {      // an older link, /fleet#tab-roles or #secrets, to what is now another page
+    location.replace((t.closest('#secrets') ? '/configuration' : home[there.id]) + location.hash); return;
+  }
+  document.querySelectorAll('.tab-pane').forEach(function (p) { p.classList.toggle('on', shown.indexOf(p.id) >= 0); });
   if (t) revealInLists(t);
   openDrawer(t && t.matches('tr.bot-row') ? t : null);
   applyBotFilter();
@@ -3543,6 +3548,7 @@ FLEET_CSS = """
 .fleet-page .sub{color:var(--dim);margin:2px 0 12px;font-size:13px}
 .fleet-page .dim{color:var(--dim)}.fleet-page .nw{white-space:nowrap}
 .fleet-page .tab-pane{display:none;scroll-margin-top:400px}/* a link to a tab scrolls to it: this keeps the tabs in view */
+.fleet-page[data-page=machines] #secrets,.fleet-page[data-page=configuration] #fleet-add-machine{display:none}
 .fleet-page .tab-pane.on{display:block}.fleet-page tr[id]{scroll-margin-top:220px}
 .fleet-page .fleet-tabs{display:flex;flex-wrap:wrap;gap:4px 22px;border-bottom:1px solid var(--line);margin:14px 0 16px}
 .fleet-page .fleet-tabs a{padding:8px 2px;color:var(--ink);border-bottom:2px solid transparent;text-decoration:none}
@@ -3726,8 +3732,16 @@ def _fleet_section(id_: str, title: str, body: str, is_open: bool = True) -> str
             f'{body}</details>')
 
 
+# The pages the old Fleet page became (#644): title, the nav tab to mark, the panes each shows.
+FLEET_PAGES = {"bots": ("Bots", "/fleet", ("tab-bots",)),
+               "machines": ("Machines", "/machines", ("tab-machines", "tab-settings")),
+               "configuration": ("Configuration", "/configuration", ("tab-settings",)),
+               "roles": ("Roles", "/roles", ("tab-roles",)),
+               "skills": ("Skills", "/skills", ("tab-skills",))}
+
+
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None,
-               claude_token=None) -> str:
+               claude_token=None, page="bots") -> str:
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
@@ -3890,21 +3904,22 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     else:
         add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: <a href="#fleet-add-machine">add one</a>.</p>'
         add_bot_card = ""
-    return shell(board_name, "fleet", here="/fleet", content=f"""
+    title, here, panes = FLEET_PAGES[page]
+    away = f' · <span class="warn-text">{len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""
+    counts = {"bots": f'{len(active)} active' + (f' · {len(stopped)} stopped' if stopped else "") + f' · {len(hosts)} machines' + away,
+              "machines": f'{len(hosts)} machines' + away, "roles": f'{len(profiles)} roles', "skills": f'{len(skills)} skills',
+              "configuration": "Shared by every bot on every machine."}[page]
+    if page != "bots":
+        add_bot = add_bot_card = ""
+    return shell(board_name, title.lower(), here=here, content=f"""
 <style>{FLEET_CSS}{registry_web.REG_CSS}</style>
-<div class="fleet-page">
-<div class="fleet-head"><h1>Fleet</h1>{add_bot}</div>
+<div class="fleet-page" data-page="{page}" data-panes="{' '.join(panes)}">
+<div class="fleet-head"><h1>{title}</h1>{add_bot}</div>
+<p class="sub fleet-count">{counts}</p>
 {add_bot_card}
 <datalist id="profiles-data">{"".join(f'<option value="{e(p["name"])}"></option>' for p in profiles)}</datalist>
 {_host_banner(hosts)}
 {attention}
-<nav class="fleet-tabs" aria-label="Fleet">
-<a href="#tab-bots">Bots <b>{len(active)}</b>{f' <span class="dim">· {len(stopped)} stopped</span>' if stopped else ""}</a>
-<a href="#tab-machines">Machines <b>{len(hosts)}</b>{f' <span class="warn-text">· {len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""}</a>
-<a href="#tab-roles">Roles <b>{len(profiles)}</b></a>
-<a href="#tab-skills">Skills <b>{len(skills)}</b></a>
-<a href="#tab-settings">Settings</a>
-</nav>
 <noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
 <div class="tab-pane" id="tab-bots">{filters}
 <section class="fleet-section" id="fleet-bots">{bots_html}</section>{stopped_html}
