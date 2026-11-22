@@ -593,15 +593,15 @@ APP_CSS = PICKUP_CSS + """
 .wsw{position:relative;flex:none}
 .wsw>button{font:600 12.5px var(--mono);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;min-height:30px}
 .wsw>button:focus-visible,.wsw li button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.wsw .badge{margin:0 4px;background:#d9822b;color:#fff}
+.wsw .badge{margin:0 4px;background:var(--accent);color:#fff}
 #wsmenu{position:absolute;top:36px;left:0;z-index:20;min-width:220px;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0004}
 #wsmenu[hidden]{display:none}
 #wsmenu li button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:12.5px var(--mono);color:var(--ink);background:none;border:0;border-radius:6px;padding:8px 10px;cursor:pointer}
 #wsmenu li button:hover{background:var(--sel)}
 #wsmenu li.here button{font-weight:600}
 #wsmenu .here-note,#wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
-#wsmenu .n.ask{color:#fff;background:#d9822b;border-radius:9px;padding:0 6px;min-width:16px;text-align:center}
-@media (max-width:700px){#wsmenu li button{min-height:44px}.wsw>button{min-height:44px;font-size:16px}}
+#wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px;min-width:16px;text-align:center}
+@media (max-width:700px){.topnav .brand,.topnav .brand+.divider{display:none}#wsmenu li button{min-height:44px}.wsw>button{min-height:44px;font-size:16px}}
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -1154,7 +1154,9 @@ $('#wsmenu').addEventListener('click', function(ev){
   var b = ev.target.closest('button[data-ws]'); if (!b) return;
   if (b.dataset.ws !== SCOPE) { setScope(b.dataset.ws); S.cur = null; S.view = null; closeThread(); history.pushState({}, '', P() || '/'); route(); }
 });
-document.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') { $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); } });
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape' && !$('#wsmenu').hidden) { $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); $('#wsbtn').focus(); }
+});
 window.addEventListener('bb:status', function(ev){ wsCounts = ev.detail.counts || {}; renderSwitcher(); });
 
 function renderRail(){
@@ -1177,7 +1179,7 @@ function renderRail(){
   $('#convs').innerHTML = lis(S.convs.filter(function(c){ return !mine(c); }), true);
   $('#dmh').hidden = $('#dms').hidden = !ME;
   $('#ndm').textContent = S.convs.filter(mine).length;
-  $('#nch').textContent = S.channels.reduce(function(a, b){ if (b.workspace && a.indexOf(b.workspace) < 0) a.push(b.workspace); return a; }, []).length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
+  $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
@@ -2372,7 +2374,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li>
     <li id="mentionsli" hidden title="messages that wait on you (orange) or only name you (grey), until you answer in their thread">
     <span class="sigil u">@</span><span class="name">Mentions</span><span class="badge w" title="waiting on you" hidden></span><span class="badge m" title="name you" hidden></span></li></ul>
-  <h2>Workspaces <span id="nch"></span></h2>
+  <h2>Channels <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2 id="dmh" hidden title="conversations you are in">Direct messages <span id="ndm"></span></h2>
   <ul id="dms" hidden></ul>
