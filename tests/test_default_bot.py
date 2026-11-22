@@ -93,6 +93,7 @@ class Install(unittest.TestCase):
         self.assertIn('BOT_RUNTIME="docker"', config)
         self.assertIn('BOT_CONTAINER_HOST_NETWORK="1"', config)
         self.assertIn("docker found: the bots run in containers", r.stderr)
+        self.assertIn("they share this machine's network, so they can reach any service on 127.0.0.1", r.stderr)
         r, config = self.install([("codex", "ok", "")], env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Darwin"})
         self.assertIn('BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal"', config)
         self.assertNotIn("BOT_CONTAINER_HOST_NETWORK", config)

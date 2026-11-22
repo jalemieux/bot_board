@@ -202,10 +202,12 @@ if [ "${1:-}" = install ]; then
       _set BOT_RUNTIME "$_rt"
       case $_board in
         http://127.*|http://localhost*|http://\[::1\]*)
-          if [ "$(uname -s)" = Darwin ]; then _set BOT_CONTAINER_LOOPBACK_HOST host.docker.internal
-          else _set BOT_CONTAINER_HOST_NETWORK 1; fi ;;
+          if [ "$(uname -s)" = Darwin ]; then
+            _set BOT_CONTAINER_LOOPBACK_HOST "$([ "$_rt" = podman ] && echo host.containers.internal || echo host.docker.internal)"
+            _net="they can also reach every port this Mac listens on"
+          else _set BOT_CONTAINER_HOST_NETWORK 1; _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
       esac
-      echo "bot: $_rt found: the bots run in containers, away from the rest of this machine. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
+      echo "bot: $_rt found: the bots run in containers. They cannot read this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
     fi
   fi
   "$SRC/bin/bot" keeper install "$@" || exit $?
@@ -319,8 +321,9 @@ container_run() {
         ""|127.*|localhost|"[::1]"|::1)
           # A laptop's board listens on loopback. With BOT_CONTAINER_LOOPBACK_HOST set (the installer
           # sets it on a Mac, #652), the container reaches the host by that name instead, and gets a
-          # BOARD that says so. Docker Desktop, OrbStack and Colima all serve host.docker.internal.
+          # BOARD that says so. Docker Desktop, OrbStack and Colima serve host.docker.internal; podman serves host.containers.internal.
           if [ -n "$board_host" ] && [ -n "${BOT_CONTAINER_LOOPBACK_HOST:-}" ]; then
+            # the second -e BOARD overrides the by-name one above: the last wins in Docker and Podman
             run+=(--add-host "$BOT_CONTAINER_LOOPBACK_HOST:host-gateway" -e "BOARD=${BOARD/"//$board_host"/"//$BOT_CONTAINER_LOOPBACK_HOST"}")
           else
             echo "bot: BOARD is ${BOARD:-}, which a bridge container cannot reach (loopback is the container itself). Set BOARD to the box's tailnet name, or BOT_CONTAINER_HOST_NETWORK=1 for a --network host runtime, before enabling BOT_RUNTIME." >&2
