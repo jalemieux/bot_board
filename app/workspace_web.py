@@ -20,7 +20,8 @@ WS_CSS = """
 .ws #wsmenu{position:absolute;top:36px;left:0;z-index:20;min-width:220px;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0004}
 .ws #wsmenu[hidden]{display:none}
 .ws #wsmenu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:12.5px var(--mono);color:var(--ink);background:none;border:0;border-radius:6px;padding:8px 10px;cursor:pointer}
-.ws #wsmenu button:hover{background:var(--sel)}
+.ws #wsmenu button:hover,.ws #wsmenu a:hover{background:var(--sel)}
+.ws #wsmenu a{display:block;font:12.5px var(--mono);color:var(--dim);border-radius:6px;padding:8px 10px;text-decoration:none}
 .ws #wsmenu .here-note,.ws #wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
 .ws #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px}
 .ws .tabs{display:flex;gap:4px 18px}
@@ -185,6 +186,11 @@ function refsText(refs) { return (refs || []).map(function (r) { return r.path +
 // ---- the list ----------------------------------------------------------------
 function listView() {
   api('GET', '/api/workspaces').then(function (d) {
+    // the top bar's Workspaces tab opens the workspace in view; the list is /workspaces?all, from the switcher's last row
+    var scope = ''; try { scope = JSON.parse(localStorage.getItem('bb.scope')) || ''; } catch (e) {}
+    if (scope && !/[?&]all\b/.test(location.search) && d.workspaces.some(function (w) { return w.slug === scope && !w.archived; })) {
+      location.replace('/workspaces/' + encodeURIComponent(scope)); return;
+    }
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
@@ -243,6 +249,7 @@ function workspaceBar(current, tab) {
       menu.appendChild(h('li', null, h('button', {type: 'button', 'data-ws': x.slug, 'aria-current': x.slug === current ? 'true' : null},
         x.name || x.slug, x.slug === current ? h('span', {'class': 'here-note', text: 'you are here'}) : n ? h('span', {'class': 'n ask', text: String(n), 'aria-label': n + ' waiting on you'}) : null)));
     });
+    menu.appendChild(h('li', null, h('a', {href: '/workspaces?all', text: 'All workspaces'})));
     total.textContent = others; total.hidden = !others;
   };
   var list = [];
