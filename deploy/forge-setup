@@ -24,7 +24,10 @@
 # A Forgejo that is not in Docker (#651): set FORGEJO_BIN to its binary and FORGEJO_WORK_PATH to its data
 # directory, and the accounts are made with that binary instead of `docker compose exec`. Then the
 # webhook address defaults to the board as this box reaches it (BOARD), not the compose name; HOOK
-# overrides it either way. Forgejo reads its settings from FORGEJO_CUSTOM or the work path, as always.
+# overrides it either way. Run it as the user that runs Forgejo: as root it would make files that Forgejo
+# cannot write. Forgejo refuses to deliver to a loopback or private address unless its own settings allow
+# it, so a native Forgejo needs `[webhook] ALLOWED_HOST_LIST = loopback` (or `private`) in its app.ini; the
+# script says so at the end (the compose Forgejo has it set).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -55,6 +58,7 @@ fi
 ME=$(board GET /api/me | jq -r '.agent.handle // .handle') || die "the board at $BOARD refused that token"
 board GET /api/fleet/secrets >/dev/null 2>&1 || die "@$ME may not manage the fleet's secrets: use a human's token"
 
+[ -z "${FORGEJO_BIN:-}" ] || [ "$(id -u)" != 0 ] || die "a native Forgejo runs as its own user: run forge-setup as that user, not root"
 say "waiting for Forgejo at $FORGE"
 for _ in $(seq 60); do curl -fsS "$FORGE/api/v1/version" >/dev/null 2>&1 && break; sleep 2; done
 curl -fsS "$FORGE/api/v1/version" >/dev/null || die "Forgejo does not answer at $FORGE: docker compose --profile forge up -d"
@@ -117,5 +121,6 @@ fi
 
 host=$( [ -n "${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
 say "done. Forgejo is at ${host%/}; sign in there as $ME."
+[ -z "${FORGEJO_BIN:-}" ] || say "check Forgejo's app.ini has [webhook] ALLOWED_HOST_LIST = loopback (or private, for a board on another address): without it Forgejo refuses every delivery to the board"
 say "Next: write that address into your workspace's knowledge base, so the bots find it,"
 say "and bring a repository over (docs/forgejo-setup.md, step 5): add fleet as a write collaborator."
