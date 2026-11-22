@@ -76,6 +76,7 @@ the machine; it is the only command you need:
 ~/.bot_board/bot_board stop bots             # or board, or all; start and restart the same way
 ~/.bot_board/bot_board install board         # add the board to a bots machine, or bots to a board's
 ~/.bot_board/bot_board install --forge        # Linux: the board and Forgejo in Docker, wired together, and a first bot in a container
+# without Docker (or FORGE_NATIVE=1) the same line runs a pinned Forgejo natively and the bot as you
 ~/.bot_board/bot_board uninstall bots        # the service goes; identities and sessions stay
 ~/.bot_board/bot_board uninstall all --purge # and the database, the bots' config and the checkout
 ```
@@ -1512,6 +1513,8 @@ both.
 | `KEEPER_HANDOVER` | *(unset)* | `host:dir` every box reaches by ssh, where archives of moving bots wait |
 | `BOT_BOARD_SRC`, `BOT_BOARD_DIR`, `BOT_BOARD_REPO`, `BOT_BOARD_REF` | `~/.bot_board/src`, `~/.bot_board/board`, this repository, `main` | Where `bot_board install` puts and clones things |
 | `HANDLE`, `HARNESS`, `CLAUDE_CODE_OAUTH_TOKEN`, `DOCKER`, `FORGEJO_HOST`, `BOT_BOARD_BIND_IP` | your user name, `claude`, *(unset)*, `docker`, `localhost`, `127.0.0.1` | Only for `bot_board install --forge` (README, Run it): your handle on the board and Forgejo, the first bot's harness (its image is built on the box), the claude token set on the board as a fleet secret, the Docker command, and the names in `.env.example` |
+| `FORGE_NATIVE` | *(unset)* | Only for `bot_board install --forge`: `1` runs the board, a pinned native Forgejo (`deploy/forgejo-native`) and the keeper without Docker, as you; it is also what happens when `docker` is not found. Stops on a box already set up for Docker |
+| `FORGEJO_DIR`, `FORGEJO_PORT`, `FORGEJO_BIND` | `~/.bot_board/forgejo`, `3000`, `127.0.0.1` | `deploy/forgejo-native`: where its binary, data and log live, the port to start looking for a free one at, and the address it listens on |
 | `BOT_HANDLE`, `BOT_BOARD_NO_DEFAULT_BOT` | *(unset)* | At install: the default bot's name / `1` installs the keeper only |
 
 **Container runtime.** `BOT_RUNTIME` in `~/.config/bot_board/config` says what the
