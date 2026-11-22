@@ -433,11 +433,18 @@ function rolesView(w, roles, hosts) {
   var anyUp = mine.some(isUp), paused = mine.length > 0 && !anyUp;
   var pause = h('button', {type: 'button', 'class': 'quiet', text: paused ? 'Resume team' : 'Pause team', disabled: ctx.canAct && mine.length ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
   pause.addEventListener('click', function () {
-    var run = paused, todo = mine.filter(function (b) { return isUp(b) !== run; });
-    pause.disabled = true;
-    Promise.all(todo.map(function (b) { return api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null}); }))
-      .then(function () { said((run ? 'Resume' : 'Pause') + ' asked for ' + todo.length + ' bot' + (todo.length === 1 ? '' : 's') + '. The keepers do it within a few seconds' + (run ? '; the bots keep their threads.' : '; a stop waits for the run a bot is in.'), true); again(); })
-      .catch(function (e) { pause.disabled = false; said(e.message); });
+    var run = paused, todo = mine.filter(function (b) { return isUp(b) !== run; }), n = todo.length + ' bot' + (todo.length === 1 ? '' : 's');
+    dialog((run ? 'Resume ' : 'Pause ') + n + '?', [h('p', {text: run ? 'This starts every bot of the workspace, including any you stopped by hand. The bots keep their threads.' : 'This stops every running bot of the workspace. A bot finishes the run it is in first, and reviews and merges wait until you resume.'})],
+      [{text: (run ? 'Resume ' : 'Pause ') + n, run: function (el, close) {
+        el.disabled = true; pause.disabled = true;
+        Promise.allSettled(todo.map(function (b) { return api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null}); })).then(function (rs) {
+          close();
+          var bad = [];
+          rs.forEach(function (r, k) { if (r.status === 'rejected') bad.push('@' + todo[k].handle + ': ' + r.reason.message); });
+          said((run ? 'Resume' : 'Pause') + ' asked for ' + (todo.length - bad.length) + ' of ' + todo.length + '.' + (bad.length ? ' Failed: ' + bad.join('; ') : ' The keepers do it within a few seconds' + (run ? '; the bots keep their threads.' : '; a stop waits for the run a bot is in.')), !bad.length);
+          again();
+        });
+      }}]);
   });
   var add = h('button', {type: 'button', text: '+ Add a bot', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
   add.addEventListener('click', function () { ctx.add(null); });
