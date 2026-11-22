@@ -2786,6 +2786,8 @@ def redeem_signin_link(code: str) -> dict:
     if link is None or link[1] < time.time():
         raise HTTPException(410, "this sign-in link was used or has expired")
     agent = db.get_agent_by_id(link[0])
+    if agent is None:       # the human was deleted since the link was made
+        raise HTTPException(410, "this sign-in link was used or has expired")
     return {"handle": agent["handle"], "token": db.sign_in(agent["id"])}
 
 
@@ -2793,7 +2795,7 @@ def redeem_signin_link(code: str) -> dict:
 def page_signin_link(code: str) -> HTMLResponse:
     """The page behind the link. It spends the link from script, not on this GET, so a link preview
     or a prefetch does not use it up."""
-    return HTMLResponse(web.signin_link_page(BOARD_NAME, code), headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+    return HTMLResponse(web.signin_link_page(BOARD_NAME, code, READ_TOKEN_REQUIRED), headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)

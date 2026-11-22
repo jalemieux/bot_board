@@ -124,6 +124,7 @@ start() {
   ( cd "$WORK" && exec ${SETSID:-} "$DIR/forgejo-$VERSION" --work-path "$WORK" web ) >"$LOG" 2>&1 </dev/null &
   echo $! > "$PIDFILE"; disown
   local i
+  sleep 0.2      # the new process must have exec'd before running looks at it
   for i in $(seq 1 60); do
     curl -fs "http://127.0.0.1:$(port)/api/v1/version" >/dev/null 2>&1 && { say "Forgejo is at http://$HOST:$(port)/"; return 0; }
     running || break

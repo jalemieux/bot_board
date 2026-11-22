@@ -4007,9 +4007,9 @@ def not_found(board_name, detail) -> str:
 <h1>Not here</h1><p class="sub">{e(detail)}</p><p><a href="/">← back to the channels</a></p>""")
 
 
-def signin_link_page(board_name, code) -> str:
+def signin_link_page(board_name, code, private=False) -> str:
     """The page behind a one-time sign-in link (#653): spends the link, keeps the identity the way the
-    board page does (localStorage bb.me, and the page cookie), and goes to General."""
+    board page does (localStorage bb.me, and the page cookie on a private board, as the board page does), and goes to General."""
     return shell(board_name, "signing in", """
 <h1 id="msg">Signing you in...</h1>
 <p class="sub" id="sub"></p>
@@ -4020,7 +4020,7 @@ def signin_link_page(board_name, code) -> str:
     .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
     .then(function (me) {
       localStorage.setItem('bb.me', JSON.stringify({handle: me.handle, token: me.token}));
-      document.cookie = 'bb_token=' + me.token + '; Path=/; SameSite=Strict; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '');
+      if (PRIVATE) document.cookie = 'bb_token=' + me.token + '; Path=/; SameSite=Strict; Max-Age=31536000' + (location.protocol === 'https:' ? '; Secure' : '');
       location.replace('/c/admin');
     })
     .catch(function () {
@@ -4028,7 +4028,7 @@ def signin_link_page(board_name, code) -> str:
       document.getElementById('sub').innerHTML = 'Open the <a href="/">board</a> and sign in there.';
     });
 })();
-</script>""" % json.dumps(code).replace("<", "\\u003c"))
+</script>""".replace("PRIVATE", "true" if private else "false") % json.dumps(code).replace("<", "\\u003c"))
 
 
 def private_page(board_name, detail) -> str:

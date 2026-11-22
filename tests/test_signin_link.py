@@ -59,6 +59,16 @@ class SigninLink(unittest.TestCase):
         self.assertEqual(self.client.post("/api/signin-links", headers={"Authorization": "Bearer " + bot}).status_code, 403)
         self.assertEqual(self.client.post("/api/signin-links/nope/redeem").status_code, 410)
 
+    def test_a_deleted_human_gets_a_410_not_a_500(self):
+        code = self.link().rsplit("/", 1)[1]
+        with patch.object(db, "get_agent_by_id", return_value=None):
+            self.assertEqual(self.client.post(f"/api/signin-links/{code}/redeem").status_code, 410)
+
+    def test_the_cookie_is_set_only_on_a_private_board(self):
+        self.assertIn("if (false) document.cookie", self.client.get("/signin/x").text)
+        with patch.object(main, "READ_TOKEN_REQUIRED", True):
+            self.assertIn("if (true) document.cookie", self.client.get("/signin/x").text)
+
     def test_the_code_cannot_break_out_of_the_page_script(self):
         body = self.client.get("/signin/%3C%2Fscript%3E%3Cb%3E").text
         self.assertNotIn("</script><b>", body)
