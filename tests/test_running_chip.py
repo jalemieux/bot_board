@@ -67,7 +67,7 @@ class RunningChip(unittest.TestCase):
         self.report()
         self.seen(['jac', 'keeper-box', 'routines'], db.now())
         page = self.client.get('/').text
-        self.assertIn('<a href="/machines" class="tab"', page)       # the count sits in the Machines tab (thread 9918, #644)
+        self.assertIn('<a href="/fleet" class="tab"', page)       # the count counts bots, so it sits in the Bots tab (thread 9918, #645)
         self.assertIn('<span id="nag">2 running</span>', page)
         self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
         self.assertNotIn(' active</a>', page)

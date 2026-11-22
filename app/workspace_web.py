@@ -12,9 +12,32 @@ from __future__ import annotations
 from .web import shell
 
 WS_CSS = """
-.ws .l2{display:flex;align-items:center;gap:10px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
-.ws .l2 select{font:600 12.5px var(--mono);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;min-height:32px}
-@media (max-width:700px){.ws .l2 select{min-height:44px;font-size:16px}}
+.ws .l2{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
+.ws .l2 .lab{color:var(--dim)}
+.ws .wsw{position:relative}
+.ws .wsw>button{font:600 12.5px var(--mono);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;min-height:32px}
+.ws .wsw .badge{margin:0 4px;background:var(--accent);color:#fff}
+.ws #wsmenu{position:absolute;top:36px;left:0;z-index:20;min-width:220px;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0004}
+.ws #wsmenu[hidden]{display:none}
+.ws #wsmenu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:12.5px var(--mono);color:var(--ink);background:none;border:0;border-radius:6px;padding:8px 10px;cursor:pointer}
+.ws #wsmenu button:hover{background:var(--sel)}
+.ws #wsmenu .here-note,.ws #wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
+.ws #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px}
+.ws .tabs{display:flex;gap:4px 18px}
+.ws .tabs a{padding:6px 2px;color:var(--ink);text-decoration:none;border-bottom:2px solid transparent}
+.ws .tabs a[aria-selected=true]{border-color:var(--accent);font-weight:600}
+.ws .wsw>button:focus-visible,.ws #wsmenu button:focus-visible,.ws .tabs a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ws .agr.short{max-height:110px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
+.ws .agr h4{margin:10px 0 2px;font:600 13px var(--mono)}
+.ws .agr-text{white-space:pre-wrap;font-size:13.5px}
+.ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
+.ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
+.ws .rolehead .status{font:600 12px var(--mono)}.ws .status.good{color:var(--good)}.ws .status.bad{color:var(--warn)}
+.ws table.bots{width:100%;border-collapse:collapse;font-size:13px}
+.ws table.bots td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:baseline}
+.ws .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--dim)}
+.ws .dot.ok{background:var(--good)}.ws .dot.warn{background:var(--warn)}.ws .dot.bad{background:#c0392b}
+@media (max-width:700px){.ws .wsw>button{min-height:44px;font-size:16px}.ws #wsmenu button{min-height:44px}.ws .tabs a{padding:12px 2px}}
 .ws .sub{color:var(--dim);font-size:13px}
 .ws section{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 14px}
 .ws section h2{margin:0 0 8px;font-size:15px;text-transform:none;letter-spacing:0;display:flex;gap:10px;align-items:baseline}
@@ -186,33 +209,120 @@ function newWorkspace() {
 }
 
 // ---- one workspace ------------------------------------------------------------
-// Row 2 of the top bar (#644): the workspace in view and a way to jump to another. It appears only inside a workspace.
-function workspaceBar(current) {
-  var sel = h('select', {'aria-label': 'workspace in view', id: 'wsjump'});
-  api('GET', '/api/workspaces').then(function (d) {
-    d.workspaces.filter(function (x) { return !x.archived || x.slug === current; }).forEach(function (x) {
-      var o = h('option', {value: x.slug, text: x.name || x.slug}); if (x.slug === current) o.selected = true; sel.appendChild(o);
+// Row 2 of the top bar (#644, #645): the workspace in view, with the same numbers as the board page's switcher
+// (what waits on you in each other workspace), and the workspace's tabs.
+function workspaceBar(current, tab) {
+  var counts = {}, menu = h('ul', {id: 'wsmenu', hidden: ''}), total = h('span', {'class': 'badge', hidden: ''});
+  var btn = h('button', {type: 'button', id: 'wsbtn', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': 'wsmenu'}, current, total, ' ▾');
+  var fill = function (list) {
+    menu.textContent = '';
+    var others = 0;
+    list.forEach(function (x) {
+      var n = x.slug === current ? 0 : counts[x.slug] || 0; others += n;
+      menu.appendChild(h('li', null, h('button', {type: 'button', 'data-ws': x.slug, 'aria-current': x.slug === current ? 'true' : null},
+        x.name || x.slug, x.slug === current ? h('span', {'class': 'here-note', text: 'you are here'}) : n ? h('span', {'class': 'n ask', text: String(n), 'aria-label': n + ' waiting on you'}) : null)));
     });
+    total.textContent = others; total.hidden = !others;
+  };
+  var list = [];
+  Promise.all([api('GET', '/api/workspaces'), ME ? api('GET', '/api/status').catch(function () { return {}; }) : {}]).then(function (r) {
+    counts = r[1].counts || {}; list = r[0].workspaces.filter(function (x) { return !x.archived || x.slug === current; }); fill(list);
   });
-  sel.addEventListener('change', function () { try { localStorage.setItem('bb.scope', JSON.stringify(sel.value)); } catch (e) {} location.href = '/workspaces/' + encodeURIComponent(sel.value); });
-  return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('label', {'for': 'wsjump', text: 'Workspace'}), sel);
+  btn.addEventListener('click', function (ev) { ev.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute('aria-expanded', String(!menu.hidden)); });
+  document.addEventListener('click', function () { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !menu.hidden) { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.focus(); } });
+  menu.addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-ws]'); if (!b || b.dataset.ws === current) return;
+    try { localStorage.setItem('bb.scope', JSON.stringify(b.dataset.ws)); } catch (e) {}
+    location.href = '/workspaces/' + encodeURIComponent(b.dataset.ws);
+  });
+  var tabs = h('div', {'class': 'tabs', role: 'tablist'}, [['team', 'Team'], ['channels', 'Channels and knowledge']].map(function (t) {
+    return h('a', {href: '#' + t[0], role: 'tab', 'aria-selected': String(t[0] === tab), 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
+  }));
+  return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('span', {'class': 'lab', text: 'Workspace'}), h('div', {'class': 'wsw'}, btn, menu), tabs);
 }
 function wsView() {
   api('GET', '/api/workspaces/' + encodeURIComponent(SLUG)).then(function (d) {
-    var w = d.workspace;
-    root.textContent = '';
-    root.appendChild(workspaceBar(w.slug));
-    root.appendChild(h('p', {'class': 'sub'}, h('a', {href: '/workspaces', text: 'Workspaces'}), ' / ' + w.slug));
-    root.appendChild(h('h1', null, w.name || w.slug, w.archived ? h('span', {'class': 'badge archived', text: 'archived'}) : null));
-    if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
-    root.appendChild(h('div', {'class': 'two'}, botsSection(w), knowledgeNote(w)));
-    var slot = h('div'); root.appendChild(slot);
-    if (w.can_manage && !w.archived) teamSection(w).then(function (t) { if (t) slot.appendChild(t); });
-    root.appendChild(channelsSection(w));
-    root.appendChild(knowledgeSection(w));
-    if (w.can_manage && !w.archived) root.appendChild(settingsSection(w));
-    if (w.can_manage && w.archived && w.slug !== 'admin') root.appendChild(deleteSection(w));
+    var w = d.workspace, shown = null;
+    var draw = function () {
+      var tab = location.hash === '#channels' ? 'channels' : 'team';
+      if (tab === shown) return; shown = tab;
+      root.textContent = '';
+      root.appendChild(workspaceBar(w.slug, tab));
+      root.appendChild(h('h1', null, w.name || w.slug, w.archived ? h('span', {'class': 'badge archived', text: 'archived'}) : null));
+      if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
+      if (tab === 'team') { teamView(w); return; }
+      root.appendChild(h('div', {'class': 'two'}, botsSection(w), knowledgeNote(w)));
+      root.appendChild(channelsSection(w));
+      root.appendChild(knowledgeSection(w));
+      if (w.can_manage && !w.archived) root.appendChild(settingsSection(w));
+      if (w.can_manage && w.archived && w.slug !== 'admin') root.appendChild(deleteSection(w));
+    };
+    window.addEventListener('hashchange', draw); draw();
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
+}
+// The Team tab (#645): the agreement first, then the bots under the roles the agreement names.
+function teamView(w) {
+  var slot = h('div'); root.appendChild(slot);
+  Promise.all([
+    api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md').then(function (d) { return d.document; }, function () { return null; }),
+    api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team').then(function (d) { return d.team; }, function () { return {roles: []}; }),
+    api('GET', '/api/fleet').then(function (d) { return d.hosts; }, function () { return []; })
+  ]).then(function (r) {
+    slot.appendChild(agreementCard(w, r[0]));
+    slot.appendChild(rolesView(w, r[1].roles || [], r[2]));
+    if (w.can_manage && !w.archived) teamSection(w).then(function (t) { if (t) slot.appendChild(t); });
+  });
+}
+function agreementCard(w, doc) {
+  if (!doc) return h('section', null, h('h2', {text: 'Team agreement'}), h('p', {'class': 'sub', text: 'This workspace has no team agreement yet. Bots work without one, and nothing says who reviews or who merges.'}));
+  var open = false, box = h('div', {'class': 'agr'}), more = h('button', {type: 'button', 'class': 'quiet', 'aria-expanded': 'false', text: 'Read the whole agreement'});
+  doc.body.split(/\n(?=#+ )/).forEach(function (part) {
+    var m = part.match(/^#+ +(.*)\n?([\s\S]*)$/); if (!m || /^team agreement$/i.test(m[1].trim()) && !m[2].trim()) return;
+    box.appendChild(h('h4', {text: m[1].trim()})); box.appendChild(h('div', {'class': 'agr-text', text: m[2].trim()}));
+  });
+  box.classList.add('short');
+  more.addEventListener('click', function () { open = !open; box.classList.toggle('short', !open); more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'Show less' : 'Read the whole agreement'; });
+  return h('section', null, h('h2', null, 'Team agreement', h('small', {text: 'revision ' + doc.revision + (doc.author ? ', by ' + doc.author : '') + (doc.created_at ? ', ' + doc.created_at.slice(0, 10) : '')})), box, more);
+}
+function ago(iso) {
+  var t = iso && Date.parse(iso); if (!t) return '—';
+  var s = Math.max(0, (Date.now() - t) / 1000);
+  return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
+}
+function botRows(bots) {
+  return bots.map(function (b) {
+    var st = b.state || {}, up = (b.status || '').indexOf('running') === 0;
+    var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
+    return h('tr', null,
+      h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
+      h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
+      h('td', {'class': 'mono', text: ago(b.last_post)}),
+      h('td', null, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'manage'})));
+  });
+}
+function rolesView(w, roles, hosts) {
+  var mine = [];
+  hosts.forEach(function (hst) { hst.bots.forEach(function (b) { if (b.workspace === w.slug) { b._host = hst.name; mine.push(b); } }); });
+  var sec = h('section', {'class': 'roles'}, h('h2', null, 'Bots', h('small', {text: String(mine.length)})));
+  var seen = {};
+  var group = function (title, profile, bots, note) {
+    var run = bots.filter(function (b) { return (b.status || '').indexOf('running') === 0; }).length, stopped = bots.length - run;
+    var status = run ? run + ' running' + (stopped ? ', ' + stopped + ' stopped' : '') : bots.length ? 'none running, ' + stopped + ' stopped' : 'no bot deployed';
+    sec.appendChild(h('div', {'class': 'rolehead'}, h('b', {text: title}), profile ? h('span', {'class': 'prof', text: 'profile ' + profile}) : null,
+      h('span', {'class': 'status ' + (run ? 'good' : 'bad'), text: status}), note ? h('span', {'class': 'sub', text: note}) : null));
+    if (bots.length) sec.appendChild(h('table', {'class': 'bots'}, h('tbody', null, botRows(bots))));
+  };
+  roles.forEach(function (r) {
+    var bots = mine.filter(function (b) { return (b.profile || '').toLowerCase() === r.profile.toLowerCase(); });
+    bots.forEach(function (b) { seen[b.handle] = 1; });
+    group(r.role, r.profile, bots, r.exists ? '' : 'this profile does not exist yet');
+  });
+  var out = mine.filter(function (b) { return !seen[b.handle]; });
+  if (out.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', out, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
+  if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub'}, 'No bot works here yet. ', h('a', {href: '/fleet', text: 'Add one on the bots page'}), ' and pick this workspace.'));
+  sec.appendChild(h('p', {'class': 'sub'}, 'Start, stop and remove a bot, and add one, on the ', h('a', {href: '/fleet', text: 'bots page'}), ' for now.'));
+  return sec;
 }
 // The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
 // top, and the one a person asks. A board with none running is told so (board thread 8378).
