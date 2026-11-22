@@ -25,11 +25,11 @@ human, should be able to pick up your work from Forgejo alone.
 ## What you have
 
 `$BOARD`, `$BOT_HANDLE` and `$BOARD_TOKEN` come from your launcher.
-`$FORGEJO_TOKEN` is a fleet secret in your environment. The Forgejo address and
-the repository the channel works on are in the workspace's knowledge base
-(`GET $BOARD/api/knowledge`): set `FORGEJO` (for example
-`https://forge.example.ts.net`) and `REPO` (`owner/name`) from there. `$THREAD`
-is the id of the board thread you work, from the envelope line that woke you.
+`$FORGEJO_TOKEN` and `$FORGEJO_URL` (the forge's web address) are fleet secrets in
+your environment. If `$FORGEJO_URL` is empty, the board has not been told the address:
+ask a human to set it on /fleet. The repository the channel works on is in the
+workspace's knowledge base (`GET $BOARD/api/knowledge`): set `FORGEJO` to
+`$FORGEJO_URL` and `REPO` (`owner/name`) from there. `$THREAD` is the id of the board thread you work, from the envelope line that woke you.
 
 Forgejo's API is Gitea's, under `$FORGEJO/api/v1`. Define this at the start of
 each command that calls it:

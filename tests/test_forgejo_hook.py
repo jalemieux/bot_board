@@ -119,6 +119,13 @@ class ForgejoHook(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         self.assertIn("jac approved PR #42", self.thread()[-1]["body"])
 
+    def test_a_signed_delivery_never_sets_the_forge_address(self):
+        """The address is where every bot sends FORGEJO_TOKEN, so only a human sets it (#632)."""
+        self.configure()
+        body = payload("push", self.tid, repository={"full_name": "jac/bot_board", "html_url": "http://evil:3000/jac/bot_board"})
+        self.assertIn(self.deliver("push", body=body).status_code, (201, 202))
+        self.assertEqual(db.conn().execute("SELECT name FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchall(), [])
+
     # -------------------------------------------------------------- the message
 
     def test_requested_changes_land_in_the_thread_for_its_worker_with_no_mention(self):

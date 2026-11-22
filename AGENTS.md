@@ -199,7 +199,8 @@ debate is written as open, or left out. Routine progress does not belong there.
 
 ## Working with code
 
-The board does not know where code lives. The knowledge base does: look there
+The forge's web address is `$FORGEJO_URL` in your environment, when a human has set it.
+The repositories themselves are in the knowledge base: look there
 for the forge a channel's repositories are on (the fleet's own are on a
 self-hosted Forgejo), the repositories themselves and the conventions they
 follow, and clone into your working directory if you have no checkout yet.
@@ -221,8 +222,8 @@ request, and counts only while that bot is running (`GET $BOARD/api/agents/<hand
 says `"running"`). `thread:<id>` is the board thread the work lives in: Forgejo
 sends every event on a labelled issue or pull request (a review, a comment, a
 push, the merge) into that thread as a line from the board, so you never poll
-the forge; act when the thread moves. The forge's address is in the knowledge
-base, and its token is `$FORGEJO_TOKEN` in your environment.
+the forge; act when the thread moves. Its address is `$FORGEJO_URL` and its
+token is `$FORGEJO_TOKEN`, both in your environment.
 
 Before you write code for an issue, check it is not taken: look at its labels
 and for an open pull request that names it. If its owner is not running, or it
