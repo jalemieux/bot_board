@@ -42,6 +42,15 @@ exit 0
 FAKE_BOT = r'''#!/bin/sh
 echo "bot $* BOARD=$BOARD" >> "$FAKE_LOG"
 '''
+FAKE_RUN = r'''#!/bin/sh
+echo "run.sh $*" >> "$FAKE_LOG"
+'''
+FAKE_NATIVE = r'''#!/bin/sh
+echo "forgejo-native $1 BOARD=$BOARD" >> "$FAKE_LOG"
+[ "$1" = env ] && echo "export FORGE=http://127.0.0.1:3001 FORGEJO_BIN=/x/forgejo FORGEJO_WORK_PATH=/x/work"
+[ "$1" = status ] && echo "forgejo-native: running at http://localhost:3001/"
+exit 0
+'''
 FAKE_SETUP = r'''#!/bin/sh
 echo "forge-setup BOARD=$BOARD TOKEN=$BOARD_HUMAN_TOKEN FORGE=$FORGE" >> "$FAKE_LOG"
 '''
@@ -108,6 +117,59 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("FORGEJO_HOST=box.example", env)
         self.assertNotIn("127.0.0.1", env, "the old bind address is replaced, not kept beside the new one")
 
+    def native(self, **env):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
+        script(self.src / "deploy" / "forge-setup", "#!/bin/sh\necho \"forge-setup BOARD=$BOARD TOKEN=$BOARD_HUMAN_TOKEN FORGE=$FORGE BIN=$FORGEJO_BIN\" >> \"$FAKE_LOG\"\n")
+        return self.run_install(**{"FORGE_NATIVE": "1", **env})
+
+    def test_without_docker_the_board_and_a_native_forgejo_are_wired_and_the_bots_run_as_you(self):
+        r = self.native()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = "\n".join(self.calls())
+        self.assertNotIn("docker", calls)
+        self.assertIn("forge-setup BOARD=http://127.0.0.1:8080 TOKEN=tok-human FORGE=http://127.0.0.1:3001 BIN=/x/forgejo", calls)
+        self.assertLess(calls.index("run.sh up"), calls.index("forgejo-native start"), "the board first")
+        self.assertLess(calls.index("forgejo-native start"), calls.index("forge-setup"), "Forgejo is up before it is wired")
+        self.assertLess(calls.index("forge-setup"), calls.index("bot install"), "and the keeper comes last")
+        config = self.cfg.read_text()
+        self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
+        self.assertNotIn("BOT_RUNTIME", config, "no container runtime: the bots run as the user")
+        self.assertIn("running as you", r.stdout)
+        self.assertIn("admin password", r.stdout)
+
+    def test_a_docker_command_with_a_prefix_stays_on_docker(self):
+        r = self.run_install(DOCKER="env docker")      # as "sudo docker" would be
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("docker compose --profile forge up -d --build", "\n".join(self.calls()))
+
+    def test_a_box_set_up_for_docker_does_not_go_native(self):
+        self.cfg.parent.mkdir(parents=True); self.cfg.write_text('BOT_RUNTIME="docker"\n')
+        r = self.native()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("set up for Docker", r.stderr)
+        self.assertEqual(self.calls(), [], "nothing was started")
+
+    def test_native_is_asked_for_with_1_only(self):
+        r = self.run_install(FORGE_NATIVE="0")
+        self.assertIn("docker compose --profile forge up", "\n".join(self.calls()), r.stderr)
+
+    def test_a_forgejo_that_is_not_set_up_stops_the_install(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", "#!/bin/sh\n[ \"$1\" = env ] && exit 1\necho \"forgejo-native $1\" >> \"$FAKE_LOG\"\n")
+        r = self.run_install(FORGE_NATIVE="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not set up", r.stderr)
+        self.assertNotIn("forge-setup", "\n".join(self.calls()))
+
+    def test_no_docker_on_the_path_is_enough_to_go_native(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
+        (self.bin / "docker").unlink()
+        r = self.run_install(PATH=str(self.bin) + os.pathsep + "/usr/bin:/bin")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("forgejo-native start", "\n".join(self.calls()))
+
     def test_the_invite_code_goes_with_the_sign_in(self):
         r = self.run_install(INVITE="open-sesame")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -141,9 +203,8 @@ class ForgeInstall(unittest.TestCase):
         r = self.run_install(HARNESS="vim")
         self.assertIn("HARNESS", r.stderr)
         self.assertEqual(self.started(), [])
-        (self.bin / "docker").unlink()
-        r = self.run_install(PATH=str(self.bin) + os.pathsep + "/usr/bin:/bin")
-        self.assertIn("needs docker", r.stderr)
+        r = self.run_install(FORGE_NATIVE="1", HANDLE="a")
+        self.assertIn("HANDLE", r.stderr)
 
     def test_forge_goes_only_with_install_and_with_the_whole_set(self):
         r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "status", "--forge"], env=self.env, capture_output=True, text=True, timeout=30)
