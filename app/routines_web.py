@@ -338,11 +338,9 @@ function recipeView(r) {
         rc.after ? ', opened after ' + when(rc.after) : ', including the backlog', ', ' + rc.batch + ' at a time'),
       h('dt', {text: 'skips'}), h('dd', {text: [rc.unassigned ? 'assigned' : '', rc.no_linked_pr ? 'linked to a PR' : '',
         rc.skip_labels.length ? 'labelled ' + rc.skip_labels.join(', ') : ''].filter(Boolean).join(' · ') || 'nothing'}),
-      h('dt', {text: 'routes to'}), h('dd', null, h('a', {href: '/workspaces/' + encodeURIComponent(rc.workspace || rc.project), text: rc.workspace || rc.project}),
+      h('dt', {text: 'posts to'}), h('dd', null, h('a', {href: '/workspaces/' + encodeURIComponent(rc.workspace || rc.project), text: rc.workspace || rc.project}),
         rc.rules.length ? ' · rules: ' + rc.rules.map(function (x) { return x.label + ' → ' + (x.channel || x.group); }).join(', ') : ''),
-      h('dt', {text: 'chases'}), h('dd', {text: (rc.reminds ? 'again after ' + fmtDur(rc.remind_after) + ', ' + rc.reminds + ' times' +
-        (rc.escalate ? ', then tells @' + rc.escalate : '') : 'no reminders') +
-        (rc.stale_after ? ' · offers again a holder that stops or is silent ' + fmtDur(rc.stale_after) : '')})),
+      h('dt', {text: 'after that'}), h('dd', {text: 'nothing: no reminder, no follow-up'})),
     (r.items || []).length ? [h('h3', {text: 'Announced'}), h('table', null,
       h('thead', null, h('tr', null, ['issue', 'where', 'announced', 'replies', 'held by', 'their last post'].map(function (t) { return h('th', {text: t}); }))),
       h('tbody', null, r.items.map(function (i) {
