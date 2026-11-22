@@ -23,7 +23,7 @@ class Install(unittest.TestCase):
     """A piped install against a stand-in checkout: its bin/keeper answers `harnesses` with
     the rows a test gives, its bin/bot plays `keeper install` and writes the keeper's note."""
 
-    def install(self, rows, *args, note=None, tty=None, installed=False, saved_bot=False, env=None):
+    def install(self, rows, *args, note=None, tty=None, installed=False, saved_bot=False, env=None, commands=None):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             src = home / "src"
@@ -45,6 +45,9 @@ class Install(unittest.TestCase):
             (home / "commands").mkdir()
             (home / "commands/git").write_text("#!/usr/bin/env bash\nexit 0\n")
             (home / "commands/git").chmod(0o755)
+            for name, body in (commands or {}).items():
+                (home / "commands" / name).write_text("#!/usr/bin/env bash\n" + body + "\n")
+                (home / "commands" / name).chmod(0o755)
             config = home / "config"
             r = subprocess.run(["bash", "-s", "--", "install", *args], input=SOURCE, capture_output=True, text=True,
                                timeout=20, env={**os.environ, "HOME": tmp, "BOT_CONFIG": str(config),
@@ -81,6 +84,36 @@ class Install(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="codex"', config)
         self.assertIn("codex is not logged in on this machine yet, so the keeper holds the bot until it is: "
                       "run codex login. It starts by itself; no second install.", r.stderr)
+
+    def test_a_working_container_runtime_puts_the_bots_in_containers(self):
+        # #652: found on a first install, the runtime is turned on and one line says so; a loopback
+        # board is reached on the host network on Linux, as the host's name on a Mac
+        up = {"docker": "exit 0"}
+        r, config = self.install(self.CLAUDE_OK, env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Linux"})
+        self.assertIn('BOT_RUNTIME="docker"', config)
+        self.assertIn('BOT_CONTAINER_HOST_NETWORK="1"', config)
+        self.assertIn("docker found: the bots run in containers", r.stderr)
+        r, config = self.install([("codex", "ok", "")], env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Darwin"})
+        self.assertIn('BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal"', config)
+        self.assertNotIn("BOT_CONTAINER_HOST_NETWORK", config)
+        # a board that is not on loopback needs neither
+        r, config = self.install(self.CLAUDE_OK, commands={**up, "uname": "echo Linux"})
+        self.assertIn('BOT_RUNTIME="docker"', config)
+        self.assertNotIn("BOT_CONTAINER", config)
+
+    def test_no_working_runtime_says_the_bots_run_on_the_machine(self):
+        r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 1"})   # installed, engine down
+        self.assertNotIn("BOT_RUNTIME", config)
+        self.assertIn("no container runtime found: the bots run on this machine", r.stderr)
+
+    def test_claude_on_a_mac_stays_on_the_host_for_its_keychain_login(self):
+        r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 0", "uname": "echo Darwin"})
+        self.assertNotIn("BOT_RUNTIME", config)
+        self.assertIn("Keychain", r.stderr)
+
+    def test_a_box_that_already_has_a_runtime_setting_keeps_it(self):
+        r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 0"}, env={"BOT_RUNTIME": "podman"})
+        self.assertNotIn('BOT_RUNTIME="docker"', config)
 
     def test_a_logged_out_harness_still_gets_the_first_bot_held_until_a_login(self):
         # #283: a new machine needs no second install; the fleet's claude token, or a login, frees the bot

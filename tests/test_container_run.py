@@ -515,6 +515,20 @@ class ContainerRun(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("cannot reach", r.stderr)
 
+    def test_loopback_board_maps_to_the_loopback_host_name(self):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        # a Mac (#652): the container reaches the host's loopback board by the name the installer set
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://127.0.0.1:8080", "BOT_CONTAINER_LOOPBACK_HOST": "host.docker.internal"}))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        self.assertIsNotNone(run, self.calls())
+        self.assertEqual(run[run.index("--add-host") + 1], "host.docker.internal:host-gateway", run)
+        self.assertIn("BOARD=http://host.docker.internal:8080", run)
+
     def test_host_network_opt_out_adds_network_host(self):
         checkout = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
