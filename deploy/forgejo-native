@@ -17,7 +17,9 @@
 #
 # Env: FORGEJO_DIR (default ~/.bot_board/forgejo), FORGEJO_PORT (a port to start the search at),
 # FORGEJO_BIND (default 127.0.0.1), FORGEJO_HOST (the name in its address, default localhost),
-# BOARD. For a test: FORGEJO_BASE_URL (where the release files are) and FORGEJO_SHA256 (their checksum).
+# BOARD. For a test only: FORGEJO_BASE_URL (where the release files are) and FORGEJO_SHA256 (their checksum),
+# both together; the script says so when it uses them instead of the pin. The free-port check looks at
+# 127.0.0.1 only, which is right for the default FORGEJO_BIND.
 set -euo pipefail
 
 VERSION=17.0.2
@@ -37,8 +39,12 @@ say() { echo "forgejo-native: $*"; }
 die() { echo "forgejo-native: $*" >&2; exit 1; }
 # the pid file may outlive a reboot, and the pid may then be another process: it counts only if it is our binary
 running() {
-  [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null \
-    && tr '\0' ' ' < "/proc/$(cat "$PIDFILE")/cmdline" 2>/dev/null | grep -qF "$DIR/forgejo-$VERSION"
+  local pid bin=$DIR/forgejo-$VERSION
+  pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  # the binary itself, or (a script, as in the tests) a process that was started with it as an argument
+  [ -n "$pid" ] && { [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$bin" ] \
+    || tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qxF "$bin"; } && return 0
+  rm -f "$PIDFILE"; return 1        # no process, or another one: the file is stale
 }
 port() { sed -n 's/^HTTP_PORT *= *//p' "$INI" 2>/dev/null | head -1; }
 free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -51,14 +57,20 @@ fetch() {
     Linux-aarch64|Linux-arm64) arch=arm64; sum=$SHA256_arm64 ;;
     *) die "no Forgejo binary for $(uname -s) $(uname -m): on a Mac, use Homebrew" ;;
   esac
-  sum=${FORGEJO_SHA256:-$sum}
-  base=${FORGEJO_BASE_URL:-https://codeberg.org/forgejo/forgejo/releases/download/v$VERSION}
+  base=https://codeberg.org/forgejo/forgejo/releases/download/v$VERSION
+  if [ -n "${FORGEJO_SHA256:-}${FORGEJO_BASE_URL:-}" ]; then
+    [ -n "${FORGEJO_SHA256:-}" ] && [ -n "${FORGEJO_BASE_URL:-}" ] || die "FORGEJO_SHA256 and FORGEJO_BASE_URL go together"
+    sum=$FORGEJO_SHA256; base=$FORGEJO_BASE_URL
+    say "NOT the pinned release: fetching from $base, checked against FORGEJO_SHA256"
+  fi
   say "downloading Forgejo $VERSION"
   tmp=$(mktemp "$DIR/download.XXXXXX")
   curl -fsSL -o "$tmp" "$base/forgejo-$VERSION-linux-$arch" || { rm -f "$tmp"; die "could not download Forgejo from $base"; }
   echo "$sum  $tmp" | sha256sum -c --quiet - || { rm -f "$tmp"; die "the download does not match the pinned checksum: not used"; }
   chmod 755 "$tmp"; mv "$tmp" "$bin"
 }
+
+SETSID=$(command -v setsid || true)      # a closed terminal must not stop it
 
 # the settings, written once: later runs keep the port and anything the user changed
 settings() {
@@ -109,7 +121,7 @@ start() {
   mkdir -p "$DIR"; chmod 700 "$DIR"
   if running; then say "already running at http://$HOST:$(port)/"; return 0; fi
   fetch; settings
-  ( cd "$WORK" && exec "$DIR/forgejo-$VERSION" --work-path "$WORK" web ) >"$LOG" 2>&1 </dev/null &
+  ( cd "$WORK" && exec ${SETSID:-} "$DIR/forgejo-$VERSION" --work-path "$WORK" web ) >"$LOG" 2>&1 </dev/null &
   echo $! > "$PIDFILE"; disown
   local i
   for i in $(seq 1 60); do
@@ -131,8 +143,11 @@ stop() {
 case ${1:-} in
   start) start ;;
   stop) stop ;;
-  status) if running; then say "running at http://$HOST:$(port)/"; else say "not running"; exit 1; fi ;;
+  status) if running; then say "running at http://$HOST:$(port)/"; else say "not running"; exit 1; fi
+          want=${BOARD#*://}; want=${want%%[:/]*}
+          [ "$(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$INI")" = "$want" ] \
+            || say "the settings allow webhooks to $(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$INI"), not $want (BOARD): change ALLOWED_HOST_LIST in $INI and restart" ;;
   env) [ -f "$INI" ] || die "not set up: deploy/forgejo-native start"
-       echo "FORGE=http://127.0.0.1:$(port) FORGEJO_BIN=$DIR/forgejo-$VERSION FORGEJO_WORK_PATH=$WORK" ;;
+       printf 'export FORGE=%q FORGEJO_BIN=%q FORGEJO_WORK_PATH=%q\n' "http://127.0.0.1:$(port)" "$DIR/forgejo-$VERSION" "$WORK" ;;
   *) die "usage: forgejo-native start|stop|status|env" ;;
 esac

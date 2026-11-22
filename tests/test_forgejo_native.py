@@ -48,7 +48,7 @@ class ForgejoNative(unittest.TestCase):
         self.assertIn(f"HTTP_PORT = {self.port}", ini)
         self.assertIn("ALLOWED_HOST_LIST = 10.1.2.3\n", ini)     # only the board, not every private address
         self.assertIn("INSTALL_LOCK = true", ini)
-        self.assertIn(f"FORGE=http://127.0.0.1:{self.port}", self.run_cmd("env").stdout)
+        self.assertIn(f"export FORGE=http://127.0.0.1:{self.port} ", self.run_cmd("env").stdout)
         self.assertIn("already running", self.run_cmd("start").stdout)
         self.assertEqual(self.run_cmd("status").returncode, 0)
         self.assertEqual(self.run_cmd("stop").returncode, 0)
@@ -61,6 +61,18 @@ class ForgejoNative(unittest.TestCase):
         Path(self.tmp.name, "fj/forgejo.pid").write_text(str(other.pid))
         self.assertEqual(self.run_cmd("stop").returncode, 0)
         self.assertIsNone(other.poll(), "stop must not kill a process that is not Forgejo")
+
+    def test_start_replaces_a_stale_pid_file(self):
+        other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.kill)
+        Path(self.tmp.name, "fj").mkdir(); Path(self.tmp.name, "fj/forgejo.pid").write_text(str(other.pid))
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("already running", r.stdout)
+        self.assertIsNone(other.poll())
+
+    def test_the_pin_is_overridden_only_with_both_variables(self):
+        r = self.run_cmd("start", env={k: v for k, v in self.env.items() if k != "FORGEJO_BASE_URL"})
+        self.assertNotEqual(r.returncode, 0); self.assertIn("go together", r.stderr)
+        self.assertIn("NOT the pinned release", self.run_cmd("start").stdout)
 
     def test_a_taken_port_moves_to_the_next(self):
         s = socket.socket(); s.bind(("127.0.0.1", self.port)); s.listen()
