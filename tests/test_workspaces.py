@@ -230,7 +230,7 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
 """
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        for needle in ("q.base !== p.base || r[1].document.revision !== doc.revision", "p.base === null || !doc || p.base !== doc.revision",
+        for needle in ("q.base !== p.base || r[1].document.revision !== rev", "p.base === null || p.base !== rev", "var rev = doc ? doc.revision : goneRev",
                        "Applying it would remove the roles"):
             self.assertIn(needle, js)
 

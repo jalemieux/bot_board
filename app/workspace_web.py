@@ -33,7 +33,7 @@ WS_CSS = """
 .ws .proposal{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
 .ws .proposal h3{margin:0 0 6px;font-size:14px}
 .ws pre.diff{max-height:320px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0;font:12px/1.5 var(--mono);white-space:pre-wrap}
-.ws pre.diff .add{background:#2f7d4f33}.ws pre.diff .del{background:#c0392b33;text-decoration:line-through}.ws pre.diff .gap{color:var(--dim)}
+.ws pre.diff .add{background:color-mix(in srgb,var(--good) 20%,transparent)}.ws pre.diff .del{background:color-mix(in srgb,var(--accent) 20%,transparent)}.ws pre.diff .gap{color:var(--dim)}
 .ws .proposal .warn{color:var(--accent);font-weight:600}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
@@ -298,10 +298,11 @@ function teamView(w) {
     api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md').then(function (d) { return d.document; }, function () { return null; }),
     api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team').then(function (d) { return d.team; }, function () { return {roles: []}; }),
     api('GET', '/api/fleet').then(function (d) { return d.hosts; }, function () { return []; }),
-    proposalDocs(w)
+    proposalDocs(w),
+    agreementRevision(w)
   ]).then(function (r) {
     slot.appendChild(agreementCard(w, r[0]));
-    if (r[3].length) slot.appendChild(proposalsView(w, r[0], r[3]));
+    if (r[3].length) slot.appendChild(proposalsView(w, r[0], r[3], r[4]));
     slot.appendChild(rolesView(w, r[1].roles || [], r[2]));
   });
 }
@@ -311,6 +312,12 @@ function teamView(w) {
 function parseProposal(body) {      // the one place the base revision is read; a missing or malformed one is no base
   var m = /^<!--\s*base:\s*(\d+)\s*-->[ \t]*\n?/.exec(body);
   return m ? {base: parseInt(m[1], 10), text: body.slice(m[0].length)} : {base: null, text: body};
+}
+// The revision a first agreement is written over: 0 for a workspace that never had one, else the last revision of one that was deleted.
+function agreementRevision(w) {
+  return api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md/history').then(function (d) {
+    return d.revisions.reduce(function (m, x) { return Math.max(m, x.revision); }, 0);
+  }, function () { return 0; });
 }
 function proposalDocs(w) {
   var base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
@@ -362,16 +369,16 @@ function threadReply(w, tid, text) {      // the outcome, in the proposal's own 
     return api('POST', '/api/messages', {channel: d.message.channel, reply_to: tid, body: text});
   });
 }
-function proposalsView(w, doc, proposals) {
+function proposalsView(w, doc, proposals, goneRev) {
   var canAct = !!(ME && w.can_manage && !w.archived), base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
   var sec = h('section', {'class': 'proposals'}, h('h2', null, 'Proposed changes', h('small', {text: String(proposals.length)})));
   proposals.forEach(function (p) {
-    var stale = p.base === null || !doc || p.base !== doc.revision, hidden = p.text.search(HIDDEN) >= 0, out = h('p', {role: 'status'});
+    var rev = doc ? doc.revision : goneRev, stale = p.base === null || p.base !== rev, hidden = p.text.search(HIDDEN) >= 0, out = h('p', {role: 'status'});
     var card = h('div', {'class': 'proposal'},
       h('h3', null, h('a', {href: '/t/' + p.tid, text: 'Proposal from thread #' + p.tid}), p.author ? h('small', {text: ' saved by @' + p.author}) : null));
-    if (doc) card.appendChild(diffView(doc.body, p.text));
+    card.appendChild(diffView(doc ? doc.body : '', p.text));
     if (stale) card.appendChild(h('p', {'class': 'warn', text: p.base === null ? 'It names no revision it was drafted against, so it cannot be applied. Reject it and ask for a new one.'
-      : 'Out of date: it was drafted against revision ' + p.base + ', and the agreement is at revision ' + (doc ? doc.revision : 'none') + '. It can only be rejected.'}));
+      : 'Out of date: it was drafted against revision ' + p.base + ', and the agreement is at revision ' + rev + '. It can only be rejected.'}));
     if (hidden) card.appendChild(h('p', {'class': 'warn', text: 'The proposal contains characters a reader cannot see (shown as <U+…> in the difference). It cannot be applied: reject it and ask for a clean one.'}));
     if (doc && /^\|\s*Role\s*\|/mi.test(doc.body) && !/^\|\s*Role\s*\|/mi.test(p.text))
       card.appendChild(h('p', {'class': 'warn', text: 'The agreement has a Roles table and this proposal has none. Applying it would remove the roles the Team tab reads.'}));
@@ -381,13 +388,13 @@ function proposalsView(w, doc, proposals) {
     apply.addEventListener('click', function () {
       apply.disabled = reject.disabled = true;
       // read both again at press time: what is written is what this page showed, or nothing
-      Promise.all([api('GET', base + p.path), api('GET', base + 'team/agreement.md')]).then(function (r) {
+      Promise.all([api('GET', base + p.path), api('GET', base + 'team/agreement.md').catch(function () { return agreementRevision(w).then(function (n) { return {document: {revision: n}}; }); })]).then(function (r) {
         var q = parseProposal(r[0].document.body);
-        if (q.text !== p.text || q.base !== p.base || r[1].document.revision !== doc.revision) { note(out, 'The proposal or the agreement changed since this page loaded. Reload to see the current difference.'); return; }
+        if (q.text !== p.text || q.base !== p.base || r[1].document.revision !== rev) { note(out, 'The proposal or the agreement changed since this page loaded. Reload to see the current difference.'); return; }
         if (q.text.search(HIDDEN) >= 0) { note(out, 'The proposal contains invisible characters and cannot be applied.'); return; }
         return api('GET', '/api/messages/' + p.tid).then(function (m) {
           if (!w.channels.some(function (c) { return c.slug === m.message.channel; })) throw new Error('Thread #' + p.tid + ' is not in this workspace, so nothing was written.');
-        }).then(function () { return api('PUT', base + 'team/agreement.md', {body: p.text, base_revision: doc.revision, reason: 'Applied the proposal from thread ' + p.tid, sources: [String(p.tid)]}); })
+        }).then(function () { return api('PUT', base + 'team/agreement.md', {body: p.text, base_revision: rev, reason: 'Applied the proposal from thread ' + p.tid, sources: [String(p.tid)]}); })
           .then(function (d) { return threadReply(w, p.tid, 'Applied. The team agreement is now revision ' + d.document.revision + '.'); })
           .then(drop).then(function () { note(out, 'Applied.', true); setTimeout(function () { location.reload(); }, 1500); });
       }).catch(function (e) { apply.disabled = reject.disabled = false; note(out, e.message + (/revision|409/.test(e.message) ? ' Someone changed the agreement: reload and ask the admin bot for a new proposal.' : '')); });
