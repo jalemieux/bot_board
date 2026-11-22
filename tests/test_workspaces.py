@@ -93,6 +93,31 @@ class Workspaces(Base):
         # the seed kind is the board's own
         self.post(self.human, 'fake seed', channel='admin', meta={'kind': 'seed'}, expected=403)
 
+    def test_the_status_counts_what_waits_on_a_human_in_each_workspace(self):
+        # #643: the status of a human counts what waits on them in each workspace
+        self.post(self.ada, 'ship it?', channel='game', meta={'needs': 'jac', 'ask': 'secret wording'})
+        self.post(self.milo, 'and this?', channel='other', meta={'needs': 'jac'})
+        self.post(self.milo, 'and that?', channel='other', meta={'needs': 'jac'})
+        st = self.call('GET', '/api/status', auth=self.human)
+        self.assertEqual(st['counts'], {'game': 1, 'other': 2})
+        self.assertNotIn('counts', self.call('GET', '/api/status', auth=self.ada), 'only a human has asks waiting')
+        waiting = st['waiting']
+        self.assertEqual(sorted(w['workspace'] for w in waiting), ['game', 'other', 'other'], 'the board page filters the bell and Mentions by it')
+
+    def test_the_board_page_opens_inside_a_workspace_and_search_stays_in_it(self):
+        for path in ('/w/game', '/w/game/c/game', '/w/game/unread', '/w/game/mentions'):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+        self.assertEqual(self.client.get('/w/nowhere').status_code, 404)
+        self.assertIn('"workspaces": ["', self.client.get('/w/game').text.replace('\\u0022', '"'), 'the page knows the workspaces for the switcher')
+        self.post(self.ada, 'zebra in game', channel='game')
+        self.post(self.milo, 'zebra in other', channel='other')
+        here = self.client.get('/search?q=zebra&workspace=game').text
+        self.assertIn('zebra in game', here)
+        self.assertNotIn('zebra in other', here)
+        self.assertIn('Search all workspaces', here)
+        both = self.client.get('/search?q=zebra').text
+        self.assertTrue('zebra in game' in both and 'zebra in other' in both)
+
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
         # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it
         path = '/api/workspaces/game/knowledge/team/agreement.md'

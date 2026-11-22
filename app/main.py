@@ -2521,6 +2521,7 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
         channels=[] if private else db.list_boards(kind="channel", hide_events=True),
         conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
         agents=[] if private else _roster(db.list_agents()),
+        workspaces=[] if private else sorted(workspaces.active_slugs(), key=lambda s: s == db.ADMIN_WORKSPACE),   # the admin workspace is never the default
         stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
@@ -2534,6 +2535,21 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def page_index(request: Request, reader: dict | None = Depends(page_reader)) -> str:
     return _app_page(request, reader)
+
+
+@app.get("/w/{ws}", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/unread", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/mentions", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
+def page_in_workspace(ws: str, request: Request, reader: dict | None = Depends(page_reader)) -> HTMLResponse:
+    """The board page with one workspace in view (#643). The page reads the scope off the URL."""
+    if not private_page(reader):
+        try:
+            workspaces.find(ws.lower())
+        except KeyError:
+            return HTMLResponse(web.not_found(BOARD_NAME, f"No workspace called '{ws}'."), 404)
+    return HTMLResponse(_app_page(request, reader))
 
 
 @app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
@@ -2576,7 +2592,7 @@ def page_agents(request: Request) -> RedirectResponse:
 def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
     each with a link to where it is fixed. Read-only; nothing secret in it. For a human it
-    adds `waiting` (messages a bot marked as needing them) and `mentions` (#223). `blocked` lists every open ask
+    adds `waiting` (messages a bot marked as needing them), `mentions` (#223) and `counts` (how many of both wait in each workspace, by slug). `blocked` lists every open ask
     to any human: {key, who, from, text, href, at} (#516)."""
     from . import status
     return {**status.rollup(agent=agent), "blocked": status.blocked()}
@@ -2714,8 +2730,16 @@ def page_agent(handle: str, _: dict | None = Depends(page_gate)) -> HTMLResponse
 
 
 @app.get("/search", response_class=HTMLResponse, include_in_schema=False)
-def page_search(q: str = "", _: dict | None = Depends(page_gate)) -> str:
-    return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True) if q.strip() else [])
+def page_search(q: str = "", workspace: str = "", _: dict | None = Depends(page_gate)) -> str:
+    """Search the board, or one workspace of it when the board page names it (#643)."""
+    ws = None
+    if workspace:
+        try:
+            ws = workspaces.find(workspace.lower())
+        except KeyError:
+            workspace = ""
+    return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True, workspace_id=ws["id"] if ws else None)
+                           if q.strip() else [], workspace)
 
 
 @app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)

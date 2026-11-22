@@ -16,6 +16,7 @@ import html
 import json
 import re
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from . import db
 from . import fleet as fleet_mod
@@ -305,7 +306,9 @@ ADMIN_ALERT_JS = """
   }
   function render(st) {
     var items = (st && st.attention) || [], gone = (st && st.dismissed) || [];
-    var waiting = (st && st.waiting) || [], mentions = (st && st.mentions) || [];
+    var scope = ''; try { scope = JSON.parse(localStorage.getItem('bb.scope')) || ''; } catch (err) {}
+    var mine = function (x) { return !scope || !x.workspace || x.workspace === scope; };    // the workspace in view (#643)
+    var waiting = ((st && st.waiting) || []).filter(mine), mentions = ((st && st.mentions) || []).filter(mine);
     var n = items.length;    // asks and mentions are counted in the rail, not here
     var count = document.getElementById('bell-count');
     if (count) { count.textContent = n || ''; count.hidden = !n; }
@@ -586,6 +589,19 @@ def presence_dot(last_seen_at: str | None) -> str:
 # ------------------------------------------------------------ channel view
 
 APP_CSS = PICKUP_CSS + """
+/* the workspace switcher (#643) */
+.wsw{position:relative;flex:none}
+.wsw>button{font:600 12.5px var(--mono);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;min-height:30px}
+.wsw>button:focus-visible,.wsw li button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.wsw .badge{margin:0 4px;background:var(--accent);color:#fff}
+#wsmenu{position:absolute;top:36px;left:0;z-index:20;min-width:220px;margin:0;padding:4px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px #0004}
+#wsmenu[hidden]{display:none}
+#wsmenu li button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:12.5px var(--mono);color:var(--ink);background:none;border:0;border-radius:6px;padding:8px 10px;cursor:pointer}
+#wsmenu li button:hover{background:var(--sel)}
+#wsmenu li.here button{font-weight:600}
+#wsmenu .here-note,#wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
+#wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px;min-width:16px;text-align:center}
+@media (max-width:700px){.topnav .brand,.topnav .brand+.divider{display:none}#wsmenu li button{min-height:44px}.wsw>button{min-height:44px;font-size:16px}}
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -924,13 +940,34 @@ function pageCookie(m){
                       : 'bb_token=; Path=/; Max-Age=0';
 }
 var S = {
-  channels: INIT.channels, convs: INIT.conversations, agents: {},
+  all: {channels: INIT.channels, convs: INIT.conversations}, channels: [], convs: [], agents: {},
   unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}), fold: load('bb.fold', {}),
   cur: null, thread: null, cursor: INIT.stats.cursor,
   roots: [], newSince: 0, olderBefore: null, ctrl: null,
   view: null, umsgs: {}, umore: {}, tmsgs: null
 };
 INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
+// One workspace is in view at a time (#643). It comes from /w/<slug>/... in the URL, else the last one used here, else
+// the first. A channel outside any workspace shows in every scope. A conversation shows where a bot of it works, and
+// in every scope when it holds no bot of any workspace. S.all keeps everything, so a link to another workspace still opens.
+var SCOPE = '', WS_SLUGS = INIT.workspaces;
+function urlScope(){ var m = location.pathname.match(/^\/w\/([^\/]+)/); return m ? decodeURIComponent(m[1]) : ''; }
+function setScope(ws){
+  if (WS_SLUGS.indexOf(ws) < 0) ws = WS_SLUGS[0] || '';
+  SCOPE = ws; try { localStorage.setItem('bb.scope', JSON.stringify(ws)); } catch(e){}
+  applyScope();
+}
+function convWs(c){
+  var ws = (c.participants || []).map(function(h){ var a = S.agents[h]; return a && a.kind !== 'human' && a.workspace || ''; }).filter(Boolean);
+  return ws;
+}
+function applyScope(){
+  S.channels = S.all.channels.filter(function(b){ return !b.workspace || b.workspace === SCOPE; });
+  S.convs = S.all.convs.filter(function(c){ var w = convWs(c); return !w.length || w.indexOf(SCOPE) >= 0; });
+}
+function P(){ return SCOPE ? '/w/' + encodeURIComponent(SCOPE) : ''; }       // the URL prefix of the scope in view
+function routePath(){ return location.pathname.replace(/^\/w\/[^\/]+/, '') || '/'; }
+setScope(urlScope() || load('bb.scope', ''));
 
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
@@ -950,7 +987,7 @@ var SOLO = new URLSearchParams(location.search).has('solo');
 if (SOLO) app.classList.add('solo');
 if (load('bb.threadWide', false)) app.classList.add('wide');
 var tw = load('bb.threadWidth', 0); if (tw) document.documentElement.style.setProperty('--tw', tw + 'px');
-function threadUrl(id){ return '/t/' + id + (SOLO ? '?solo' : ''); }
+function threadUrl(id){ return P() + '/t/' + id + (SOLO ? '?solo' : ''); }
 // The onboarding banner: on until this browser hides it. /onboard has it all the time.
 var hero = $('#hero');
 if (hero && !SOLO && !load('bb.heroHidden', false)) hero.hidden = false;
@@ -1056,8 +1093,8 @@ function convPresence(c){
   return best;
 }
 function findEntry(slug){
-  for (var i = 0; i < S.channels.length; i++) if (S.channels[i].slug === slug) return S.channels[i];
-  for (var j = 0; j < S.convs.length; j++) if (S.convs[j].slug === slug) return S.convs[j];
+  for (var i = 0; i < S.all.channels.length; i++) if (S.all.channels[i].slug === slug) return S.all.channels[i];
+  for (var j = 0; j < S.all.convs.length; j++) if (S.all.convs[j].slug === slug) return S.all.convs[j];
   return null;
 }
 // Unread and Mentions list what they hold under a heading per workspace (a conversation or a channel
@@ -1094,7 +1131,36 @@ function seenParam(list){
 }
 
 // ------------------------------------------------------------------ rail
+// The workspace switcher (#643): the workspace in view, and one number for each other workspace: the asks and
+// mentions that wait on this human there, from the `counts` of /api/status.
+var wsCounts = {};
+function renderSwitcher(){
+  $('#wsw').hidden = !WS_SLUGS.length;
+  $('#wsname').textContent = SCOPE;
+  document.querySelectorAll('.wsq').forEach(function(i){ i.value = SCOPE; });
+  var others = WS_SLUGS.reduce(function(n, w){ return n + (w === SCOPE ? 0 : wsCounts[w] || 0); }, 0), tb = $('#wstotal');
+  tb.hidden = !others; tb.textContent = others; tb.setAttribute('aria-label', others + ' waiting on you in other workspaces');
+  $('#wsmenu').innerHTML = WS_SLUGS.map(function(w){
+    var n = w === SCOPE ? 0 : wsCounts[w] || 0;
+    return '<li class="' + (w === SCOPE ? 'here' : '') + '"><button type="button" data-ws="' + esc(w) + '"' + (w === SCOPE ? ' aria-current="true"' : '') + '>' + esc(w) +
+      (w === SCOPE ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
+  }).join('');
+}
+$('#wsbtn').addEventListener('click', function(ev){
+  ev.stopPropagation(); var m = $('#wsmenu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden));
+});
+document.addEventListener('click', function(){ $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); });
+$('#wsmenu').addEventListener('click', function(ev){
+  var b = ev.target.closest('button[data-ws]'); if (!b) return;
+  if (b.dataset.ws !== SCOPE) { setScope(b.dataset.ws); S.cur = null; S.view = null; closeThread(); history.pushState({}, '', P() || '/'); route(); }
+});
+document.addEventListener('keydown', function(ev){
+  if (ev.key === 'Escape' && !$('#wsmenu').hidden) { $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); $('#wsbtn').focus(); }
+});
+window.addEventListener('bb:status', function(ev){ wsCounts = ev.detail.counts || {}; renderSwitcher(); });
+
 function renderRail(){
+  renderSwitcher();
   var lis = function(list, isConv){
     if (!list.length) return '<li class="empty">' + (isConv ? 'none open yet' : 'none yet') + '</li>';
     return list.map(function(b){
@@ -1113,7 +1179,7 @@ function renderRail(){
   $('#convs').innerHTML = lis(S.convs.filter(function(c){ return !mine(c); }), true);
   $('#dmh').hidden = $('#dms').hidden = !ME;
   $('#ndm').textContent = S.convs.filter(mine).length;
-  $('#nch').textContent = S.channels.reduce(function(a, b){ if (b.workspace && a.indexOf(b.workspace) < 0) a.push(b.workspace); return a; }, []).length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
+  $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
@@ -1143,7 +1209,7 @@ function phoneSync(){
 function showList(push){
   S.mlist = true; S.view = null;
   if (S.thread) closeThread();
-  if (push && !SOLO) history.pushState({}, '', '/');
+  if (push && !SOLO) history.pushState({}, '', P() || '/');
   renderRail();
 }
 $('#tabbar').addEventListener('click', function(ev){
@@ -1275,15 +1341,15 @@ rail.addEventListener('scroll', hideCrew);
 document.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') hideCrew(); });
 
 function refreshLists(){
-  var q1 = '/api/channels?hide_events=true&seen=' + encodeURIComponent(seenParam(S.channels));
-  var q2 = '/api/conversations?hide_events=true&all=true&seen=' + encodeURIComponent(seenParam(S.convs));
+  var q1 = '/api/channels?hide_events=true&seen=' + encodeURIComponent(seenParam(S.all.channels));
+  var q2 = '/api/conversations?hide_events=true&all=true&seen=' + encodeURIComponent(seenParam(S.all.convs));
   return Promise.all([fetch(q1).then(function(r){ return r.json(); }), fetch(q2).then(function(r){ return r.json(); })])
     .then(function(rs){
-      S.channels = rs[0].channels; S.convs = rs[1].conversations;
+      S.all.channels = rs[0].channels; S.all.convs = rs[1].conversations; applyScope();
       // Entries we have never seen before get a cursor now, then their exact count.
-      var need = S.channels.concat(S.convs).filter(function(b){ return S.seen[b.slug] == null; });
+      var need = S.all.channels.concat(S.all.convs).filter(function(b){ return S.seen[b.slug] == null; });
       need.forEach(function(b){ S.seen[b.slug] = b.last_message_id || 0; });
-      S.channels.concat(S.convs).forEach(function(b){ S.unread[b.slug] = b.unread || 0; });
+      S.all.channels.concat(S.all.convs).forEach(function(b){ S.unread[b.slug] = b.unread || 0; });
       save('bb.seen', S.seen); sortLists(); renderRail();
     });
 }
@@ -1491,10 +1557,11 @@ stream.addEventListener('click', function(ev){
 function openChannel(slug, push){
   var b = findEntry(slug);
   if (!b) { return refreshLists().then(function(){ if (findEntry(slug)) openChannel(slug, push); }); }
+  if (b.workspace && b.workspace !== SCOPE) setScope(b.workspace);      // a link to a channel of another workspace opens that workspace
   S.mlist = false; S.cur = b; S.view = null; S.thread = null; app.classList.add('thread-closed');
   S.newSince = S.seen[slug] || 0;
   showCompose();
-  if (push && !SOLO) history.pushState({}, '', '/c/' + slug);
+  if (push && !SOLO) history.pushState({}, '', P() + '/c/' + slug);
   renderHead(); renderRail();
   stream.innerHTML = '<div class="empty">loading…</div>';
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
@@ -1536,7 +1603,7 @@ function boardLabel(b){ return b.kind === 'conversation' ? 'conversation ' + con
 function openUnread(push){
   S.mlist = false; S.view = 'unread'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
   showCompose();
-  if (push && !SOLO) history.pushState({}, '', '/unread');
+  if (push && !SOLO) history.pushState({}, '', P() + '/unread');
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
   var signal = S.ctrl.signal;
   S.umsgs = {}; S.umore = {};
@@ -1594,8 +1661,9 @@ function unreadGroup(b){
 // first what bots marked as waiting on them, with the ask, then the other @mentions. An item leaves
 // when the human answers in its thread, its asker marks it resolved, or the human says done.
 S.status = null; S.mmsgs = {}; S.mretry = {};
+function inScopeItem(x){ return !x.workspace || x.workspace === SCOPE; }     // an ask or mention of the workspace in view
 function mentionCounts(){    // what the view can show: an item whose message cannot be read is left out
-  var shown = function(list){ return (list || []).filter(function(x){ return S.mmsgs[+x.key.slice(1)] !== false; }).length; };
+  var shown = function(list){ return (list || []).filter(function(x){ return inScopeItem(x) && S.mmsgs[+x.key.slice(1)] !== false; }).length; };
   return S.status ? {waiting: shown(S.status.waiting), mentions: shown(S.status.mentions)} : {waiting: 0, mentions: 0};
 }
 window.addEventListener('bb:status', function(ev){
@@ -1606,7 +1674,7 @@ window.addEventListener('bb:status', function(ev){
 function openMentions(push){
   S.mlist = false; S.view = 'mentions'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
   showCompose();
-  if (push && !SOLO) history.pushState({}, '', '/mentions');
+  if (push && !SOLO) history.pushState({}, '', P() + '/mentions');
   if (S.ctrl) S.ctrl.abort(); S.ctrl = null;
   renderRail();
   stream.innerHTML = '<div class="empty">loading…</div>';
@@ -1625,7 +1693,7 @@ function renderMentionsHead(){
 }
 function renderMentions(){
   renderMentionsHead();
-  var st = S.status || {}, waiting = st.waiting || [], mentions = st.mentions || [], all = waiting.concat(mentions);
+  var st = S.status || {}, waiting = (st.waiting || []).filter(inScopeItem), mentions = (st.mentions || []).filter(inScopeItem), all = waiting.concat(mentions);
   if (!all.length) { stream.innerHTML = '<div class="empty">Nothing waits on you. You are all caught up.</div>'; return; }
   // each message is fetched once: null while it is on its way, false if it cannot be read (deleted since, or refused)
   var missing = all.map(function(x){ return +x.key.slice(1); }).filter(function(id){ return !(id in S.mmsgs); });
@@ -1742,7 +1810,7 @@ async function openThread(id, push, focusMsg){
     tin.textContent = (b.kind === 'conversation' ? 'conversation' : '#' + b.slug) + ' · #' + d.thread_id + (d.hidden ? ' · hidden' : '');
     var hideBtn = $('#thide'); hideBtn.hidden = !ME; hideBtn.textContent = d.hidden ? 'expand' : 'collapse'; hideBtn.dataset.hidden = d.hidden ? '1' : '';
     hideBtn.title = d.hidden ? 'expand this thread in the channel again' : 'collapse this thread to one line in the channel';
-    $('#tboard').href = '/t/' + d.thread_id;
+    $('#tboard').href = P() + '/t/' + d.thread_id;
     document.title = 'thread #' + d.thread_id + ' · ' + (b.kind === 'conversation' ? 'conversation' : '#' + b.slug) + ' · ' + INIT.name;
     S.tmsgs = d.messages;
     renderThreadList();
@@ -1790,7 +1858,7 @@ function closeThread(){
   S.thread = null; S.tmsgs = null; app.classList.add('thread-closed');
   document.querySelectorAll('.msg.focus').forEach(function(x){ x.classList.remove('focus'); });
   document.querySelectorAll('.replies.open').forEach(function(x){ x.classList.remove('open'); });
-  if (S.cur) history.replaceState({}, '', '/c/' + S.cur.slug);
+  if (S.cur) history.replaceState({}, '', P() + '/c/' + S.cur.slug);
 }
 $('#tclose').addEventListener('click', closeThread);
 // Hide a thread (#374): folded into a strip in the channel for every human (#407), still in search
@@ -2203,10 +2271,11 @@ setInterval(function(){
 
 // --------------------------------------------------------------- routing
 function route(){
-  var m = location.pathname.match(/^\/c\/([^\/]+)/), t = location.pathname.match(/^\/t\/(\d+)/);
+  var path = routePath(), m = path.match(/^\/c\/([^\/]+)/), t = path.match(/^\/t\/(\d+)/);
+  if (urlScope() && urlScope() !== SCOPE) setScope(urlScope());
   if (m) return openChannel(decodeURIComponent(m[1]), false);
-  if (location.pathname === '/unread') return openUnread(false);
-  if (location.pathname === '/mentions') return openMentions(false);
+  if (path === '/unread') return openUnread(false);
+  if (path === '/mentions') return openMentions(false);
   if (t) return openThread(+t[1], false);
   if (matchMedia('(max-width:700px)').matches) { S.mlist = true; S.view = null; return renderRail(); }   // a phone starts on the Channels screen
   var first = S.channels.filter(function(b){ return S.unread[b.slug]; })[0] || S.channels[0];
@@ -2264,11 +2333,11 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
              stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
              max_image_attachment_bytes: int = 10 * 1024 * 1024, private: bool = False,
-             max_file_attachment_bytes: int = 10 * 1024 * 1024) -> str:
+             max_file_attachment_bytes: int = 10 * 1024 * 1024, workspaces: list | None = None) -> str:
     # no '<' survives in the embedded JSON, so no text from the board can close the script block
     init = json.dumps(
         {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats, "invite_required": invite_required, "private": private,
+         "agents": agents, "stats": stats, "workspaces": workspaces or [], "invite_required": invite_required, "private": private,
          "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes,
          "max_image_attachment_bytes": max_image_attachment_bytes, "max_file_attachment_bytes": max_file_attachment_bytes},
         ensure_ascii=False,
@@ -2281,7 +2350,11 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <button type="button" id="mback" aria-label="back to channels">‹</button>
   <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
-  <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
+  <div class="wsw" id="wsw">
+    <button type="button" id="wsbtn" aria-haspopup="true" aria-expanded="false" aria-controls="wsmenu" title="the workspace in view"><span id="wsname"></span><span class="badge" id="wstotal" hidden></span> ▾</button>
+    <ul id="wsmenu" hidden></ul>
+  </div>
+  <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"><input type="hidden" name="workspace" class="wsq"></form>
   <nav class="links" id="navlinks" aria-label="pages">
 {nav_tabs("/", running_chip(stats.get('running')))}
 {util_links()}
@@ -2296,12 +2369,12 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </header>
 <script>{THEME_JS}</script>
 <nav class="rail" id="rail">
-  <form class="rsearch" action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
+  <form class="rsearch" action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"><input type="hidden" name="workspace" class="wsq"></form>
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li>
     <li id="mentionsli" hidden title="messages that wait on you (orange) or only name you (grey), until you answer in their thread">
     <span class="sigil u">@</span><span class="name">Mentions</span><span class="badge w" title="waiting on you" hidden></span><span class="badge m" title="name you" hidden></span></li></ul>
-  <h2>Workspaces <span id="nch"></span></h2>
+  <h2>Channels <span id="nch"></span></h2>
   <ul id="channels"></ul>
   <h2 id="dmh" hidden title="conversations you are in">Direct messages <span id="ndm"></span></h2>
   <ul id="dms" hidden></ul>
@@ -3904,7 +3977,7 @@ last seen {e(ago(agent['last_seen_at']))}</p>
 """)
 
 
-def search_page(board_name, q, results) -> str:
+def search_page(board_name, q, results, workspace="") -> str:
     if not q.strip():
         body = '<div class="empty">Type something in the search box.</div>'
     elif not results:
@@ -3912,7 +3985,7 @@ def search_page(board_name, q, results) -> str:
     else:
         body = "".join(message_html(m) for m in results)
     return shell(board_name, f"search: {q}", f"""
-<h1>Search</h1><p class="sub">{len(results)} result(s) for “{e(q)}”</p>{body}""")
+<h1>Search</h1><p class="sub">{len(results)} result(s) for “{e(q)}”{f' in workspace {e(workspace)}. <a href="/search?q={quote(q)}">Search all workspaces</a>' if workspace else ''}</p>{body}""")
 
 
 def not_found(board_name, detail) -> str:

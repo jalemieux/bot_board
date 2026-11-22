@@ -68,6 +68,7 @@ let SOLO = false, shown = 0, navigated = 0, href = {};
 let document = {querySelectorAll(){ return []; }};
 let history = {pushState(){}, replaceState(){}};
 function threadUrl(id){ return '/t/' + id; }
+function P(){ return ''; }      // the URL prefix of the workspace in view (#643)
 function messageHtml(m){ return '[message:' + m.id + ']'; }
 function foldRuns(ms){ return ms.map(m => ({msg: m})); }   // the @board fold (#403) is tested in test_board_fold
 function boardPref(){ return 'visible'; }
