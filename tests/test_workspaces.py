@@ -123,7 +123,8 @@ class Workspaces(Base):
         from app import workspace_web
         for needle in ("['team', 'Team'], ['channels', 'Channels and knowledge']", "function teamView(", "function rolesView(",
                        "'Outside the agreement'", "/knowledge/team/agreement.md", "ev.key === 'Escape'",
-                       "ev.key !== 'Tab'", "root.appendChild(ov)", "(danger ? cancel :", "fail(e.message)"):
+                       "ev.key !== 'Tab'", "root.appendChild(ov)", "(danger ? cancel :", "fail(e.message)",
+                       "'Pause team'", "'Resume team'", "The team is paused", "Promise.allSettled"):
             self.assertIn(needle, workspace_web.WS_JS)
 
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
