@@ -31,6 +31,11 @@ WS_CSS = """
 .ws .agr.short{max-height:110px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
 .ws .agr h4{margin:10px 0 2px;font:600 13px var(--mono)}
 .ws .agr-text{white-space:pre-wrap;font-size:13.5px}
+.ws .proposal{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+.ws .proposal h3{margin:0 0 6px;font-size:14px}
+.ws pre.diff{max-height:320px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0;font:12px/1.5 var(--mono);white-space:pre-wrap}
+.ws pre.diff .add{background:color-mix(in srgb,var(--good) 20%,transparent)}.ws pre.diff .del{background:color-mix(in srgb,var(--accent) 20%,transparent)}.ws pre.diff .gap{color:var(--dim)}
+.ws .proposal .warn{color:var(--accent);font-weight:600}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
 .ws .rolehead .status{font:600 12px var(--mono)}.ws .status.good{color:var(--good)}.ws .status.bad{color:var(--accent)}
@@ -299,11 +304,117 @@ function teamView(w) {
   Promise.all([
     api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md').then(function (d) { return d.document; }, function () { return null; }),
     api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team').then(function (d) { return d.team; }, function () { return {roles: []}; }),
-    api('GET', '/api/fleet').then(function (d) { return d.hosts; }, function () { return []; })
+    api('GET', '/api/fleet').then(function (d) { return d.hosts; }, function () { return []; }),
+    proposalDocs(w),
+    agreementRevision(w)
   ]).then(function (r) {
     slot.appendChild(agreementCard(w, r[0]));
+    if (r[3].length) slot.appendChild(proposalsView(w, r[0], r[3], r[4]));
     slot.appendChild(rolesView(w, r[1].roles || [], r[2]));
   });
+}
+// A proposed change to the agreement (#646): the admin bot saves the whole proposed text as team/proposals/<thread id>.md,
+// with `<!-- base: <revision> -->` on its first line. The page, not the bot, computes the difference; only a human's Apply writes
+// the agreement, with the text this page showed.
+function parseProposal(body) {      // the one place the base revision is read; a missing or malformed one is no base
+  var m = /^<!--\s*base:\s*(\d+)\s*-->[ \t]*\n?/.exec(body);
+  return m ? {base: parseInt(m[1], 10), text: body.slice(m[0].length)} : {base: null, text: body};
+}
+// The revision a first agreement is written over: 0 for a workspace that never had one, else the last revision of one that was deleted.
+function agreementRevision(w) {
+  return api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md/history').then(function (d) {
+    return d.revisions.reduce(function (m, x) { return Math.max(m, x.revision); }, 0);
+  }, function () { return 0; });
+}
+function proposalDocs(w) {
+  var base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
+  return api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge').then(function (d) {
+    var docs = d.documents.filter(function (x) { return /^team\/proposals\/\d+\.md$/.test(x.path); });
+    return Promise.all(docs.map(function (x) {
+      return api('GET', base + x.path).then(function (r) {
+        var q = parseProposal(r.document.body);
+        return {path: x.path, tid: parseInt(x.path.replace(/\D/g, ''), 10), revision: r.document.revision, author: r.document.author, base: q.base, text: q.text};
+      });
+    })).then(function (list) { return list.sort(function (a, b) { return b.tid - a.tid; }); });      // newest first
+  }, function () { return []; });
+}
+// Characters a reader cannot see, that could hide an instruction in a line that looks clean: zero-width and bidi controls,
+// the soft hyphen, the byte-order mark and the Unicode tag characters. The agreement reaches every bot, so a proposal with one
+// is shown with the character spelled out and cannot be applied.
+var HIDDEN = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]|[\u{E0000}-\u{E007F}]/gu;
+function showHidden(line) { return line.replace(HIDDEN, function (c) { return '<U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + '>'; }); }
+function lineDiff(a, b) {
+  var x = a.split('\n'), y = b.split('\n');
+  if (x.length * y.length > 4000000) return x.map(function (l) { return {t: 'del', s: l}; }).concat(y.map(function (l) { return {t: 'add', s: l}; }));
+  var n = x.length, m = y.length, t = [], i, j;
+  for (i = 0; i <= n; i++) t.push(new Array(m + 1).fill(0));
+  for (i = n - 1; i >= 0; i--) for (j = m - 1; j >= 0; j--) t[i][j] = x[i] === y[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+  var out = []; i = 0; j = 0;
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { out.push({t: 'ctx', s: x[i]}); i++; j++; }
+    else if (t[i + 1][j] >= t[i][j + 1]) { out.push({t: 'del', s: x[i]}); i++; }
+    else { out.push({t: 'add', s: y[j]}); j++; }
+  }
+  while (i < n) out.push({t: 'del', s: x[i++]});
+  while (j < m) out.push({t: 'add', s: y[j++]});
+  return out;
+}
+function diffView(oldText, newText) {
+  var lines = lineDiff(oldText, newText), keep = lines.map(function () { return false; });
+  lines.forEach(function (l, i) { if (l.t !== 'ctx') for (var k = Math.max(0, i - 2); k <= Math.min(lines.length - 1, i + 2); k++) keep[k] = true; });
+  var pre = h('pre', {'class': 'diff', tabindex: '0', 'aria-label': 'what the proposal changes'}), gap = false;
+  lines.forEach(function (l, i) {
+    if (!keep[i]) { gap = true; return; }
+    if (gap) { pre.appendChild(h('span', {'class': 'gap', text: '…\n'})); gap = false; }
+    pre.appendChild(h('span', {'class': l.t, text: (l.t === 'add' ? '+ ' : l.t === 'del' ? '- ' : '  ') + showHidden(l.s) + '\n'}));
+  });
+  return pre;
+}
+function threadReply(w, tid, text) {      // the outcome, in the proposal's own thread, as the person who pressed the button
+  return api('GET', '/api/messages/' + tid).then(function (d) {
+    if (!w.channels.some(function (c) { return c.slug === d.message.channel; })) throw new Error('Thread #' + tid + ' is not in this workspace, so nothing was written or posted.');
+    return api('POST', '/api/messages', {channel: d.message.channel, reply_to: tid, body: text});
+  });
+}
+function proposalsView(w, doc, proposals, goneRev) {
+  var canAct = !!(ME && w.can_manage && !w.archived), base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
+  var sec = h('section', {'class': 'proposals'}, h('h2', null, 'Proposed changes', h('small', {text: String(proposals.length)})));
+  proposals.forEach(function (p) {
+    var rev = doc ? doc.revision : goneRev, stale = p.base === null || p.base !== rev, hidden = p.text.search(HIDDEN) >= 0, out = h('p', {role: 'status'});
+    var card = h('div', {'class': 'proposal'},
+      h('h3', null, h('a', {href: '/t/' + p.tid, text: 'Proposal from thread #' + p.tid}), p.author ? h('small', {text: ' saved by @' + p.author}) : null));
+    card.appendChild(diffView(doc ? doc.body : '', p.text));
+    if (stale) card.appendChild(h('p', {'class': 'warn', text: p.base === null ? 'It names no revision it was drafted against, so it cannot be applied. Reject it and ask for a new one.'
+      : 'Out of date: it was drafted against revision ' + p.base + ', and the agreement is at revision ' + rev + '. It can only be rejected.'}));
+    if (hidden) card.appendChild(h('p', {'class': 'warn', text: 'The proposal contains characters a reader cannot see (shown as <U+…> in the difference). It cannot be applied: reject it and ask for a clean one.'}));
+    if (doc && /^\|\s*Role\s*\|/mi.test(doc.body) && !/^\|\s*Role\s*\|/mi.test(p.text))
+      card.appendChild(h('p', {'class': 'warn', text: 'The agreement has a Roles table and this proposal has none. Applying it would remove the roles the Team tab reads.'}));
+    var apply = h('button', {type: 'button', text: 'Apply', disabled: canAct && !stale && !hidden ? null : '', title: canAct ? (stale ? 'Out of date' : hidden ? 'Has invisible characters' : null) : 'Only a manager of this workspace, signed in on the board page'});
+    var reject = h('button', {type: 'button', 'class': 'quiet danger', text: 'Reject', disabled: canAct ? null : ''});
+    var drop = function () { return api('DELETE', base + p.path, {base_revision: p.revision, reason: 'applied or rejected'}); };
+    apply.addEventListener('click', function () {
+      apply.disabled = reject.disabled = true;
+      // read both again at press time: what is written is what this page showed, or nothing
+      Promise.all([api('GET', base + p.path), api('GET', base + 'team/agreement.md').catch(function () { return agreementRevision(w).then(function (n) { return {document: {revision: n}}; }); })]).then(function (r) {
+        var q = parseProposal(r[0].document.body);
+        if (q.text !== p.text || q.base !== p.base || r[1].document.revision !== rev) { note(out, 'The proposal or the agreement changed since this page loaded. Reload to see the current difference.'); return; }
+        if (q.text.search(HIDDEN) >= 0) { note(out, 'The proposal contains invisible characters and cannot be applied.'); return; }
+        return api('GET', '/api/messages/' + p.tid).then(function (m) {
+          if (!w.channels.some(function (c) { return c.slug === m.message.channel; })) throw new Error('Thread #' + p.tid + ' is not in this workspace, so nothing was written.');
+        }).then(function () { return api('PUT', base + 'team/agreement.md', {body: p.text, base_revision: rev, reason: 'Applied the proposal from thread ' + p.tid, sources: [String(p.tid)]}); })
+          .then(function (d) { return threadReply(w, p.tid, 'Applied. The team agreement is now revision ' + d.document.revision + '.'); })
+          .then(drop).then(function () { note(out, 'Applied.', true); setTimeout(function () { location.reload(); }, 1500); });
+      }).catch(function (e) { apply.disabled = reject.disabled = false; note(out, e.message + (/revision|409/.test(e.message) ? ' Someone changed the agreement: reload and ask the admin bot for a new proposal.' : '')); });
+    });
+    reject.addEventListener('click', function () {
+      dialog('Reject the proposal', [h('p', {text: 'Reject the proposal from thread #' + p.tid + '? The agreement stays as it is, and the thread is told.'})], [{text: 'Reject', danger: true, run: function (el, close, fail) {
+        el.disabled = true;
+        threadReply(w, p.tid, 'Rejected. The team agreement is unchanged.').then(drop).then(function () { close(); location.reload(); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+    });
+    card.appendChild(h('div', {'class': 'dlg-actions'}, reject, apply)); card.appendChild(out); sec.appendChild(card);
+  });
+  return sec;
 }
 function agreementCard(w, doc) {
   if (!doc) return h('section', null, h('h2', {text: 'Team agreement'}), h('p', {'class': 'sub', text: 'This workspace has no team agreement yet. Bots work without one, and nothing says who reviews or who merges.'}));
