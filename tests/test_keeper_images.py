@@ -46,6 +46,12 @@ class KeeperImages(unittest.TestCase):
                                  'echo \'{"is_error": false, "result": "OK."}\'')
         os.environ['PATH'] = self.bin + os.pathsep + os.environ['PATH']
         self.k = load_keeper(self.home)
+        # the keeper runs bin/bot for its checks (#490): that reads the same scratch home
+        os.environ['HOME'] = self.home
+
+    def fleet_env(self, text):
+        with open(self.k.FLEET_ENV, 'w') as fh:
+            fh.write(text)
 
     def runtime(self, value):
         with open(os.path.join(self.home, '.config', 'bot_board', 'config'), 'w') as fh:     # the keeper's CFG
@@ -90,7 +96,7 @@ class KeeperImages(unittest.TestCase):
 
     def test_the_image_is_pulled_and_the_login_checked_inside_it(self):
         self.runtime('docker')
-        os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = 'sekrit-value'
+        self.fleet_env('CLAUDE_CODE_OAUTH_TOKEN=sekrit-value\n')
         c = self.k.Credentials('box')
         self.assertEqual(c.check(self.k.CREDENTIALS[1], c.env())[0], 'missing', 'no image yet holds claude bots')
         rows = self.pulled(self.k.Images())
@@ -99,21 +105,27 @@ class KeeperImages(unittest.TestCase):
         self.assertEqual(c.check(self.k.CREDENTIALS[1], c.env()), ('ok', ''))
         run = [line for line in self.calls() if line.startswith('run ')]
         user = f'{os.getuid()}:{os.getgid()}'
-        self.assertEqual(run, [f'run --rm --user {user} -e HOME=/home/bot -e CLAUDE_CODE_OAUTH_TOKEN {IMAGE}claude:latest claude auth status'])
+        self.assertEqual(len(run), 1, run)
+        self.assertIn(f'--user {user} -e HOME=/home/bot', run[0])
+        self.assertIn(f'-e CLAUDE_CODE_OAUTH_TOKEN', run[0])
+        self.assertTrue(run[0].endswith(f'{IMAGE}claude:latest claude auth status'), run[0])
         self.assertNotIn('sekrit-value', '\n'.join(self.calls()), 'secrets go in by name, never as a value')
 
     def test_the_keepers_own_environment_stays_out(self):
         # what the keeper's service has in its environment (its own token, say) is not a bot's secret
-        os.environ.update(BOARD_TOKEN='keeper-own', FORGEJO_TOKEN='forge-own', CLAUDE_CODE_OAUTH_TOKEN='fleet')
-        with open(self.k.FLEET_ENV, 'w') as fh:
-            fh.write('GH_TOKEN=gh\n')
+        self.runtime('docker')
+        self.pulled(self.k.Images())
+        os.environ.update(BOARD_TOKEN='keeper-own', FORGEJO_TOKEN='forge-own')
+        self.fleet_env('CLAUDE_CODE_OAUTH_TOKEN=fleet\nGH_TOKEN=gh\n')
         c = self.k.Credentials('box')
-        argv = self.k.in_image('docker', 'claude', ['claude', 'auth', 'status'], c.env())
-        self.assertEqual([argv[i + 1] for i, a in enumerate(argv) if a == '-e'], ['HOME=/home/bot', 'CLAUDE_CODE_OAUTH_TOKEN', 'GH_TOKEN'])
+        c.check(self.k.CREDENTIALS[1], c.env())
+        run = [line.split() for line in self.calls() if line.startswith('run ')][0]
+        self.assertEqual([run[i + 1] for i, a in enumerate(run) if a == '-e'],
+                         ['HOME=/home/bot', 'CLAUDE_CODE_OAUTH_TOKEN', 'GH_TOKEN'])
 
     def test_the_token_is_tried_in_the_image(self):
         self.runtime('docker')
-        os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = 'good'
+        self.fleet_env('CLAUDE_CODE_OAUTH_TOKEN=good\n')
         self.pulled(self.k.Images())
         c = self.k.Credentials('box'); c.refresh({'claude'}, force=True)
         self.assertEqual(c.state['claude'], ('ok', ''))
@@ -136,14 +148,17 @@ class KeeperImages(unittest.TestCase):
         self.runtime('docker')
         os.makedirs(os.path.join(self.home, '.codex'))
         open(os.path.join(self.home, '.codex', 'auth.json'), 'w').close()
-        with open(self.k.FLEET_ENV, 'w') as fh:
-            fh.write('GH_TOKEN=x\n')
-        env = {'PATH': '/bin', 'GH_TOKEN': 'x', 'BOARD_TOKEN': 'the keeper\'s own'}
-        argv = self.k.in_image('docker', 'codex', ['codex', 'login', 'status'], env)
-        self.assertEqual(argv, ['docker', 'run', '--rm', '--user', f'{os.getuid()}:{os.getgid()}', '-e', 'HOME=/home/bot',
-                                '-e', 'GH_TOKEN', '-v',
-                                f'{self.home}/.codex/auth.json:/home/bot/.codex/auth.json:ro',
-                                IMAGE + 'codex:latest', 'codex', 'login', 'status'])
+        self.fleet_env('GH_TOKEN=x\n')
+        argv = self.k.in_image(['codex', 'login', 'status'])
+        self.assertEqual(argv[1:], ['run-in-container', '--box', 'codex', '--', 'login', 'status'])
+        self.assertEqual(os.path.basename(argv[0]), 'bot')
+        self.pulled(self.k.Images(), ('codex',))
+        fake(self.bin, 'codex', 'echo "Logged in using ChatGPT"')
+        c = self.k.Credentials('box')
+        c.check(next(x for x in self.k.CREDENTIALS if x[0] == 'codex'), c.env())
+        run = [line for line in self.calls() if line.startswith('run ')][0]
+        self.assertIn(f'-v {self.home}/.codex/auth.json:/home/bot/.codex/auth.json:ro', run)
+        self.assertTrue(run.endswith(IMAGE + 'codex:latest codex login status'), run)
 
     def test_the_registry_is_a_box_setting(self):
         os.environ['BOT_HARNESS_REGISTRY'] = 'reg.example:5000'

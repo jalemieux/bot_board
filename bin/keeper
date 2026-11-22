@@ -657,7 +657,6 @@ class Handover:
 # the login checks inside them. No container is given the runtime, the host home or this directory.
 HARNESSES = ("claude", "codex", "opencode", "copilot")
 HARNESS_REGISTRY = "minipc-2.taild87368.ts.net:3000"
-CODEX_LOGIN = os.path.expanduser("~/.codex/auth.json")     # mounted read-only into its checks
 
 
 def runtime():
@@ -671,21 +670,11 @@ def harness_image(harness):
     return f"{setting('BOT_HARNESS_REGISTRY').strip() or HARNESS_REGISTRY}/jac/bot_board-harness-{harness}:latest"
 
 
-def in_image(rt, harness, cmd, env):
-    """argv that runs cmd once in the harness's image, for the box rather than a bot: no checkout and
-    no state volume. Secrets go in by name, as bin/bot passes them (#477), never as a file; codex
-    reads its login, mounted read-only where its home is in the image."""
-    # as this box's user, as bin/bot runs it (#477): a login file owned by it (mode 600) is then
-    # readable, and HOME is set, since that uid has no home of its own in the image
-    args = [rt, "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/home/bot"]
-    # only the secrets meant for bots, fleet.env's, and the fleet's claude token where the keeper's own
-    # environment sets it: never the rest of the keeper's environment, which may hold its own token
-    for name in sorted((set(read_env(FLEET_ENV)) | ({"CLAUDE_CODE_OAUTH_TOKEN"} & set(env))) & set(env)):
-        if SECRET_NAME.fullmatch(name):
-            args += ["-e", name]
-    if harness == "codex" and os.path.exists(CODEX_LOGIN):
-        args += ["-v", f"{CODEX_LOGIN}:/home/bot/.codex/auth.json:ro"]
-    return args + [harness_image(harness), *cmd]
+def in_image(cmd):
+    """argv that runs cmd (a harness's own command: cmd[0] is the harness) once in its image, for the box
+    rather than a bot: bin/bot owns the runtime, image, secrets-by-name and the codex login mount (#477),
+    so the keeper only asks it (#490)."""
+    return [os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot"), "run-in-container", "--box", cmd[0], "--", *cmd[1:]]
 
 
 class Images:
@@ -867,7 +856,7 @@ class Credentials:
                 return "unknown", f"the runtime {rt} is not on the keeper's PATH"
             if have.returncode:
                 return "missing", f"no {name} image here yet; the keeper pulls {harness_image(name)}"
-            cmd = in_image(rt, name, cmd, env)
+            cmd = in_image(cmd)
         elif not shutil.which(cmd[0], path=env.get("PATH")):
             return "missing", f"{cmd[0]} is not installed (or not on the keeper's PATH)"
         try:
@@ -929,7 +918,7 @@ class Credentials:
         result, retry = None, False
         try:
             rt = runtime()      # in the image when bots run in one (#478): the token is tried where it is used
-            r = subprocess.run(in_image(rt, "claude", TOKEN_PROBE, env) if rt else TOKEN_PROBE, capture_output=True,
+            r = subprocess.run(in_image(TOKEN_PROBE) if rt else TOKEN_PROBE, capture_output=True,
                                text=True, timeout=120 if rt else 90, env=env, cwd=where,
                                stdin=subprocess.DEVNULL)
             d = json.loads(r.stdout)
