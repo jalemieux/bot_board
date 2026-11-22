@@ -115,6 +115,10 @@ board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
 # as you, not in containers (#651). Linux only until Forgejo is installed natively on a Mac.
+# a native Forgejo (deploy/forgejo-native) lives with the board: it starts and stops with it, and --purge removes its data
+FORGEJO_HOME=${FORGEJO_DIR:-$HOME/.bot_board/forgejo}
+has_native_forgejo() { [ -f "$FORGEJO_HOME/work/custom/conf/app.ini" ]; }
+native_forgejo() { BOARD=http://127.0.0.1:${PORT:-8080} bash "$SRC/deploy/forgejo-native" "$1"; }
 forge_native() { local d=${DOCKER:-docker}; [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
@@ -208,12 +212,14 @@ case $CMD in
     say "installed; manage it all with $(dirname "$SRC")/bot_board status|stop|restart|update|uninstall" ;;
   start|restart)
     [ -z "$BOARD_ON" ] || board up        # up stops a running board first
+    [ -z "$BOARD_ON" ] || ! has_native_forgejo || native_forgejo start
     if [ -n "$BOTS_ON" ]; then
       "$BOT" keeper install
       if [ "$CMD" = restart ]; then for h in $(running_bots); do "$BOT" restart "$h"; done; fi
     fi ;;
   stop)
     [ -z "$BOARD_ON" ] || board stop || true
+    [ -z "$BOARD_ON" ] || ! has_native_forgejo || native_forgejo stop
     if [ -n "$BOTS_ON" ]; then
       keeper_stop; say "keeper stopped; start brings it back, and it starts the bots the board wants"
       for h in $(running_bots); do "$BOT" stop "$h"; done
@@ -245,6 +251,8 @@ case $CMD in
     if [ -n "$BOTS_ON" ] && [ -n "$PURGE" ]; then "$BOT" keeper leave || true; fi
     if [ -n "$BOARD_ON" ]; then
       board stop || true
+      ! has_native_forgejo || native_forgejo stop || true
+      if [ -n "$PURGE" ] && [ -d "$FORGEJO_HOME" ]; then rm -rf "$FORGEJO_HOME" "$HOME/.bot_board/forgejo-admin-password" "$HOME/.bot_board/forgejo-hook-id"; say "removed Forgejo and its data: $FORGEJO_HOME"; fi
       boot="$(dirname "$SRC")/bot_board start board"      # the @reboot line run.sh suggests, or the older one
       if crontab -l 2>/dev/null | grep -qF -e "$boot" -e "$RUN"; then
         crontab -l | grep -vF -e "$boot" -e "$RUN" | crontab -; say "removed the board's @reboot line from crontab"

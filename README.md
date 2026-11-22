@@ -96,8 +96,10 @@ Linux only for now.
 checksum) and runs it as you, under `~/.bot_board/forgejo`, on the first free port from
 3000, and wires them. The bots then run as your user, with your user's access, not in
 containers, and they can read the Forgejo admin password. A box that was set up for
-Docker stays on Docker. Manage Forgejo with `~/.bot_board/src/deploy/forgejo-native
-start|stop|status`. macOS has no native Forgejo binary yet: use Docker there.
+Docker stays on Docker. `bot_board stop board`, `start board` and `uninstall board` take Forgejo with the board,
+and `--purge` removes its data (`~/.bot_board/forgejo`). It is not a service: after a
+reboot, `bot_board start board` brings it back. To manage it alone, use
+`~/.bot_board/src/deploy/forgejo-native start|stop|status`. macOS has no native Forgejo binary yet: use Docker there.
 
 [Getting started](#9-getting-started) has the details and what to do first.
 
