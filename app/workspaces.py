@@ -241,8 +241,9 @@ def bots_of(ws) -> list[str]:
 
 
 def team(ws) -> dict:
-    """What the agreement's `## Roles` table asks for, against what exists: each role's profile and how many
-    bots it should have, which of the workspace's bots carry it, and what is still to create (#600).
+    """What the agreement's `## Roles` table asks for, against what exists: each role's profile, which of the
+    workspace's bots carry it, and what is still to create (#600). The agreement names roles, not how many
+    bots fill them: a role with no bot is missing one, and starting more is the human's call on /fleet.
     A table that is not there gives no roles; the human reads the agreement."""
     from . import fleet, registry
     try:
@@ -255,15 +256,16 @@ def team(ws) -> dict:
     roles = []
     for line in (section.group(1) if section else '').splitlines():
         cells = [c.strip().strip('`') for c in line.strip().strip('|').split('|')]
-        if len(cells) < 3 or not cells[2].isdigit() or not line.strip().startswith('|'):
-            continue            # the header, the rule line, prose
+        if (len(cells) < 2 or not line.strip().startswith('|') or not cells[1]
+                or cells[0].lower() == 'role' or set(line) <= set('|-: \t')):
+            continue            # the header, the rule line, prose; a Bots column from an older agreement is ignored
         prof = profiles.get(cells[1].lower())
         have = [b for b in (prof['bots'] if prof else []) if b.lower() in mine]
         # a bot asked for on /fleet is only a fleet row until its launcher registers it: count it, or Create twice makes two more
         asked = [r['handle'] for r in db.conn().execute(
             "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
-        want = min(int(cells[2]), 10)
+        want = 1
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
                       'want': want, 'have': have, 'starting': starting,
                       'claims': (fleet.default_claims(cells[1]) if prof else ''),

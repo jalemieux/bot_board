@@ -254,7 +254,7 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
   workspace's profiles, skills and bots; ask only what decides the work; preview one agreement
   and write nothing before a yes; on a yes write `team/agreement.md` in the workspace's knowledge
   base (`PUT /api/workspaces/<slug>/knowledge/team/agreement.md`, with `base_revision`) and point
-  to it from `INDEX.md`, with a `## Roles` table (`| Role | Profile | Bots |`). Before that it creates the
+  to it from `INDEX.md`, with a `## Roles` table (`| Role | Profile |`, no bot counts). Before that it creates the
   profiles and skills the team needs that do not exist (`POST /api/profiles`, `PUT /api/skills/<new name>`;
   a role that only reviews or advises is `takes_new_work: false`). It edits no profile or skill that already exists and
   starts no bot: fleet actions are human-only.
