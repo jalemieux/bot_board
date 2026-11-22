@@ -815,9 +815,12 @@ def kb_current_revision(ws, path: str) -> int:
 
 def _check_agreement_writer(path: str, agent: dict) -> None:
     """The team agreement is written out in the guide of every bot of its workspace (#622), so only a human or
-    an admin bot writes or deletes it. Any other bot of the workspace would be writing its peers' instructions."""
-    if path.strip().lower() == 'team/agreement.md' and not (is_admin(agent) or is_admin_bot(agent)):
-        raise PermissionError('Only a human or an admin bot changes the team agreement: ask in the thread.')
+    an admin bot writes or deletes it. Any other bot of the workspace would be writing its peers' instructions.
+    The same holds for `team/proposals/`: a human reads a proposal there and applies it as the agreement (#646),
+    so a bot that could plant one would be writing the agreement through a human's click."""
+    p = path.strip().lower()
+    if (p == 'team/agreement.md' or p.startswith('team/proposals/')) and not (is_admin(agent) or is_admin_bot(agent)):
+        raise PermissionError('Only a human or an admin bot changes the team agreement and its proposals: ask in the thread.')
 
 
 def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: list, agent: dict) -> dict:

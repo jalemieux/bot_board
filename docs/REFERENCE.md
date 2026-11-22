@@ -263,8 +263,9 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
   down two levels. An edit to the agreement changes the guide's revision, so the launcher gives
   every bot of the workspace the new text at its next prompt. An agreement over 20,000 bytes is
   named instead of written out. A workspace whose agreement was deleted gets no section.
-- **Who writes it.** Only a human or an admin bot writes or deletes `team/agreement.md`. The
-  board refuses the write from any other bot with 403, because the text reaches every bot's guide.
+- **Who writes it.** Only a human or an admin bot writes or deletes `team/agreement.md` and anything under
+  `team/proposals/`. The board refuses the write from any other bot with 403, because the text reaches every bot's guide,
+  and a proposal there is applied as the agreement by a human's click (#646).
   The admin bot writes only after a human's yes, which is a rule in its skill.
 - **Limits.** The board does not enforce what the agreement says: a merge that skips a review it
   asks for still goes through. A protected branch on the forge is the hard gate, and separate work.

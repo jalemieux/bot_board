@@ -95,6 +95,15 @@ Then **preview the change, short, and wait:** each section that changes, before 
 line per role and profile it touches, as in step 4 of "Set up a team". Write nothing before a clear
 yes. Then "Write it".
 
+**When the request comes from the Team tab.** A human can ask for a change in a text box on the
+workspace's Team tab. It arrives as a thread in the workspace's General channel whose first line is
+`Amendment request for <workspace>, agreement revision <n>:`, then their words. Answer in that
+thread as above: ask only what you cannot guess, then show the plain words, what else you changed
+so the agreement does not contradict itself, and who it affects. Do not write `team/agreement.md`.
+Save the whole proposed agreement as `team/proposals/<thread id>.md`, with the revision you read on
+its first line as `<!-- base: <n> -->`. The page shows the human the difference and a button; only
+their press applies it, and it posts the outcome in the thread.
+
 ## Choose profiles
 
 Profiles are shared by every workspace, so reuse them. For each role, in this order:
