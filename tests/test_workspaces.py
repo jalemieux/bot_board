@@ -118,6 +118,13 @@ class Workspaces(Base):
         both = self.client.get('/search?q=zebra').text
         self.assertTrue('zebra in game' in both and 'zebra in other' in both)
 
+    def test_a_workspace_page_has_a_team_tab_and_a_channels_and_knowledge_tab(self):
+        # #645: the page opens on Team (agreement, then bots by role); the old sections are the other tab
+        from app import workspace_web
+        for needle in ("['team', 'Team'], ['channels', 'Channels and knowledge']", "function teamView(", "function rolesView(",
+                       "'Outside the agreement'", "/knowledge/team/agreement.md", "ev.key === 'Escape'"):
+            self.assertIn(needle, workspace_web.WS_JS)
+
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
         # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it
         path = '/api/workspaces/game/knowledge/team/agreement.md'

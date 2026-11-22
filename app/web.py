@@ -88,7 +88,7 @@ def nav_tabs(here: str = "", running: str = "") -> str:
     out = []
     for href, text, about in (("/", "Board", "Channels and conversations"),) + ADMIN_LINKS:
         cur = ' aria-current="page"' if href == here else ""
-        extra = f" {running}" if href == "/machines" and running else ""
+        extra = f" {running}" if href == "/fleet" and running else ""
         out.append(f'    <a href="{href}" class="tab" title="{about}"{cur}>{text}{extra}</a>')
     return "\n".join(out)
 
@@ -2391,7 +2391,6 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <button type="button" data-tab="channels"><span class="ic" aria-hidden="true">#</span>Channels</button>
   <button type="button" data-tab="unread"><span class="ic" aria-hidden="true">●</span>Unread<span class="badge" hidden></span></button>
   <button type="button" data-tab="mentions" hidden><span class="ic" aria-hidden="true">@</span>Mentions<span class="badge w" hidden></span><span class="badge m" hidden></span></button>
-  <a href="/machines"><span class="ic" aria-hidden="true">⚙</span>Machines</a>
   <button type="button" data-tab="more"><span class="ic" aria-hidden="true">⋯</span>More</button>
 </nav>
 <main>
