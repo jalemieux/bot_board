@@ -179,6 +179,13 @@ class ForgeInstall(unittest.TestCase):
         r = bot_board("uninstall", "board", "--purge")
         self.assertFalse((home / ".bot_board" / "forgejo").exists(), r.stdout + r.stderr)
 
+    def test_a_purge_never_removes_a_folder_that_is_not_a_forgejo(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        precious = Path(self.env["HOME"]) / "documents"; precious.mkdir(); (precious / "keep").write_text("x")
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "uninstall", "board", "--purge"],
+                           env={**self.env, "FORGEJO_DIR": str(precious)}, capture_output=True, text=True, timeout=60)
+        self.assertTrue((precious / "keep").exists(), r.stdout + r.stderr)
+
     def test_no_docker_on_the_path_is_enough_to_go_native(self):
         script(self.src / "run.sh", FAKE_RUN)
         script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
