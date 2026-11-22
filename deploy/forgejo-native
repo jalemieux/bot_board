@@ -35,7 +35,11 @@ HOST=${FORGEJO_HOST:-localhost}
 
 say() { echo "forgejo-native: $*"; }
 die() { echo "forgejo-native: $*" >&2; exit 1; }
-running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+# the pid file may outlive a reboot, and the pid may then be another process: it counts only if it is our binary
+running() {
+  [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null \
+    && tr '\0' ' ' < "/proc/$(cat "$PIDFILE")/cmdline" 2>/dev/null | grep -qF "$DIR/forgejo-$VERSION"
+}
 port() { sed -n 's/^HTTP_PORT *= *//p' "$INI" 2>/dev/null | head -1; }
 free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 

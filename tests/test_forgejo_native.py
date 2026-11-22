@@ -54,6 +54,14 @@ class ForgejoNative(unittest.TestCase):
         self.assertEqual(self.run_cmd("stop").returncode, 0)
         self.assertEqual(self.run_cmd("status").returncode, 1)
 
+    def test_a_stale_pid_file_is_not_trusted(self):
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.run_cmd("stop")
+        other = subprocess.Popen(["sleep", "30"]); self.addCleanup(other.kill)
+        Path(self.tmp.name, "fj/forgejo.pid").write_text(str(other.pid))
+        self.assertEqual(self.run_cmd("stop").returncode, 0)
+        self.assertIsNone(other.poll(), "stop must not kill a process that is not Forgejo")
+
     def test_a_taken_port_moves_to_the_next(self):
         s = socket.socket(); s.bind(("127.0.0.1", self.port)); s.listen()
         self.addCleanup(s.close)
