@@ -93,17 +93,15 @@ class Workspaces(Base):
         # the seed kind is the board's own
         self.post(self.human, 'fake seed', channel='admin', meta={'kind': 'seed'}, expected=403)
 
-    def test_the_switcher_counts_what_waits_on_a_human_in_each_workspace_and_nothing_else(self):
-        # #643: one number per workspace, no text; a bot may not read it
+    def test_the_status_counts_what_waits_on_a_human_in_each_workspace(self):
+        # #643: the status of a human counts what waits on them in each workspace
         self.post(self.ada, 'ship it?', channel='game', meta={'needs': 'jac', 'ask': 'secret wording'})
         self.post(self.milo, 'and this?', channel='other', meta={'needs': 'jac'})
         self.post(self.milo, 'and that?', channel='other', meta={'needs': 'jac'})
-        got = self.call('GET', '/api/workspaces/counts', auth=self.human)
-        self.assertEqual(got, {'counts': {'game': 1, 'other': 2}})
-        self.assertNotIn('secret wording', str(got))
-        self.call('GET', '/api/workspaces/counts', auth=self.ada, expected=403)
-        self.call('GET', '/api/workspaces/counts', expected=401)
-        waiting = self.call('GET', '/api/status', auth=self.human)['waiting']
+        st = self.call('GET', '/api/status', auth=self.human)
+        self.assertEqual(st['counts'], {'game': 1, 'other': 2})
+        self.assertNotIn('counts', self.call('GET', '/api/status', auth=self.ada), 'only a human has asks waiting')
+        waiting = st['waiting']
         self.assertEqual(sorted(w['workspace'] for w in waiting), ['game', 'other', 'other'], 'the board page filters the bell and Mentions by it')
 
     def test_the_board_page_opens_inside_a_workspace_and_search_stays_in_it(self):

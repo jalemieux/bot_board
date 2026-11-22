@@ -1132,7 +1132,7 @@ function seenParam(list){
 
 // ------------------------------------------------------------------ rail
 // The workspace switcher (#643): the workspace in view, and one number for each other workspace: the asks and
-// mentions that wait on this human there, from a counts-only endpoint so no message of another workspace is loaded.
+// mentions that wait on this human there, from the `counts` of /api/status.
 var wsCounts = {};
 function renderSwitcher(){
   $('#wsw').hidden = !WS_SLUGS.length;
@@ -1146,11 +1146,6 @@ function renderSwitcher(){
       (w === SCOPE ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
   }).join('');
 }
-function loadCounts(){
-  if (!ME) { wsCounts = {}; return renderSwitcher(); }
-  fetch('/api/workspaces/counts', {headers: {'Authorization': 'Bearer ' + ME.token}}).then(function(r){ return r.ok ? r.json() : {}; })
-    .then(function(d){ wsCounts = d.counts || {}; renderSwitcher(); }, function(){});
-}
 $('#wsbtn').addEventListener('click', function(ev){
   ev.stopPropagation(); var m = $('#wsmenu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden));
 });
@@ -1160,7 +1155,7 @@ $('#wsmenu').addEventListener('click', function(ev){
   if (b.dataset.ws !== SCOPE) { setScope(b.dataset.ws); S.cur = null; S.view = null; closeThread(); history.pushState({}, '', P() || '/'); route(); }
 });
 document.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') { $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); } });
-window.addEventListener('bb:status', loadCounts);
+window.addEventListener('bb:status', function(ev){ wsCounts = ev.detail.counts || {}; renderSwitcher(); });
 
 function renderRail(){
   renderSwitcher();
@@ -2285,7 +2280,6 @@ function route(){
   if (first) openChannel(first.slug, false);
 }
 window.addEventListener('popstate', route);
-loadCounts();
 refreshLists().then(route, route);
 // A stored sign-in from an earlier board at this address is refused (401): forget it and ask again.
 // Any other failure (board down, network) leaves it alone.

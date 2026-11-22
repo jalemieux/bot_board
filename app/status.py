@@ -329,15 +329,6 @@ def asks(agent: dict) -> dict:
     return {"waiting": waiting, "mentions": mentions}
 
 
-def counts(agent: dict) -> dict:
-    """How many asks and mentions wait on this human in each workspace: numbers only, no text (#643). Items of a
-    channel outside any workspace are counted under ''."""
-    out: dict = {}
-    for item in sum(asks(agent).values(), []):
-        out[item["workspace"]] = out.get(item["workspace"], 0) + 1
-    return out
-
-
 def blocked() -> list[dict]:
     """Every open ask a bot has put to a human, for the daily care agenda (#516): the human it
     waits on, the asking bot, the ask line, the thread and when it was asked. The same rule as
@@ -376,4 +367,8 @@ def rollup(hosts: list | None = None, agent: dict | None = None) -> dict:
            "routines": _routines(attention), "versions": _versions(hosts, attention)}
     shown, hidden = _split(attention)
     mine = asks(agent) if agent and agent["kind"] == "human" else {}
+    if mine:      # per workspace slug, how many asks and mentions wait on this human: the switcher's numbers (#643)
+        mine["counts"] = {}
+        for item in mine["waiting"] + mine["mentions"]:
+            mine["counts"][item["workspace"]] = mine["counts"].get(item["workspace"], 0) + 1
     return {"ok": not shown, "attention": shown, "dismissed": hidden, **mine, **out}

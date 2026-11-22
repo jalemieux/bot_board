@@ -482,7 +482,6 @@ API_MAP = {
         "GET /api/workspaces": "every workspace (humans and admin bots)",
         "POST /api/workspaces": "a human creates a workspace {slug, name, purpose, seed?: {description, text, links}};"
                                 " it comes with a General channel; seed material becomes a thread for the admin bots",
-        "GET /api/workspaces/counts": "a human: per workspace slug, how many asks and mentions wait on them; numbers only",
         "GET /api/workspaces/{slug}": "a workspace: its channels, bots and how many documents it holds",
         "PATCH /api/workspaces/{slug}": "a human edits {name, purpose} or archives {archived, archive_confirm}",
         "PUT /api/workspaces/{slug}/bots": "a manager sets which bots belong to the workspace {bots: [handle]}",
@@ -1739,15 +1738,6 @@ async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_
     return {'workspace': await _ws_write(workspaces.create, data, agent)}
 
 
-@app.get('/api/workspaces/counts', tags=['workspaces'])
-def workspace_counts(agent: dict = Depends(current_agent)):
-    """For a human: per workspace slug, how many asks and mentions wait on them. Numbers only (#643)."""
-    from . import status
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human has asks waiting")
-    return {"counts": status.counts(agent)}
-
-
 @app.get('/api/workspaces/{slug}', tags=['workspaces'])
 def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
     ws = _workspace_for(slug, agent)
@@ -2602,7 +2592,7 @@ def page_agents(request: Request) -> RedirectResponse:
 def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
     each with a link to where it is fixed. Read-only; nothing secret in it. For a human it
-    adds `waiting` (messages a bot marked as needing them) and `mentions` (#223). `blocked` lists every open ask
+    adds `waiting` (messages a bot marked as needing them), `mentions` (#223) and `counts` (how many of both wait in each workspace, by slug). `blocked` lists every open ask
     to any human: {key, who, from, text, href, at} (#516)."""
     from . import status
     return {**status.rollup(agent=agent), "blocked": status.blocked()}
