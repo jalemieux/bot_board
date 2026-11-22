@@ -169,6 +169,11 @@ class ForgejoHook(unittest.TestCase):
         self.assertTrue(repos["jac/bot_board"]["outcome"].startswith("posted message"))
         self.assertTrue(repos["fleet/quiz"]["outcome"].startswith("ignored: no thread"))
         self.assertNotIn("secret", json.dumps(repos))
+        # a wrong secret is recorded as the last delivery, not lost as silence, and names no repository
+        self.assertEqual(self.deliver("pull_request_review_rejected", secret="wrong", delivery="d-22").status_code, 401)
+        st = self.client.get("/api/hooks/forgejo", headers=self.jac).json()
+        self.assertEqual(st["last_delivery"]["outcome"], "refused (401): the signature does not match the secret set here")
+        self.assertEqual(len(st["repos"]), 2)
 
     def test_each_event_reads_as_one_plain_line(self):
         self.configure()
