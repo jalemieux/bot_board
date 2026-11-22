@@ -115,7 +115,7 @@ board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
 # as you, not in containers (#651). Linux only until Forgejo is installed natively on a Mac.
-forge_native() { local d=${DOCKER:-docker}; [ -n "${FORGE_NATIVE:-}" ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
+forge_native() { local d=${DOCKER:-docker}; [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
   local tok i _pair native=
@@ -123,6 +123,8 @@ forge_install() {
   if [ -n "$native" ]; then
     [ "$(uname -s)" = Linux ] || die "install --forge without Docker needs Linux for now: Forgejo has no macOS binary (install Docker, or see README)"
     d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c"; done
+    grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this box is set up for Docker (BOT_RUNTIME in $CFG_FILE): install --forge keeps using Docker here, and a native install is for a box that never ran it"
+    say "native install ($([ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found")): the bots will run as you, with your user's access, not in containers"
   fi
   [ -n "$native" ] || [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
   [ -n "$native" ] || for c in $d jq openssl curl python3; do command -v "${c%% *}" >/dev/null || die "install --forge needs $c"; done
@@ -150,7 +152,8 @@ forge_install() {
           -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) || die "could not sign in as $human on $api"
   [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
   if [ -n "$native" ]; then
-    ( eval "$(BOARD=$api bash "$SRC/deploy/forgejo-native" env)"      # in a subshell: it sets FORGE, which is this script's flag
+    _pair=$(BOARD=$api bash "$SRC/deploy/forgejo-native" env) || die "Forgejo is not set up: $SRC/deploy/forgejo-native start"
+    ( eval "$_pair"      # in a subshell: it sets FORGE, which is this script's flag
       BOARD=$api BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" ) \
       || die "forge-setup failed; run it again from $SRC once the cause is gone"
   else

@@ -143,6 +143,25 @@ class ForgeInstall(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("docker compose --profile forge up -d --build", "\n".join(self.calls()))
 
+    def test_a_box_set_up_for_docker_does_not_go_native(self):
+        self.cfg.parent.mkdir(parents=True); self.cfg.write_text('BOT_RUNTIME="docker"\n')
+        r = self.native()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("set up for Docker", r.stderr)
+        self.assertEqual(self.calls(), [], "nothing was started")
+
+    def test_native_is_asked_for_with_1_only(self):
+        r = self.run_install(FORGE_NATIVE="0")
+        self.assertIn("docker compose --profile forge up", "\n".join(self.calls()), r.stderr)
+
+    def test_a_forgejo_that_is_not_set_up_stops_the_install(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", "#!/bin/sh\n[ \"$1\" = env ] && exit 1\necho \"forgejo-native $1\" >> \"$FAKE_LOG\"\n")
+        r = self.run_install(FORGE_NATIVE="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not set up", r.stderr)
+        self.assertNotIn("forge-setup", "\n".join(self.calls()))
+
     def test_no_docker_on_the_path_is_enough_to_go_native(self):
         script(self.src / "run.sh", FAKE_RUN)
         script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
