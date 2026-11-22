@@ -20,6 +20,11 @@
 # BOARD_HUMAN_TOKEN (a human's, instead of signing in), INVITE (the board's invite code, if
 # it has one), FORGE (Forgejo as this box reaches it, default http://127.0.0.1:3000),
 # COMPOSE (default `docker compose --profile forge`; prefix sudo if docker needs it).
+#
+# A Forgejo that is not in Docker (#651): set FORGEJO_BIN to its binary and FORGEJO_WORK_PATH to its data
+# directory, and the accounts are made with that binary instead of `docker compose exec`. Then the
+# webhook address defaults to the board as this box reaches it (BOARD), not the compose name; HOOK
+# overrides it either way. Forgejo reads its settings from FORGEJO_CUSTOM or the work path, as always.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -31,7 +36,10 @@ SCOPES=write:repository,write:issue,write:user,read:organization
 
 say() { echo "forge-setup: $*"; }
 die() { echo "forge-setup: $*" >&2; exit 1; }
-forgejo() { $COMPOSE exec -T -u 1000 forgejo forgejo "$@"; }
+forgejo() {
+  if [ -n "${FORGEJO_BIN:-}" ]; then "$FORGEJO_BIN" --work-path "${FORGEJO_WORK_PATH:?FORGEJO_BIN needs FORGEJO_WORK_PATH}" "$@"
+  else $COMPOSE exec -T -u 1000 forgejo forgejo "$@"; fi
+}
 board() {   # board METHOD PATH [JSON]: the answer's body; fails loudly on an error
   curl -fsS -X "$1" "$BOARD$2" -H "Authorization: Bearer $BOARD_TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"}
 }
@@ -86,7 +94,7 @@ fi
 #    and the board has a secret. Otherwise that hook goes, and a new secret is set on the board
 #    before the hook that signs with it is made, so a failure half way is redone, not doubled.
 [ -s "$PWFILE" ] || die "the site webhook needs $ME's Forgejo password in $PWFILE"
-HOOK=http://bot_board:8080/api/hooks/forgejo
+HOOK=${HOOK:-$( [ -n "${FORGEJO_BIN:-}" ] && echo "$BOARD/api/hooks/forgejo" || echo http://bot_board:8080/api/hooks/forgejo )}
 IDFILE=$(dirname "$PWFILE")/forgejo-hook-id
 admin() { curl -fsS -u "$ME:$(cat "$PWFILE")" -H 'Content-Type: application/json' "$@"; }
 id=$(cat "$IDFILE" 2>/dev/null || true)
@@ -107,7 +115,7 @@ else
   say "site webhook made: every repository's events reach the board"
 fi
 
-host=$($COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
+host=$( [ -n "${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
 say "done. Forgejo is at ${host%/}; sign in there as $ME."
 say "Next: write that address into your workspace's knowledge base, so the bots find it,"
 say "and bring a repository over (docs/forgejo-setup.md, step 5): add fleet as a write collaborator."
