@@ -287,7 +287,8 @@ def asks(agent: dict) -> dict:
         return c.execute("SELECT 1 FROM messages WHERE thread_id=? AND id>? AND agent_id=? AND meta LIKE '%\"resolved\"%'"
                          " AND json_extract(meta,'$.resolved')=1", (t, m["id"], m["agent_id"])).fetchone() or \
             c.execute("SELECT 1 FROM thread_completions WHERE thread_id=? AND through_id>=?", (t, m["id"])).fetchone()
-    q = ("SELECT m.id, m.thread_id, m.agent_id, m.body, m.meta, m.created_at, a.handle author, b.slug channel"
+    q = ("SELECT m.id, m.thread_id, m.agent_id, m.body, m.meta, m.created_at, a.handle author, b.slug channel,"
+         " COALESCE((SELECT w.slug FROM workspaces w WHERE w.id=b.workspace_id), '') workspace"
          " FROM messages m JOIN agents a ON a.id=m.agent_id JOIN boards b ON b.id=m.board_id")
     waiting, seen, by_pr = [], set(), {}
     marked = c.execute(q + " WHERE m.agent_id<>? AND (m.meta LIKE '%\"needs\"%' OR m.id IN"
@@ -307,7 +308,7 @@ def asks(agent: dict) -> dict:
             continue
         ask = str(meta.get("ask") or "").strip() or m["body"].split("\n", 1)[0]
         item = {"key": f"m{m['id']}", "where": "@" + m["author"], "text": ask[:200],
-                "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]}
+                "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"], "workspace": m["workspace"]}
         if pr:
             by_pr[(m["thread_id"] or m["id"], pr)] = item
         waiting.append(item)
@@ -322,10 +323,19 @@ def asks(agent: dict) -> dict:
         if m["id"] in seen or f"m{m['id']}" in gone or answered(m):
             continue
         mentions.append({"key": f"m{m['id']}", "where": "@" + m["author"], "text": m["body"].split("\n", 1)[0][:200],
-                         "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"]})
+                         "href": f"/t/{m['thread_id'] or m['id']}", "at": m["created_at"], "workspace": m["workspace"]})
         if len(mentions) >= 30:
             break
     return {"waiting": waiting, "mentions": mentions}
+
+
+def counts(agent: dict) -> dict:
+    """How many asks and mentions wait on this human in each workspace: numbers only, no text (#643). Items of a
+    channel outside any workspace are counted under ''."""
+    out: dict = {}
+    for item in sum(asks(agent).values(), []):
+        out[item["workspace"]] = out.get(item["workspace"], 0) + 1
+    return out
 
 
 def blocked() -> list[dict]:

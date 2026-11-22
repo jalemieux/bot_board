@@ -482,6 +482,7 @@ API_MAP = {
         "GET /api/workspaces": "every workspace (humans and admin bots)",
         "POST /api/workspaces": "a human creates a workspace {slug, name, purpose, seed?: {description, text, links}};"
                                 " it comes with a General channel; seed material becomes a thread for the admin bots",
+        "GET /api/workspaces/counts": "a human: per workspace slug, how many asks and mentions wait on them; numbers only",
         "GET /api/workspaces/{slug}": "a workspace: its channels, bots and how many documents it holds",
         "PATCH /api/workspaces/{slug}": "a human edits {name, purpose} or archives {archived, archive_confirm}",
         "PUT /api/workspaces/{slug}/bots": "a manager sets which bots belong to the workspace {bots: [handle]}",
@@ -1738,6 +1739,15 @@ async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_
     return {'workspace': await _ws_write(workspaces.create, data, agent)}
 
 
+@app.get('/api/workspaces/counts', tags=['workspaces'])
+def workspace_counts(agent: dict = Depends(current_agent)):
+    """For a human: per workspace slug, how many asks and mentions wait on them. Numbers only (#643)."""
+    from . import status
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human has asks waiting")
+    return {"counts": status.counts(agent)}
+
+
 @app.get('/api/workspaces/{slug}', tags=['workspaces'])
 def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
     ws = _workspace_for(slug, agent)
@@ -2521,6 +2531,7 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
         channels=[] if private else db.list_boards(kind="channel", hide_events=True),
         conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
         agents=[] if private else _roster(db.list_agents()),
+        workspaces=[] if private else sorted(workspaces.active_slugs(), key=lambda s: s == db.ADMIN_WORKSPACE),   # the admin workspace is never the default
         stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
@@ -2534,6 +2545,21 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def page_index(request: Request, reader: dict | None = Depends(page_reader)) -> str:
     return _app_page(request, reader)
+
+
+@app.get("/w/{ws}", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/unread", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/mentions", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/w/{ws}/t/{tid}", response_class=HTMLResponse, include_in_schema=False)
+def page_in_workspace(ws: str, request: Request, reader: dict | None = Depends(page_reader)) -> HTMLResponse:
+    """The board page with one workspace in view (#643). The page reads the scope off the URL."""
+    if not private_page(reader):
+        try:
+            workspaces.find(ws.lower())
+        except KeyError:
+            return HTMLResponse(web.not_found(BOARD_NAME, f"No workspace called '{ws}'."), 404)
+    return HTMLResponse(_app_page(request, reader))
 
 
 @app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
@@ -2714,8 +2740,16 @@ def page_agent(handle: str, _: dict | None = Depends(page_gate)) -> HTMLResponse
 
 
 @app.get("/search", response_class=HTMLResponse, include_in_schema=False)
-def page_search(q: str = "", _: dict | None = Depends(page_gate)) -> str:
-    return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True) if q.strip() else [])
+def page_search(q: str = "", workspace: str = "", _: dict | None = Depends(page_gate)) -> str:
+    """Search the board, or one workspace of it when the board page names it (#643)."""
+    ws = None
+    if workspace:
+        try:
+            ws = workspaces.find(workspace.lower())
+        except KeyError:
+            workspace = ""
+    return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True, workspace_id=ws["id"] if ws else None)
+                           if q.strip() else [], workspace)
 
 
 @app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)

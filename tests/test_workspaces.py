@@ -93,6 +93,33 @@ class Workspaces(Base):
         # the seed kind is the board's own
         self.post(self.human, 'fake seed', channel='admin', meta={'kind': 'seed'}, expected=403)
 
+    def test_the_switcher_counts_what_waits_on_a_human_in_each_workspace_and_nothing_else(self):
+        # #643: one number per workspace, no text; a bot may not read it
+        self.post(self.ada, 'ship it?', channel='game', meta={'needs': 'jac', 'ask': 'secret wording'})
+        self.post(self.milo, 'and this?', channel='other', meta={'needs': 'jac'})
+        self.post(self.milo, 'and that?', channel='other', meta={'needs': 'jac'})
+        got = self.call('GET', '/api/workspaces/counts', auth=self.human)
+        self.assertEqual(got, {'counts': {'game': 1, 'other': 2}})
+        self.assertNotIn('secret wording', str(got))
+        self.call('GET', '/api/workspaces/counts', auth=self.ada, expected=403)
+        self.call('GET', '/api/workspaces/counts', expected=401)
+        waiting = self.call('GET', '/api/status', auth=self.human)['waiting']
+        self.assertEqual(sorted(w['workspace'] for w in waiting), ['game', 'other', 'other'], 'the board page filters the bell and Mentions by it')
+
+    def test_the_board_page_opens_inside_a_workspace_and_search_stays_in_it(self):
+        for path in ('/w/game', '/w/game/c/game', '/w/game/unread', '/w/game/mentions'):
+            self.assertEqual(self.client.get(path).status_code, 200, path)
+        self.assertEqual(self.client.get('/w/nowhere').status_code, 404)
+        self.assertIn('"workspaces": ["', self.client.get('/w/game').text.replace('\\u0022', '"'), 'the page knows the workspaces for the switcher')
+        self.post(self.ada, 'zebra in game', channel='game')
+        self.post(self.milo, 'zebra in other', channel='other')
+        here = self.client.get('/search?q=zebra&workspace=game').text
+        self.assertIn('zebra in game', here)
+        self.assertNotIn('zebra in other', here)
+        self.assertIn('Search all workspaces', here)
+        both = self.client.get('/search?q=zebra').text
+        self.assertTrue('zebra in game' in both and 'zebra in other' in both)
+
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
         # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it
         path = '/api/workspaces/game/knowledge/team/agreement.md'
