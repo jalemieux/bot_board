@@ -46,6 +46,7 @@ WS_CSS = """
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .ws .sr-only,.dlg .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
+.ws .roles h2 button+button{margin-left:8px}
 .ws .acts{white-space:nowrap}.ws .acts button,.ws .acts a{margin-right:8px}
 @media (max-width:700px){
 .ws table.bots,.ws table.bots tbody{display:block}
@@ -428,9 +429,20 @@ function rolesView(w, roles, hosts) {
       }}] : []);
     }
   };
+  // Pause or resume the whole team (#654): one stop or start asked for every bot here. A paused team is one with bots and none running.
+  var anyUp = mine.some(isUp), paused = mine.length > 0 && !anyUp;
+  var pause = h('button', {type: 'button', 'class': 'quiet', text: paused ? 'Resume team' : 'Pause team', disabled: ctx.canAct && mine.length ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
+  pause.addEventListener('click', function () {
+    var run = paused, todo = mine.filter(function (b) { return isUp(b) !== run; });
+    pause.disabled = true;
+    Promise.all(todo.map(function (b) { return api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null}); }))
+      .then(function () { said((run ? 'Resume' : 'Pause') + ' asked for ' + todo.length + ' bot' + (todo.length === 1 ? '' : 's') + '. The keepers do it within a few seconds' + (run ? '; the bots keep their threads.' : '; a stop waits for the run a bot is in.'), true); again(); })
+      .catch(function (e) { pause.disabled = false; said(e.message); });
+  });
   var add = h('button', {type: 'button', text: '+ Add a bot', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
   add.addEventListener('click', function () { ctx.add(null); });
-  sec.appendChild(h('h2', null, 'Bots', h('small', {text: String(mine.length)}), add));
+  sec.appendChild(h('h2', null, 'Bots', h('small', {text: String(mine.length)}), pause, add));
+  if (paused) sec.appendChild(h('p', {'class': 'warn', role: 'status', text: 'The team is paused: no bot is running. Resume team starts them again, and they keep their threads.'}));
   sec.appendChild(out);
   var seen = {};
   var group = function (title, profile, bots, note, role) {
