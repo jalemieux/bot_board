@@ -140,6 +140,17 @@ class Workspaces(Base):
         self.call('PUT', path, doc(rev()), auth=self.human)
         self.call('DELETE', path, {'base_revision': rev(), 'reason': 't'}, auth=self.human)
 
+    def test_only_a_human_or_an_admin_bot_writes_a_proposed_agreement(self):
+        # #646: a human applies a proposal as the agreement, so a workspace bot must not be able to plant one
+        path = '/api/workspaces/game/knowledge/team/proposals/17.md'
+        body = {'body': '<!-- base: 1 -->\n# Team agreement\n', 'base_revision': 0, 'reason': 't', 'sources': []}
+        self.call('PUT', path, body, auth=self.ada, expected=403)
+        self.call('PUT', '/api/knowledge/team/proposals/17.md', body, auth=self.ada, expected=403)
+        self.call('PUT', path, body, auth=self.root)
+        self.call('DELETE', path, {'base_revision': 1, 'reason': 't'}, auth=self.ada, expected=403)
+        self.call('DELETE', path, {'base_revision': 1, 'reason': 't'}, auth=self.human)
+        self.call('PUT', '/api/knowledge/team/notes.md', {'body': 'x', 'base_revision': 0, 'reason': 't', 'sources': []}, auth=self.ada)
+
     def test_team_setup_asks_an_admin_bot_to_work_out_the_workspaces_team_with_its_creator(self):
         def team_threads():
             return [m for m in self.call('GET', '/api/messages', auth=self.root)['messages'] if (m.get('meta') or {}).get('kind') == 'team_setup']
