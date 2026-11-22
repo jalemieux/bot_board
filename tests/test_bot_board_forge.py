@@ -22,8 +22,8 @@ if a[:1] == ["-n"]:                      # jq -n --arg k v '<filter>'
         print(json.dumps({"handle": args["h"], "kind": "human", "invite_code": args["i"]}))
     else:
         print(json.dumps({"value": args["v"]}))
-else:                                     # jq -r .token
-    print(json.load(sys.stdin)["token"])
+else:                                     # jq -r .token, or .path
+    print(json.load(sys.stdin)[a[-1].lstrip(".")])
 '''
 FAKE_CURL = r'''#!/usr/bin/env python3
 import os, sys
@@ -34,6 +34,8 @@ if "-d" in sys.argv:
 url = [x for x in sys.argv[1:] if x.startswith("http")][0]
 if url.endswith("/api/agents"):
     print('{"token": "tok-human"}')
+if url.endswith("/api/signin-links"):
+    print('{"path": "/signin/abc"}')
 '''
 FAKE_DOCKER = r'''#!/bin/sh
 echo "docker $*" >> "$FAKE_LOG"
@@ -107,6 +109,7 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("forge-setup BOARD=http://127.0.0.1:8080 TOKEN=tok-human FORGE=http://127.0.0.1:3000", calls)
         self.assertIn("/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN", calls, "the claude token goes to the board as a fleet secret")
         self.assertIn("bot install --no-bot BOARD=http://127.0.0.1:8080", calls)
+        self.assertIn("/api/signin-links", calls)
         self.assertLess(calls.index("docker compose"), calls.index("forge-setup"), "Forgejo is up before it is wired")
         self.assertLess(calls.index("forge-setup"), calls.index("bot install"), "and the keeper comes last")
         config = self.cfg.read_text()
@@ -137,6 +140,9 @@ class ForgeInstall(unittest.TestCase):
         self.assertNotIn("BOT_RUNTIME", config, "no container runtime: the bots run as the user")
         self.assertIn("running as you", r.stdout)
         self.assertIn("admin password", r.stdout)
+        self.assertIn("curl -fsS -X POST http://127.0.0.1:8080/api/signin-links -H Authorization: Bearer tok-human", calls,
+                      "the install asks the board for a sign-in link with the human's token")
+        self.assertIn("http://127.0.0.1:8080/signin/abc", r.stdout + r.stderr, "and opens it, or prints it with no browser")
 
     def test_a_docker_command_with_a_prefix_stays_on_docker(self):
         r = self.run_install(DOCKER="env docker")      # as "sudo docker" would be

@@ -16,8 +16,10 @@ import hmac
 import json
 import os
 import re
+import secrets
 import signal
 import threading
+import time
 import sqlite3
 from typing import Literal
 from typing import Any
@@ -2747,6 +2749,53 @@ def page_search(q: str = "", workspace: str = "", _: dict | None = Depends(page_
             workspace = ""
     return web.search_page(BOARD_NAME, q, db.search(q, limit=60, hide_events=True, workspace_id=ws["id"] if ws else None)
                            if q.strip() else [], workspace)
+
+
+# One-time sign-in links (#653): the installer, signed in as the human it registered, asks for one and
+# opens it in the browser, so the user lands on the board signed in. In memory: a link lives minutes,
+# and a board restart before it is used only means asking again.
+SIGNIN_LINK_TTL = 600
+_signin_links: dict[str, tuple[int, float]] = {}      # sha256(code) -> (agent id, expires at)
+_signin_lock = threading.Lock()
+
+
+def _link_key(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
+@app.post("/api/signin-links", tags=["agents"])
+def make_signin_link(agent: dict = Depends(current_agent)) -> dict:
+    """A link that signs a browser in as you, once: for a human with a token (the installer) to open
+    the board already signed in. It expires after ten minutes or its first use."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "only a human signs a browser in")
+    code = secrets.token_urlsafe(24)
+    with _signin_lock:
+        now = time.time()
+        for k in [k for k, (_, exp) in _signin_links.items() if exp < now]:
+            del _signin_links[k]
+        _signin_links[_link_key(code)] = (agent["id"], now + SIGNIN_LINK_TTL)
+    return {"path": f"/signin/{code}", "expires_in": SIGNIN_LINK_TTL}
+
+
+@app.post("/api/signin-links/{code}/redeem", tags=["agents"])
+def redeem_signin_link(code: str) -> dict:
+    """Spends the link: a new token for its human, once."""
+    with _signin_lock:
+        link = _signin_links.pop(_link_key(code), None)
+    if link is None or link[1] < time.time():
+        raise HTTPException(410, "this sign-in link was used or has expired")
+    agent = db.get_agent_by_id(link[0])
+    if agent is None:       # the human was deleted since the link was made
+        raise HTTPException(410, "this sign-in link was used or has expired")
+    return {"handle": agent["handle"], "token": db.sign_in(agent["id"])}
+
+
+@app.get("/signin/{code}", response_class=HTMLResponse, include_in_schema=False)
+def page_signin_link(code: str) -> HTMLResponse:
+    """The page behind the link. It spends the link from script, not on this GET, so a link preview
+    or a prefetch does not use it up."""
+    return HTMLResponse(web.signin_link_page(BOARD_NAME, code, READ_TOKEN_REQUIRED), headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @app.get("/onboard", response_class=HTMLResponse, include_in_schema=False)

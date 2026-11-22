@@ -109,6 +109,20 @@ case ${WHAT:-installed} in
 esac
 board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 
+# Open the board in the browser already signed in (#653): a one-time link the board issues to this human's
+# token. With no browser to open (no display, or a remote shell) the link is printed instead.
+open_signed_in() {
+  local path url opener=""
+  path=$(curl -fsS -X POST "$1/api/signin-links" -H "Authorization: Bearer $2" | jq -r .path 2>/dev/null) || path=""
+  case $path in /signin/*) url=$1$path ;; *) say "could not get a sign-in link: open $1 and sign in"; return 0 ;; esac
+  if [ -z "${SSH_CONNECTION:-}" ]; then
+    if command -v open >/dev/null && [ "$(uname -s)" = Darwin ]; then opener=open
+    elif command -v xdg-open >/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then opener=xdg-open; fi
+  fi
+  if [ -n "$opener" ] && $opener "$url" >/dev/null 2>&1; then say "opened the board in your browser, signed in"
+  else say "open this link once to sign in (it expires in ten minutes): $url"; fi
+}
+
 # install --forge: the board and Forgejo in Docker, the Forgejo wired to the board, and the keeper with a
 # first bot that runs in a container (BOT_RUNTIME=docker). Linux only for now: a container reaches the board
 # on 127.0.0.1 through host networking. Every step is safe to run again.
@@ -182,11 +196,12 @@ forge_install() {
     { grep -v "^${_pair%%:*}=" "$CFG_FILE" || true; printf '%s="%s"\n' "${_pair%%:*}" "${_pair#*:}"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
   done
   BOARD=$api BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install --no-bot
+  open_signed_in "$api" "$tok"
   if [ -n "$native" ]; then
-    say "the board is at $api (sign in as $human), Forgejo at $(BOARD=$api bash "$SRC/deploy/forgejo-native" status | sed 's/.* at //'), and the first bot starts within a minute, running as you: watch $api/fleet"
+    say "the board is at $api (you are $human), Forgejo at $(BOARD=$api bash "$SRC/deploy/forgejo-native" status | sed 's/.* at //'), and the first bot starts within a minute, running as you: watch $api/fleet"
     say "the bots run as you, so they can read Forgejo's admin password in ~/.bot_board/forgejo-admin-password; a container install keeps them out of it"
   else
-  say "the board is at $api (sign in as $human), Forgejo at http://${FORGEJO_HOST:-localhost}:3000, and the first bot starts in a container within a minute: watch $api/fleet"
+  say "the board is at $api (you are $human), Forgejo at http://${FORGEJO_HOST:-localhost}:3000, and the first bot starts in a container within a minute: watch $api/fleet"
   fi
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ "$harness" != claude ] \
     || say "the claude bot waits for a login: set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $api/fleet (make it with claude setup-token), and it starts by itself"
