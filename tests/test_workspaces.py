@@ -190,10 +190,9 @@ class Workspaces(Base):
         db.conn().commit()
         r = self.call('GET', '/api/workspaces/game/team', auth=self.human)['team']['roles'][0]
         self.assertEqual((r['starting'], r['missing']), (['newdev'], 0), 'a bot asked for and not yet registered counts')
-        self.assertIn('t.roles.every(function (x) { return x.exists && !x.missing; })', workspace_web.WS_JS, 'done only when no role lacks a profile or a bot')
-        for needle in ("'/team'", "'/api/fleet/bots'", 'claims: x.claims'):
+        for needle in ("'/team'", "'/api/fleet/bots'", "ctx.add(role)", "No bot would be running in the role"):      # #645: the Team tab adds, stops and removes
             self.assertIn(needle, workspace_web.WS_JS)
-        self.assertNotIn('channels:', workspace_web.WS_JS.split('function teamSection')[1].split('function knowledgeNote')[0], 'the panel binds no channels')
+        self.assertNotIn('channels:', workspace_web.WS_JS.split('add: function (role)')[1].split('var add = ')[0], 'the add dialog binds no channels')
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']

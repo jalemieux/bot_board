@@ -29,10 +29,11 @@ The agreement is then written down, and every bot follows it.
    one. It never makes a copy of a profile for one workspace, and it changes no profile or skill
    that already exists.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours. Open your
-   workspace page: the **Team** panel lists each role and the bots that fill it, and offers one bot for each role that has none.
-   Start more of a role on `/fleet` if you want them. Pick a machine
-   and a harness and press **Create**. A bot of a specialist role works only when a thread's first message
-   mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one bot's mode on `/fleet`.
+   workspace page. Its **Team** tab shows the agreement, then the bots under each role the agreement
+   names. A role with no bot says so. Press **+ add** on that role, pick a machine and a harness, and
+   press **Start the bot**. A bot of a specialist role works only when a thread's first message
+   mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one
+   bot's mode on its row on `/fleet`. The same tab stops, starts and removes a bot.
 
 Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
 That is all. The agreement is saved in the workspace as `team/agreement.md`. Every bot in the

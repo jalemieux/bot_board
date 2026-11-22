@@ -25,19 +25,37 @@ WS_CSS = """
 .ws #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px}
 .ws .tabs{display:flex;gap:4px 18px}
 .ws .tabs a{padding:6px 2px;color:var(--ink);text-decoration:none;border-bottom:2px solid transparent}
-.ws .tabs a[aria-selected=true]{border-color:var(--accent);font-weight:600}
+.ws .tabs a[aria-current=page]{border-color:var(--accent);font-weight:600}
 .ws .wsw>button:focus-visible,.ws #wsmenu button:focus-visible,.ws .tabs a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ws .agr.short{max-height:110px;overflow:hidden;-webkit-mask-image:linear-gradient(#000 60%,transparent);mask-image:linear-gradient(#000 60%,transparent)}
 .ws .agr h4{margin:10px 0 2px;font:600 13px var(--mono)}
 .ws .agr-text{white-space:pre-wrap;font-size:13.5px}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
-.ws .rolehead .status{font:600 12px var(--mono)}.ws .status.good{color:var(--good)}.ws .status.bad{color:var(--warn)}
+.ws .rolehead .status{font:600 12px var(--mono)}.ws .status.good{color:var(--good)}.ws .status.bad{color:var(--accent)}
 .ws table.bots{width:100%;border-collapse:collapse;font-size:13px}
 .ws table.bots td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:baseline}
 .ws .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--dim)}
-.ws .dot.ok{background:var(--good)}.ws .dot.warn{background:var(--warn)}.ws .dot.bad{background:#c0392b}
-@media (max-width:700px){.ws .wsw>button{min-height:44px;font-size:16px}.ws #wsmenu button{min-height:44px}.ws .tabs a{padding:12px 2px}}
+.ws .dot.ok{background:var(--good)}.ws .dot.warn{background:var(--warn)}.ws .dot.bad{background:var(--accent)}
+/* dialogs (#645) */
+.ovl{position:fixed;inset:0;background:#0007;display:flex;align-items:center;justify-content:center;z-index:50;padding:12px}
+.dlg{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:18px 20px;max-width:520px;width:100%;max-height:90vh;overflow:auto}
+.dlg h3{margin:0 0 10px;font-size:16px}
+.dlg .form{display:flex;flex-wrap:wrap;gap:8px 16px}.dlg .form label{display:flex;gap:6px;align-items:center}
+.dlg .warn{color:var(--accent);font-weight:600}
+.dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.ws .sr-only,.dlg .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
+.ws .acts{white-space:nowrap}.ws .acts button,.ws .acts a{margin-right:8px}
+@media (max-width:700px){
+.ws table.bots,.ws table.bots tbody{display:block}
+.ws table.bots tr{display:flex;flex-wrap:wrap;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line)}
+.ws table.bots td{border:0;padding:0}
+.ws table.bots td:nth-child(2){flex-basis:100%;order:1}.ws table.bots td:nth-child(3),.ws table.bots td:nth-child(4),.ws table.bots td:nth-child(5){order:2;font-size:12px;color:var(--dim)}
+.ws table.bots td:nth-child(6){order:3;flex-basis:100%;margin-top:4px}
+.ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
+.dlg select{min-height:44px;font-size:16px}
+.ws .wsw>button{min-height:44px;font-size:16px}.ws #wsmenu button{min-height:44px}.ws .tabs a{padding:12px 2px}}
 .ws .sub{color:var(--dim);font-size:13px}
 .ws section{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 14px}
 .ws section h2{margin:0 0 8px;font-size:15px;text-transform:none;letter-spacing:0;display:flex;gap:10px;align-items:baseline}
@@ -211,6 +229,7 @@ function newWorkspace() {
 // ---- one workspace ------------------------------------------------------------
 // Row 2 of the top bar (#644, #645): the workspace in view, with the same numbers as the board page's switcher
 // (what waits on you in each other workspace), and the workspace's tabs.
+var BAR = null, BAR_BOUND = false;
 function workspaceBar(current, tab) {
   var counts = {}, menu = h('ul', {id: 'wsmenu', hidden: ''}), total = h('span', {'class': 'badge', hidden: ''});
   var btn = h('button', {type: 'button', id: 'wsbtn', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': 'wsmenu'}, current, total, ' ▾');
@@ -229,15 +248,19 @@ function workspaceBar(current, tab) {
     counts = r[1].counts || {}; list = r[0].workspaces.filter(function (x) { return !x.archived || x.slug === current; }); fill(list);
   });
   btn.addEventListener('click', function (ev) { ev.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute('aria-expanded', String(!menu.hidden)); });
-  document.addEventListener('click', function () { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !menu.hidden) { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.focus(); } });
+  BAR = {menu: menu, btn: btn};      // the document listeners below act on the bar drawn last
+  if (!BAR_BOUND) {
+    BAR_BOUND = true;
+    document.addEventListener('click', function () { BAR.menu.hidden = true; BAR.btn.setAttribute('aria-expanded', 'false'); });
+    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !BAR.menu.hidden) { BAR.menu.hidden = true; BAR.btn.setAttribute('aria-expanded', 'false'); BAR.btn.focus(); } });
+  }
   menu.addEventListener('click', function (ev) {
     var b = ev.target.closest('button[data-ws]'); if (!b || b.dataset.ws === current) return;
     try { localStorage.setItem('bb.scope', JSON.stringify(b.dataset.ws)); } catch (e) {}
     location.href = '/workspaces/' + encodeURIComponent(b.dataset.ws);
   });
-  var tabs = h('div', {'class': 'tabs', role: 'tablist'}, [['team', 'Team'], ['channels', 'Channels and knowledge']].map(function (t) {
-    return h('a', {href: '#' + t[0], role: 'tab', 'aria-selected': String(t[0] === tab), 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
+  var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge']].map(function (t) {
+    return h('a', {href: '#' + t[0], 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
   }));
   return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('span', {'class': 'lab', text: 'Workspace'}), h('div', {'class': 'wsw'}, btn, menu), tabs);
 }
@@ -271,57 +294,143 @@ function teamView(w) {
   ]).then(function (r) {
     slot.appendChild(agreementCard(w, r[0]));
     slot.appendChild(rolesView(w, r[1].roles || [], r[2]));
-    if (w.can_manage && !w.archived) teamSection(w).then(function (t) { if (t) slot.appendChild(t); });
   });
 }
 function agreementCard(w, doc) {
   if (!doc) return h('section', null, h('h2', {text: 'Team agreement'}), h('p', {'class': 'sub', text: 'This workspace has no team agreement yet. Bots work without one, and nothing says who reviews or who merges.'}));
   var open = false, box = h('div', {'class': 'agr'}), more = h('button', {type: 'button', 'class': 'quiet', 'aria-expanded': 'false', text: 'Read the whole agreement'});
   doc.body.split(/\n(?=#+ )/).forEach(function (part) {
-    var m = part.match(/^#+ +(.*)\n?([\s\S]*)$/); if (!m || /^team agreement$/i.test(m[1].trim()) && !m[2].trim()) return;
+    var m = part.match(/^#+ +(.*)\n?([\s\S]*)$/); if (!m || /^team agreement$/i.test(m[1].trim()) && !m[2].trim() || /^roles$/i.test(m[1].trim())) return;      // the Roles table is the bots list below
     box.appendChild(h('h4', {text: m[1].trim()})); box.appendChild(h('div', {'class': 'agr-text', text: m[2].trim()}));
   });
   box.classList.add('short');
   more.addEventListener('click', function () { open = !open; box.classList.toggle('short', !open); more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'Show less' : 'Read the whole agreement'; });
-  return h('section', null, h('h2', null, 'Team agreement', h('small', {text: 'revision ' + doc.revision + (doc.author ? ', by ' + doc.author : '') + (doc.created_at ? ', ' + doc.created_at.slice(0, 10) : '')})), box, more);
+  return h('section', null, h('h2', null, 'Team agreement', h('small', {text: 'revision ' + doc.revision + (doc.author ? ', last edited by ' + doc.author : '') + (doc.created_at ? ', ' + doc.created_at.slice(0, 10) : '')})), box, more);
 }
 function ago(iso) {
   var t = iso && Date.parse(iso); if (!t) return '—';
   var s = Math.max(0, (Date.now() - t) / 1000);
   return s < 90 ? 'just now' : s < 5400 ? Math.round(s / 60) + ' min ago' : s < 129600 ? Math.round(s / 3600) + ' h ago' : Math.round(s / 86400) + ' d ago';
 }
-function botRows(bots) {
+// A modal dialog: a title, some nodes, buttons. Escape and the Cancel button close it, and focus returns to what opened it.
+function dialog(title, nodes, buttons) {
+  var opener = document.activeElement, ov = h('div', {'class': 'ovl'}), box = h('div', {'class': 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlgt'});
+  var close = function () { document.removeEventListener('keydown', onKey); ov.remove(); if (opener && opener.focus) opener.focus(); };
+  var onKey = function (ev) { if (ev.key === 'Escape') close(); };
+  box.appendChild(h('h3', {id: 'dlgt', text: title}));
+  nodes.forEach(function (n) { box.appendChild(n); });
+  var row = h('div', {'class': 'dlg-actions'}, h('button', {type: 'button', 'class': 'quiet', text: 'Cancel'}));
+  row.firstChild.addEventListener('click', close);
+  buttons.forEach(function (bt) {
+    var el = h('button', {type: 'button', 'class': bt.danger ? 'danger' : '', text: bt.text});
+    el.addEventListener('click', function () { bt.run(el, close); });
+    row.appendChild(el);
+  });
+  box.appendChild(row); ov.appendChild(box); document.body.appendChild(ov);
+  ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+  document.addEventListener('keydown', onKey);
+  (box.querySelector('select, input') || row.lastChild).focus();
+  return close;
+}
+function botRows(bots, ctx) {
   return bots.map(function (b) {
     var st = b.state || {}, up = (b.status || '').indexOf('running') === 0;
     var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
+    var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ME ? null : '', title: ME ? null : 'Sign in on the board page first'});
+    go.addEventListener('click', function () { ctx.setRun(b, !up, go); });
+    var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ME ? null : ''});
+    rm.addEventListener('click', function () { ctx.remove(b, up); });
     return h('tr', null,
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
       h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
       h('td', {'class': 'mono', text: ago(b.last_post)}),
-      h('td', null, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'manage'})));
+      h('td', {'class': 'acts'}, go, rm, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'more'})));
   });
 }
+function botsTable(bots, ctx) {
+  return h('table', {'class': 'bots'}, h('thead', {'class': 'sr-only'}, h('tr', null, ['Bot', 'Doing', 'Machine', 'Harness', 'Last active', 'Actions'].map(function (t) { return h('th', {scope: 'col', text: t}); }))),
+    h('tbody', null, botRows(bots, ctx)));
+}
 function rolesView(w, roles, hosts) {
-  var mine = [];
+  var mine = [], reporting = hosts.filter(function (x) { return x.reporting; });
   hosts.forEach(function (hst) { hst.bots.forEach(function (b) { if (b.workspace === w.slug) { b._host = hst.name; mine.push(b); } }); });
-  var sec = h('section', {'class': 'roles'}, h('h2', null, 'Bots', h('small', {text: String(mine.length)})));
+  var sec = h('section', {'class': 'roles'}), out = h('p', {'class': 'sub', role: 'status'});
+  var isUp = function (b) { return (b.status || '').indexOf('running') === 0; };
+  var said = function (text, ok) { note(out, text, ok); };
+  var again = function () { setTimeout(function () { location.reload(); }, 2500); };
+  var ctx = {
+    setRun: function (b, run, el) {
+      el.disabled = true;
+      api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null})
+        .then(function () { said((run ? 'Start' : 'Stop') + ' asked for @' + b.handle + '. The keeper on ' + b._host + ' does it within a few seconds' + (run ? '.' : '; a stop waits for the run the bot is in.'), true); again(); })
+        .catch(function (e) { el.disabled = false; said(e.message); });
+    },
+    remove: function (b, up) {
+      var role = roles.filter(function (r) { return (b.profile || '').toLowerCase() === r.profile.toLowerCase(); })[0];
+      var others = role ? mine.filter(function (x) { return x !== b && isUp(x) && (x.profile || '').toLowerCase() === role.profile.toLowerCase(); }).length : 1;
+      var nodes = [h('p', {text: 'Delete @' + b.handle + '? Its threads are released for pickup, its token stops working, and its machine removes its files. Its old messages stay.'})];
+      if (role && up && !others) {
+        nodes.push(h('p', {'class': 'warn', text: 'No bot would be running in the role ' + role.role + '. The agreement still lists it.' +
+          (/architect|security/i.test(role.role) ? ' The agreement asks for this role\'s review on every pull request, so merges would wait for it.' : '')}));
+      }
+      dialog('Remove @' + b.handle, nodes, [{text: 'Delete @' + b.handle, danger: true, run: function (el, close) {
+        el.disabled = true;
+        api('DELETE', '/api/agents/' + encodeURIComponent(b.handle)).then(function () { close(); said('@' + b.handle + ' is being removed.', true); again(); })
+          .catch(function (e) { el.disabled = false; close(); said(e.message); });
+      }}]);
+    },
+    add: function (role) {
+      var inAgreement = function (name) { return roles.some(function (r) { return r.exists && r.profile.toLowerCase() === name.toLowerCase(); }); };
+      var profile = role ? h('b', {text: role.profile}) : h('select', {'aria-label': 'profile'});
+      var host = h('select', {'aria-label': 'machine'}, reporting.map(function (x) { return h('option', {value: x.name, text: x.name}); }));
+      var harness = h('select', {'aria-label': 'harness'}, ['claude', 'codex', 'opencode', 'copilot'].map(function (x) { return h('option', {value: x, text: x}); }));
+      var warn = h('p', {'class': 'warn', hidden: ''}), nodes = [];
+      var fill = function () {
+        var name = role ? role.profile : profile.value;
+        warn.hidden = !name || inAgreement(name);
+        warn.textContent = warn.hidden ? '' : 'The agreement does not mention the profile ' + name + '. The bot works, and it is listed under Outside the agreement. Changing the agreement to include it is a separate step.';
+      };
+      if (!role) api('GET', '/api/profiles').then(function (d) { d.profiles.forEach(function (x) { profile.appendChild(h('option', {value: x.name, text: x.name})); }); fill(); });
+      profile.addEventListener && profile.addEventListener('change', fill);
+      nodes.push(h('p', {'class': 'sub', text: role ? 'A bot for the role ' + role.role + '.' : 'A bot with any profile.'}));
+      nodes.push(h('div', {'class': 'form'}, h('label', null, 'Profile ', profile), h('label', null, 'Machine ', host), h('label', null, 'Harness ', harness)));
+      nodes.push(warn);
+      nodes.push(h('p', {'class': 'sub', text: 'Whether the bot takes new work is set on the bot, from its profile, not in the agreement.'}));
+      if (!reporting.length) { nodes.push(h('p', {'class': 'warn'}, 'No machine is reporting. ', h('a', {href: '/machines', text: 'Add one on the Machines page'}), ' first.')); }
+      dialog('Add a bot', nodes, reporting.length ? [{text: 'Start the bot', run: function (el, close) {
+        var name = role ? role.profile : profile.value;
+        el.disabled = true;
+        api('POST', '/api/fleet/bots', {host: host.value, harness: harness.value, workspace: w.slug, profile: name || null})
+          .then(function () { close(); said('Asked for a ' + name + ' bot. The keeper on ' + host.value + ' starts it within a few seconds.', true); again(); })
+          .catch(function (e) { el.disabled = false; close(); said(e.message); });
+      }}] : []);
+    }
+  };
+  var add = h('button', {type: 'button', text: '+ Add a bot', disabled: ME && w.can_manage && !w.archived ? null : '', title: ME ? null : 'Sign in on the board page first'});
+  add.addEventListener('click', function () { ctx.add(null); });
+  sec.appendChild(h('h2', null, 'Bots', h('small', {text: String(mine.length)}), add));
   var seen = {};
-  var group = function (title, profile, bots, note) {
-    var run = bots.filter(function (b) { return (b.status || '').indexOf('running') === 0; }).length, stopped = bots.length - run;
+  var group = function (title, profile, bots, note, role) {
+    var run = bots.filter(isUp).length, stopped = bots.length - run;
     var status = run ? run + ' running' + (stopped ? ', ' + stopped + ' stopped' : '') : bots.length ? 'none running, ' + stopped + ' stopped' : 'no bot deployed';
-    sec.appendChild(h('div', {'class': 'rolehead'}, h('b', {text: title}), profile ? h('span', {'class': 'prof', text: 'profile ' + profile}) : null,
-      h('span', {'class': 'status ' + (run ? 'good' : 'bad'), text: status}), note ? h('span', {'class': 'sub', text: note}) : null));
-    if (bots.length) sec.appendChild(h('table', {'class': 'bots'}, h('tbody', null, botRows(bots))));
+    var head = h('div', {'class': 'rolehead'}, h('b', {text: title}), profile ? h('span', {'class': 'prof', text: 'profile ' + profile}) : null,
+      h('span', {'class': 'status ' + (run ? 'good' : 'bad'), text: status}), note ? h('span', {'class': 'sub', text: note}) : null);
+    if (role && role.exists && ME && w.can_manage && !w.archived) {
+      var b = h('button', {type: 'button', 'class': 'quiet', text: '+ add', 'aria-label': 'Add a bot to ' + title}); b.addEventListener('click', function () { ctx.add(role); }); head.appendChild(b);
+    }
+    sec.appendChild(head);
+    if (bots.length) sec.appendChild(botsTable(bots, ctx));
   };
   roles.forEach(function (r) {
     var bots = mine.filter(function (b) { return (b.profile || '').toLowerCase() === r.profile.toLowerCase(); });
     bots.forEach(function (b) { seen[b.handle] = 1; });
-    group(r.role, r.profile, bots, r.exists ? '' : 'this profile does not exist yet');
+    group(r.role, r.profile, bots, r.exists ? '' : 'this profile does not exist yet', r);
   });
-  var out = mine.filter(function (b) { return !seen[b.handle]; });
-  if (out.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', out, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
-  if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub'}, 'No bot works here yet. ', h('a', {href: '/fleet', text: 'Add one on the bots page'}), ' and pick this workspace.'));
-  sec.appendChild(h('p', {'class': 'sub'}, 'Start, stop and remove a bot, and add one, on the ', h('a', {href: '/fleet', text: 'bots page'}), ' for now.'));
+  var outside = mine.filter(function (b) { return !seen[b.handle]; });
+  if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
+  if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
+  sec.appendChild(out);
+  sec.appendChild(h('p', {'class': 'sub'}, 'More about a bot (channels, role, machine, voice, a new session) is on its row on the ', h('a', {href: '/fleet', text: 'bots page'}), '.'));
   return sec;
 }
 // The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
@@ -350,42 +459,6 @@ function botsSection(w) {
     sec.appendChild(h('details', null, h('summary', {text: 'Change which bots belong here'}), f));
   }
   return sec;
-}
-// The team the agreement asks for (#600): its Roles table against the bots that exist. One press creates the
-// missing bots on the machine picked; a bot takes new work or works when mentioned, as its profile says.
-function teamSection(w) {
-  return Promise.all([api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team'), api('GET', '/api/fleet')]).then(function (r) {
-    var t = r[0].team, hosts = (r[1].hosts || []).filter(function (x) { return x.reporting; });
-    var roles = t.roles.filter(function (x) { return x.exists; }), todo = roles.filter(function (x) { return x.missing; });
-    if (!t.roles.length) return null;
-    var out = h('p'), sec = h('section', null, h('h2', {text: 'Team'}),
-      h('p', {'class': 'sub', text: 'From team/agreement.md. A role whose profile does not exist yet is made by the admin bot first.'}));
-    t.roles.forEach(function (x) {
-      sec.appendChild(h('p', {'class': 'sub'}, x.role + ': ', h('b', {text: x.profile}),
-        x.exists ? ' ' + (x.have.length ? x.have.join(', ') : 'no bot yet') + (x.starting.length ? ', ' + x.starting.length + ' starting' : '') + (x.claims === 'mentioned' ? ', works when mentioned' : ', takes new work') : ' (no such profile yet)'));
-    });
-    if (!todo.length) { sec.appendChild(h('p', {'class': 'sub', text: t.roles.every(function (x) { return x.exists && !x.missing; }) ? 'Every role has its bots.' : 'Nothing to create yet; the roles above wait for a profile.'})); return sec; }
-    if (!hosts.length) { sec.appendChild(h('p', {'class': 'sub'}, 'No machine is reporting. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), '.')); return sec; }
-    var n = todo.reduce(function (a, x) { return a + x.missing; }, 0);
-    var host = h('select', {name: 'host'}, hosts.map(function (x) { return h('option', {value: x.name, text: x.name}); }));
-    var harness = h('select', {name: 'harness'}, ['claude', 'codex', 'opencode', 'copilot'].map(function (x) { return h('option', {value: x, text: x}); }));
-    var go = h('button', {type: 'button', text: 'Create ' + n + ' bot' + (n === 1 ? '' : 's')});
-    go.addEventListener('click', function () {
-      if (!confirm('Start ' + todo.map(function (x) { return x.missing + ' x ' + x.profile; }).join(', ') + ' on ' + host.value + ' with ' + harness.value + '?')) return;
-      go.disabled = true;
-      var jobs = [];
-      todo.forEach(function (x) {
-        for (var i = 0; i < x.missing; i++) jobs.push({host: host.value, harness: harness.value, workspace: w.slug, profile: x.profile,
-          claims: x.claims});
-      });
-      jobs.reduce(function (p, j) { return p.then(function () { return api('POST', '/api/fleet/bots', j); }); }, Promise.resolve())
-        .then(function () { note(out, 'Asked for ' + jobs.length + '. The keeper on ' + host.value + ' starts them within a few seconds.', true); setTimeout(function () { location.reload(); }, 2500); })
-        .catch(function (e) { go.disabled = false; note(out, e.message + ' Reload to see which were created.'); });
-    });
-    sec.appendChild(h('div', {'class': 'row'}, h('label', null, 'Machine ', host), h('label', null, 'Harness ', harness), go));
-    sec.appendChild(out);
-    return sec;
-  }).catch(function () { return null; });
 }
 function knowledgeNote(w) {
   return h('section', null, h('h2', {text: 'Knowledge'}),
