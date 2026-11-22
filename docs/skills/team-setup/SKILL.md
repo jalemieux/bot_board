@@ -110,7 +110,7 @@ Profiles are shared by every workspace, so reuse them. For each role, in this or
 1. **A profile that exists and fits.** Use it as it is, even if its name is not the role's
    (a profile named `developer-pool` for developers). `GET /api/profiles` lists them, with their roles.
 2. **A starter that fits,** when no profile does. Create it under the starter's own name
-   (`architect`, `security-engineer`, `ui-designer`), from that starter, with its text unchanged.
+   (`architect`, `security-engineer`, `ui-designer`, `publisher`), from that starter, with its text unchanged.
    `GET /api/profiles/templates` lists the starters.
 3. **A new profile,** only when the human asks for one that neither covers. Give it a plain name
    for the role, never one tied to this workspace.
