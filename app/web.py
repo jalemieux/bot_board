@@ -115,7 +115,8 @@ def theme_css(dark: str) -> str:
 
 
 # Runs before the page paints, so a chosen theme shows without a flash of the other one.
-THEME_HEAD = ("<script>try{var t=localStorage.getItem('bb.theme');"
+THEME_HEAD = ('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
+              "<script>try{var t=localStorage.getItem('bb.theme');"
               "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
 # The switch: Auto (the operating system decides), Light, Dark, in that order. The choice is kept in this browser.
 THEME_JS = """
@@ -601,7 +602,7 @@ overflow-x:auto;font:12px/1.5 var(--mono);white-space:pre}
 pre code{background:none;padding:0;font-size:inherit}
 button{font:inherit}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);grid-template-rows:auto minmax(0,1fr);height:100vh}
+.app{display:grid;grid-template-columns:248px minmax(0,1fr) var(--tw,380px);grid-template-rows:auto minmax(0,1fr);height:100vh;height:100dvh}
 .app.thread-closed{grid-template-columns:248px minmax(0,1fr) 0}
 .app.thread-closed aside.thread{display:none}
 .app.wide{grid-template-columns:248px minmax(0,1fr)}
@@ -873,7 +874,31 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 .app.thread-closed aside.thread{display:none}
 .app.solo aside.thread{position:relative;inset:auto;width:auto;box-shadow:none}}   /* the popout has no main area to overlay: it fills the window */
 """ + TOPNAV_RESPONSIVE_CSS + """
-@media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}}
+.tabbar,#mback,.rail .rsearch{display:none}
+@media (max-width:700px){.app,.app.thread-closed{grid-template-columns:minmax(0,1fr)}nav.rail{display:none}.topnav form{display:none}
+/* phone navigation: the rail is the Channels screen, and a tab bar switches between list screens (#16727) */
+.app.m-list nav.rail{display:flex}.app.m-list main{display:none}.app.m-list .rail ul.views{display:none}
+.rail .rsearch{display:block;padding:10px 12px 2px}
+.rail .rsearch input{box-sizing:border-box;width:100%;min-height:44px;font-size:16px;padding:0 12px;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:9px}
+.rail li{min-height:44px}
+.app.m-tabs.thread-closed nav.rail,.app.m-tabs.thread-closed main{padding-bottom:calc(56px + env(safe-area-inset-bottom))}
+.app.m-tabs.thread-closed .tabbar{display:flex}
+.app:not(.m-tabs) #mback{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;margin-left:-8px;background:none;border:0;color:var(--ink);font:28px/1 var(--sans);cursor:pointer}
+.app:not(.m-tabs) .topnav .brand{display:none}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;height:calc(56px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--panel);border-top:1px solid var(--line)}
+.tabbar>*{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:44px;background:none;border:0;color:var(--dim);font:12px var(--sans);text-decoration:none;cursor:pointer}
+.tabbar .on{color:var(--accent);font-weight:700}
+.tabbar .ic{font-size:18px;line-height:1}
+.tabbar .badge{position:absolute;top:4px;left:calc(50% + 6px);background:var(--accent);color:#fff;border-radius:10px;font:600 11px/1 var(--mono);padding:3px 6px;min-width:20px;text-align:center;box-sizing:border-box}
+.tabbar .badge.m{background:var(--dim)}
+.tabbar [hidden]{display:none}
+/* More opens the page links as a sheet above the tab bar, near the thumb that tapped it */
+.topnav .links{position:fixed;top:auto;left:8px;right:8px;bottom:calc(60px + env(safe-area-inset-bottom));z-index:6}
+.topnav .links a{min-height:44px;display:flex;align-items:center}
+.compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+aside.thread .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+.compose textarea{font-size:16px}  /* under 16px iOS zooms the page on focus */
+.compose .send,.compose .attach{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}}
 """
 
 APP_JS = r"""
@@ -1096,7 +1121,40 @@ function renderRail(){
   mli.hidden = !ME; mli.className = (S.view === 'mentions' ? 'active ' : '') + (mn ? 'unread' : '');
   $('.badge.w', mli).hidden = !mc.waiting; $('.badge.w', mli).textContent = mc.waiting;
   $('.badge.m', mli).hidden = !mc.mentions; $('.badge.m', mli).textContent = mc.mentions;
+  phoneSync();
 }
+// Phone navigation (#16727): S.mlist shows the rail as the Channels screen. The tab bar shows on that
+// screen and on Unread and Mentions; an open channel gets a back arrow instead. CSS ignores all of it above 700px.
+function phoneSync(){
+  var tabs = $('#tabbar'), onList = !!S.mlist;
+  app.classList.toggle('m-list', onList);
+  app.classList.toggle('m-tabs', onList || !!S.view);
+  [['channels', onList], ['unread', !onList && S.view === 'unread'], ['mentions', !onList && S.view === 'mentions']].forEach(function(t){
+    var b = $('[data-tab=' + t[0] + ']', tabs); b.classList.toggle('on', t[1]); b.setAttribute('aria-current', t[1] ? 'page' : 'false');
+  });
+  [['unread', $('#unreadli')], ['mentions', $('#mentionsli')]].forEach(function(t){
+    var b = $('[data-tab=' + t[0] + ']', tabs); b.hidden = t[1].hidden;
+    ['', '.w', '.m'].forEach(function(k){
+      var src = t[1].querySelector('.badge' + k), dst = b.querySelector('.badge' + k);
+      if (src && dst) { dst.hidden = src.hidden; dst.textContent = src.textContent; }
+    });
+  });
+}
+function showList(push){
+  S.mlist = true; S.view = null;
+  if (S.thread) closeThread();
+  if (push && !SOLO) history.pushState({}, '', '/');
+  renderRail();
+}
+$('#tabbar').addEventListener('click', function(ev){
+  var b = ev.target.closest('[data-tab]'); if (!b) return;
+  var t = b.dataset.tab;
+  if (t === 'channels') showList(true);
+  else if (t === 'unread') openUnread(true);
+  else if (t === 'mentions') openMentions(true);
+  else $('#navmore').click();
+});
+$('#mback').addEventListener('click', function(){ showList(true); });
 // Channels are listed by workspace: the workspace is a heading, not a channel, and
 // its channels sit under it by name (General first). A workspace is folded unless
 // opened (bb.open) or holding the open channel; folded, it shows only how much is unread
@@ -1433,7 +1491,7 @@ stream.addEventListener('click', function(ev){
 function openChannel(slug, push){
   var b = findEntry(slug);
   if (!b) { return refreshLists().then(function(){ if (findEntry(slug)) openChannel(slug, push); }); }
-  S.cur = b; S.view = null; S.thread = null; app.classList.add('thread-closed');
+  S.mlist = false; S.cur = b; S.view = null; S.thread = null; app.classList.add('thread-closed');
   S.newSince = S.seen[slug] || 0;
   showCompose();
   if (push && !SOLO) history.pushState({}, '', '/c/' + slug);
@@ -1476,7 +1534,7 @@ window.addEventListener('focus', markSeen);
 var UNREAD_LIMIT = 100;
 function boardLabel(b){ return b.kind === 'conversation' ? 'conversation ' + convLabel(b) : '<span class="sigil">#</span>' + esc(b.slug); }
 function openUnread(push){
-  S.view = 'unread'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
+  S.mlist = false; S.view = 'unread'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
   showCompose();
   if (push && !SOLO) history.pushState({}, '', '/unread');
   if (S.ctrl) S.ctrl.abort(); S.ctrl = new AbortController();
@@ -1546,7 +1604,7 @@ window.addEventListener('bb:status', function(ev){
   if (S.view === 'mentions') renderMentions();
 });
 function openMentions(push){
-  S.view = 'mentions'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
+  S.mlist = false; S.view = 'mentions'; S.cur = null; S.thread = null; app.classList.add('thread-closed');
   showCompose();
   if (push && !SOLO) history.pushState({}, '', '/mentions');
   if (S.ctrl) S.ctrl.abort(); S.ctrl = null;
@@ -1821,6 +1879,12 @@ function gate(msg){ openSignin(msg, null, true); }
 signin.addEventListener('cancel', function(ev){ if (signin.classList.contains('gate')) ev.preventDefault(); });
 $('#navmore').addEventListener('click', function(){
   this.setAttribute('aria-expanded', $('#navlinks').classList.toggle('open'));
+});
+// a tap anywhere else closes the menu, so the phone sheet does not stay open over a tab or a channel
+document.addEventListener('click', function(ev){
+  var links = $('#navlinks');
+  if (!links.classList.contains('open') || ev.target.closest('#navlinks, #navmore, [data-tab=more]')) return;
+  links.classList.remove('open'); $('#navmore').setAttribute('aria-expanded', 'false');
 });
 $('#signinbtn').addEventListener('click', function(){
   if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) { setMe(null); gate(); } }
@@ -2144,6 +2208,7 @@ function route(){
   if (location.pathname === '/unread') return openUnread(false);
   if (location.pathname === '/mentions') return openMentions(false);
   if (t) return openThread(+t[1], false);
+  if (matchMedia('(max-width:700px)').matches) { S.mlist = true; S.view = null; return renderRail(); }   // a phone starts on the Channels screen
   var first = S.channels.filter(function(b){ return S.unread[b.slug]; })[0] || S.channels[0];
   if (first) openChannel(first.slug, false);
 }
@@ -2213,6 +2278,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
+  <button type="button" id="mback" aria-label="back to channels">‹</button>
   <a class="brand" href="/">{e(board_name)}<span>/</span><em class="sub">bot collaboration</em></a>
   <span class="divider"></span>
   <form action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
@@ -2230,6 +2296,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </header>
 <script>{THEME_JS}</script>
 <nav class="rail" id="rail">
+  <form class="rsearch" action="/search" role="search"><input name="q" placeholder="search…" autocomplete="off" aria-label="search the board"></form>
   <ul class="views"><li id="unreadli" title="every message you have not read yet, across channels and conversations">
     <span class="sigil u">●</span><span class="name">Unread</span><span class="badge" hidden></span></li>
     <li id="mentionsli" hidden title="messages that wait on you (orange) or only name you (grey), until you answer in their thread">
@@ -2240,6 +2307,13 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <ul id="dms" hidden></ul>
   <h2>Conversations <span id="ncv"></span></h2>
   <ul id="convs"></ul>
+</nav>
+<nav class="tabbar" id="tabbar" aria-label="sections">
+  <button type="button" data-tab="channels"><span class="ic" aria-hidden="true">#</span>Channels</button>
+  <button type="button" data-tab="unread"><span class="ic" aria-hidden="true">●</span>Unread<span class="badge" hidden></span></button>
+  <button type="button" data-tab="mentions" hidden><span class="ic" aria-hidden="true">@</span>Mentions<span class="badge w" hidden></span><span class="badge m" hidden></span></button>
+  <a href="/fleet"><span class="ic" aria-hidden="true">⚙</span>Fleet</a>
+  <button type="button" data-tab="more"><span class="ic" aria-hidden="true">⋯</span>More</button>
 </nav>
 <main>
   <header id="head"></header>
