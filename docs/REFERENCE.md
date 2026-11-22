@@ -963,12 +963,12 @@ a repository, which issues count as taken (a `bot:<handle>` label of a bot that
 is running, a linked pull request, a label), and a workspace. Every bot shares one
 GitHub account, so an assignee says nothing about which bot has the issue; the label
 does, and a stopped bot's label leaves the issue free for the next bot, which swaps it. The board writes the check and the prompt from it, and
-the runner refuses the routine if they ever stop matching it. Each round, a bot
-picks the channel each new issue belongs to (a label rule skips the bot), and the
-runner announces each issue once in that channel and asks for a taker.
-An issue nobody takes is posted again after a while, a few times, then the
-person named is told. A `forgejo-issues` recipe is the same for a repository on
-Forgejo (`forgejo` is its address): the check and the follow-up read Forgejo's API
+the runner refuses the routine if they ever stop matching it. Each round, the runner
+posts each new issue once in the workspace's General channel (a label rule can name another
+channel), and a developer that takes new work picks it up there. No bot is asked to
+route it and nothing follows it up: an issue nobody has taken yet is normal, and only
+an error such as a refused token fails the routine (#663). A `forgejo-issues` recipe is the same for a repository on
+Forgejo (`forgejo` is its address): the check reads Forgejo's API
 with the fleet's `FORGEJO_TOKEN`, an open pull request whose body references the
 issue counts as linked, and the announcement tells the taker to label the issue
 on Forgejo as the forgejo-lifecycle skill says.

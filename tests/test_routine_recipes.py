@@ -117,8 +117,10 @@ class Definitions(unittest.TestCase):
 
     # What recipe_check and recipe_prompt write for one fixed recipe, per RECIPE_VERSION (#242).
     WRITER = {5: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
-              6: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0"}
-    FORGEJO_WRITER = {6: "26d230031cda07a732e6ce9ddc6b58a9eb79e2ffffb6d8cf47e3e1377a9619b7"}
+              6: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
+              7: "fbf2c26d22ecb05fdf4509d3b9e8a87b3d904a9674f1e9af8c8e6e83c48e9b1f"}
+    FORGEJO_WRITER = {6: "26d230031cda07a732e6ce9ddc6b58a9eb79e2ffffb6d8cf47e3e1377a9619b7",
+                      7: "64dbc569b8ae89d55355ae8664ab67deefe12f39297e479f6c70020a2c2e48b6"}
 
     def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
         cli = load_cli()
@@ -149,8 +151,7 @@ class Definitions(unittest.TestCase):
         for word in ("FORGEJO_TOKEN", "/issues?state=open&type=issues", 'rel="next"', "502, 503, 504"):
             self.assertIn(word, check)
         prompt = cli.recipe_prompt(rc)
-        self.assertIn("Route each Forgejo issue below, from o/game on Forgejo", prompt)
-        self.assertIn("GET http://forge.test:3000/api/v1/repos/o/game/issues/<n>", prompt)
+        self.assertIn("the runner posts each new Forgejo issue of o/game once, in the General channel", prompt)
         self.assertNotIn("gh issue view", prompt)
         self.assertIn("on http://forge.test:3000", cli.recipe_summary(rc))
         r = {"name": "x", "channel": "game", "check": check, "prompt": prompt, "recipe": rc,
@@ -160,6 +161,17 @@ class Definitions(unittest.TestCase):
         old = {k: v for k, v in gh.items() if k != "forgejo"}
         up = cli.upgraded({**r, "recipe": old})
         self.assertEqual(up["recipe"]["forgejo"], "")
+
+    def test_a_version_6_recipe_with_the_retired_settings_still_runs(self):
+        # #663: remind_after, reminds, escalate and stale_after do nothing now; a stored recipe may still hold them
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
+        old = {**rc, "remind_after": 7200, "reminds": 3, "escalate": "jac", "stale_after": 86400}
+        r = {"name": "x", "channel": "game", "check": "c", "prompt": "p", "recipe": old, "recipe_version": 6, **cli.DEFAULTS}
+        self.assertEqual(cli.problem_with(r), "")
+        up = cli.upgraded(r)
+        self.assertEqual(sorted(set(old) - set(up["recipe"])), ["escalate", "remind_after", "reminds", "stale_after"])
+        self.assertEqual(cli.problem_with({**up, "recipe_version": 6}), "")
 
     def test_after_is_kept_in_utc(self):
         cli = load_cli()
@@ -178,14 +190,15 @@ class Definitions(unittest.TestCase):
     def test_a_recipe_stored_before_a_rename_or_a_new_setting_still_runs(self):
         cli = load_cli()
         rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
-        old = {k: v for k, v in rc.items() if k not in ("workspace", "escalate")}
-        old.update(project="game", rules=[{"label": "ui", "group": "design"}])    # written before workspaces
+        old = {k: v for k, v in rc.items() if k != "workspace"}
+        old.update(project="game", rules=[{"label": "ui", "group": "design"}],
+                   escalate="jac", reminds=3, remind_after=7200, stale_after=86400)    # written before workspaces, with settings since retired
         r = {"name": "x", "channel": "game", "check": "c", "prompt": "p", "recipe": old, "recipe_version": 1, **cli.DEFAULTS}
         self.assertIn("not a complete recipe", cli.problem_with(r))
         up = cli.upgraded(r)
         self.assertEqual(cli.problem_with(up), "")
-        self.assertEqual((up["recipe"]["workspace"], up["recipe"]["escalate"], up["recipe"]["rules"]),
-                         ("game", "", [{"label": "ui", "channel": "design"}]))
+        self.assertEqual((up["recipe"]["workspace"], "escalate" in up["recipe"], up["recipe"]["rules"]),
+                         ("game", False, [{"label": "ui", "channel": "design"}]))
         self.assertEqual(r["recipe"], old, "the stored definition is left as it was")
         odd = cli.upgraded({**r, "recipe": {**old, "surprise": 1}})     # a key no release wrote
         self.assertIn("not a complete recipe", cli.problem_with(odd))
@@ -247,21 +260,6 @@ class Recipes(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         return p.stdout
 
-    def view(self, n, state="OPEN", labels=(), updated="", prs=()):
-        with open(os.path.join(self.home, f"view-{n}.json"), "w") as fh:
-            json.dump({"state": state, "title": f"issue {n}", "url": f"https://github.com/o/game/issues/{n}",
-                       "labels": [{"name": x} for x in labels], "assignees": [], "updatedAt": updated,
-                       "closedByPullRequestsReferences": [{"number": p} for p in prs]}, fh)
-
-    def chased(self, rc, n, name):
-        """A routine that has announced issue n by label rule, with its state."""
-        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "rules": [{"label": "doc", "channel": "art"}], **rc}
-        thread = self.api("POST", "/api/routines", {"name": name, "recipe": rc, "every": 1}, self.human)["id"]
-        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
-        self.issues(issue(n, ["doc"]))
-        self.once()
-        return thread, self.state(thread)["items"][str(n)]["msg"]
-
     def issues(self, *items):
         with open(os.path.join(self.home, "issues.json"), "w") as fh:
             json.dump(list(items), fh)
@@ -294,13 +292,15 @@ class Recipes(unittest.TestCase):
                     out.setdefault(item["number"], []).append((ch, m["id"]))
         return out
 
-    def test_route_announce_once_and_chase(self):
-        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 2, "remind_after": 60,
-              "reminds": 1, "escalate": "jac", "rules": [{"label": "doc", "channel": "art"}]}
+    def test_new_issues_are_posted_once_in_general_with_no_job_and_no_follow_up(self):
+        # #663: the runner posts each new issue itself; no bot is asked to route it, and nothing chases it afterwards
+        rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 2,
+              "rules": [{"label": "doc", "channel": "art"}]}
         got = self.api("POST", "/api/routines", {"name": "issues", "recipe": rc, "every": 1}, self.human)
         thread = got["id"]
         routine = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual((routine["state"], routine["channel"]), ("paused", "game"))
+        self.assertIn("Nothing for a bot to do", routine["prompt"])
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
 
         # #3 is ada's (bot:ada, and ada is running) and #4 labelled claimed: never announced.
@@ -309,66 +309,40 @@ class Recipes(unittest.TestCase):
         self.issues(issue(1, ["doc"], assignees=["bots"]), issue(2), issue(3, ["bot:ada"]), issue(4, ["claimed"]),
                     issue(6, assignees=["jac"]))
         self.once()
-        job = self.state(thread)["job"]
-        self.assertEqual([i["number"] for i in job["items"]], [1, 2])
-        self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
-                                           "meta": {"done": True, "routes": [{"number": 2, "channel": "game.econ", "why": "trade"}]}},
-                 self.bot)
-        self.once()
+        st = self.state(thread)
+        self.assertNotIn("job", st)       # no job for a bot
         announced = self.announced(thread)
-        self.assertEqual({n: [c for c, _ in v] for n, v in announced.items()}, {1: ["game.art"], 2: ["game.econ"]})
+        self.assertEqual({n: [c for c, _ in v] for n, v in announced.items()}, {1: ["game.art"], 2: ["game"]})
+        self.assertEqual(st["watermark"], {"sent": [1, 2]})
 
-        # The next pass finds nothing new: each issue is announced once.
-        self.state(thread, lambda st: st.update(checked_at=0))
-        self.once()
-        self.assertNotIn("job", self.state(thread))
-        self.assertEqual(len(self.announced(thread)), 2)
+        # The next pass finds nothing new: each issue is announced once, and nothing is posted again later.
+        for _ in range(3):
+            self.state(thread, lambda st: st.update(checked_at=0, **{"items": {n: {**i, "sent_at": 0} for n, i in st["items"].items()}}))
+            self.once()
+        self.assertEqual({n: len(v) for n, v in self.announced(thread).items()}, {1: 1, 2: 1})
+        self.assertEqual([m for m in self.channel("game") if "Still nobody" in m["body"] or m["body"].startswith("@jac #1 ")], [])
+        self.assertEqual(self.api("GET", f"/api/routines/{thread}")["state"], "enabled", "a slow pickup is not a failure")
 
-        # A new issue a rule places goes out without a bot.
+        # A new issue is announced on its own pass.
         self.issues(issue(1, ["doc"]), issue(2), issue(5, ["doc"]))
         self.state(thread, lambda st: st.update(checked_at=0))
         self.once()
-        self.assertNotIn("job", self.state(thread))
         self.assertEqual([c for c, _ in self.announced(thread)[5]], ["game.art"])
-
-        # Chasing: a bot takes #2 and holds it; #1 and #5 get one reminder, then @jac hears about #1;
-        # #5 gets a bot:ada label, which holds it too.
-        self.api("POST", f"/api/threads/{announced[2][0][1]}/worker", token=self.bot)
-        self.state(thread, age); self.once()
-        items = self.state(thread)["items"]
-        self.assertEqual(items["2"]["held"], "ada")
-        self.assertEqual((items["1"]["reminds"], items["5"]["reminds"]), (1, 1))
-        self.view(5, labels=["bot:ada"])
-        self.state(thread, age); self.once()
-        items = self.state(thread)["items"]
-        self.assertEqual((items["1"].get("escalated"), items["5"]["held"]), (True, "ada"))
-        self.state(thread, age); self.once()      # told once, however long it stays open
-        told = [m for m in self.channel("game")
-                if m["body"].startswith("@jac #1 ")]
-        self.assertEqual(len(told), 1)
         listed = self.api("GET", f"/api/routines/{thread}")
         self.assertEqual(sorted(i["number"] for i in listed["items"]), [1, 2, 5])
-
-    def test_an_owner_that_is_not_running_frees_the_issue_and_the_label_moves(self):
+    def test_an_owner_that_is_not_running_frees_the_issue(self):
         rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 5}
         thread = self.api("POST", "/api/routines", {"name": "owners", "recipe": rc, "every": 1}, self.human)["id"]
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
         self.api("GET", "/api/me", token=self.bot)     # ada is around; ghost runs nowhere
         self.issues(issue(41, ["bot:ghost"]), issue(42, ["bot:ada"]))
         self.once()
-        job = self.state(thread)["job"]
-        self.assertEqual([i["number"] for i in job["items"]], [41])
-        self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
-                                           "meta": {"done": True, "routes": [{"number": 41, "channel": "", "why": "x"}]}},
-                 self.bot)
-        self.once()
-        body = next(m["body"] for m in self.channel("game")
-                    if m["body"].startswith("New issue to take: #41"))
+        self.assertEqual(list(self.announced(thread)), [41])      # ghost stopped: #41 is free. ada runs: #42 is hers.
+        body = next(m["body"] for m in self.channel("game") if m["body"].startswith("New issue to take: #41"))
         self.assertIn("--add-label bot:<your handle>", body)
-        self.assertIn("removes `bot:ghost`", body)
-        self.assertIn("hold the work so far", body)
-
-    def test_an_issue_announced_before_goes_out_again_when_its_owner_stops(self):
+        self.assertNotIn("not running", body, "no re-offer wording: it is a new issue to take")
+    def test_an_issue_announced_before_is_not_offered_again_when_its_owner_stops(self):
+        # #663: no re-offers. The board releases a stopped worker's thread; the feed does not post the issue again.
         rc = {"type": "github-issues", "repo": "o/game", "workspace": "game", "batch": 5,
               "rules": [{"label": "doc", "channel": "art"}]}
         thread = self.api("POST", "/api/routines", {"name": "orphans", "recipe": rc, "every": 1}, self.human)["id"]
@@ -376,71 +350,11 @@ class Recipes(unittest.TestCase):
         self.issues(issue(51, ["doc"]))
         self.once()
         self.assertEqual(len(self.announced(thread)[51]), 1)
-        # ghost took it, then stopped: the issue goes out again, once for ghost, though it was sent and is old
-        self.issues(issue(51, ["doc", "bot:ghost"]))
+        self.issues(issue(51, ["doc", "bot:ghost"]))      # ghost took it, then stopped
         for _ in range(2):
             self.state(thread, lambda st: st.update(checked_at=0)); self.once()
-        self.assertEqual(len(self.announced(thread)[51]), 2)
-        self.assertEqual(self.state(thread)["watermark"]["orphaned"], {"51": "ghost"})
-
-    def test_a_holder_that_stops_loses_the_issue_once(self):
-        thread, first = self.chased({"remind_after": 60}, 71, "stops")
-        self.view(71, labels=["doc", "bot:ghost"])     # ghost took it, and runs nowhere
-        self.state(thread, age); self.once()
-        item = self.state(thread)["items"]["71"]
-        self.assertNotEqual(item["msg"], first)
-        self.assertEqual((item["orphan_of"], item["reminds"]), ("ghost", 0))
-        again = self.api("GET", f"/api/messages/{item['msg']}", token=self.human)["message"]
-        self.assertTrue(again["body"].startswith("Issue to take again: #71 issue 71"), again["body"])
-        self.assertIn("It was ghost's, who is not running", again["body"])
-        self.assertIn("--remove-label bot:ghost", again["body"])
-        self.assertNotIn("@ghost", again["body"])       # named, not pinged (#216)
-        # Nobody takes the new thread: it is reminded like any untaken issue, not offered again.
-        self.state(thread, age); self.once()
-        item = self.state(thread)["items"]["71"]
-        self.assertEqual((item["reminds"], len(self.announced(thread)[71])), (1, 2))
-
-    def test_a_holder_silent_for_stale_after_loses_the_issue(self):
-        thread, first = self.chased({"remind_after": 60, "stale_after": 3600}, 72, "silent")
-        self.view(72, labels=["doc", "bot:ada"], updated="2026-10-01T00:00:00Z")
-        self.api("GET", "/api/me", token=self.bot)      # ada runs, but shows nothing on #72
-        self.state(thread, age); self.once()
-        self.assertEqual(self.state(thread)["items"]["72"]["held"], "ada")
-        self.state(thread, lambda st: age(st, 4000)); self.once()
-        item = self.state(thread)["items"]["72"]
-        self.assertEqual(item["orphan_of"], "ada")
-        body = self.api("GET", f"/api/messages/{item['msg']}", token=self.human)["message"]["body"]
-        self.assertIn("It was ada's, who has shown nothing on it for 1 h", body)
-
-    def test_a_linked_pull_request_waiting_on_review_is_not_silence(self):
-        thread, first = self.chased({"remind_after": 60, "stale_after": 3600}, 75, "review")
-        self.view(75, labels=["doc", "bot:ada"], updated="2026-10-01T00:00:00Z", prs=[9])
-        self.api("GET", "/api/me", token=self.bot)
-        self.state(thread, lambda st: age(st, 4000)); self.once()
-        item = self.state(thread)["items"]["75"]
-        self.assertEqual((item["msg"], item["held"]), (first, "a linked pull request"))
-
-    def test_a_hand_back_is_not_a_take_and_a_closed_issue_is_over(self):
-        thread, msg = self.chased({"remind_after": 60}, 73, "handback")
-        self.api("GET", "/api/me", token=self.bot)
-        self.api("POST", f"/api/threads/{msg}/worker", token=self.bot)
-        self.api("POST", "/api/messages", {"channel": "game.art", "reply_to": msg, "body": "handing this back"}, self.bot)
-        self.api("DELETE", f"/api/threads/{msg}/worker", token=self.bot)
-        self.view(73, labels=["doc", "bot:ada"])        # the label stayed on
-        self.state(thread, age); self.once()
-        self.assertEqual(self.state(thread)["items"]["73"]["reminds"], 1)
-        self.view(73, state="CLOSED")
-        self.state(thread, age); self.once()
-        self.assertEqual(self.state(thread)["items"]["73"]["over"], "closed")
-        self.assertEqual(self.api("GET", f"/api/routines/{thread}")["items"][0]["worker"], None)
-
-    def test_an_item_an_older_runner_stopped_following_is_followed_again(self):
-        thread, msg = self.chased({"remind_after": 60}, 74, "older")
-        self.state(thread, lambda st: (age(st), st["items"]["74"].update(over="a bot took it")))
-        self.view(74, labels=["doc", "bot:ghost"])
-        self.once()
-        self.assertEqual(self.state(thread)["items"]["74"]["orphan_of"], "ghost")
-
+        self.assertEqual(len(self.announced(thread)[51]), 1)
+        self.assertEqual(self.state(thread)["watermark"], {"sent": [51]})
     def test_a_version_2_watermark_still_reads(self):
         cli = load_cli()
         rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
@@ -452,7 +366,7 @@ class Recipes(unittest.TestCase):
                              capture_output=True, text=True, cwd=self.tmp.name)
         got = json.loads(out.stdout)
         self.assertEqual([i["number"] for i in got["items"]], [62], out.stderr)
-        self.assertEqual(got["watermark"], {"sent": [61, 62], "orphaned": {}})
+        self.assertEqual(got["watermark"], {"sent": [61, 62]})
 
     def run_with_failing_gh(self, said):
         cli = load_cli()
@@ -490,12 +404,12 @@ class Recipes(unittest.TestCase):
             with open(os.path.join(self.home, f"forgejo-view-{v['number']}.json"), "w") as fh:
                 json.dump(v, fh)
 
-    def test_forgejo_issues_are_routed_announced_once_and_chased(self):
-        # #401: the github-issues behaviour against Forgejo's API, through the fake in this process
+    def test_forgejo_issues_are_announced_once_in_general_with_no_job(self):
+        # #401, #663: the github-issues behaviour against Forgejo's API, through the fake in this process
         rc = {"type": "forgejo-issues", "forgejo": self.forgejo, "repo": "o/game", "workspace": "game", "batch": 5,
-              "remind_after": 60, "reminds": 1, "rules": [{"label": "doc", "channel": "art"}]}
+              "rules": [{"label": "doc", "channel": "art"}]}
         thread = self.api("POST", "/api/routines", {"name": "forge", "recipe": rc, "every": 1}, self.human)["id"]
-        self.assertIn("Route each Forgejo issue", self.api("GET", f"/api/routines/{thread}")["prompt"])
+        self.assertIn("Nothing for a bot to do: the runner posts each new Forgejo issue", self.api("GET", f"/api/routines/{thread}")["prompt"])
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
         self.api("GET", "/api/me", token=self.bot)     # ada is around; ghost runs nowhere
         # #1 a rule places; #2 needs a bot; #3 is ada's; #4 is labelled claimed; #5 has a person; #6 has an open
@@ -505,47 +419,21 @@ class Recipes(unittest.TestCase):
                     fissue(6), fissue(7, ["bot:ghost"]), fissue(8, assignees=["fleet"])],
             pulls=[{"number": 9, "state": "open", "body": "Closes #6.\n\nBoard thread: x"}])
         self.once()
-        job = self.state(thread)["job"]
-        self.assertEqual([i["number"] for i in job["items"]], [1, 2, 7, 8])
-        self.assertEqual(job["items"][2]["orphan_of"], "ghost")
-        self.assertEqual(job["items"][0]["url"], "http://forge.test/o/game/issues/1")
-        self.assertEqual(job["watermark"], {"sent": [1, 2, 7, 8], "orphaned": {"7": "ghost"}})
-        self.api("POST", "/api/messages", {"channel": "game", "reply_to": job["msg"], "body": "routed",
-                                           "meta": {"done": True, "routes": [{"number": 2, "channel": "econ", "why": "trade"},
-                                                                             {"number": 7, "channel": "", "why": "x"}]}}, self.bot)
-        self.once()
+        st = self.state(thread)
+        self.assertNotIn("job", st)
+        self.assertEqual(st["watermark"], {"sent": [1, 2, 7, 8]})
         announced = self.announced(thread)
-        self.assertEqual({n: [c for c, _ in v] for n, v in announced.items()}, {1: ["game.art"], 2: ["game.econ"], 7: ["game"], 8: ["game"]})
+        self.assertEqual({n: [c for c, _ in v] for n, v in announced.items()}, {1: ["game.art"], 2: ["game"], 7: ["game"], 8: ["game"]})
         body = self.api("GET", f"/api/messages/{announced[7][0][1]}", token=self.human)["message"]["body"]
-        self.assertIn("Its owner, ghost, is not running", body)
-        self.assertIn("comments on Forgejo hold the work so far", body)
+        self.assertIn("http://forge.test/o/game/issues/7", body)
         self.assertIn("labels the issue as its own on Forgejo: `bot:<your handle>` and `thread:<this thread's id>`", body)
         self.assertIn("`POST /repos/o/game/issues/7/labels`", body)
-        self.assertIn("removes `bot:ghost`", body)
         self.assertNotIn("gh issue", body)
-        # the next pass finds nothing new; each issue is announced once
-        self.state(thread, lambda st: st.update(checked_at=0)); self.once()
-        self.assertNotIn("job", self.state(thread))
-        # chasing on Forgejo: #1 closed is over; #2 with a linked PR under ada is held; #8 taken by ghost, who
-        # runs nowhere, is offered again with the Forgejo text
-        self.forgejo_files(
-            issues=[fissue(2), fissue(7, ["bot:ghost"]), fissue(8)],
-            pulls=[{"number": 9, "state": "open", "body": "Closes #6."}, {"number": 10, "state": "open", "body": "Fixes #2"}],
-            views=[fissue(1, ["doc"], state="closed"), fissue(2, ["bot:ada"]), fissue(8, ["bot:ghost"])])
-        self.state(thread, age); self.once()
-        items = self.state(thread)["items"]
-        self.assertEqual(items["1"]["over"], "closed")
-        self.assertEqual(items["2"]["held"], "a linked pull request")
-        self.assertEqual(items["8"]["orphan_of"], "ghost")
-        again = self.api("GET", f"/api/messages/{items['8']['msg']}", token=self.human)["message"]["body"]
-        self.assertTrue(again.startswith("Issue to take again: #8 issue 8"), again)
-        self.assertIn("It was ghost's, who is not running", again)
-        self.assertIn("comments on Forgejo hold", again)
-        self.assertIn("`POST /repos/o/game/issues/8/labels`", again)
-        self.assertIn("removes `bot:ghost`", again)
-        self.assertEqual(items["7"]["reminds"], 1)     # nobody took #7: reminded like any untaken issue
-        self.assertEqual(sorted({i["number"] for i in self.api("GET", f"/api/routines/{thread}")["items"]}), [1, 2, 7, 8])
-
+        self.assertNotIn("Its owner", body, "a stopped owner's issue is free, not a re-offer")
+        # the next passes find nothing new; nothing is posted again, and nothing is looked at on Forgejo but the list
+        for _ in range(2):
+            self.state(thread, lambda st: st.update(checked_at=0)); self.once()
+        self.assertEqual({n: len(v) for n, v in self.announced(thread).items()}, {1: 1, 2: 1, 7: 1, 8: 1})
     def run_forgejo_check(self, env=None):
         cli = load_cli()
         rc = cli.recipe_of({"type": "forgejo-issues", "forgejo": self.forgejo, "repo": "o/game", "workspace": "game"})
@@ -558,7 +446,7 @@ class Recipes(unittest.TestCase):
         out = self.run_forgejo_check()
         got = json.loads(out.stdout)
         self.assertEqual([i["number"] for i in got["items"]], [62, 63], out.stderr)     # three pages of two, one sent before
-        self.assertEqual(got["watermark"], {"sent": [61, 62, 63], "orphaned": {}})
+        self.assertEqual(got["watermark"], {"sent": [61, 62, 63]})
         fail = os.path.join(self.home, "forgejo-fail")
         try:
             for code in (502, 503, 504):
