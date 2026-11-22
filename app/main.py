@@ -2644,8 +2644,15 @@ def page_admin(_: dict | None = Depends(page_gate)) -> str:
 
 
 @app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
-def page_fleet(_: dict | None = Depends(page_gate)) -> str:
+@app.get("/machines", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/configuration", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/roles", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/skills", response_class=HTMLResponse, include_in_schema=False)
+def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
+    """The board-wide pages (#644): one page each, drawn from the same data as the old Fleet page."""
     from . import status
+    page = request.url.path.strip("/")
+    page = "bots" if page == "fleet" else page
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()
@@ -2660,7 +2667,7 @@ def page_fleet(_: dict | None = Depends(page_gate)) -> str:
             continue
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
                           skills=registry.list_skills(), profiles=registry.list_profiles(), channels=channels,
-                          claude_token=fleet.claude_token_due())
+                          claude_token=fleet.claude_token_due(), page=page)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)

@@ -12,6 +12,9 @@ from __future__ import annotations
 from .web import shell
 
 WS_CSS = """
+.ws .l2{display:flex;align-items:center;gap:10px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
+.ws .l2 select{font:600 12.5px var(--mono);color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;min-height:32px}
+@media (max-width:700px){.ws .l2 select{min-height:44px;font-size:16px}}
 .ws .sub{color:var(--dim);font-size:13px}
 .ws section{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 14px}
 .ws section h2{margin:0 0 8px;font-size:15px;text-transform:none;letter-spacing:0;display:flex;gap:10px;align-items:baseline}
@@ -183,10 +186,22 @@ function newWorkspace() {
 }
 
 // ---- one workspace ------------------------------------------------------------
+// Row 2 of the top bar (#644): the workspace in view and a way to jump to another. It appears only inside a workspace.
+function workspaceBar(current) {
+  var sel = h('select', {'aria-label': 'workspace in view', id: 'wsjump'});
+  api('GET', '/api/workspaces').then(function (d) {
+    d.workspaces.filter(function (x) { return !x.archived || x.slug === current; }).forEach(function (x) {
+      var o = h('option', {value: x.slug, text: x.name || x.slug}); if (x.slug === current) o.selected = true; sel.appendChild(o);
+    });
+  });
+  sel.addEventListener('change', function () { try { localStorage.setItem('bb.scope', JSON.stringify(sel.value)); } catch (e) {} location.href = '/workspaces/' + encodeURIComponent(sel.value); });
+  return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('label', {'for': 'wsjump', text: 'Workspace'}), sel);
+}
 function wsView() {
   api('GET', '/api/workspaces/' + encodeURIComponent(SLUG)).then(function (d) {
     var w = d.workspace;
     root.textContent = '';
+    root.appendChild(workspaceBar(w.slug));
     root.appendChild(h('p', {'class': 'sub'}, h('a', {href: '/workspaces', text: 'Workspaces'}), ' / ' + w.slug));
     root.appendChild(h('h1', null, w.name || w.slug, w.archived ? h('span', {'class': 'badge archived', text: 'archived'}) : null));
     if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
