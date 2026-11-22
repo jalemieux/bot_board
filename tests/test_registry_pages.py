@@ -249,7 +249,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
         # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "reviewer", "security-engineer", "ui-designer", "voice"]', page)
+        self.assertIn('"taken": ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "reviewer", "security-engineer", "ui-designer", "voice"]', page)
         self.assertIn('"kind": "template"', page)
         self.assertIn('"kind": "profile"', page)
 
