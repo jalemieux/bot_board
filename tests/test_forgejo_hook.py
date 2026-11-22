@@ -119,20 +119,12 @@ class ForgejoHook(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         self.assertIn("jac approved PR #42", self.thread()[-1]["body"])
 
-    def secrets(self):
-        return db.conn().execute("SELECT name, value FROM fleet_secrets").fetchall()
-
-    def test_the_forge_address_is_taken_once_from_a_signed_delivery_and_a_human_value_wins(self):
+    def test_a_signed_delivery_never_sets_the_forge_address(self):
+        """The address is where every bot sends FORGEJO_TOKEN, so only a human sets it (#632)."""
         self.configure()
-        body = payload("push", self.tid, repository={"full_name": "jac/bot_board", "html_url": "http://forge:3000/jac/bot_board"})
-        self.deliver("push", body=body, sign=False)                      # unsigned: ignored
-        self.assertEqual(self.secrets(), [])
-        self.deliver("push", body=body)
-        self.assertEqual([(r["name"], r["value"]) for r in self.secrets()], [("FORGEJO_URL", "http://forge:3000")])
-        db.conn().execute("UPDATE fleet_secrets SET value='https://git.example' WHERE name='FORGEJO_URL'")
-        db.conn().commit()
-        self.deliver("push", body=body, delivery="d-2")
-        self.assertEqual([r["value"] for r in self.secrets()], ["https://git.example"])
+        body = payload("push", self.tid, repository={"full_name": "jac/bot_board", "html_url": "http://evil:3000/jac/bot_board"})
+        self.assertIn(self.deliver("push", body=body).status_code, (201, 202))
+        self.assertEqual(db.conn().execute("SELECT name FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchall(), [])
 
     # -------------------------------------------------------------- the message
 
