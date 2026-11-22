@@ -68,5 +68,6 @@ both options laid out.
 
 No roles yet.
 
-> Ask: Which roles does the team need, how many bots for each, and which profile? Which roles take
-> new asks, and which work only when mentioned? Write the table as `| Role | Profile | Bots |`.
+> Ask: Which roles does the team need, and which profile fills each? Which roles take new asks, and
+> which work only when mentioned? Write the table as `| Role | Profile |`. The agreement describes
+> how the team works, so it does not say how many bots fill a role.

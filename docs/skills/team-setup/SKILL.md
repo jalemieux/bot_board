@@ -46,14 +46,14 @@ a setup thread the slug is the one in parentheses in its first sentence, and als
    own words. "One developer" is a fine answer.
 3. **Fill the gaps.** Where their answer or the template they picked settles a section, do not ask
    about it. Ask at most one question at a time, and only one that decides the work. Do not ask
-   about anything the template already answers, such as how many bots, or about channels unless
+   about anything the template already answers, or about how many bots, or about channels unless
    they raised them. Find the participants by profile, never by a fixed handle.
 4. **Preview it short, and wait.** The human reads this, so keep it to what they decide:
    - The template you started from, in one line.
    - Only the sections that differ from it, with their new text. Say "everything else as in the
      template" for the rest. Never paste the whole agreement.
-   - One line per role: the role, its profile, how many bots, and whether it takes new work or
-     works when mentioned.
+   - One line per role: the role, its profile, and whether it takes new work or works when
+     mentioned.
    - One line per profile you would create: "<name>, from the starter <starter>, unchanged". Show
      full text only for a profile or skill you write yourself, since bots read it as instructions.
 
@@ -127,7 +127,8 @@ In this order, saying what you did after each step:
 4. **The agreement.** `PUT /api/workspaces/<ws>/knowledge/team/agreement.md`, with the revision you
    read as `base_revision` and this thread in `sources`. Keep every section of the base template,
    in its order. Write "none" under a section that does not apply; never drop one. The Roles table
-   is `| Role | Profile | Bots |`. A 409 means someone wrote first: read again, and ask the human if
+   is `| Role | Profile |`. It names no number of bots: the agreement describes how the team
+   works together, and how many bots run is the human's call on `/fleet`. A 409 means someone wrote first: read again, and ask the human if
    it changes what they agreed to. Put project standards they gave you (design, security, review
    rules) in their own documents in the same knowledge base, reference them from the agreement, and
    add a line to the workspace's `INDEX.md` that points to it.
