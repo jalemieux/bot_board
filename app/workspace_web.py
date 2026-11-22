@@ -51,8 +51,9 @@ WS_CSS = """
 .ws table.bots,.ws table.bots tbody{display:block}
 .ws table.bots tr{display:flex;flex-wrap:wrap;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line)}
 .ws table.bots td{border:0;padding:0}
-.ws table.bots td:nth-child(2){flex-basis:100%;order:1}.ws table.bots td:nth-child(3),.ws table.bots td:nth-child(4),.ws table.bots td:nth-child(5){order:2;font-size:12px;color:var(--dim)}
-.ws table.bots td:nth-child(6){order:3;flex-basis:100%;margin-top:4px}
+.ws table.bots td:nth-child(2){flex:1 1 40%;order:1}.ws table.bots td:nth-child(3),.ws table.bots td:nth-child(4),.ws table.bots td:nth-child(5){order:2;font-size:12px;color:var(--dim);align-self:center}
+.ws table.bots td:nth-child(6){order:3;margin-left:auto}
+.ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
 .dlg select{min-height:44px;font-size:16px}
 .ws .wsw>button{min-height:44px;font-size:16px}.ws #wsmenu button{min-height:44px}.ws .tabs a{padding:12px 2px}}
@@ -316,29 +317,46 @@ function ago(iso) {
 function dialog(title, nodes, buttons) {
   var opener = document.activeElement, ov = h('div', {'class': 'ovl'}), box = h('div', {'class': 'dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlgt'});
   var close = function () { document.removeEventListener('keydown', onKey); ov.remove(); if (opener && opener.focus) opener.focus(); };
-  var onKey = function (ev) { if (ev.key === 'Escape') close(); };
+  var err = h('p', {'class': 'msg-err', role: 'alert'});
+  // Escape closes; Tab stays inside the dialog (aria-modal does not do that by itself)
+  var onKey = function (ev) {
+    if (ev.key === 'Escape') { close(); return; }
+    if (ev.key !== 'Tab') return;
+    var f = Array.prototype.filter.call(box.querySelectorAll('button, select, input, a[href]'), function (x) { return !x.disabled && !x.hidden; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+    else if (!box.contains(document.activeElement)) { ev.preventDefault(); first.focus(); }
+  };
   box.appendChild(h('h3', {id: 'dlgt', text: title}));
   nodes.forEach(function (n) { box.appendChild(n); });
-  var row = h('div', {'class': 'dlg-actions'}, h('button', {type: 'button', 'class': 'quiet', text: 'Cancel'}));
-  row.firstChild.addEventListener('click', close);
+  box.appendChild(err);
+  var cancel = h('button', {type: 'button', 'class': 'quiet', text: 'Cancel'});
+  var row = h('div', {'class': 'dlg-actions'}, cancel);
+  cancel.addEventListener('click', close);
+  var fail = function (msg) { err.textContent = msg; };      // an error stays in the dialog, where the person is looking
   buttons.forEach(function (bt) {
     var el = h('button', {type: 'button', 'class': bt.danger ? 'danger' : '', text: bt.text});
-    el.addEventListener('click', function () { bt.run(el, close); });
+    el.addEventListener('click', function () { err.textContent = ''; bt.run(el, close, fail); });
     row.appendChild(el);
+    if (bt.init) bt.init(el);
   });
-  box.appendChild(row); ov.appendChild(box); document.body.appendChild(ov);
+  box.appendChild(row); ov.appendChild(box); root.appendChild(ov);      // inside the page, so its button rules reach the dialog
   ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
   document.addEventListener('keydown', onKey);
-  (box.querySelector('select, input') || row.lastChild).focus();
+  // a destructive dialog starts on Cancel, so Enter does not delete
+  var danger = buttons.some(function (bt) { return bt.danger; });
+  (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
 function botRows(bots, ctx) {
   return bots.map(function (b) {
     var st = b.state || {}, up = (b.status || '').indexOf('running') === 0;
     var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
-    var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ME ? null : '', title: ME ? null : 'Sign in on the board page first'});
+    var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
     go.addEventListener('click', function () { ctx.setRun(b, !up, go); });
-    var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ME ? null : ''});
+    var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ctx.canAct ? null : ''});
     rm.addEventListener('click', function () { ctx.remove(b, up); });
     return h('tr', null,
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
@@ -359,6 +377,7 @@ function rolesView(w, roles, hosts) {
   var said = function (text, ok) { note(out, text, ok); };
   var again = function () { setTimeout(function () { location.reload(); }, 2500); };
   var ctx = {
+    canAct: !!(ME && w.can_manage && !w.archived),
     setRun: function (b, run, el) {
       el.disabled = true;
       api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null})
@@ -373,10 +392,10 @@ function rolesView(w, roles, hosts) {
         nodes.push(h('p', {'class': 'warn', text: 'No bot would be running in the role ' + role.role + '. The agreement still lists it.' +
           (/architect|security/i.test(role.role) ? ' The agreement asks for this role\'s review on every pull request, so merges would wait for it.' : '')}));
       }
-      dialog('Remove @' + b.handle, nodes, [{text: 'Delete @' + b.handle, danger: true, run: function (el, close) {
+      dialog('Remove @' + b.handle, nodes, [{text: 'Delete @' + b.handle, danger: true, run: function (el, close, fail) {
         el.disabled = true;
         api('DELETE', '/api/agents/' + encodeURIComponent(b.handle)).then(function () { close(); said('@' + b.handle + ' is being removed.', true); again(); })
-          .catch(function (e) { el.disabled = false; close(); said(e.message); });
+          .catch(function (e) { el.disabled = false; fail(e.message); });
       }}]);
     },
     add: function (role) {
@@ -390,32 +409,36 @@ function rolesView(w, roles, hosts) {
         warn.hidden = !name || inAgreement(name);
         warn.textContent = warn.hidden ? '' : 'The agreement does not mention the profile ' + name + '. The bot works, and it is listed under Outside the agreement. Changing the agreement to include it is a separate step.';
       };
-      if (!role) api('GET', '/api/profiles').then(function (d) { d.profiles.forEach(function (x) { profile.appendChild(h('option', {value: x.name, text: x.name})); }); fill(); });
+      if (!role) api('GET', '/api/profiles').then(function (d) { d.profiles.forEach(function (x) { profile.appendChild(h('option', {value: x.name, text: x.name})); }); fill(); ready(); });
       profile.addEventListener && profile.addEventListener('change', fill);
       nodes.push(h('p', {'class': 'sub', text: role ? 'A bot for the role ' + role.role + '.' : 'A bot with any profile.'}));
       nodes.push(h('div', {'class': 'form'}, h('label', null, 'Profile ', profile), h('label', null, 'Machine ', host), h('label', null, 'Harness ', harness)));
       nodes.push(warn);
       nodes.push(h('p', {'class': 'sub', text: 'Whether the bot takes new work is set on the bot, from its profile, not in the agreement.'}));
       if (!reporting.length) { nodes.push(h('p', {'class': 'warn'}, 'No machine is reporting. ', h('a', {href: '/machines', text: 'Add one on the Machines page'}), ' first.')); }
-      dialog('Add a bot', nodes, reporting.length ? [{text: 'Start the bot', run: function (el, close) {
+      var start = null;
+      var ready = function () { if (start) start.disabled = !(role ? role.profile : profile.value); };
+      if (!role) profile.addEventListener('change', ready);
+      dialog('Add a bot', nodes, reporting.length ? [{text: 'Start the bot', init: function (el) { start = el; ready(); }, run: function (el, close, fail) {
         var name = role ? role.profile : profile.value;
         el.disabled = true;
-        api('POST', '/api/fleet/bots', {host: host.value, harness: harness.value, workspace: w.slug, profile: name || null})
+        api('POST', '/api/fleet/bots', {host: host.value, harness: harness.value, workspace: w.slug, profile: name})
           .then(function () { close(); said('Asked for a ' + name + ' bot. The keeper on ' + host.value + ' starts it within a few seconds.', true); again(); })
-          .catch(function (e) { el.disabled = false; close(); said(e.message); });
+          .catch(function (e) { el.disabled = false; fail(e.message); });
       }}] : []);
     }
   };
-  var add = h('button', {type: 'button', text: '+ Add a bot', disabled: ME && w.can_manage && !w.archived ? null : '', title: ME ? null : 'Sign in on the board page first'});
+  var add = h('button', {type: 'button', text: '+ Add a bot', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
   add.addEventListener('click', function () { ctx.add(null); });
   sec.appendChild(h('h2', null, 'Bots', h('small', {text: String(mine.length)}), add));
+  sec.appendChild(out);
   var seen = {};
   var group = function (title, profile, bots, note, role) {
     var run = bots.filter(isUp).length, stopped = bots.length - run;
     var status = run ? run + ' running' + (stopped ? ', ' + stopped + ' stopped' : '') : bots.length ? 'none running, ' + stopped + ' stopped' : 'no bot deployed';
     var head = h('div', {'class': 'rolehead'}, h('b', {text: title}), profile ? h('span', {'class': 'prof', text: 'profile ' + profile}) : null,
       h('span', {'class': 'status ' + (run ? 'good' : 'bad'), text: status}), note ? h('span', {'class': 'sub', text: note}) : null);
-    if (role && role.exists && ME && w.can_manage && !w.archived) {
+    if (role && role.exists && ctx.canAct) {
       var b = h('button', {type: 'button', 'class': 'quiet', text: '+ add', 'aria-label': 'Add a bot to ' + title}); b.addEventListener('click', function () { ctx.add(role); }); head.appendChild(b);
     }
     sec.appendChild(head);
@@ -429,7 +452,6 @@ function rolesView(w, roles, hosts) {
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
   if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
-  sec.appendChild(out);
   sec.appendChild(h('p', {'class': 'sub'}, 'More about a bot (channels, role, machine, voice, a new session) is on its row on the ', h('a', {href: '/fleet', text: 'bots page'}), '.'));
   return sec;
 }
