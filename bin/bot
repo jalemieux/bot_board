@@ -189,6 +189,27 @@ if [ "${1:-}" = install ]; then
     _set KEEPER_DEFAULT_BOT "$_harness"
     [ -z "${BOT_HANDLE:-}" ] || _set KEEPER_DEFAULT_HANDLE "$BOT_HANDLE"
   fi
+  # Put the bots in containers when this box can run them (#652). Only on a first install, and never
+  # over a BOT_RUNTIME the box already has (set or deliberately removed). A Mac keeps claude on the
+  # host: its login is in the Keychain, which a container cannot read. The board on loopback is reached as the host (a Mac) or on the host network.
+  if [ -n "$_fresh" ] && ! grep -qs '^BOT_RUNTIME=' "$_cfg" && [ -z "${BOT_RUNTIME:-}" ]; then
+    _rt=; for _c in docker podman; do command -v "$_c" >/dev/null && "$_c" info >/dev/null 2>&1 && { _rt=$_c; break; }; done
+    if [ -z "$_rt" ]; then
+      echo "bot: no container runtime found: the bots run on this machine, with your user's access. Install Docker, then add BOT_RUNTIME=docker to $_cfg and run bot_board restart bots to move them into containers" >&2
+    elif [ "$(uname -s)" = Darwin ] && [ "$_harness" = claude ]; then
+      echo "bot: $_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots" >&2
+    else
+      _set BOT_RUNTIME "$_rt"
+      case $_board in
+        http://127.*|http://localhost*|http://\[::1\]*)
+          if [ "$(uname -s)" = Darwin ]; then
+            _set BOT_CONTAINER_LOOPBACK_HOST "$([ "$_rt" = podman ] && echo host.containers.internal || echo host.docker.internal)"
+            _net="they can also reach every port this Mac listens on"
+          else _set BOT_CONTAINER_HOST_NETWORK 1; _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
+      esac
+      echo "bot: $_rt found: the bots run in containers. They cannot read this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
+    fi
+  fi
   "$SRC/bin/bot" keeper install "$@" || exit $?
   [ -n "$_harness" ] || exit 0
   # The keeper asks the board on its first report and writes the answer into the config.
@@ -298,8 +319,16 @@ container_run() {
       board_host=$(printf '%s' "${BOARD:-}" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
       case $board_host in
         ""|127.*|localhost|"[::1]"|::1)
-          echo "bot: BOARD is ${BOARD:-}, which a bridge container cannot reach (loopback is the container itself). Set BOARD to the box's tailnet name, or BOT_CONTAINER_HOST_NETWORK=1 for a --network host runtime, before enabling BOT_RUNTIME." >&2
-          return 1 ;;
+          # A laptop's board listens on loopback. With BOT_CONTAINER_LOOPBACK_HOST set (the installer
+          # sets it on a Mac, #652), the container reaches the host by that name instead, and gets a
+          # BOARD that says so. Docker Desktop, OrbStack and Colima serve host.docker.internal; podman serves host.containers.internal.
+          if [ -n "$board_host" ] && [ -n "${BOT_CONTAINER_LOOPBACK_HOST:-}" ]; then
+            # the second -e BOARD overrides the by-name one above: the last wins in Docker and Podman
+            run+=(--add-host "$BOT_CONTAINER_LOOPBACK_HOST:host-gateway" -e "BOARD=${BOARD/"//$board_host"/"//$BOT_CONTAINER_LOOPBACK_HOST"}")
+          else
+            echo "bot: BOARD is ${BOARD:-}, which a bridge container cannot reach (loopback is the container itself). Set BOARD to the box's tailnet name, or BOT_CONTAINER_HOST_NETWORK=1 for a --network host runtime, before enabling BOT_RUNTIME." >&2
+            return 1
+          fi ;;
         *[!0-9.]*)   # a hostname: resolve it on the host, where MagicDNS works, and map it in
           # python3 (always present here) uses the host's resolver, so it sees MagicDNS names too;
           # it prints the ip or nothing and always exits 0, so set -euo pipefail does not trip
