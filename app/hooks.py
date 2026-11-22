@@ -20,8 +20,9 @@ import hashlib
 import hmac
 import json
 import re
+from urllib.parse import urlsplit
 
-from . import db, progress
+from . import db, fleet, progress
 
 NAMES = ("forgejo",)
 EXCERPT = 200       # characters of a review or comment quoted under the line
@@ -241,6 +242,19 @@ def _settle_merge_asks(tid: int, number, merge_id: int, by: int) -> None:
             c.executemany("INSERT OR IGNORE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)", hit)
 
 
+FORGE_URL = "FORGEJO_URL"       # the fleet secret every bot gets in its environment (#632)
+
+
+def _prefill_forge_url(payload: dict) -> None:
+    """The forge's address, taken once from a signed delivery's repository, unless a human already set it.
+    It is the fleet secret FORGEJO_URL, so a human changes it on /fleet and bots get it as an environment variable."""
+    if FORGE_URL in fleet.secret_values():
+        return
+    u = urlsplit(str((payload.get("repository") or {}).get("html_url") or ""))
+    if u.scheme in ("http", "https") and u.netloc:
+        fleet.set_secret(FORGE_URL, f"{u.scheme}://{u.netloc}", "forgejo webhook")
+
+
 def deliver(name: str, raw: bytes, headers) -> dict:
     """Check the signature, find the thread, post the line. Returns {"status", ...} for the
     response: 201 posted, 200 replayed (the same delivery again), 202 ignored (why).
@@ -265,6 +279,7 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     delivery = _header(headers, DELIVERY_HEADERS)
     label = event_type or event or "?"
     repo = str((payload.get("repository") or {}).get("full_name") or "")
+    _prefill_forge_url(payload)
 
     def ignored(reason: str) -> dict:
         _record(name, label, "ignored: " + reason, repo)
