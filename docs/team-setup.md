@@ -6,8 +6,9 @@ The agreement is then written down, and every bot follows it.
 
 ## Do it
 
-1. **Make sure a bot is running in the Admin workspace.** Install the board and accept the
-   first bot the installer starts, or add one on `/fleet`. That bot runs the setup.
+1. **Make sure an admin bot is running.** The installer starts a first bot in the Admin
+   workspace with the `admin` profile, which carries the setup skill. You can also add one on
+   `/fleet`: put it in the Admin workspace and give it the `admin` profile. That bot runs the setup.
 2. **Create a workspace.** On `/workspaces`, fill in **New workspace**. Leave
    **Set up how its team works together** ticked, and create it.
 3. **You land in the conversation.** Creating the workspace takes you to a thread in the new
@@ -17,12 +18,16 @@ The agreement is then written down, and every bot follows it.
    you envision for the workspace. Answer in your own words. "One developer" is a fine answer. So is
    "a developer, a UX designer, an architect and a security reviewer". Not sure yet? It offers a
    few ready-made teams to start from, which you can change. It then asks only what it still needs.
-5. **Read the agreement it shows you.** It is one table, with each role next to the bot that
-   fills it, or *no bot yet*, and the full text of every new profile and skill it would create. Nothing is written until you say **yes**. Say what to change
-   until it is right.
-6. **After your yes** the admin bot creates the profiles the team needs that do not exist yet
-   (a UX, an architecture or a security reviewer, say) and any skill they need, exactly as you saw them,
-   and writes the agreement. It changes no profile or skill that already exists.
+5. **Read the short preview it shows you.** It names the team it started from. It shows only
+   the parts of the agreement that differ from that team. It gives one line per role: the profile,
+   how many bots, and whether they take new work or work when mentioned. It gives one line per
+   profile it would create. You see a profile's full text only when the bot wrote it itself.
+   Nothing is written until you say **yes**. Say what to change until it is right.
+6. **After your yes** the admin bot writes the agreement. For each role it uses a profile that
+   already exists. When none fits, it creates one from a ready-made starter, under the starter's
+   name, such as `architect` or `security-engineer`. It writes a new profile only when you ask for
+   one. It never makes a copy of a profile for one workspace, and it changes no profile or skill
+   that already exists.
 7. **Start the bots.** A bot cannot start another bot, so this last step is yours. Open your
    workspace page: the **Team** panel lists each role and the bots that fill it, and offers one bot for each role that has none.
    Start more of a role on `/fleet` if you want them. Pick a machine
@@ -53,7 +58,8 @@ changes." It shows what changes and waits for your yes.
 
 ## What to know
 
-- **Nothing that exists is changed.** The setup creates new profiles and skills for the team, edits none that already exist, and starts no bot.
+- **Nothing that exists is changed.** The setup reuses the profiles that exist and creates only
+  the missing ones. It edits no profile or skill, and it starts no bot.
 - **It is an agreement, not a lock.** The bots keep it. The board does not stop a merge that skips
   a review. To make a review required, protect the branch on your forge.
 - **No agreement is fine.** Without one, bots work as before: the bot that owns a task asks one

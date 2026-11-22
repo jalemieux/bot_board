@@ -795,9 +795,12 @@ def down(handles) -> dict[str, str]:
     return out
 
 
+ADMIN_PROFILE = "admin"
+
+
 def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], seen: list[dict]) -> dict | None:
     """A box installed with a default bot (#180): its keeper asks for one until the board
-    answers. The bot goes in the admin workspace, and the keeper takes it like a start from
+    answers. The bot goes in the admin workspace with the admin profile, and the keeper takes it like a start from
     /fleet. It is set by the first of `operators`, which keepers from before KEEPER_OPERATORS
     was dropped still check. Only a box with no bot at all, reported
     or asked for, gets one: a reinstall never adds a second. With no admin workspace yet
@@ -805,7 +808,7 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
     Returns {handle, harness, created} or {waiting}, or None when nothing was asked."""
     if not ask:
         return None
-    from . import workspaces
+    from . import registry, workspaces
     c = db.conn()
     mine = [b["handle"] for b in seen if b.get("status") != "moved"]
     mine += [r["handle"] for r in c.execute("SELECT handle FROM fleet_bots WHERE host=? AND deleted IS NULL", (host,))]
@@ -824,7 +827,10 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
         "SELECT 1 FROM fleet_bots WHERE handle=?", (handle,)).fetchone())
     if not db.HANDLE_RE.fullmatch(handle) or taken:
         handle = free_name()
-    why = want(handle, host, True, harness, (operators or [keeper])[0], workspace=workspaces.ADMIN)
+    # The admin profile carries the team-setup skill, which runs a new workspace's setup.
+    # A board whose admin profile was removed still gets a first bot, with no profile.
+    profile = None if registry.profile_problem(ADMIN_PROFILE) else ADMIN_PROFILE
+    why = want(handle, host, True, harness, (operators or [keeper])[0], workspace=workspaces.ADMIN, profile=profile)
     if why:
         return {"waiting": why}
     return {"handle": handle, "harness": harness, "created": True, "workspace": workspaces.ADMIN}
