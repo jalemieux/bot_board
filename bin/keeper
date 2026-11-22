@@ -905,7 +905,7 @@ class Credentials:
     def try_token(self, env):
         """(state, detail) from a real request with the fleet's CLAUDE_CODE_OAUTH_TOKEN, or None:
         no such token here, or the request could not tell (a timeout, a usage limit)."""
-        token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+        token = (read_env(FLEET_ENV) if runtime() else env).get("CLAUDE_CODE_OAUTH_TOKEN", "")   # the one the container sees (#490)
         if not token:
             self.probe = None
             return None
