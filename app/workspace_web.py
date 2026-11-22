@@ -324,6 +324,11 @@ function proposalDocs(w) {
     })).then(function (list) { return list.sort(function (a, b) { return b.tid - a.tid; }); });      // newest first
   }, function () { return []; });
 }
+// Characters a reader cannot see, that could hide an instruction in a line that looks clean: zero-width and bidi controls,
+// the soft hyphen, the byte-order mark and the Unicode tag characters. The agreement reaches every bot, so a proposal with one
+// is shown with the character spelled out and cannot be applied.
+var HIDDEN = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]|[\u{E0000}-\u{E007F}]/gu;
+function showHidden(line) { return line.replace(HIDDEN, function (c) { return '<U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + '>'; }); }
 function lineDiff(a, b) {
   var x = a.split('\n'), y = b.split('\n');
   if (x.length * y.length > 4000000) return x.map(function (l) { return {t: 'del', s: l}; }).concat(y.map(function (l) { return {t: 'add', s: l}; }));
@@ -347,26 +352,30 @@ function diffView(oldText, newText) {
   lines.forEach(function (l, i) {
     if (!keep[i]) { gap = true; return; }
     if (gap) { pre.appendChild(h('span', {'class': 'gap', text: '…\n'})); gap = false; }
-    pre.appendChild(h('span', {'class': l.t, text: (l.t === 'add' ? '+ ' : l.t === 'del' ? '- ' : '  ') + l.s + '\n'}));
+    pre.appendChild(h('span', {'class': l.t, text: (l.t === 'add' ? '+ ' : l.t === 'del' ? '- ' : '  ') + showHidden(l.s) + '\n'}));
   });
   return pre;
 }
-function threadReply(tid, text) {      // the outcome, in the proposal's own thread, as the person who pressed the button
-  return api('GET', '/api/messages/' + tid).then(function (d) { return api('POST', '/api/messages', {channel: d.message.channel, reply_to: tid, body: text}); });
+function threadReply(w, tid, text) {      // the outcome, in the proposal's own thread, as the person who pressed the button
+  return api('GET', '/api/messages/' + tid).then(function (d) {
+    if (!w.channels.some(function (c) { return c.slug === d.message.channel; })) throw new Error('Thread #' + tid + ' is not in this workspace, so nothing was written or posted.');
+    return api('POST', '/api/messages', {channel: d.message.channel, reply_to: tid, body: text});
+  });
 }
 function proposalsView(w, doc, proposals) {
   var canAct = !!(ME && w.can_manage && !w.archived), base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
   var sec = h('section', {'class': 'proposals'}, h('h2', null, 'Proposed changes', h('small', {text: String(proposals.length)})));
   proposals.forEach(function (p) {
-    var stale = p.base === null || !doc || p.base !== doc.revision, out = h('p', {role: 'status'});
+    var stale = p.base === null || !doc || p.base !== doc.revision, hidden = p.text.search(HIDDEN) >= 0, out = h('p', {role: 'status'});
     var card = h('div', {'class': 'proposal'},
       h('h3', null, h('a', {href: '/t/' + p.tid, text: 'Proposal from thread #' + p.tid}), p.author ? h('small', {text: ' saved by @' + p.author}) : null));
     if (doc) card.appendChild(diffView(doc.body, p.text));
     if (stale) card.appendChild(h('p', {'class': 'warn', text: p.base === null ? 'It names no revision it was drafted against, so it cannot be applied. Reject it and ask for a new one.'
       : 'Out of date: it was drafted against revision ' + p.base + ', and the agreement is at revision ' + (doc ? doc.revision : 'none') + '. It can only be rejected.'}));
+    if (hidden) card.appendChild(h('p', {'class': 'warn', text: 'The proposal contains characters a reader cannot see (shown as <U+…> in the difference). It cannot be applied: reject it and ask for a clean one.'}));
     if (doc && /^\|\s*Role\s*\|/mi.test(doc.body) && !/^\|\s*Role\s*\|/mi.test(p.text))
       card.appendChild(h('p', {'class': 'warn', text: 'The agreement has a Roles table and this proposal has none. Applying it would remove the roles the Team tab reads.'}));
-    var apply = h('button', {type: 'button', text: 'Apply', disabled: canAct && !stale ? null : '', title: canAct ? (stale ? 'Out of date' : null) : 'Only a manager of this workspace, signed in on the board page'});
+    var apply = h('button', {type: 'button', text: 'Apply', disabled: canAct && !stale && !hidden ? null : '', title: canAct ? (stale ? 'Out of date' : hidden ? 'Has invisible characters' : null) : 'Only a manager of this workspace, signed in on the board page'});
     var reject = h('button', {type: 'button', 'class': 'quiet danger', text: 'Reject', disabled: canAct ? null : ''});
     var drop = function () { return api('DELETE', base + p.path, {base_revision: p.revision, reason: 'applied or rejected'}); };
     apply.addEventListener('click', function () {
@@ -375,15 +384,18 @@ function proposalsView(w, doc, proposals) {
       Promise.all([api('GET', base + p.path), api('GET', base + 'team/agreement.md')]).then(function (r) {
         var q = parseProposal(r[0].document.body);
         if (q.text !== p.text || q.base !== p.base || r[1].document.revision !== doc.revision) { note(out, 'The proposal or the agreement changed since this page loaded. Reload to see the current difference.'); return; }
-        return api('PUT', base + 'team/agreement.md', {body: p.text, base_revision: doc.revision, reason: 'Applied the proposal from thread ' + p.tid, sources: [String(p.tid)]})
-          .then(function (d) { return threadReply(p.tid, 'Applied. The team agreement is now revision ' + d.document.revision + '.'); })
+        if (q.text.search(HIDDEN) >= 0) { note(out, 'The proposal contains invisible characters and cannot be applied.'); return; }
+        return api('GET', '/api/messages/' + p.tid).then(function (m) {
+          if (!w.channels.some(function (c) { return c.slug === m.message.channel; })) throw new Error('Thread #' + p.tid + ' is not in this workspace, so nothing was written.');
+        }).then(function () { return api('PUT', base + 'team/agreement.md', {body: p.text, base_revision: doc.revision, reason: 'Applied the proposal from thread ' + p.tid, sources: [String(p.tid)]}); })
+          .then(function (d) { return threadReply(w, p.tid, 'Applied. The team agreement is now revision ' + d.document.revision + '.'); })
           .then(drop).then(function () { note(out, 'Applied.', true); setTimeout(function () { location.reload(); }, 1500); });
       }).catch(function (e) { apply.disabled = reject.disabled = false; note(out, e.message + (/revision|409/.test(e.message) ? ' Someone changed the agreement: reload and ask the admin bot for a new proposal.' : '')); });
     });
     reject.addEventListener('click', function () {
       dialog('Reject the proposal', [h('p', {text: 'Reject the proposal from thread #' + p.tid + '? The agreement stays as it is, and the thread is told.'})], [{text: 'Reject', danger: true, run: function (el, close, fail) {
         el.disabled = true;
-        threadReply(p.tid, 'Rejected. The team agreement is unchanged.').then(drop).then(function () { close(); location.reload(); }).catch(function (e) { el.disabled = false; fail(e.message); });
+        threadReply(w, p.tid, 'Rejected. The team agreement is unchanged.').then(drop).then(function () { close(); location.reload(); }).catch(function (e) { el.disabled = false; fail(e.message); });
       }}]);
     });
     card.appendChild(h('div', {'class': 'dlg-actions'}, reject, apply)); card.appendChild(out); sec.appendChild(card);

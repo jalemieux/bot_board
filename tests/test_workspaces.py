@@ -214,7 +214,7 @@ class Workspaces(Base):
         if not shutil.which('node'):
             self.skipTest('node is needed')
         js = workspace_web.WS_JS
-        code = js[js.index('function parseProposal('):js.index('function proposalDocs(')] + js[js.index('function lineDiff('):js.index('function diffView(')]
+        code = js[js.index('function parseProposal('):js.index('function proposalDocs(')] + js[js.index('var HIDDEN'):js.index('function diffView(')]
         script = code + """
 const assert = require('node:assert/strict');
 assert.deepEqual(parseProposal('<!-- base: 7 -->\\n# Team\\n'), {base: 7, text: '# Team\\n'});
@@ -223,6 +223,10 @@ assert.equal(parseProposal('<!-- base: x -->\\n# Team').base, null);
 assert.equal(parseProposal('intro <!-- base: 7 -->\\n# Team').base, null);
 const d = lineDiff('a\\nb\\nc', 'a\\nc\\nd');
 assert.deepEqual(d.map(x => x.t + ':' + x.s), ['ctx:a', 'del:b', 'ctx:c', 'add:d']);
+assert.equal('plain text, | table |'.search(HIDDEN), -1);
+for (const c of ['\\u200B', '\\u202E', '\\u00AD', '\\uFEFF', '\\u{E0041}']) assert.ok(('a' + c + 'b').search(HIDDEN) >= 0, c);
+assert.equal(showHidden('a\\u200Bb'), 'a<U+200B>b');
+assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
 """
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
