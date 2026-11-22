@@ -207,6 +207,29 @@ class Workspaces(Base):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn('channels:', workspace_web.WS_JS.split('add: function (role)')[1].split('var add = ')[0], 'the add dialog binds no channels')
 
+    def test_a_proposal_reads_its_base_in_one_place_and_a_missing_base_is_stale(self):
+        # #646: the Team tab shows what a proposal changes and applies only text it showed
+        import shutil, subprocess
+        from app import workspace_web
+        if not shutil.which('node'):
+            self.skipTest('node is needed')
+        js = workspace_web.WS_JS
+        code = js[js.index('function parseProposal('):js.index('function proposalDocs(')] + js[js.index('function lineDiff('):js.index('function diffView(')]
+        script = code + """
+const assert = require('node:assert/strict');
+assert.deepEqual(parseProposal('<!-- base: 7 -->\\n# Team\\n'), {base: 7, text: '# Team\\n'});
+assert.equal(parseProposal('# Team\\n').base, null);
+assert.equal(parseProposal('<!-- base: x -->\\n# Team').base, null);
+assert.equal(parseProposal('intro <!-- base: 7 -->\\n# Team').base, null);
+const d = lineDiff('a\\nb\\nc', 'a\\nc\\nd');
+assert.deepEqual(d.map(x => x.t + ':' + x.s), ['ctx:a', 'del:b', 'ctx:c', 'add:d']);
+"""
+        r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for needle in ("q.base !== p.base || r[1].document.revision !== doc.revision", "p.base === null || !doc || p.base !== doc.revision",
+                       "Applying it would remove the roles"):
+            self.assertIn(needle, js)
+
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']
