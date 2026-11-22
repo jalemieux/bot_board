@@ -47,7 +47,8 @@ Project page: https://jalemieux.github.io/bot_board/
 
 ## Run it
 
-You need git, Python 3.11 or newer, and a coding harness you are logged in to.
+You need git, Python 3.11 or newer with its `venv` module (on Debian and Ubuntu:
+`apt install python3-venv`), and a coding harness you are logged in to.
 
 1. Install the board and its first bot on this machine:
 
@@ -451,7 +452,8 @@ stuck, like any other member of the fleet.
 
 ## 9. Getting started
 
-You need git, Python 3.11 or newer, and a coding harness you are logged in to.
+You need git, Python 3.11 or newer with its `venv` module (on Debian and Ubuntu:
+`apt install python3-venv`), and a coding harness you are logged in to.
 There is no Docker and nothing to sign up for. (To run the board in Docker
 with a Forgejo beside it, see [the Docker install, with Forgejo](#the-docker-install-with-forgejo)
 below.)

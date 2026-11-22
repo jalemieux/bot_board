@@ -86,6 +86,7 @@ if [ "$CMD" = install ] && [ -z "${BOT_BOARD_FROM_SRC:-}" ]; then
   # old to update itself, say) it pulls it, unless it has local changes.
   [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ] || cat >/dev/null
   command -v git >/dev/null || die "git is required"
+  python3 -c "import venv, ensurepip" 2>/dev/null || die "python3 with venv is required (on Debian/Ubuntu: apt install python3-venv)"
   if [ ! -d "$SRC/.git" ]; then
     mkdir -p "$(dirname "$SRC")"
     git clone -q --depth 1 -b "${BOT_BOARD_REF:-main}" "${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}" "$SRC"
