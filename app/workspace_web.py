@@ -5,11 +5,12 @@ the script reads the path and talks to /api/workspaces. Writes use the identity
 the board page keeps in this browser (localStorage bb.me {handle, token}); the
 server decides what that identity may do and says so in can_create /
 can_manage. Data from the API is only ever put on the page as text, never as
-HTML.
+HTML, with one exception: the workspace switcher's rows (WS_SWITCHER_JS, shared with
+the board page, #660) are built as HTML with every value escaped.
 """
 from __future__ import annotations
 
-from .web import shell, sheet_css
+from .web import shell, sheet_css, WS_SWITCHER_JS
 
 WS_CSS = """
 .ws .l2{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
@@ -251,37 +252,22 @@ function newWorkspace() {
 // ---- one workspace ------------------------------------------------------------
 // Row 2 of the top bar (#644, #645): the workspace in view, with the same numbers as the board page's switcher
 // (what waits on you in each other workspace), and the workspace's tabs.
-var BAR = null, BAR_BOUND = false;
 function workspaceBar(current, tab) {
-  var counts = {}, menu = h('ul', {id: 'wsmenu', hidden: ''}), total = h('span', {'class': 'badge', hidden: ''});
+  var menu = h('ul', {id: 'wsmenu', hidden: ''}), total = h('span', {'class': 'badge', hidden: ''});
   var btn = h('button', {type: 'button', id: 'wsbtn', 'aria-haspopup': 'true', 'aria-expanded': 'false', 'aria-controls': 'wsmenu'}, current, total, ' ▾');
-  var fill = function (list) {
-    menu.textContent = '';
-    var others = 0;
-    list.forEach(function (x) {
-      var n = x.slug === current ? 0 : counts[x.slug] || 0; others += n;
-      menu.appendChild(h('li', null, h('button', {type: 'button', 'data-ws': x.slug, 'aria-current': x.slug === current ? 'true' : null},
-        x.name || x.slug, x.slug === current ? h('span', {'class': 'here-note', text: 'you are here'}) : n ? h('span', {'class': 'n ask', text: String(n), 'aria-label': n + ' waiting on you'}) : null)));
-    });
-    menu.appendChild(h('li', null, h('a', {href: '/workspaces?all', text: 'All workspaces'})));
-    menu.appendChild(h('li', {'class': 'bw'}, h('a', {href: '/machines', text: 'Board-wide'})));
-    total.textContent = others; total.hidden = !others;
-  };
-  var list = [];
   Promise.all([api('GET', '/api/workspaces'), ME ? api('GET', '/api/status').catch(function () { return {}; }) : {}]).then(function (r) {
-    counts = r[1].counts || {}; list = r[0].workspaces.filter(function (x) { return !x.archived || x.slug === current; }); fill(list);
+    var counts = r[1].counts || {}, others = 0;
+    var items = r[0].workspaces.filter(function (x) { return !x.archived || x.slug === current; }).map(function (x) {
+      var n = x.slug === current ? 0 : counts[x.slug] || 0; others += n;
+      return {slug: x.slug, label: x.name, n: n};
+    });
+    menu.innerHTML = wsRows(items, current, [{href: '/workspaces?all', text: 'All workspaces'}, {href: '/machines', text: 'Board-wide', cls: 'bw'}]);
+    total.textContent = others; total.hidden = !others;
   });
-  btn.addEventListener('click', function (ev) { ev.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute('aria-expanded', String(!menu.hidden)); });
-  BAR = {menu: menu, btn: btn};      // the document listeners below act on the bar drawn last
-  if (!BAR_BOUND) {
-    BAR_BOUND = true;
-    document.addEventListener('click', function () { BAR.menu.hidden = true; BAR.btn.setAttribute('aria-expanded', 'false'); });
-    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && !BAR.menu.hidden) { BAR.menu.hidden = true; BAR.btn.setAttribute('aria-expanded', 'false'); BAR.btn.focus(); } });
-  }
-  menu.addEventListener('click', function (ev) {
-    var b = ev.target.closest('button[data-ws]'); if (!b || b.dataset.ws === current) return;
-    try { localStorage.setItem('bb.scope', JSON.stringify(b.dataset.ws)); } catch (e) {}
-    location.href = '/workspaces/' + encodeURIComponent(b.dataset.ws);
+  wsSwitcher(btn, menu, function (w) {
+    if (w === current) return;
+    try { localStorage.setItem('bb.scope', JSON.stringify(w)); } catch (e) {}
+    location.href = '/workspaces/' + encodeURIComponent(w);
   });
   var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge']].map(function (t) {
     return h('a', {href: '#' + t[0], 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
@@ -939,4 +925,4 @@ def workspaces_page(name: str) -> str:
                  '<div class="ws" id="ws"><p class="sub">Loading workspaces…</p>'
                  '<noscript><p class="sub">This page needs JavaScript. The same data is at '
                  '<a href="/api/workspaces">/api/workspaces</a>.</p></noscript></div>'
-                 '<script>' + WS_JS + '</script>')
+                 '<script>' + WS_SWITCHER_JS + WS_JS + '</script>')
