@@ -15,7 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FAKE_JQ = r'''#!/usr/bin/env python3
 import json, sys
 a = sys.argv[1:]
-if a[:1] == ["-n"]:                      # jq -n --arg k v '<filter>'
+if a[:1] == ["-n"] and a[-1] == "{value: env.CLAUDE_CODE_OAUTH_TOKEN}":      # the token comes by the environment (#817)
+    print(json.dumps({"value": __import__("os").environ["CLAUDE_CODE_OAUTH_TOKEN"]}))
+elif a[:1] == ["-n"]:                    # jq -n --arg k v '<filter>'
     args = {a[i + 1]: a[i + 2] for i in range(len(a)) if a[i] == "--arg"}
     f = a[-1]
     if "kind" in f:
@@ -31,6 +33,11 @@ log = os.environ["FAKE_LOG"]
 open(log, "a").write("curl " + " ".join(sys.argv[1:]) + "\n")
 if "-d" in sys.argv:
     open(log, "a").write("body " + sys.argv[sys.argv.index("-d") + 1] + "\n")
+if "--data" in sys.argv and sys.argv[sys.argv.index("--data") + 1] == "@-":
+    open(log, "a").write("stdin " + sys.stdin.read() + "\n")
+for i, x in enumerate(sys.argv):
+    if x == "-H" and sys.argv[i + 1].startswith("@"):
+        open(log, "a").write("header-file " + open(sys.argv[i + 1][1:]).read().strip() + "\n")
 url = [x for x in sys.argv[1:] if x.startswith("http")][0]
 if url.endswith("/api/agents"):
     print('{"token": "tok-human"}')
@@ -108,6 +115,11 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("-t localhost/jac/bot_board-harness-claude:latest", calls)
         self.assertIn("forge-setup BOARD=http://127.0.0.1:8080 TOKEN=tok-human FORGE=http://127.0.0.1:3000", calls)
         self.assertIn("/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN", calls, "the claude token goes to the board as a fleet secret")
+        # #817: the token and the board's own token are not in any command's arguments; they arrive on stdin and by a file
+        argv = [ln for ln in self.calls() if ln.startswith("curl ")]
+        self.assertTrue(all("sk-test" not in ln and "tok-human" not in ln for ln in argv), argv)
+        self.assertIn('stdin {"value": "sk-test"}', calls)
+        self.assertIn("header-file Authorization: Bearer tok-human", calls)
         self.assertIn("bot install --no-bot BOARD=http://127.0.0.1:8080", calls)
         self.assertIn("/api/signin-links", calls)
         self.assertLess(calls.index("docker compose"), calls.index("forge-setup"), "Forgejo is up before it is wired")
@@ -164,8 +176,9 @@ class ForgeInstall(unittest.TestCase):
         self.assertNotIn("BOT_RUNTIME", config, "no container runtime: the bots run as the user")
         self.assertIn("the bots run as you, with your user's access", r.stdout)
         self.assertIn("admin password", r.stdout)
-        self.assertIn("curl -fsS -X POST http://127.0.0.1:8080/api/signin-links -H Authorization: Bearer tok-human", calls,
-                      "the install asks the board for a sign-in link with the human's token")
+        self.assertIn("curl -fsS -X POST http://127.0.0.1:8080/api/signin-links -H @/dev/fd/", calls,
+                      "the install asks the board for a sign-in link, with the token by a file descriptor and not in the arguments (#817)")
+        self.assertIn("header-file Authorization: Bearer tok-human", calls, "the human's token")
         self.assertIn("http://127.0.0.1:8080/signin/abc", r.stdout + r.stderr, "and opens it, or prints it with no browser")
 
     def test_a_docker_command_with_a_prefix_stays_on_docker(self):
