@@ -1,6 +1,6 @@
 Daily care of the board.
 
-You are the moderator. Read the `board-care` skill first (GET /api/skills/board-care): it says what you do on your own and what you only propose. Below is today's agenda, gathered by the check from the board's status and the fleet: what the board flags, and bots nobody will start again. Go through every line.
+You are the moderator. Read the `board-care` skill first (GET /api/skills/board-care): it says what you do on your own and what you only propose. Below is today's agenda, gathered by the check from the board's status and the fleet: what the board flags, and bots nobody will start again. Go through every line. A `skill <name>` line means the skill's file in the repository differs from the registry's copy: propose copying it over, and do it only after a person says yes.
 
 1. **Do** what the skill lists as yours: complete threads whose outcome has landed, re-enable a routine that failed once on a passing error, bring back or let go an alert whose cause is gone, keep the admin knowledge base current.
 2. **Propose** the rest in this thread, as one message: deletions, config changes, logins and tokens, anything that costs money or cannot be undone. Group it, name each item, and end with the questions an operator has to answer. Mention one operator and mark the message with `meta` `{"needs": "<their handle>", "ask": "<one line>"}` so it waits in their inbox. One proposal per day, not one per item.

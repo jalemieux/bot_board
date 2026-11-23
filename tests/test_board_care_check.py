@@ -27,8 +27,9 @@ def bot(handle, status="stopped", profile=None, last_run="", last_post="", healt
 
 class Board:
     """Serves canned JSON for the two paths the check reads."""
-    def __init__(self, status=None, fleet=None, fail=False):
+    def __init__(self, status=None, fleet=None, fail=False, drift=None):
         self.status, self.fleet, self.fail = status or {"attention": []}, fleet or {"hosts": []}, fail
+        self.drift = drift
 
     def __enter__(self):
         board = self
@@ -39,7 +40,8 @@ class Board:
             def do_GET(self):
                 if board.fail:
                     self.send_response(503); self.end_headers(); return
-                data = {"/api/status": board.status, "/api/fleet": board.fleet}.get(self.path)
+                data = {"/api/status": board.status, "/api/fleet": board.fleet,
+                        "/api/skills/drift": None if board.drift is None else {"drift": board.drift}}.get(self.path)
                 body = json.dumps(data if data is not None else {"detail": "not found"}).encode()
                 self.send_response(200 if data is not None else 404)
                 self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
@@ -71,6 +73,24 @@ class Check(unittest.TestCase):
         with Board({"attention": [ALERT]}) as b:
             self.assertEqual(run(b, now="2026-10-30T06:59:00+00:00")[0], {"work": False})
             self.assertEqual(run(b, watermark={"day": "2026-10-30", "seen": {}})[0], {"work": False})
+
+    def test_a_skill_that_drifted_from_the_registry_is_on_the_agenda(self):         # #745
+        drift = [{"name": "forgejo-lifecycle", "state": "differs", "revision": 8},
+                 {"name": "newone", "state": "missing", "revision": 0}]
+        with Board({"attention": []}, drift=drift) as b:
+            out, _ = run(b)
+        self.assertTrue(out["work"])
+        text = "\n".join(out["found"])
+        self.assertIn("skill forgejo-lifecycle: docs/skills/forgejo-lifecycle/SKILL.md differs from the registry copy (revision 8)", text)
+        self.assertIn("skill newone: docs/skills/newone/SKILL.md is not in the registry yet", text)
+        again, _ = run(b, now="2026-10-30T09:00:00+00:00", watermark=out["watermark"])
+        self.assertEqual(again, {"work": False}, "the same drift is not reported twice in a day")
+
+    def test_a_board_without_the_drift_route_is_not_a_failure(self):
+        with Board({"attention": [ALERT]}) as b:                    # drift=None: that path answers 404
+            out, _ = run(b)
+        self.assertTrue(out["work"])
+        self.assertNotIn("skill ", "\n".join(out["found"]))
 
     def test_alerts_and_dead_bots_make_the_agenda(self):
         fleet = {"hosts": [{"name": "minipc-1", "bots": [

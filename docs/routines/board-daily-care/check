@@ -11,6 +11,9 @@ The agenda is one line per item, each with a stable key:
   ask:<key>            an open ask a bot put to a human (`blocked` in GET /api/status): who, from
                        which bot, how long, the ask line. The moderator tells each human once; the
                        thread's worker is not nudged for it (#499)
+  skill:<name>         a skill whose file under docs/skills on the board's release differs from the registry's copy
+                       (GET /api/skills/drift, #745): a merged change reaches bots only when a person says yes and an
+                       admin bot copies it over
   bot:<handle>@<host>  a stopped bot with no profile that has not run for STALE_DAYS, or
                        never: nobody will start it again, so it is a deletion to propose
 Watermark: {"day": the last job's day, "seen": {key: day first reported}, "full": the day
@@ -49,9 +52,16 @@ def day_of(text):
         return None
 
 
-def agenda(status, fleet, today):
-    """[(key, line)] of what needs attention, from the status rollup and the fleet."""
+def agenda(status, fleet, today, drift=()):
+    """[(key, line)] of what needs attention, from the status rollup, the fleet and the skills that drifted."""
     items = []
+    for d in drift:
+        if not isinstance(d, dict) or not d.get("name"):
+            continue
+        what = ("is not in the registry yet (the board seeds it at its next start)" if d.get("state") == "missing"
+                else f"differs from the registry copy (revision {d.get('revision')}): bots keep the old text until it is copied over")
+        items.append((f"skill:{d['name']}", f"skill {d['name']}: docs/skills/{d['name']}/SKILL.md {what}. "
+                      f"Propose copying it, and an admin bot does it on a person's yes ({BOARD}/api/skills/{d['name']})"))
     for a in status.get("attention") or []:
         if not isinstance(a, dict) or not a.get("key"):
             continue
@@ -119,7 +129,11 @@ def main():
         print(f"board-daily-care: the board did not answer, trying again later: {e}", file=sys.stderr)
         print(json.dumps({"work": False}))
         return
-    items = agenda(status, fleet, today)
+    try:
+        drift = get("/api/skills/drift").get("drift") or []
+    except (OSError, ValueError):       # an older board has no such route: no drift to report
+        drift = []
+    items = agenda(status, fleet, today, drift)
     seen = mark.get("seen") if isinstance(mark.get("seen"), dict) else {}
     new = [(k, l) for k, l in items if k not in seen]
     standing = [(k, l) for k, l in items if k in seen]

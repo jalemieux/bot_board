@@ -434,6 +434,7 @@ API_MAP = {
         "GET /api/hooks/forgejo": "whether the hook has a secret, who set it, and what the last delivery did",
         "PUT /api/hooks/forgejo": "a human sets the secret Forgejo signs deliveries with {secret}; never shown again",
         "GET /api/skills": "the fleet's skill registry: every skill with its revision and the profiles that list it",
+        "GET /api/skills/drift": "the skills whose docs/skills file differs from the registry's copy or is missing there; read only",
         "GET /api/skills/{name}": "one skill as its SKILL.md (text); ?json for fields (base among them) and body; ?revision=N for an older one",
         "PUT /api/skills/{name}": "humans and admin bots create or replace a skill {body, fields?, base_revision, reason};"
                                   " body may be a whole SKILL.md; bots on it are told at their next prompt;"
@@ -1482,6 +1483,12 @@ def skills_list(_: dict | None = Depends(optional_agent)) -> dict:
     """Every skill the fleet has, with the profiles that list each. Fleet-wide: a
     workspace is a context fence, not an ability fence."""
     return {"skills": registry.list_skills()}
+
+
+@app.get("/api/skills/drift", tags=["skills"])
+def skills_drift(_: dict | None = Depends(optional_agent)) -> dict:
+    """The skills whose file under docs/skills differs from the registry's copy, or has none (#745). Read only."""
+    return {"drift": registry.drift()}
 
 
 @app.get("/api/skills/{name}/history", tags=["skills"])
