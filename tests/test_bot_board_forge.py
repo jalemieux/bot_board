@@ -153,7 +153,19 @@ class ForgeInstall(unittest.TestCase):
         self.cfg.parent.mkdir(parents=True); self.cfg.write_text('BOT_RUNTIME="docker"\n')
         r = self.native()
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("set up for Docker", r.stderr)
+        self.assertIn("set to run its bots in containers", r.stderr)
+        self.assertIn("{ grep -v '^BOT_RUNTIME=' ", r.stderr, "the one command that fixes it is in the message")
+        # the printed command, run as printed, deletes the line, also when it is the only one in the file
+        fix = [ln.strip() for ln in r.stderr.splitlines() if ln.strip().startswith("{ grep -v")][0]
+        for content in ('BOT_RUNTIME="docker"\n', 'KEEPER_DEFAULT_BOT="claude"\nBOT_RUNTIME="docker"\nX="1"\n'):
+            self.cfg.write_text(content)
+            done = subprocess.run(["bash", "-c", fix], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertNotIn("BOT_RUNTIME", self.cfg.read_text())
+        self.assertEqual(self.cfg.read_text(), 'KEEPER_DEFAULT_BOT="claude"\nX="1"\n', "the other settings stay")
+        self.cfg.write_text('BOT_RUNTIME="docker"\n')
+        self.assertIn("bot_board uninstall all --purge", r.stderr)
+        self.assertNotIn("keeps using Docker", r.stderr)
         self.assertEqual(self.calls(), [], "nothing was started")
 
     def test_native_is_asked_for_with_1_only(self):
