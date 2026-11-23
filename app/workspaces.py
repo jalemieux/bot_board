@@ -332,6 +332,9 @@ def describe(ws, agent=None, full=True) -> dict:
     out = {k: ws[k] for k in ('id', 'slug', 'name', 'purpose', 'created_at', 'updated_at', 'seed_thread_id')}
     out.update(channel=home_slug(ws), archived=bool(ws['archived']), can_manage=can_manage(ws, agent),
                bots=bots_of(ws), repository=repository(ws), repository_url=repository_url(ws))
+    if full and out['repository']:
+        from . import routines       # not at the top: routines imports this module
+        out['issue_routine'] = routines.issue_routine_of(out['repository'])
     if full:
         out.update(channels=channels_of(ws),
                    documents=db.conn().execute(
