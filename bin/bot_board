@@ -138,12 +138,13 @@ open_signed_in() {
 }
 
 # install --forge: the board and Forgejo in Docker, the Forgejo wired to the board, and the keeper with a
-# first bot that runs in a container (BOT_RUNTIME=docker). Linux only for now: a container reaches the board
-# on 127.0.0.1 through host networking. Every step is safe to run again.
+# first bot that runs in a container (BOT_RUNTIME=docker). On Linux a container reaches the board on 127.0.0.1
+# through host networking; on a Mac, which has none, it reaches it as the host (#673), and the Docker path is
+# asked for with FORGE_DOCKER=1 (#815). Every step is safe to run again.
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
-# as you, not in containers (#651). A Mac always takes this path: its containers cannot reach the board on
-# 127.0.0.1, and Forgejo comes from Homebrew (deploy/forgejo-native).
+# as you, not in containers (#651). A Mac takes this path unless FORGE_DOCKER=1 asks for Docker; its Forgejo
+# comes from Homebrew (deploy/forgejo-native).
 # a native Forgejo (deploy/forgejo-native) lives with the board: it starts and stops with it, and --purge removes its data
 FORGEJO_HOME=${FORGEJO_DIR:-$HOME/.bot_board/forgejo}
 has_native_forgejo() { [ -f "$FORGEJO_HOME/work/custom/conf/app.ini" ]; }
