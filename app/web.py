@@ -3396,6 +3396,7 @@ function secretCall(method, name, body) {
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: body ? JSON.stringify(body) : undefined})
   .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
 }
+function isUrl(name) { return name === 'FORGEJO_URL'; }      // a URL typed blind cannot be checked: shown as text
 var SECRET_NAME = /^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|FORGEJO_URL)$/;     // the server checks it too; this only helps while typing
 function sEl(tag, attrs) {
   var n = document.createElement(tag);
@@ -3409,7 +3410,7 @@ function secretWhen(iso) {
   var abs = isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
   return sEl('td', {'data-label': 'When', title: iso}, rel + (abs ? ' \\u00b7 ' + abs : ''));
 }
-function secretNote(text) { var m = document.getElementById('secretmsg'); m.textContent = text || ''; }
+function secretNote(text) { var m = document.getElementById('secretmsg'); m.textContent = text || ''; document.getElementById('secretok').textContent = ''; }
 function secretDialog(title, nodes, okText, run) {
   var opener = document.activeElement, ov = sEl('div', {'class': 'secret-dlg'});
   var box = sEl('div', {role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'secret-dlg-t'}, sEl('h3', {id: 'secret-dlg-t', text: title}));
@@ -3439,11 +3440,14 @@ function removeSecret(x) {
 }
 function saveSecret(name, value, done) {
   secretNote('');
-  secretCall('PUT', name, {value: value}).then(function () { done(); listSecrets(); }, function (e) { if (e) secretNote(e.message); });
+  secretCall('PUT', name, {value: value}).then(function () {
+    done(); listSecrets();
+    var ok = document.getElementById('secretok'); ok.textContent = 'Saved ' + name + '. Bots use it from their next run.'; ok.focus();
+  }, function (e) { if (e) secretNote(e.message); });
 }
 function replaceRow(x, cell, actions) {
-  var inp = sEl('input', {type: 'password', autocomplete: 'new-password', 'aria-label': 'New value for ' + x.name, placeholder: 'new value'});
-  var save = sEl('button', {type: 'button', text: 'Save', disabled: ''}), cancel = sEl('button', {type: 'button', text: 'Cancel'});
+  var inp = sEl('input', {type: isUrl(x.name) ? 'text' : 'password', autocomplete: isUrl(x.name) ? 'off' : 'new-password', 'aria-label': 'New value for ' + x.name, placeholder: 'new value'});
+  var save = sEl('button', {type: 'button', 'class': 'primary', text: 'Save', disabled: ''}), cancel = sEl('button', {type: 'button', text: 'Cancel'});
   cell.classList.add('secret-edit'); cell.textContent = ''; cell.appendChild(inp);
   actions.textContent = ''; actions.appendChild(save); actions.appendChild(cancel);
   var undo = function () { listSecrets(); };
@@ -3463,13 +3467,13 @@ function claudeCard(list) {
     // nothing copied: select the command and say so, rather than claim it worked (a plain-http board has no clipboard API)
     var fail = function () {
       var r = document.createRange(); r.selectNodeContents(cmd); var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      copy.textContent = 'Press Ctrl+C'; reset(4000);
+      copy.textContent = 'Selected: copy it'; reset(4000);
     };
     var legacy = function () {
       var ta = sEl('textarea', {readonly: '', 'aria-hidden': 'true', style: 'position:fixed;opacity:0'}), ok = false;
       ta.value = text; document.body.appendChild(ta); ta.select();
       try { ok = document.execCommand('copy'); } catch (e) {}
-      ta.remove(); if (ok) done(); else fail();
+      ta.remove(); copy.focus(); if (ok) done(); else fail();
     };
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, legacy); else legacy();
   });
@@ -3502,11 +3506,12 @@ function listSecrets() {
     });
     var name = sEl('input', {autocomplete: 'off', 'aria-label': 'Name of a new secret', placeholder: 'NEW_SECRET_NAME', 'aria-describedby': 'secrethint'});
     var val = sEl('input', {type: 'password', autocomplete: 'new-password', 'aria-label': 'Value of the new secret', placeholder: 'value'});
-    var add = sEl('button', {type: 'button', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.'});
+    var add = sEl('button', {type: 'button', 'class': 'primary', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.'});
     var check = function () {
       var bad = name.value && !SECRET_NAME.test(name.value);
       hint.className = 'sub' + (bad ? ' secret-err' : '');
       hint.textContent = bad ? 'Not accepted: use capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.' : 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.';
+      val.type = isUrl(name.value.trim()) ? 'text' : 'password';
       add.disabled = !(SECRET_NAME.test(name.value) && val.value);
     };
     name.addEventListener('input', check); val.addEventListener('input', check);
@@ -3817,6 +3822,7 @@ FLEET_CSS = """
 .fleet-page table.secrets button,.fleet-page .claude-card button,.secret-dlg button{font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
 .fleet-page table.secrets button:hover,.fleet-page .claude-card button:hover,.secret-dlg button:hover{border-color:var(--accent)}
 .fleet-page table.secrets button.danger,.secret-dlg button.danger{border-color:var(--accent);color:var(--accent)}
+.fleet-page table.secrets button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .fleet-page table.secrets button:disabled,.secret-dlg button:disabled{opacity:.5;cursor:default}
 .fleet-page .status{display:inline-block;border-radius:12px;padding:1px 10px;font:600 12px var(--mono)}
 .fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}
@@ -4168,6 +4174,7 @@ If this board requires an invite code, configure it on the machine before instal
 <p class="sub">The file is <code>~/.config/bot_board/fleet.env</code> on each machine.</p>
 <div id="claudecard"></div>
 <div id="secretlist" class="sub"></div>
+<p id="secretok" class="sub" role="status" tabindex="-1"></p>
 <p id="secretmsg" class="secret-err" role="alert"></p></details>
 </div></div>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
