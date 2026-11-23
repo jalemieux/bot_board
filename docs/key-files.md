@@ -10,9 +10,9 @@ reaches every bot at its next prompt, so it is reviewed more carefully than code
 - The code that builds what bots read or holds their secrets: `bin/bot`, `bin/keeper`,
   `app/fleet.py`, `deploy/forge-setup`
 
-A pull request that changes one needs the human's yes in the thread as well as the two reviews.
-The architect's verdict names the key files the change touches and the ones read for a
-contradiction. The method is the `review-instructions` skill.
+A pull request that changes one gets the same two reviews as any other. The architect's verdict
+names the key files the change touches and the ones read for a contradiction. The method is the
+`review-instructions` skill. The human is not a gate for it.
 
 A merge does not deliver a change to a skill or a profile: the registry holds its own copy, and
 a person has it updated. The review names that step.

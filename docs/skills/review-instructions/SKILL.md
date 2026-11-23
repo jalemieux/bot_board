@@ -22,5 +22,6 @@ by every bot at its next prompt, so review the text like code that runs everywhe
 6. **Smallest change.** A rule spelled in a new place is a copy that will drift. Link to the
    one that exists.
 
-Verdict: on the exact commit, naming the key files touched and the ones read. The merge
-needs the human's yes as well as the two reviews. If the change is only wording, say so.
+Verdict: on the exact commit, naming the key files touched and the ones read. The merge needs
+the same two reviews as any pull request; the human is not a gate. If the change is only wording,
+say so.
