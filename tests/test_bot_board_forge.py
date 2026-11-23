@@ -138,7 +138,7 @@ class ForgeInstall(unittest.TestCase):
         config = self.cfg.read_text()
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         self.assertNotIn("BOT_RUNTIME", config, "no container runtime: the bots run as the user")
-        self.assertIn("running as you", r.stdout)
+        self.assertIn("the bots run as you, with your user's access", r.stdout)
         self.assertIn("admin password", r.stdout)
         self.assertIn("curl -fsS -X POST http://127.0.0.1:8080/api/signin-links -H Authorization: Bearer tok-human", calls,
                       "the install asks the board for a sign-in link with the human's token")
@@ -257,12 +257,50 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="codex"', self.cfg.read_text())
         self.assertNotIn("fleet/secrets", "\n".join(self.calls()), "no claude token, none sent")
 
+    def test_the_native_install_ends_with_one_block_that_says_where_forgejo_is_and_how_to_sign_in(self):
+        # #769: the plain install's block with Forgejo in it: the address, where it lives, who to sign in as, the password file (never the password)
+        r = self.native()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        block = r.stdout[r.stdout.index("bot_board is up at"):]
+        lines = block.splitlines()
+        self.assertEqual(lines[0], "bot_board is up at http://127.0.0.1:8080")
+        self.assertIn("  Installed: the board, in ~/.bot_board/board (data: board.db, back it up; log: board.log)", lines)
+        forgejo = next(l for l in lines if "Forgejo:" in l)
+        self.assertIn("http://localhost:3001", forgejo)
+        self.assertIn("sign in as ada, password in ~/.bot_board/forgejo-admin-password; the board has its address as FORGEJO_URL", forgejo)
+        self.assertIn("manage it with ~/.bot_board/bot_board stop|start board, or ", block)
+        self.assertIn("a keeper (log: keeper.log) and a default bot, claude, which starts within a minute", block)
+        self.assertIn("the bots run as you, with your user's access, so they can read Forgejo's admin password", block)
+        self.assertIn("  Runs:      in the background until you stop it or restart this machine", lines)
+        self.assertNotIn("hunter2", r.stdout + r.stderr, "the password is never printed")
+        self.assertTrue(lines[-1].startswith("Next:"), "Next is the last line")
+        # nothing else from the steps: they ran into the log
+        self.assertNotIn("forge-setup", r.stdout)
+        before = r.stdout[:r.stdout.index("bot_board is up at")].splitlines()      # the one wait line, and the sign-in link when no browser opened it
+        self.assertEqual([l for l in before if "starting the board and Forgejo" not in l and "open this link once" not in l], [])
+
+    def test_the_docker_install_block_names_forgejo_in_docker_and_the_bots_reach(self):
+        self.assertEqual(self.run_install().returncode, 0)
+        r = self.run_install()
+        block = r.stdout[r.stdout.index("bot_board is up at"):]
+        self.assertIn("Forgejo: http://localhost:3000 (in Docker; sign in as ada, password in ~/.bot_board/forgejo-admin-password", block)
+        self.assertIn("the bots run in a container (they share this machine's network, so they can reach any service on 127.0.0.1)", block)
+
+    def test_a_failing_step_prints_the_end_of_its_log_and_the_cause(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
+        script(self.src / "deploy" / "forge-setup", "#!/bin/sh\necho 'forge-setup: boom, the cause' >&2\nexit 1\n")
+        r = self.run_install(FORGE_NATIVE="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("boom, the cause", r.stderr)
+        self.assertIn("forge-setup failed", r.stderr)
+
     def test_it_stops_before_starting_anything_when_it_cannot_work(self):
         uname = self.bin / "uname"
         script(uname, "#!/bin/sh\necho Darwin\n")
         r = self.run_install()
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("a Mac, Forgejo from Homebrew", r.stdout + r.stderr, "a Mac takes the native path, with or without Docker (#651)")
+        self.assertIn("a Mac, Forgejo from Homebrew", (self.cfg.parent / "keeper.log").read_text(), "a Mac takes the native path, with or without Docker (#651); the note is in the log (#769)")
         self.assertEqual(self.started(), [], "a Mac never starts Docker")
         uname.unlink()
         r = self.run_install(HANDLE="a")                                  # not a handle

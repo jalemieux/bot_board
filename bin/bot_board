@@ -119,7 +119,7 @@ open_signed_in() {
     if command -v open >/dev/null && [ "$(uname -s)" = Darwin ]; then opener=open
     elif command -v xdg-open >/dev/null && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then opener=xdg-open; fi
   fi
-  if [ -n "$opener" ] && $opener "$url" >/dev/null 2>&1; then say "opened the board in your browser, signed in"
+  if [ -n "$opener" ] && $opener "$url" >/dev/null 2>&1; then OPENED=1; note "opened the board in your browser, signed in"
   else say "open this link once to sign in (it expires in ten minutes): $url"; fi
 }
 
@@ -135,6 +135,42 @@ FORGEJO_HOME=${FORGEJO_DIR:-$HOME/.bot_board/forgejo}
 has_native_forgejo() { [ -f "$FORGEJO_HOME/work/custom/conf/app.ini" ]; }
 native_forgejo() { BOARD=http://127.0.0.1:${PORT:-8080} bash "$SRC/deploy/forgejo-native" "$1"; }
 forge_native() { local d=${DOCKER:-docker}; [ "$(uname -s)" = Darwin ] || [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
+# The block that ends `install --forge` (#769): the plain install's block with Forgejo in it: where it is, how to reach it and sign in
+# (the path of the password file, never the password), and how to manage it. The bots' reach stays on the screen (#670).
+forge_summary() {
+  local api=$1 human=$2 native=$3 harness=$4 forgejo where first=1
+  add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
+  echo "bot_board is up at $api"
+  add "the board, in $(tilde "$DATA") (data: board.db, back it up; log: board.log)"
+  if [ -n "$native" ]; then
+    forgejo=$(BOARD=$api bash "$SRC/deploy/forgejo-native" status 2>/dev/null | sed 's/.* at //')
+    add "Forgejo: $forgejo (in $(tilde "$FORGEJO_HOME"); sign in as $human, password in ~/.bot_board/forgejo-admin-password; the board has its address as FORGEJO_URL)"
+    add "manage it with $(tilde "$(dirname "$SRC")")/bot_board stop|start board, or $(tilde "$SRC")/deploy/forgejo-native status"
+    where="run as you, with your user's access, so they can read Forgejo's admin password; a container install keeps them out of it"
+  else
+    add "Forgejo: http://${FORGEJO_HOST:-localhost}:3000 (in Docker; sign in as $human, password in ~/.bot_board/forgejo-admin-password; the board has its address as FORGEJO_URL)"
+    add "manage it with docker compose in $(tilde "$SRC")"
+    where="run in a container (they share this machine's network, so they can reach any service on 127.0.0.1)"
+  fi
+  add "a keeper (log: keeper.log) and a default bot, $harness, which starts within a minute"
+  add "the bots $where"
+  echo "  Runs:      in the background until you stop it or restart this machine"
+  echo "  Manage:    $(tilde "$(dirname "$SRC")")/bot_board status|stop|restart|update|uninstall"
+  if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "$harness" = claude ]; then
+    echo "  Needs:     a claude login: set CLAUDE_CODE_OAUTH_TOKEN on $api/configuration (make it with claude setup-token), and the bot starts by itself"
+  fi
+  echo
+  if [ -n "${OPENED:-}" ]; then echo "Next:   the board is open in your browser, signed in as $human"; else echo "Next:   open the link above once, to sign in as $human"; fi
+}
+
+# The steps of `install --forge` run quietly (#769): their output goes to the keeper's log, and a step that fails prints the last
+# lines of it, so the cause is on the screen. What a person must do is printed.
+install_log() { echo "$(dirname "$CFG_FILE")/keeper.log"; }
+note() { local log; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "bot_board: $*" >> "$log"; }
+quietly() {
+  local log rc=0; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "--- $*" >> "$log"
+  "$@" >> "$log" 2>&1 || { rc=$?; tail -n 20 "$log" >&2; return $rc; }
+}
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
   local tok i _pair native=
@@ -142,7 +178,7 @@ forge_install() {
   if [ -n "$native" ]; then
     d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c$([ "$(uname -s)" != Darwin ] || echo " (brew install $c)")"; done
     grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this box is set up for Docker (BOT_RUNTIME in $CFG_FILE): install --forge keeps using Docker here, and a native install is for a box that never ran it"
-    say "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
+    note "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
   fi
   [ -n "$native" ] || [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
   [ -n "$native" ] || for c in $d jq openssl curl python3; do command -v "${c%% *}" >/dev/null || die "install --forge needs $c"; done
@@ -151,17 +187,17 @@ forge_install() {
   printf '%s' "$human" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$' || die "HANDLE ($human): letters, digits, dot, dash, underscore; 2 to 32 characters"
   # 1. the board and Forgejo
   if [ -n "$native" ]; then
-    say "starting the board and a native Forgejo (no Docker)"
-    board up
-    BOARD=$api bash "$SRC/deploy/forgejo-native" start || die "Forgejo did not start"
+    say "starting the board and Forgejo: the first run takes a few minutes"
+    BOT_BOARD_QUIET=1 board up
+    quietly env BOARD=$api bash "$SRC/deploy/forgejo-native" start || die "Forgejo did not start"
   else
   [ -f "$SRC/.env" ] || cp "$SRC/.env.example" "$SRC/.env"
   for _pair in BOT_BOARD_BIND_IP:${BOT_BOARD_BIND_IP:-} FORGEJO_HOST:${FORGEJO_HOST:-}; do
     [ -n "${_pair#*:}" ] || continue
     { grep -v "^#\?${_pair%%:*}=" "$SRC/.env" || true; echo "${_pair%%:*}=${_pair#*:}"; } > "$SRC/.env.new" && mv "$SRC/.env.new" "$SRC/.env"
   done
-  say "starting the board and Forgejo in Docker (the first build takes a few minutes)"
-  (cd "$SRC" && $d compose --profile forge up -d --build) || die "docker compose failed: is Docker running, and may you use it (DOCKER=\"sudo docker\")?"
+  say "starting the board and Forgejo in Docker: the first build takes a few minutes"
+  (cd "$SRC" && quietly $d compose --profile forge up -d --build) || die "docker compose failed: is Docker running, and may you use it (DOCKER=\"sudo docker\")?"
   fi
   for i in $(seq 1 90); do curl -fsS "$api/healthz" >/dev/null 2>&1 && break; sleep 2; done
   curl -fsS "$api/healthz" >/dev/null 2>&1 || die "the board does not answer at $api"
@@ -172,21 +208,21 @@ forge_install() {
   if [ -n "$native" ]; then
     _pair=$(BOARD=$api bash "$SRC/deploy/forgejo-native" env) || die "Forgejo is not set up: $SRC/deploy/forgejo-native start"
     ( eval "$_pair"      # in a subshell: it sets FORGE, which is this script's flag
-      BOARD=$api BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" ) \
+      quietly env BOARD=$api BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" ) \
       || die "forge-setup failed; run it again from $SRC once the cause is gone"
   else
-  BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
+  quietly env BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
     || die "forge-setup failed; run it again from $SRC once the cause is gone"
   fi
   # 3. the first bot's harness runs in a container: an image of its own, built here, and its login
   if [ -z "$native" ]; then
-  say "building the $harness image for the bots' containers"
-  $d build --build-arg "HARNESS=$harness" -f "$SRC/deploy/harness.Dockerfile" -t "localhost/jac/bot_board-harness-$harness:latest" "$SRC" \
+  note "building the $harness image for the bots' containers"
+  quietly $d build --build-arg "HARNESS=$harness" -f "$SRC/deploy/harness.Dockerfile" -t "localhost/jac/bot_board-harness-$harness:latest" "$SRC" \
     || die "the $harness image did not build"
   fi
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "$harness" = claude ]; then
     curl -fsS -X PUT "$api/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
-      -d "$(jq -n --arg v "$CLAUDE_CODE_OAUTH_TOKEN" '{value: $v}')" >/dev/null && say "the claude token is set on the board as a fleet secret"
+      -d "$(jq -n --arg v "$CLAUDE_CODE_OAUTH_TOKEN" '{value: $v}')" >/dev/null && note "the claude token is set on the board as a fleet secret"
   fi
   # 4. the keeper, with the box setting that puts every bot in a container
   mkdir -p "$(dirname "$CFG_FILE")"; chmod 700 "$(dirname "$CFG_FILE")"; touch "$CFG_FILE"
@@ -195,16 +231,9 @@ forge_install() {
   for _pair in $_pair; do
     { grep -v "^${_pair%%:*}=" "$CFG_FILE" || true; printf '%s="%s"\n' "${_pair%%:*}" "${_pair#*:}"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
   done
-  BOARD=$api BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install --no-bot
+  BOT_BOARD_QUIET=1 BOARD=$api BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install --no-bot
   open_signed_in "$api" "$tok"
-  if [ -n "$native" ]; then
-    say "the board is at $api (you are $human), Forgejo at $(BOARD=$api bash "$SRC/deploy/forgejo-native" status | sed 's/.* at //'), and the first bot starts within a minute, running as you: watch $api/workspaces"
-    say "the bots run as you, so they can read Forgejo's admin password in ~/.bot_board/forgejo-admin-password; a container install keeps them out of it"
-  else
-  say "the board is at $api (you are $human), Forgejo at http://${FORGEJO_HOST:-localhost}:3000, and the first bot starts in a container within a minute: watch $api/workspaces"
-  fi
-  [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ "$harness" != claude ] \
-    || say "the claude bot waits for a login: set CLAUDE_CODE_OAUTH_TOKEN on $api/configuration (make it with claude setup-token), and it starts by itself"
+  forge_summary "$api" "$human" "$native" "$harness"
 }
 
 # The one block that ends `bot_board install` (#766): what was installed, how it runs, how to manage it, and the next step.
@@ -267,8 +296,6 @@ case $CMD in
     ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
     if [ -n "$FORGE" ]; then
       forge_install
-      if forge_native; then say "manage the keeper and the board with $(dirname "$SRC")/bot_board status|stop|restart; Forgejo with $SRC/deploy/forgejo-native start|stop|status"
-      else say "manage the keeper with $(dirname "$SRC")/bot_board status|stop|restart bots; the board and Forgejo with docker compose in $SRC"; fi
       exit 0
     fi
     # the board first: bots installed beside it report to it, unless BOARD says otherwise. The steps run quietly (BOT_BOARD_QUIET:
