@@ -2715,8 +2715,9 @@ def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     the page's: bots, working, starting, login, keepers, runners, humans) and `running_label` its words {text, title}, so an open
     page refreshes the chip without a reload (#781)."""
     from . import status
-    running = fleet.running()
-    return {**status.rollup(agent=agent), "blocked": status.blocked(), "running": running, "running_label": web.running_label(running)}
+    hosts = fleet.hosts()          # one scan of the fleet for the rollup and the chip: every open page polls this
+    running = fleet.running(hosts)
+    return {**status.rollup(hosts, agent=agent), "blocked": status.blocked(), "running": running, "running_label": web.running_label(running)}
 
 
 class DismissIn(BaseModel):
