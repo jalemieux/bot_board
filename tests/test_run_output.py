@@ -48,6 +48,13 @@ class RunOutput(unittest.TestCase):
             out = self.run_sh("update", str(repo), {"HOME": home, "BOT_BOARD_SRC": f"{home}/.bot_board/src"})
         self.assertRegex(out, r"^bot_board updated to [0-9a-f]{7,} and running at http://127\.0\.0\.1:8080\n$")
 
+    def test_the_managed_update_hands_the_board_restart_to_run_sh_update_with_a_flag_that_stops_the_loop(self):
+        # bin/bot_board update calls `run.sh update`; run.sh update hands over to bin/bot_board update unless that flag is set
+        bb = (ROOT / "bin" / "bot_board").read_text()
+        run = (ROOT / "run.sh").read_text()
+        self.assertIn('BOT_BOARD_UPDATING=1 board update', bb)
+        self.assertIn('[ -z "${BOT_BOARD_UPDATING:-}" ]', run)
+
     def test_what_left_the_output_is_in_the_readme(self):
         readme = (ROOT / "README.md").read_text()
         for piece in ("install bots", "single-user", "A handle is", "sign out and sign in", "@reboot", "start board"):

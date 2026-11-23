@@ -99,7 +99,7 @@ healthy() {
 
 case "$CMD" in
   up|update)
-    if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ]; then
+    if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ] && [ -z "${BOT_BOARD_UPDATING:-}" ]; then      # bin/bot_board update calls this with the flag set
       # the board and the bots move onto the new code together
       exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DIR" "$SRC/bin/bot_board" update
     fi

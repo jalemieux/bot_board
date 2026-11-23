@@ -278,8 +278,8 @@ case $CMD in
     "$BOT" update || die "update failed; the checkout is where it was"
     after=$(git -C "$SRC" rev-parse HEAD)
     if [ "$before" = "$after" ]; then say "nothing new: still on ${after:0:12}"; exit 0; fi
-    say "updated ${before:0:12} -> ${after:0:12}; restarting on it"
-    [ -z "$BOARD_ON" ] || board up
+    # run.sh update prints the one line (the commit and the address) when the board restarts on the new code (#766)
+    if [ -n "$BOARD_ON" ]; then BOT_BOARD_UPDATING=1 board update; else say "updated ${before:0:12} -> ${after:0:12}; restarting on it"; fi
     [ -z "$BOTS_ON" ] || "$BOT" keeper install ;;
   uninstall)
     # --purge deletes the keeper's token: tell the board first, while it is still up even

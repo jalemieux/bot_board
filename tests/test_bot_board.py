@@ -96,7 +96,7 @@ class EntryPoint(unittest.TestCase):
         self.installed()
         r, calls = self.run_bb("update", UPDATE_NEW="1")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(calls, ["bot update", "run.sh up", "bot keeper install"])
+        self.assertEqual(calls, ["bot update", "run.sh update", "bot keeper install"])
         r, calls = self.run_bb("update")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(calls, ["bot update"], "nothing new: nothing restarted")
