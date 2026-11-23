@@ -107,6 +107,14 @@ class RunningChip(unittest.TestCase):
         self.assertEqual(self.client.get('/api/status').json()['running_label']['text'], '1 bot running')
         self.assertIn("document.getElementById('nag')", web.ADMIN_ALERT_JS)          # the bell's poll puts the words in the chip
 
+    def test_the_status_answer_scans_the_fleet_once(self):
+        calls = []
+        real = fleet.hosts
+        fleet.hosts = lambda: (calls.append(1), real())[1]
+        self.addCleanup(setattr, fleet, 'hosts', real)
+        self.assertEqual(self.client.get('/api/status').status_code, 200)
+        self.assertEqual(len(calls), 1)
+
     def test_a_running_bot_beside_a_starting_one_says_both(self):
         self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
             {'handle': 'ann', 'harness': 'claude', 'status': 'waiting'},

@@ -769,12 +769,12 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
     return out("stopped", "stopped" if st != "moved" else "moved to another box", problem)
 
 
-def running() -> dict:
+def running(hosts_now: list | None = None) -> dict:
     """What the header's chip counts (#232): the bots /fleet shows as working or waiting, from
     the keepers' reports; a bot no keeper reports counts when it made a request in the last
     5 minutes. Keepers, the routines runner and humans are counted beside it, not in it."""
     states = {}
-    for h in hosts():
+    for h in (hosts() if hosts_now is None else hosts_now):      # a caller that scanned the fleet already passes it (#781)
         for b in h["bots"]:
             st = b["state"]
             low = b["handle"].lower()
