@@ -26,6 +26,8 @@ class SharedSwitcher(unittest.TestCase):
     def test_the_rows_escape_what_they_show(self):
         self.assertIn("wsEsc(x.label || x.slug)", web.WS_SWITCHER_JS)
         self.assertIn("wsEsc(x.slug)", web.WS_SWITCHER_JS)
+        self.assertIn("Number(x.n)", web.WS_SWITCHER_JS)          # a count is a number, whatever it was sent as
+        self.assertIn("wsEsc(l.cls)", web.WS_SWITCHER_JS)
 
 
 if __name__ == "__main__":

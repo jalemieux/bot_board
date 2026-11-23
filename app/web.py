@@ -965,11 +965,11 @@ function wsEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {
 // items: [{slug, label, n}] (n: what waits on you there); links: [{href, text, cls}] shown after the workspaces
 function wsRows(items, current, links) {
   return items.map(function (x) {
-    var here = x.slug === current, n = here ? 0 : x.n || 0;
+    var here = x.slug === current, n = here ? 0 : Number(x.n) || 0;
     return '<li class="' + (here ? 'here' : '') + '"><button type="button" data-ws="' + wsEsc(x.slug) + '"' + (here ? ' aria-current="true"' : '') + '>' + wsEsc(x.label || x.slug) +
       (here ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
   }).join('') + (links || []).map(function (l) {
-    return '<li' + (l.cls ? ' class="' + l.cls + '"' : '') + '><a href="' + wsEsc(l.href) + '">' + wsEsc(l.text) + '</a></li>';
+    return '<li' + (l.cls ? ' class="' + wsEsc(l.cls) + '"' : '') + '><a href="' + wsEsc(l.href) + '">' + wsEsc(l.text) + '</a></li>';
   }).join('');
 }
 var WSW = null;      // the switcher drawn last: the document listeners act on it, once, however often a page draws one
