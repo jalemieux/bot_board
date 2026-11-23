@@ -95,7 +95,7 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(calls, ["run.sh up QUIET=1", "bot install QUIET=1"])
         self.assertEqual(r.stdout, "bot_board is up at http://127.0.0.1:8080\n"
                                    "  Installed: the board, in ~/.bot_board/board (data: board.db, back it up; log: board.log)\n"
-                                   "             a keeper and a default bot, @ada (claude), running as you\n"
+                                   "             a keeper and a default bot, @ada (claude), running as you, with your user's access\n"
                                    "  Runs:      in the background until you stop it or restart this machine\n"
                                    "  Manage:    ~/.bot_board/bot_board status|stop|restart|update|uninstall\n"
                                    "\n"
@@ -111,6 +111,26 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("a keeper; a default bot, ada, was already here", r.stdout)
         self.assertEqual(len(r.stdout.splitlines()), 7, r.stdout)
+
+    def test_the_install_block_keeps_what_the_bots_can_reach(self):
+        # #670: the isolation notice stays on the screen under the quiet install, in the Installed line
+        def block(config, uname, url_env):
+            (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
+            (self.src / "bin/bot").write_text('#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+                                              "printf '%s' '" + config + "' >> \"$HOME/.config/bot_board/config\"; fi\n")
+            (self.home / "fakebin/uname").write_text(f"#!/bin/sh\necho {uname}\n"); (self.home / "fakebin/uname").chmod(0o755)
+            r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="", **url_env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return r.stdout
+        base = 'KEEPER_DEFAULT_BOT="claude"\n# default bot: @ada (claude) in workspace admin, started\n'
+        out = block(base + 'BOT_RUNTIME="docker"\n', "Linux", {})
+        self.assertIn("in a container (they share this machine's network, so they can reach any service on 127.0.0.1)", out)
+        self.tearDown(); self.setUp()
+        out = block(base + 'BOT_RUNTIME="docker"\n', "Darwin", {})
+        self.assertIn("in a container (they can also reach every port this Mac listens on)", out)
+        self.tearDown(); self.setUp()
+        out = block(base, "Linux", {})
+        self.assertIn("running as you, with your user's access", out)
 
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)

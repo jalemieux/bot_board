@@ -218,7 +218,15 @@ install_summary() {
   if [ -n "$BOTS_ON" ]; then
     note=$(sed -n 's/^# default bot: //p' "$CFG_FILE" 2>/dev/null | tail -1)
     harness=$(sed -n 's/^KEEPER_DEFAULT_BOT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1)
-    where="running as you"; ! grep -qs '^BOT_RUNTIME=' "$CFG_FILE" || where="in a container"
+    # what the bots can reach stays on the screen: it is the isolation notice (#670), the one thing the quiet install keeps from the container note
+    where="running as you, with your user's access"
+    if grep -qs '^BOT_RUNTIME=' "$CFG_FILE"; then
+      where="in a container"
+      case $url in http://127.*|http://localhost*|http://\[::1\]*)
+        if [ "$(uname -s)" = Darwin ]; then where="$where (they can also reach every port this Mac listens on)"
+        else where="$where (they share this machine's network, so they can reach any service on 127.0.0.1)"; fi ;;
+      esac
+    fi
     case $note in
       *started) who=${note%, started}; add "a keeper and a default bot, ${who%% in workspace*}, $where" ;;
       waiting:*) add "a keeper and a default bot, $harness, which starts when you sign in" ;;
