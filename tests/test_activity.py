@@ -47,6 +47,11 @@ class Activity(unittest.TestCase):
             db._local.conn.close()
         self.tmp.cleanup()
 
+    def forge_set(self):
+        from app import fleet
+        fleet.set_secret("FORGEJO_URL", "http://forge.invalid:3000", "jac")
+        fleet.set_secret("FORGEJO_TOKEN", "t", "jac")
+
     def say(self, body):
         self.client.post("/api/messages", headers=self.jac, json={"channel": "general", "body": body}).raise_for_status()
 
@@ -60,6 +65,7 @@ class Activity(unittest.TestCase):
     def test_the_forge_adds_its_counts_and_each_count_is_its_events(self):
         workspaces.set_repository("general", "jac/x", self.agent)
         self.ws = workspaces.find("general")
+        self.forge_set()
         with mock.patch.object(forge, "recent_activity", return_value=FORGE):
             a = activity.build(self.ws, now=NOW)
         self.assertEqual((a["forge"], a["capped"]), ("ok", False))
@@ -78,9 +84,19 @@ class Activity(unittest.TestCase):
         self.assertTrue(activity._capped(data, datetime(2026, 11, 16, tzinfo=timezone.utc)))       # the oldest is inside this window
         self.assertFalse(activity._capped(data, datetime(2026, 11, 23, tzinfo=timezone.utc)))      # and outside this shorter one
 
+    def test_a_board_with_no_forge_address_says_so_and_asks_nothing(self):
+        workspaces.set_repository("general", "jac/x", self.agent)
+        self.ws = workspaces.find("general")
+        with mock.patch.object(forge, "recent_activity") as ask:
+            a = activity.build(self.ws, now=datetime.now(timezone.utc))
+        self.assertEqual(a["forge"], "unset")
+        ask.assert_not_called()
+        self.assertNotIn("merged", a["counts"])
+
     def test_a_forge_that_does_not_answer_leaves_the_boards_part_and_says_why(self):
         workspaces.set_repository("general", "jac/x", self.agent)
         self.ws = workspaces.find("general")
+        self.forge_set()
         with mock.patch.object(forge, "recent_activity", side_effect=forge.ForgeError("the forge did not answer: refused")):
             a = activity.build(self.ws, now=datetime.now(timezone.utc))
         self.assertEqual((a["forge"], a["reason"]), ("down", "the forge did not answer: refused"))
@@ -89,6 +105,7 @@ class Activity(unittest.TestCase):
     def test_the_forge_is_asked_once_a_minute_and_a_failure_is_kept_briefly(self):
         workspaces.set_repository("general", "jac/x", self.agent)
         self.ws = workspaces.find("general")
+        self.forge_set()
         with mock.patch.object(forge, "recent_activity", return_value=FORGE) as ask:
             for hours in (1, 2, 3, 24, 100, 168):          # any window is served from the same answer
                 activity.build(self.ws, hours=hours, now=NOW)

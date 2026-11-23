@@ -349,6 +349,9 @@ function activityView(w) {
     if (a.forge === 'none') {
       body.appendChild(h('div', {'class': 'warn', role: 'status'}, h('b', null, 'No repository is linked to ' + (w.name || w.slug) + '. '),
         'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. ', h('a', {href: '#team', text: 'A manager can have the board create one on the Team tab.'})));
+    } else if (a.forge === 'unset') {
+      body.appendChild(h('div', {'class': 'warn', role: 'status'}, h('b', null, 'The board does not know the forge yet. '),
+        'Showing threads and messages from the board only. Add FORGEJO_URL and FORGEJO_TOKEN under Secrets on the ', h('a', {href: '/configuration', text: 'Configuration page'}), '.'));
     } else if (a.forge === 'down') {
       var retry = h('button', {type: 'button', 'class': 'quiet', text: 'Retry'}); retry.addEventListener('click', load);
       body.appendChild(h('div', {'class': 'warn', role: 'alert'}, h('b', null, 'The forge did not answer. '),
