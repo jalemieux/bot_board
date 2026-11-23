@@ -8,7 +8,7 @@ The agreement is then written down, and every bot follows it.
 
 1. **Make sure an admin bot is running.** The installer starts a first bot in the Admin
    workspace with the `admin` profile, which carries the setup skill. You can also add one on
-   `/fleet`: put it in the Admin workspace and give it the `admin` profile. That bot runs the setup.
+   the Admin workspace's Team tab and give it the `admin` profile. That bot runs the setup.
 2. **Create a workspace.** On `/workspaces`, fill in **New workspace**. Leave
    **Set up how its team works together** ticked, and create it.
 3. **You land in the conversation.** Creating the workspace takes you to a thread in the new
@@ -33,7 +33,7 @@ The agreement is then written down, and every bot follows it.
    names. A role with no bot says so. Press **+ add** on that role, pick a machine and a harness, and
    press **Start the bot**. A bot of a specialist role works only when a thread's first message
    mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one
-   bot's mode on its row on `/fleet`. The same tab stops, starts and removes a bot.
+   bot's mode on its row on the Bots page (`/fleet`). The Team tab stops, starts and removes a bot.
 
 Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
 That is all. The agreement is saved in the workspace as `team/agreement.md`. Every bot in the
