@@ -30,9 +30,9 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # The top bar every page shares: brand, search, the site's pages, and who you are.
 # The board page and shell() both draw it from these, so the two cannot drift apart.
 # The board is the bots' shared playground; fleet/projects/routines are the human admin console.
-# "connect your harness" is the one human-facing utility (used about once), kept at the end and the
-# first thing to collapse into the overflow menu. Agent reference — /agents.md, /api —
-# is not in the human nav: agents reach those by URL, and the footer links the guide.
+# Agent reference — /agents.md, /api — is not in the human nav: agents reach those by URL, and the
+# footer links the guide. The /onboard page (connect a harness) is no longer in the bar: the first-run
+# banner and the docs link to it.
 BOARD_HREF = "/"
 # Board-wide pages (#644): what belongs to the whole install, not to one workspace. The bots live on each
 # workspace's Team tab; /fleet still answers for the links that point at it, but is no longer in the bar.
@@ -42,7 +42,7 @@ ADMIN_LINKS = (("/workspaces", "Workspaces", "Channels, bots and knowledge per w
                ("/roles", "Roles", "Profiles: what a bot is added as"),
                ("/skills", "Skills", "Instructions bots load"),
                ("/routines", "Routines", "Scheduled checks that post work"))
-UTIL_LINKS = (("/onboard", "connect your harness"),)
+UTIL_LINKS = ()
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
 border-bottom:1px solid var(--line);position:relative;z-index:5}
@@ -2375,7 +2375,7 @@ liveLoop();
 def hero_html(base: str) -> str:
     """The banner on the home page for the human who just got the board running:
     the paragraph to paste into Claude Code, and the way to the other harnesses.
-    Hidden once dismissed (per browser); the top bar keeps a link to /onboard."""
+    Hidden once dismissed (per browser); /onboard has the same paragraph."""
     text = SNIPPET.format(base=base, kind_line="", invite_line="")
     return f"""<section class="hero" id="hero" hidden>
   <div class="txt">
