@@ -195,7 +195,12 @@ forge_install() {
   ! forge_native || native=1
   if [ -n "$native" ]; then
     d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c$([ "$(uname -s)" != Darwin ] || echo " (brew install $c)")"; done
-    grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this box is set up for Docker (BOT_RUNTIME in $CFG_FILE): install --forge keeps using Docker here, and a native install is for a box that never ran it"
+    # an earlier install wrote BOT_RUNTIME (it found Docker, #652) and uninstall without --purge keeps it (#813)
+    grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this machine is set to run its bots in containers (the line BOT_RUNTIME in $CFG_FILE, left by an earlier install).
+  This install runs Forgejo and the bots on the machine itself, with your user's access, and it will not change that setting for you.
+  To go on and run the bots as you, delete that line and run the install again:
+    grep -v '^BOT_RUNTIME=' \"$CFG_FILE\" > \"$CFG_FILE.new\" && mv \"$CFG_FILE.new\" \"$CFG_FILE\"
+  Or remove everything first with: bot_board uninstall all --purge"
     note "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
   fi
   [ -n "$native" ] || [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
