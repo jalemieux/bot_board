@@ -926,6 +926,10 @@ class FleetReportIn(BaseModel):
     harness_images: list[dict[str, str]] = Field(default_factory=list, max_length=8, description="The harness"
                                                  " images this box pulled (#478), when its bots run in a container:"
                                                  " {harness, image, state: ok | pulling | stale | missing, digest, detail, at}.")
+    secrets_version: str | None = Field(default=None, max_length=64, description="The version of the board's secrets the box's"
+                                        " fleet.env holds (#557): the board compares it with its own, to say which boxes have the current set.")
+    secret_collisions: list[str] = Field(default_factory=list, max_length=100, description="Names of /fleet secrets the box's own"
+                                         " environment also holds (#555, #557): names only, never a value.")
     bots: list[FleetBot] = Field(default_factory=list, max_length=500)
     credentials: list[FleetCredential] = Field(default_factory=list, max_length=20, description="What bots here"
                                                " need, as the keeper last checked it. Secrets themselves never come here.")
@@ -1024,9 +1028,13 @@ def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dic
 
 
 @app.get("/api/fleet", tags=["fleet"])
-def fleet_hosts(_: dict | None = Depends(optional_agent)) -> dict:
-    """Every box a keeper has reported, with its load and its bots."""
-    return {"hosts": fleet.hosts(), "stale_after": fleet.STALE_AFTER}
+def fleet_hosts(agent: dict | None = Depends(optional_agent)) -> dict:
+    """Every box a keeper has reported, with its load and its bots. What a box says about its secrets (a hash of the set it
+    holds, the names its environment also holds) goes to a human only (#557)."""
+    hosts = fleet.hosts()
+    if not (agent and agent["kind"] == "human"):
+        hosts = [{k: v for k, v in h.items() if k not in fleet.PRIVATE_REPORT} for h in hosts]
+    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER}
 
 
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
@@ -1332,7 +1340,7 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
