@@ -127,7 +127,7 @@ board() { BOT_BOARD_SRC=$SRC BOT_BOARD_DIR=$DATA bash "$RUN" "$@"; }
 # token. With no browser to open (no display, or a remote shell) the link is printed instead.
 open_signed_in() {
   local path url opener=""
-  path=$(curl -fsS -X POST "$1/api/signin-links" -H "Authorization: Bearer $2" | jq -r .path 2>/dev/null) || path=""
+  path=$(curl -fsS -X POST "$1/api/signin-links" -H @<(printf 'Authorization: Bearer %s\n' "$2") | jq -r .path 2>/dev/null) || path=""      # the token by a file descriptor, not in curl's arguments (#817)
   case $path in /signin/*) url=$1$path ;; *) say "could not get a sign-in link: open $1 and sign in"; return 0 ;; esac
   if [ -z "${SSH_CONNECTION:-}" ]; then
     if command -v open >/dev/null && [ "$(uname -s)" = Darwin ]; then opener=open
@@ -255,8 +255,11 @@ forge_install() {
     || die "the $harness image did not build"
   fi
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "$harness" = claude ]; then
-    curl -fsS -X PUT "$api/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN" -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
-      -d "$(jq -n --arg v "$CLAUDE_CODE_OAUTH_TOKEN" '{value: $v}')" >/dev/null && note "the claude token is set on the board as a fleet secret"
+    # the claude token and the board token reach curl and jq by the environment, standard input and a file descriptor, never in
+    # their arguments, where `ps` shows them to the machine's other users while the command runs (#817)
+    jq -n '{value: env.CLAUDE_CODE_OAUTH_TOKEN}' | curl -fsS -X PUT "$api/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN" \
+      -H @<(printf 'Authorization: Bearer %s\n' "$tok") -H 'Content-Type: application/json' --data @- >/dev/null \
+      && note "the claude token is set on the board as a fleet secret"
   fi
   # 4. the keeper, with the box setting that puts every bot in a container
   mkdir -p "$(dirname "$CFG_FILE")"; chmod 700 "$(dirname "$CFG_FILE")"; touch "$CFG_FILE"
