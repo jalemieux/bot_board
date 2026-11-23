@@ -5,6 +5,7 @@ Lifecycle runs the real thing in a temporary HOME (a venv, the board, the keeper
 install): slow and it needs pip to reach PyPI, so it runs with BOT_BOARD_E2E=1."""
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -249,7 +250,7 @@ class EntryPoint(unittest.TestCase):
         (self.src / "run.sh").write_text('#!/usr/bin/env bash\necho "run.sh $* QUIET=${BOT_BOARD_QUIET:-}" >> "$CALLS"\n')
         (self.src / "bin/bot").write_text(
             '#!/usr/bin/env bash\necho "bot $* QUIET=${BOT_BOARD_QUIET:-}" >> "$CALLS"\n'
-            'if [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+            'if [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board" "$HOME/.config/systemd/user"; : > "$HOME/.config/systemd/user/bot-board-keeper.service"; '
             'printf \'KEEPER_DEFAULT_BOT="claude"\\n# default bot: @ada (claude) in workspace admin, started\\n\' >> "$HOME/.config/bot_board/config"; fi\n')
         r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -267,7 +268,7 @@ class EntryPoint(unittest.TestCase):
     def test_the_install_block_says_when_the_default_bot_was_already_here_and_names_a_container(self):
         (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
         (self.src / "bin/bot").write_text(
-            '#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+            '#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board" "$HOME/.config/systemd/user"; : > "$HOME/.config/systemd/user/bot-board-keeper.service"; '
             'printf \'BOT_RUNTIME="docker"\\n# default bot: ada is on this box already\\n\' >> "$HOME/.config/bot_board/config"; fi\n')
         r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -287,7 +288,7 @@ class EntryPoint(unittest.TestCase):
                     self.tearDown() if hasattr(self, "_started") else None
                     self.setUp(); self._started = True
                     (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
-                    (self.src / "bin/bot").write_text('#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+                    (self.src / "bin/bot").write_text('#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board" "$HOME/.config/systemd/user"; : > "$HOME/.config/systemd/user/bot-board-keeper.service"; '
                                                       "printf '%s' '" + 'KEEPER_DEFAULT_BOT="claude"\n' + runtime + note + "' >> \"$HOME/.config/bot_board/config\"; fi\n")
                     (self.home / "fakebin/uname").write_text(f"#!/bin/sh\necho {uname}\n"); (self.home / "fakebin/uname").chmod(0o755)
                     r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
@@ -354,6 +355,35 @@ class EntryPoint(unittest.TestCase):
         self.fake_install('KEEPER_DEFAULT_BOT="claude"\nKEEPER_DEFAULT_HANDLE="milo"\n')
         r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="", BOT_HANDLE="milo")
         self.assertIn("a default bot, claude named milo, from BOT_HANDLE, which starts when the keeper reaches the board", r.stdout)
+    def test_the_install_block_says_when_there_is_no_keeper_service(self):
+        # #549: a box with no systemd user manager: the block says so and how to run the keeper, and does not claim a keeper or a bot
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
+        (self.src / "bin/bot").write_text('#!/usr/bin/env bash\nexit 0\n')      # `bot install` ended cleanly (exit 75 of the keeper); no unit file
+        r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("no keeper service: this machine has no systemd user manager. Run it yourself:", r.stdout)
+        self.assertNotIn("a default bot", r.stdout)
+        self.assertTrue(r.stdout.splitlines()[-1].startswith("Next:"))
+
+    def test_stop_and_status_on_a_box_with_a_unit_file_and_no_systemd_do_not_fail_on_the_missing_command(self):
+        # #549 (ken's note on PR #790): a unit file from an earlier install, and no systemctl on this machine
+        if shutil.which("systemctl", path="/usr/bin:/bin"):
+            self.skipTest("this machine has systemctl; the case is a box without it")
+        self.installed(board=False)
+        r, _ = self.run_bb("stop", "bots", PATH=f"{self.home / 'nobin'}{os.pathsep}/usr/bin{os.pathsep}/bin")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("systemctl: command not found", r.stderr)
+        r, _ = self.run_bb("status", "bots", PATH=f"{self.home / 'nobin'}{os.pathsep}/usr/bin{os.pathsep}/bin")
+        self.assertNotIn("command not found", r.stderr)
+
+    def test_start_restart_and_update_treat_a_keeper_install_that_exits_75_as_done(self):
+        # #549 (gina): the same exit 75 as `bin/bot install` (no systemd user manager), under `set -e` in start, restart and update
+        self.installed(board=False)
+        (self.src / "bin/bot").write_text('#!/usr/bin/env bash\necho "bot $*" >> "$CALLS"\ncase $1 in keeper) exit 75 ;; esac\n')
+        for command in ("start", "restart"):
+            r, calls = self.run_bb(command)
+            self.assertEqual(r.returncode, 0, (command, r.stderr))
+            self.assertIn("bot keeper install", calls)
 
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)

@@ -515,7 +515,8 @@ class ServiceFileTests(unittest.TestCase):
                    'BOT_INVITE': 'secret', 'KEEPER_HANDOVER': 'h:dir'}
             with mock.patch.object(k, 'UNIT', unit), mock.patch.object(k.sys, 'platform', 'linux'), \
                     mock.patch.object(k, 'out', return_value='Linger=yes'), \
-                    mock.patch.object(k.subprocess, 'run'), mock.patch.dict(os.environ, env):
+                    mock.patch.object(k.subprocess, 'run', return_value=mock.Mock(returncode=0)), \
+                    mock.patch.object(k.shutil, 'which', return_value='/bin/systemctl'), mock.patch.dict(os.environ, env):      # systemd is there (#549)
                 k.service(True)
             text = Path(unit).read_text()
         self.assertIn('Environment="PATH=/harnesses"', text)

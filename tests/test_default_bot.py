@@ -23,7 +23,7 @@ class Install(unittest.TestCase):
     """A piped install against a stand-in checkout: its bin/keeper answers `harnesses` with
     the rows a test gives, its bin/bot plays `keeper install` and writes the keeper's note."""
 
-    def install(self, rows, *args, note=None, tty=None, installed=False, saved_bot=False, env=None, commands=None):
+    def install(self, rows, *args, note=None, tty=None, installed=False, saved_bot=False, env=None, commands=None, keeper_exit=None):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             src = home / "src"
@@ -31,7 +31,8 @@ class Install(unittest.TestCase):
             (src / "bin").mkdir()
             (src / "bin/keeper").write_text("import sys\nsys.stdout.write(%r)\n" % "".join("\t".join(r) + "\n" for r in rows))
             (src / "bin/bot").write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n'
-                                         + (f'echo "# default bot: {note}" >> "$BOT_CONFIG"\n' if note else ""))
+                                         + (f'echo "# default bot: {note}" >> "$BOT_CONFIG"\n' if note else "")
+                                         + (f"exit {keeper_exit}\n" if keeper_exit else ""))
             (src / "bin/bot").chmod(0o755)
             if installed:     # a box that has had a keeper: its token is there
                 (home / ".config/bot_board").mkdir(parents=True)
@@ -121,6 +122,14 @@ class Install(unittest.TestCase):
         r, _ = self.install([("claude", "absent", ""), ("codex", "absent", ""), ("copilot", "absent", ""), ("opencode", "absent", "")],
                             env={"BOT_BOARD_QUIET": "1"})
         self.assertIn("no default bot: no harness found", r.stderr)
+
+    def test_a_keeper_that_made_no_service_is_not_a_failed_install_and_nothing_is_waited_for(self):
+        # #549: `keeper install` exits 75 on a box with no systemd user manager; the install ends cleanly, at once, with no default bot to wait for
+        import time
+        began = time.time()
+        r, config = self.install(self.CLAUDE_OK, keeper_exit=75, env={"BOT_INSTALL_WAIT": "30"})
+        self.assertLess(time.time() - began, 20, "it did not wait for a default bot that cannot start")
+        self.assertNotIn("has not heard back", r.stderr)
 
     def test_no_working_runtime_says_the_bots_run_on_the_machine(self):
         r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 1"})   # installed, engine down
