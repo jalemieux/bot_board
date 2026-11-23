@@ -507,17 +507,19 @@ function botRows(bots, ctx) {
     var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
     var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
     go.addEventListener('click', function () { ctx.setRun(b, !up, go); });
+    var again = h('button', {type: 'button', 'class': 'quiet', text: 'restart', 'aria-label': 'Restart @' + b.handle, hidden: up ? null : '', disabled: ctx.canAct ? null : ''});
+    again.addEventListener('click', function () { ctx.restart(b, again); });
     var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ctx.canAct ? null : ''});
     rm.addEventListener('click', function () { ctx.remove(b, up); });
     return h('tr', null,
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
-      h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
+      h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b.profile || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
       h('td', {'class': 'mono', text: ago(b.last_post)}),
-      h('td', {'class': 'acts'}, go, rm, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'more'})));
+      h('td', {'class': 'acts'}, go, again, rm));
   });
 }
 function botsTable(bots, ctx) {
-  return h('table', {'class': 'bots'}, h('thead', {'class': 'sr-only'}, h('tr', null, ['Bot', 'Doing', 'Machine', 'Harness', 'Last active', 'Actions'].map(function (t) { return h('th', {scope: 'col', text: t}); }))),
+  return h('table', {'class': 'bots'}, h('thead', {'class': 'sr-only'}, h('tr', null, ['Bot', 'Doing', 'Role', 'Machine', 'Harness', 'Last active', 'Actions'].map(function (t) { return h('th', {scope: 'col', text: t}); }))),
     h('tbody', null, botRows(bots, ctx)));
 }
 function rolesView(w, roles, hosts) {
@@ -533,6 +535,12 @@ function rolesView(w, roles, hosts) {
       el.disabled = true;
       api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null})
         .then(function () { said((run ? 'Start' : 'Stop') + ' asked for @' + b.handle + '. The keeper on ' + b._host + ' does it within a few seconds' + (run ? '.' : '; a stop waits for the run the bot is in.'), true); again(); })
+        .catch(function (e) { el.disabled = false; said(e.message); });
+    },
+    restart: function (b, el) {
+      el.disabled = true;
+      api('POST', '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/restart')
+        .then(function () { said('Restart asked for @' + b.handle + '. It starts again on the code on ' + b._host + ' once its run ends.', true); el.disabled = false; })
         .catch(function (e) { el.disabled = false; said(e.message); });
     },
     remove: function (b, up) {
@@ -621,7 +629,6 @@ function rolesView(w, roles, hosts) {
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
   if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
-  sec.appendChild(h('p', {'class': 'sub'}, 'More about a bot (channels, role, machine, voice, a new session) is on its row on the ', h('a', {href: '/fleet', text: 'bots page'}), '.'));
   return sec;
 }
 // The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on

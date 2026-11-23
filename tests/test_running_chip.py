@@ -67,7 +67,7 @@ class RunningChip(unittest.TestCase):
         self.report()
         self.seen(['jac', 'keeper-box', 'routines'], db.now())
         page = self.client.get('/').text
-        self.assertIn('<a href="/fleet" class="tab"', page)       # the count counts bots, so it sits in the Bots tab (thread 9918, #645)
+        self.assertIn('<a href="/workspaces" class="tab"', page)  # the count counts bots, and the bots live in workspaces (thread 17902)
         self.assertIn('<span id="nag">2 running</span>', page)
         self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
         self.assertNotIn(' active</a>', page)
@@ -77,12 +77,13 @@ class RunningChip(unittest.TestCase):
 
     def test_the_top_bar_has_tabs_not_a_manage_menu(self):
         # thread 9918, #644: Board and the board-wide pages as tabs; the current page is marked
-        for path, current in (('/', '/'), ('/fleet', '/fleet'), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
+        for path, current in (('/', '/'), ('/fleet', ''), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
                               ('/skills', '/skills'), ('/routines', '/routines'), ('/workspaces', '/workspaces')):
             page = self.client.get(path).text
             self.assertNotIn('id="manage"', page, path)
             self.assertNotIn('id="navboard"', page, path)
-            for href in ('/', '/workspaces', '/fleet', '/machines', '/configuration', '/roles', '/skills', '/routines'):
+            self.assertNotIn('<a href="/fleet" class="tab"', page, path)     # the bots are a tab of each workspace
+            for href in ('/', '/workspaces', '/machines', '/configuration', '/roles', '/skills', '/routines'):
                 cur = ' aria-current="page"' if href == current else ''
                 self.assertRegex(page, f'<a href="{href}" class="tab" title="[^"]*"{cur}>', (path, href))
 
