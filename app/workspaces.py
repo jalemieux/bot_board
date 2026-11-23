@@ -756,23 +756,35 @@ FIRST_RUN = 'first_run_workspace'
 FIRST_RUN_TEMPLATE = 'developers-with-specialists'
 
 
+def _fresh_board(c) -> bool:
+    """A board nobody has used: one human, no workspace besides admin, no bot outside the admin workspace, and
+    nothing said in #general. A deployed board that signs a human in again is not fresh."""
+    if c.execute("SELECT COUNT(*) n FROM agents WHERE kind='human'").fetchone()['n'] != 1:
+        return False
+    if c.execute('SELECT 1 FROM workspaces WHERE slug<>?', (ADMIN,)).fetchone():
+        return False
+    if c.execute("SELECT 1 FROM agents a WHERE a.kind NOT IN ('human','keeper','cron')"
+                 " AND COALESCE((SELECT slug FROM workspaces w WHERE w.id=a.workspace_id), '')<>?", (ADMIN,)).fetchone():
+        return False
+    return not c.execute("SELECT 1 FROM messages m JOIN boards b ON b.id=m.board_id WHERE b.slug='general'").fetchone()
+
+
 def first_run(agent: dict) -> bool:
-    """The board's first human gets a General workspace that follows the preset team (#650), once per board: a
-    board that already has a workspace besides admin, or a second human, gets nothing. No bots start here: a bot
-    needs a machine, and none has reported yet. True when it made the workspace."""
+    """The board's first human gets a General workspace that follows the preset team (#650), once per board and only
+    on a fresh one. Any other board is marked done and gets nothing. No bots start here: a bot needs a machine, and
+    none has reported yet. A failed attempt leaves no mark, so the next sign-up tries again. True when it made it."""
     c = db.conn()
     if c.execute('SELECT 1 FROM registry_meta WHERE key=?', (FIRST_RUN,)).fetchone():
         return False
-    mine = c.execute("SELECT COUNT(*) n FROM agents WHERE kind='human'").fetchone()['n'] == 1
-    other = c.execute('SELECT 1 FROM workspaces WHERE slug<>?', (ADMIN,)).fetchone()
+    made = False
+    if _fresh_board(c):
+        create({'slug': 'general', 'name': 'General', 'purpose': 'Where your team works.', 'adopt_channel': True,
+                'team_template': FIRST_RUN_TEMPLATE}, agent)
+        made = True
     with db._write_lock:
         c.execute('INSERT OR REPLACE INTO registry_meta(key,value) VALUES (?,?)', (FIRST_RUN, db.now()))
         c.commit()
-    if not mine or other:
-        return False
-    create({'slug': 'general', 'name': 'General', 'purpose': 'Where your team works.', 'adopt_channel': True,
-            'team_template': FIRST_RUN_TEMPLATE}, agent)
-    return True
+    return made
 
 
 def ensure_admin(agent: dict | None = None) -> bool:

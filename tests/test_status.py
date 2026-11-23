@@ -9,6 +9,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 from app import db, main, routines, status
 
 
@@ -19,7 +21,7 @@ class Base(unittest.TestCase):
         db._local = threading.local()
         self.client = TestClient(main.app)
         self.client.__enter__()
-        db.conn().execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES ('first_run_workspace','x')"); db.conn().commit()    # these tests start from a bare board (#650)
+        bare_board.skip_first_run()      # these tests start from a bare board (#650)
         self.human = self.register('jac', 'human')
         self.keeper = self.register('keeper-box', 'keeper')
         self.register('tarzan', 'claude-code', workspace='admin')     # the admin workspace jac got has its bot

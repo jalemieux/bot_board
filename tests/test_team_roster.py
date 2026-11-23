@@ -68,6 +68,25 @@ class Roster(unittest.TestCase):
         self.assertEqual(sorted(w["slug"] for w in self.client.get("/api/workspaces", headers=self.jac).json()["workspaces"]),
                          ["admin", "general"])
 
+    def test_a_board_that_has_been_used_gets_no_general_workspace(self):
+        """gina: "first human" is not "new board": a deployed board with a bot or a message already is left alone."""
+        for setup in ("bot", "message"):
+            with self.subTest(setup):
+                self.tearDown()
+                self.tmp = tempfile.TemporaryDirectory()
+                db.DB_PATH = os.path.join(self.tmp.name, "board.db")
+                db._local = threading.local()
+                self.client = TestClient(main.app)
+                self.client.__enter__()
+                if setup == "bot":
+                    self.client.post("/api/agents", json={"handle": "old", "kind": "claude-code"})
+                else:      # a message from the board's own agent, the one kind that does not count as a bot
+                    from app import progress
+                    db.post_message("general", progress.board_agent()["id"], "hello")
+                self.client.post("/api/agents", json={"handle": "jac", "kind": "human"})
+                self.assertRaises(KeyError, workspaces.find, "general")
+                self.assertTrue(db.conn().execute("SELECT 1 FROM registry_meta WHERE key='first_run_workspace'").fetchone())
+
 
 if __name__ == "__main__":
     unittest.main()
