@@ -144,6 +144,41 @@ class EntryPoint(unittest.TestCase):
             self.assertIn(read, bot)
             self.assertIn(read, block)
 
+    def fake_install(self, note=""):
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
+        (self.src / "bin/bot").write_text('#!/usr/bin/env bash\nif [ "$1" = install ]; then echo "BOARD=${BOARD:-}" >> "$CALLS"; '
+                                          'mkdir -p "$HOME/.config/bot_board" "$HOME/.config/systemd/user"; : > "$HOME/.config/systemd/user/bot-board-keeper.service"; '
+                                          "printf '%s' '" + note + "' >> \"$HOME/.config/bot_board/config\"; fi\n")
+
+    def test_an_environment_board_that_is_not_the_one_installed_here_is_not_used_for_the_keeper_and_the_install_says_so(self):
+        # #553: BOARD exported for another install must not point the new box's keeper at the other board
+        self.fake_install()
+        r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="http://other-board:8080")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("BOARD=http://127.0.0.1:8080", calls, "the keeper reports to the board installed here")
+        self.assertNotIn("BOARD=http://other-board:8080", calls)
+        self.assertIn("BOARD is http://other-board:8080 in your environment, which is not the board installed here: the keeper reports to http://127.0.0.1:8080", r.stdout)
+        self.assertIn("BOARD=http://other-board:8080 ~/.bot_board/bot_board install bots", r.stdout.replace(str(self.home), "~"), "and says how to report to the other board")
+
+    def test_a_board_saved_by_an_earlier_install_is_replaced_by_the_one_installed_here_and_said(self):
+        self.fake_install()
+        self.cfg.mkdir(parents=True, exist_ok=True)
+        (self.cfg / "config").write_text('BOARD="http://old-board:8080"\n')
+        r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
+        self.assertIn("BOARD=http://127.0.0.1:8080", calls)
+        self.assertIn("this machine's config names the board http://old-board:8080: the keeper now reports to http://127.0.0.1:8080", r.stdout)
+
+    def test_the_board_of_the_environment_is_still_used_when_only_bots_are_installed(self):
+        self.fake_install()
+        r, calls = self.run_bb("install", "bots", BOT_BOARD_FROM_SRC="1", BOARD="http://other-board:8080")
+        self.assertIn("BOARD=http://other-board:8080", calls)
+        self.assertNotIn("not the board installed here", r.stdout)
+
+    def test_the_block_says_the_name_the_default_bot_was_given(self):
+        self.fake_install('KEEPER_DEFAULT_BOT="claude"\nKEEPER_DEFAULT_HANDLE="milo"\n')
+        r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="", BOT_HANDLE="milo")
+        self.assertIn("a default bot, claude named milo, from BOT_HANDLE, which starts when the keeper reaches the board", r.stdout)
+
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)
         r, calls = self.run_bb("restart")
