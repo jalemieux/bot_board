@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS fleet_alert_clears (
 );
 
 -- Secrets every box's bots get in their environment (GH_TOKEN, ...), set by an admin
--- on /fleet. Only keepers read the values; everyone else sees names and who set them.
+-- on /fleet. Only keepers read the values; everyone else sees names and who set them. The one exception is FORGEJO_URL,
+-- an address and not a secret (#632, #701), which the list shows in full.
 CREATE TABLE IF NOT EXISTS fleet_secrets (
     name   TEXT PRIMARY KEY,
     value  TEXT NOT NULL,
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS fleet_secrets (
 """
 # What a secret may be called: the names bin/bot and the keeper accept from fleet.env,
 # so a secret cannot move a box's BOARD or PATH.
+PLAIN_SECRET = "FORGEJO_URL"     # the one name that is not a secret: the forge's address (#632), shown in full in the list (#701)
 SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)|FORGEJO_URL")   # the one plain name: the forge's address (#632)
 # A move, in two steps: move_to is set on the row while the bot's own box packs it
 # and hands the archive over; then the row points at the new box with fetch naming
@@ -244,8 +246,10 @@ def hand_off(host: str, bots: list[dict]) -> None:
 
 
 def secrets() -> list[dict]:
-    """The fleet's secrets without their values: name, who set it, when, and its last 4 characters."""
-    return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:]}
+    """The fleet's secrets without their values: name, who set it, when, and its last 4 characters. FORGEJO_URL is an
+    address, not a secret (#632), so its row also carries `value`, in full, and nothing else's does (#701)."""
+    return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:],
+             **({"value": r["value"]} if r["name"] == PLAIN_SECRET else {})}
             for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
 
 
