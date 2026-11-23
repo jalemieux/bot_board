@@ -370,7 +370,8 @@ def describe(row: dict, full: bool = True) -> dict:
     d = _stored(row)
     test = json.loads(row["last_test"]) if row["last_test"] else None
     ran = json.loads(row["last_run"]) if row["last_run"] else None
-    out = {**d, "workspace": workspace_of(d.get("channel")), "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
+    owner = _owner()
+    out = {**d, "workspace": workspace_of(d.get("channel")), "notify": owner["handle"] if owner else None, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
            "approved_by": row["approved_by"], "failure": row["failure"] if row["state"] == "failed" else None,
            "test_pending": row["test_asked"] > (test or {}).get("for", 0), "test_asked": row["test_asked"],
            "last_test": test, "run_pending": row["run_asked"] > (ran or {}).get("for", 0),

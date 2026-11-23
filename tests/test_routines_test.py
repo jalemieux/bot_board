@@ -164,6 +164,8 @@ class RoutineTest(unittest.TestCase):
         told = [m for m in self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
+        self.assertTrue(told[0]["body"].startswith("@jac "), "addressed to a person who can enable it, so no bot takes it as work")
+        self.assertEqual(told[0]["meta"]["needs"], "jac")
 
     def test_an_enabled_routine_that_cannot_run_is_stopped_and_said_so_not_skipped(self):
         rid = self.add("unrunnable")

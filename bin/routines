@@ -629,8 +629,16 @@ class Runner:
     def fail(self, r, st, why):
         """Report it, which stops the routine until it is enabled again, and tell the humans once."""
         self.board.report(r, failed=why, version=r["version"])
-        self.board.post(r["channel"], f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled "
-                        f"again: {BOARD}/routines#r={r['id']}", meta={"routine": r["id"]})
+        text = (f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled again: {BOARD}/routines#r={r['id']}")
+        who = r.get("notify")
+        meta = {"routine": r["id"]}
+        if who:      # a person who can enable it, named, so no bot takes this notice as work (#820)
+            text, meta = f"@{who} {text}", {**meta, "needs": who, "ask": f"Routine `{r['name']}` stopped: enable it again?"}
+        try:
+            self.board.post(r["channel"], text, meta=meta)
+        except Exception as e:      # the channel refuses (archived, say): the admin channel is read by those who can enable it
+            self.log(r, f"could not post in {r['channel']}: {e}")
+            self.board.post(ADMIN, text, meta=meta)
         st.pop("job", None)
         self.log(r, f"failed: {why}")
 
