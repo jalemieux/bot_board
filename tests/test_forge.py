@@ -107,6 +107,13 @@ class ForgeClient(unittest.TestCase):
             with mock.patch.object(fleet, "forge_url", lambda bad=bad: bad), self.assertRaises(forge.ForgeError, msg=bad):
                 forge.make_repository("x")
 
+    def test_configured_is_a_bool_and_needs_both_an_address_and_a_token(self):
+        self.assertIs(forge.configured(), True)
+        with mock.patch.object(fleet, "forge_url", lambda: ""):
+            self.assertIs(forge.configured(), False)
+        with mock.patch.object(fleet, "forge_token", lambda **kw: ""):
+            self.assertIs(forge.configured(), False)
+
     def test_a_crafted_name_never_reaches_the_forge(self):
         for bad in ("", ".", "..", "a/b", "a b", "../../admin", "-x", "x.git", "a" * 101, "x?y=1", "x#", "x%2e", None):
             with self.assertRaises(forge.ForgeError, msg=repr(bad)):
