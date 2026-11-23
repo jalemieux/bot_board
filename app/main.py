@@ -422,9 +422,9 @@ API_MAP = {
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/fleet/secrets": "an admin lists the fleet's secrets: names, who set them, when, the last four characters; never values,"
-                                       " except FORGEJO_URL, an address, shown in full",
+                                       f" except {fleet.PLAIN_SECRET}, an address, shown in full",
         "PUT /api/fleet/secrets/{name}": "an admin sets a secret every box's bots get in their environment {value};"
-                                         " names end in _TOKEN, _KEY or _SECRET, or are FORGEJO_URL",
+                                         f" names end in _TOKEN, _KEY or _SECRET, or are {fleet.PLAIN_SECRET}; that address has no user, password, query or fragment",
         "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
         "GET /api/fleet/secrets/values": "a keeper fetches the secrets' values for its bots; nobody else can",
         "POST /api/hooks/forgejo": "Forgejo's webhook endpoint, signed with the hook's secret (HMAC-SHA256), no token;"
@@ -1324,7 +1324,7 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "version": fleet.secrets_version()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
@@ -1333,10 +1333,13 @@ def fleet_secret_set(name: str, body: SecretIn, agent: dict = Depends(current_ag
     writes it to fleet.env on its box; bots read that before every harness run."""
     _secrets_admin(agent)
     if not fleet.SECRET_NAME.fullmatch(name):
-        raise HTTPException(422, "name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN), or FORGEJO_URL")
+        raise HTTPException(422, f"name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN), or {fleet.PLAIN_SECRET}")
     if "\n" in body.value or "\0" in body.value:
         raise HTTPException(422, "a secret is one line")
-    fleet.set_secret(name, body.value.strip(), agent["handle"])
+    try:
+        fleet.set_secret(name, body.value.strip(), agent["handle"])
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
     return {"ok": True}
 
 

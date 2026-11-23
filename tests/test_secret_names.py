@@ -40,7 +40,9 @@ class SecretNames(unittest.TestCase):
         self.check(lambda n: subprocess.run(["grep", "-E", ere], input=n + "\n", text=True, capture_output=True).returncode == 0)
 
     def test_the_configuration_form(self):
-        rx = re.compile(spelled("app/web.py", r"var SECRET_NAME = /\^(.+)\$/;"))
+        # the page builds its pattern from the list's `plain_name`: the shape of a secret, then that one name
+        shape = spelled("app/web.py", r"new RegExp\('\^\((.+?)\|' \+ plainName")
+        rx = re.compile(f"(?:{shape}|{fleet.PLAIN_SECRET})")
         self.check(lambda n: rx.fullmatch(n))
 
 

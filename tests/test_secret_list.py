@@ -28,6 +28,28 @@ class SecretList(unittest.TestCase):
         self.assertNotIn("value", rows["GH_TOKEN"])
         self.assertEqual(rows["GH_TOKEN"]["ends"], "1234")
         self.assertNotIn("ghp_abcdefgh", str(fleet.secrets()))
+        self.assertEqual({n: r["plain"] for n, r in rows.items()}, {"FORGEJO_URL": True, "GH_TOKEN": False}, "the list says which is plain")
+
+    def test_an_address_with_credentials_a_query_or_a_fragment_is_refused_when_saved(self):
+        # #762: the list shows the address in full, and the board's token goes to it
+        for bad in ("http://user:pw@forge.example", "https://forge.example/?token=x", "http://forge.example/#x",
+                    "ftp://forge.example", "forge.example", "http://", "http://[::1"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    fleet.set_secret("FORGEJO_URL", bad, "jac")
+        self.assertEqual([r["name"] for r in fleet.secrets()], [], "nothing was stored")
+        fleet.set_secret("FORGEJO_URL", "https://forge.example:3000/sub", "jac")
+        self.assertEqual(fleet.forge_url(), "https://forge.example:3000/sub")
+        fleet.set_secret("GH_TOKEN", "http://user:pw@not-an-address", "jac")      # any other name takes any value
+
+    def test_an_address_stored_with_credentials_before_the_rule_is_not_shown_in_full(self):
+        c = db.conn()
+        c.execute("INSERT INTO fleet_secrets (name, value, set_by, set_at) VALUES ('FORGEJO_URL', 'http://u:pw@forge.example', 'jac', ?)", (db.now(),))
+        c.commit()
+        row = fleet.secrets()[0]
+        self.assertTrue(row["plain"])
+        self.assertNotIn("value", row)
+        self.assertNotIn("u:pw", str(fleet.secrets()))
 
 
 if __name__ == "__main__":
