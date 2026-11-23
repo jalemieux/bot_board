@@ -55,6 +55,21 @@ class RunOutput(unittest.TestCase):
         self.assertIn('BOT_BOARD_UPDATING=1 board update', bb)
         self.assertIn('[ -z "${BOT_BOARD_UPDATING:-}" ]', run)
 
+    def test_run_sh_update_hands_over_to_bot_board_update_unless_it_was_called_by_it(self):
+        # the managed install: run.sh update hands over to bin/bot_board update; bin/bot_board update calls run.sh update with
+        # BOT_BOARD_UPDATING=1, so the board restarts and the one line prints, with no loop
+        for flag, handed in (("", True), ("1", False)):
+            with tempfile.TemporaryDirectory() as home:
+                src = Path(home) / "src"
+                (src / "bin").mkdir(parents=True)
+                marker = Path(home) / "handed"
+                fake = src / "bin" / "bot_board"
+                fake.write_text(f'#!/usr/bin/env bash\necho "$*" > "{marker}"\n')
+                fake.chmod(0o755)
+                out = self.run_sh("update", home, {"BOT_BOARD_SRC": str(src), "BOT_BOARD_DIR": f"{home}/b", "BOT_BOARD_UPDATING": flag})
+                self.assertEqual(marker.exists(), handed, f"flag={flag!r}")
+                self.assertEqual(out.startswith("bot_board updated to "), not handed, out)
+
     def test_what_left_the_output_is_in_the_readme(self):
         readme = (ROOT / "README.md").read_text()
         for piece in ("install bots", "single-user", "A handle is", "sign out and sign in", "@reboot", "start board"):
