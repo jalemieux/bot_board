@@ -529,6 +529,39 @@ class ContainerRun(unittest.TestCase):
         self.assertEqual(run[run.index("--add-host") + 1], "host.docker.internal:host-gateway", run)
         self.assertIn("BOARD=http://host.docker.internal:8080", run)
 
+    def run_forge_url(self, **env):
+        checkout = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
+        (Path(checkout) / ".keep").write_text("a non-empty checkout")
+        self.log.write_text("")
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
+                         self.sub_env({"BOARD": "http://100.64.0.9:8080", "FORGEJO_URL": "http://localhost:3000", **env}))
+        run = next((c for c in self.calls() if c and c[0] == "run"), None)
+        return r, run
+
+    def test_a_loopback_forge_url_maps_to_the_loopback_host_name_on_a_bridge(self):      # #692
+        r, run = self.run_forge_url(BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("FORGEJO_URL=http://host.docker.internal:3000", run)
+        self.assertEqual(run.count("host.docker.internal:host-gateway"), 1, run)
+
+    def test_a_loopback_board_and_forge_url_share_one_add_host(self):
+        r, run = self.run_forge_url(BOARD="http://127.0.0.1:8080", BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(run.count("host.docker.internal:host-gateway"), 1, run)
+        self.assertIn("BOARD=http://host.docker.internal:8080", run)
+        self.assertIn("FORGEJO_URL=http://host.docker.internal:3000", run)
+
+    def test_a_loopback_forge_url_without_the_host_name_warns_and_runs(self):
+        r, run = self.run_forge_url()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("FORGEJO_URL is http://localhost:3000", r.stderr)
+        self.assertFalse(any(a.startswith("FORGEJO_URL=") for a in run), run)
+
+    def test_a_forge_url_that_is_not_loopback_is_left_alone(self):
+        r, run = self.run_forge_url(FORGEJO_URL="http://forge.example.ts.net:3000", BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal")
+        self.assertFalse(any(a.startswith("FORGEJO_URL=") for a in run), run)
+
     def test_host_network_opt_out_adds_network_host(self):
         checkout = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)

@@ -371,6 +371,22 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
     [ "$harness" = copilot ] && case $_k in GH_TOKEN|GITHUB_TOKEN) continue ;; esac
     run+=(-e "$_k")
   done
+  # A loopback FORGEJO_URL is the container itself on a bridge network (#692), as a loopback BOARD is: the same
+  # rewrite to the loopback host name when the installer set one, and a warning, not a refusal, when it did not
+  # (a turn may not need the forge). The last -e FORGEJO_URL wins over the by-name one above.
+  if [ "$mode" = bot ] && [ -z "${BOT_CONTAINER_HOST_NETWORK:-}" ] && [ -n "${FORGEJO_URL:-}" ]; then
+    local _fh
+    _fh=$(printf '%s' "$FORGEJO_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
+    case $_fh in
+      127.*|localhost|"[::1]"|::1)
+        if [ -n "${BOT_CONTAINER_LOOPBACK_HOST:-}" ]; then
+          case " ${run[*]} " in *" $BOT_CONTAINER_LOOPBACK_HOST:host-gateway "*) ;; *) run+=(--add-host "$BOT_CONTAINER_LOOPBACK_HOST:host-gateway") ;; esac
+          run+=(-e "FORGEJO_URL=${FORGEJO_URL/"//$_fh"/"//$BOT_CONTAINER_LOOPBACK_HOST"}")
+        else
+          echo "bot: FORGEJO_URL is $FORGEJO_URL, which a bridge container cannot reach (loopback is the container itself). Set it to the forge's tailnet name under Secrets on /fleet, or BOT_CONTAINER_LOOPBACK_HOST on this box." >&2
+        fi ;;
+    esac
+  fi
   # opencode takes its per-bot config as content in this var (#324); forward it when set so a
   # container run uses the same model and config block as the host does.
   [ -n "${OPENCODE_CONFIG_CONTENT:-}" ] && run+=(-e OPENCODE_CONFIG_CONTENT)
