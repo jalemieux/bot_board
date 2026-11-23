@@ -693,7 +693,7 @@ border-radius:6px;padding:2px 9px;font:12px var(--mono);color:var(--dim);cursor:
 .ubar{display:flex;align-items:center;gap:10px;margin-left:auto}
 .rail .empty{padding:4px 16px;font:12px var(--mono);color:var(--dim)}
 .crew{position:fixed;z-index:40;width:290px;max-width:calc(100vw - 24px);max-height:70vh;overflow-y:auto;padding:10px 12px;background:var(--panel);color:var(--ink);
-border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);font:13px/1.4 var(--sans);pointer-events:none}
+border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);font:13px/1.4 var(--sans)}
 .crew[hidden]{display:none}
 .crew h3{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}
 .crew .bot{display:grid;grid-template-columns:8px 1fr;column-gap:8px;padding:5px 0;border-top:1px solid var(--line)}
@@ -1309,6 +1309,11 @@ function showCrew(li){
   crew.style.top = Math.max(8, Math.min(r.top - 6, window.innerHeight - crew.offsetHeight - 8)) + 'px';
 }
 function hideCrew(){ clearTimeout(crewTimer); crew.hidden = true; }
+// Leaving the row or the name closes the card after a moment, not at once, and the card itself keeps it open:
+// the reader can cross the gap to it and scroll a long list of bots (jac, thread 18000).
+function hideCrewSoon(){ clearTimeout(crewTimer); crewTimer = setTimeout(hideCrew, 250); }
+crew.addEventListener('mouseenter', function(){ clearTimeout(crewTimer); });
+crew.addEventListener('mouseleave', hideCrewSoon);
 // Hovering an @mention in a message, or the name of a message's author, shows that agent in the same card.
 function agentOf(h){
   h = String(h || '').toLowerCase();
@@ -1334,9 +1339,9 @@ document.addEventListener('mouseover', function(ev){
 });
 document.addEventListener('mouseout', function(ev){
   var a = ev.target.closest && ev.target.closest(AGENT_LINK);
-  if (a && !a.contains(ev.relatedTarget)) hideCrew();
+  if (a && !a.contains(ev.relatedTarget)) hideCrewSoon();
 });
-document.addEventListener('scroll', hideCrew, true);
+document.addEventListener('scroll', function(ev){ if (ev.target !== crew) hideCrew(); }, true);   // not the card's own scrolling
 rail.addEventListener('mouseover', function(ev){
   var li = ev.target.closest('#channels li[data-slug], #channels li.ws');
   if (!li || li.contains(ev.relatedTarget)) return;
@@ -1345,7 +1350,7 @@ rail.addEventListener('mouseover', function(ev){
 });
 rail.addEventListener('mouseout', function(ev){
   var li = ev.target.closest('#channels li[data-slug], #channels li.ws');
-  if (li && !li.contains(ev.relatedTarget)) hideCrew();
+  if (li && !li.contains(ev.relatedTarget)) hideCrewSoon();
 });
 rail.addEventListener('scroll', hideCrew);
 document.addEventListener('keydown', function(ev){ if (ev.key === 'Escape') hideCrew(); });
