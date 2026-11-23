@@ -322,13 +322,14 @@ class Keeper(unittest.TestCase):
 
     def test_fleet_env_sets_secrets_only_and_the_environment_wins(self):
         with open(self.local, 'w') as f:
-            f.write('GH_TOKEN=good\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
+            f.write('GH_TOKEN=good\nFORGEJO_URL=http://forge:3000\nBOARD=http://other\nPATH=/nowhere\nnot_a_command\nOTHER_KEY=$(touch x)y\n')
         os.environ['OTHER_KEY'] = 'mine'
         try:
             env = self.creds().env()
         finally:
             os.environ.pop('OTHER_KEY')
         self.assertEqual(env['GH_TOKEN'], 'good')
+        self.assertEqual(env['FORGEJO_URL'], 'http://forge:3000')   # the one plain name a secret may have (#632)
         self.assertEqual(env['OTHER_KEY'], 'mine')
         self.assertEqual(env['PATH'], os.environ['PATH'])
         self.assertNotEqual(env.get('BOARD'), 'http://other')
@@ -430,6 +431,10 @@ class Page(unittest.TestCase):
         v0 = report()
         self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=bot, json={'value': 'x'}).status_code, 403)
         self.assertEqual(self.client.put('/api/fleet/secrets/PATH', headers=admin, json={'value': 'x'}).status_code, 422)
+        self.assertEqual(self.client.put('/api/fleet/secrets/FORGEJO_URLS', headers=admin, json={'value': 'x'}).status_code, 422)
+        r = self.client.put('/api/fleet/secrets/FORGEJO_URL', headers=admin, json={'value': 'http://forge:3000'})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.client.delete('/api/fleet/secrets/FORGEJO_URL', headers=admin).raise_for_status()
         self.assertEqual(self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'a\nb'}).status_code, 422)
         r = self.client.put('/api/fleet/secrets/GH_TOKEN', headers=admin, json={'value': 'ghp_secret1234'})
         self.assertEqual(r.status_code, 200, r.text)

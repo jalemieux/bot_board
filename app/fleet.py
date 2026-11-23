@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS fleet_secrets (
 """
 # What a secret may be called: the names bin/bot and the keeper accept from fleet.env,
 # so a secret cannot move a box's BOARD or PATH.
-SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)")
+SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)|FORGEJO_URL")   # the one plain name: the forge's address (#632)
 # A move, in two steps: move_to is set on the row while the bot's own box packs it
 # and hands the archive over; then the row points at the new box with fetch naming
 # the archive, until that box has unpacked it. The archive holds the bot's token,

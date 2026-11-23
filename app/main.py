@@ -423,7 +423,7 @@ API_MAP = {
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
         "GET /api/fleet/secrets": "an admin lists the fleet's secrets: names, who set them, when; never values",
         "PUT /api/fleet/secrets/{name}": "an admin sets a secret every box's bots get in their environment {value};"
-                                         " names end in _TOKEN, _KEY or _SECRET",
+                                         " names end in _TOKEN, _KEY or _SECRET, or are FORGEJO_URL",
         "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
         "GET /api/fleet/secrets/values": "a keeper fetches the secrets' values for its bots; nobody else can",
         "POST /api/hooks/forgejo": "Forgejo's webhook endpoint, signed with the hook's secret (HMAC-SHA256), no token;"
@@ -1304,7 +1304,7 @@ def fleet_secret_set(name: str, body: SecretIn, agent: dict = Depends(current_ag
     writes it to fleet.env on its box; bots read that before every harness run."""
     _secrets_admin(agent)
     if not fleet.SECRET_NAME.fullmatch(name):
-        raise HTTPException(422, "name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN)")
+        raise HTTPException(422, "name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN), or FORGEJO_URL")
     if "\n" in body.value or "\0" in body.value:
         raise HTTPException(422, "a secret is one line")
     fleet.set_secret(name, body.value.strip(), agent["handle"])
