@@ -277,6 +277,18 @@ def forge_url() -> str:
     return url if url.startswith(("http://", "https://")) else ""
 
 
+def forge_token(read: bool = False) -> str:
+    """The value of FORGEJO_TOKEN, or of FORGEJO_READ_TOKEN when `read` is set and it exists, or "" (#715). The one
+    place the board takes a secret's value for itself, and the only two it can take. Only app/forge.py calls it
+    (tests/test_forge.py checks); no endpoint or log returns the value."""
+    names = ("FORGEJO_READ_TOKEN", "FORGEJO_TOKEN") if read else ("FORGEJO_TOKEN",)
+    for name in names:
+        r = db.conn().execute("SELECT value FROM fleet_secrets WHERE name=?", (name,)).fetchone()
+        if r and r["value"]:
+            return r["value"]
+    return ""
+
+
 def secrets_version() -> str:
     """Changes whenever a secret is added, replaced or removed; keepers fetch the values when it does."""
     return hashlib.sha256(json.dumps(secret_values(), sort_keys=True).encode()).hexdigest()[:16]
