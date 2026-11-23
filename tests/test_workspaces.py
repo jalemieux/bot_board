@@ -320,6 +320,24 @@ console.log(JSON.stringify(out));
         for f in files:
             self.assertIsNone(workspaces.hidden_char(f.read_text(encoding='utf-8').replace('\r\n', '\n')), str(f))
 
+    def test_a_bot_that_waits_for_work_is_up_and_offers_stop_and_restart(self):
+        # a bot that waits for work has a launcher that runs: the board says `waiting`, as fleet.UP does
+        import shutil, subprocess
+        from app import fleet, workspace_web
+        if not shutil.which('node'):
+            self.skipTest('node is needed')
+        js = workspace_web.WS_JS
+        code = js[js.index('function botUp('):js.index('function botRows(')]
+        script = code + """
+const assert = require('node:assert/strict');
+for (const s of %s) assert.equal(botUp({status: s}), true, s);
+for (const s of ['stopped', 'moved', '', undefined]) assert.equal(botUp({status: s}), false, String(s));
+""" % json.dumps(['waiting for work', 'running game', 'running game, stopping', 'waiting'])
+        r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(fleet.UP, ('waiting', 'running'), 'the page copies this list: change both together')
+        self.assertIn("'/fleet#bot-' + encodeURIComponent(b.handle), text: 'details'", js)
+
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']

@@ -518,9 +518,12 @@ function dialog(title, nodes, buttons) {
   (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
+// Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
+// A bot that waits for work is up, so it offers stop and restart, not start.
+function botUp(b) { return /^(waiting|running)/.test(b.status || ''); }
 function botRows(bots, ctx) {
   return bots.map(function (b) {
-    var st = b.state || {}, up = (b.status || '').indexOf('running') === 0;
+    var st = b.state || {}, up = botUp(b);
     var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
     var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
     go.addEventListener('click', function () { ctx.setRun(b, !up, go); });
@@ -532,7 +535,7 @@ function botRows(bots, ctx) {
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
       h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b.profile || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
       h('td', {'class': 'mono', text: ago(b.last_post)}),
-      h('td', {'class': 'acts'}, go, again, rm));
+      h('td', {'class': 'acts'}, go, again, rm, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'details', 'aria-label': 'Details of @' + b.handle})));
   });
 }
 function botsTable(bots, ctx) {
@@ -543,7 +546,7 @@ function rolesView(w, roles, hosts) {
   var mine = [], reporting = hosts.filter(function (x) { return x.reporting; });
   hosts.forEach(function (hst) { hst.bots.forEach(function (b) { if (b.workspace === w.slug) { b._host = hst.name; mine.push(b); } }); });
   var sec = h('section', {'class': 'roles'}), out = h('p', {'class': 'sub', role: 'status'});
-  var isUp = function (b) { return (b.status || '').indexOf('running') === 0; };
+  var isUp = botUp;
   var said = function (text, ok) { note(out, text, ok); };
   var again = function () { setTimeout(function () { location.reload(); }, 2500); };
   var ctx = {
