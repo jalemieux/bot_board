@@ -347,6 +347,9 @@ ADMIN_ALERT_JS = """
     var count = document.getElementById('bell-count');
     if (count) { count.textContent = n || ''; count.hidden = !n; }
     // the board page's rail shows the asks and mentions from the same answer
+    // the header chip ("1 bot starting" becomes "1 bot running" by itself): the words come from the server, which spells them once (#781)
+    var chip = st && st.running_label, nag = chip && document.getElementById('nag');
+    if (nag) { nag.textContent = chip.text; nag.parentElement.title = chip.title; }
     if (st) window.dispatchEvent(new CustomEvent('bb:status', {detail: st}));
     var box = document.getElementById('inbox');
     if (box) {
@@ -2396,11 +2399,11 @@ def hero_html(base: str) -> str:
 </section>"""
 
 
-def running_chip(r: dict | None) -> str:
-    """The header's count (#232): the bots the fleet reports running, and, when one is on its way or waits for a login,
-    that too, so the chip never says "0 bots running" while a bot starts (#776). The rest is in its title."""
+def running_label(r: dict | None) -> dict | None:
+    """The header chip's words (#232, #776): {"text", "title"} for the counts of fleet.running(), or None. The one place
+    that spells them: the page renders them, and GET /api/status returns them so the open page can refresh the chip (#781)."""
     if not r:
-        return ""
+        return None
     def n(k, word):
         return f"{r[k]} {word}{'' if r[k] == 1 else 's'}"
     title = " · ".join([f"{n('bots', 'bot')} running ({r['working']} working)"]
@@ -2410,7 +2413,16 @@ def running_chip(r: dict | None) -> str:
         + [(r["starting"], "starting")] * bool(r.get("starting")) + [(r["login"], "waiting for a login")] * bool(r.get("login"))
     # the first part carries the noun ("1 bot starting", "2 bots running"); the next ones follow it ("2 bots running, 1 starting")
     text = ", ".join((f"{c} bot{'' if c == 1 else 's'} {w}" if k == 0 else f"{c} {w}") for k, (c, w) in enumerate(parts))
-    return f'<span class="n" title="{e(title)}">· <span id="nag">{text}</span></span>'
+    return {"text": text, "title": title}
+
+
+def running_chip(r: dict | None) -> str:
+    """The header's count (#232): the bots the fleet reports running, and, when one is on its way or waits for a login,
+    that too, so the chip never says "0 bots running" while a bot starts (#776). The rest is in its title."""
+    label = running_label(r)
+    if not label:
+        return ""
+    return f'<span class="n" title="{e(label["title"])}">· <span id="nag">{label["text"]}</span></span>'
 
 
 # While the first-run guide is pending, the board's own page sends the signed-in person to /welcome, once per tab session

@@ -54,7 +54,7 @@ class RunningChip(unittest.TestCase):
         # everyone made a request just now: cal's token was used by hand, though its launcher is stopped
         self.seen(['jac', 'keeper-box', 'routines', 'ann', 'bob', 'cal', 'dot'], db.now())
         self.assertEqual(db.stats()['active'], 7)       # presence itself is unchanged
-        self.assertEqual(fleet.running(), {'bots': 2, 'working': 1, 'keepers': 1, 'runners': 1, 'humans': 1})
+        self.assertEqual(fleet.running(), {'bots': 2, 'working': 1, 'starting': 0, 'login': 1, 'keepers': 1, 'runners': 1, 'humans': 1})
 
     def test_a_bot_no_keeper_reports_counts_by_presence(self):
         self.report()
@@ -69,7 +69,7 @@ class RunningChip(unittest.TestCase):
         page = self.client.get('/').text
         self.assertIn('<a href="/workspaces" class="tab"', page)  # the count counts bots, and the bots live in workspaces (thread 17902)
         self.assertIn('<span id="nag">2 bots running, 1 waiting for a login</span>', page)
-        self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
+        self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human · 1 waiting for a login"', page)
         self.assertNotIn(' active</a>', page)
         # the presence refresh leaves it alone: "active agents" is another number (#456, review)
         self.assertNotIn("$('#nag').textContent", web.APP_JS)
@@ -92,6 +92,20 @@ class RunningChip(unittest.TestCase):
         self.ask('ann')
         self.assertIn('<span id="nag">1 bot starting</span>', self.chip())
         self.assertIn('1 starting', self.chip())
+
+    def test_the_status_answer_carries_the_chip_words_so_an_open_page_can_refresh_it(self):      # #781
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'ann', 'harness': 'claude', 'status': 'stopped'}]})
+        self.ask('ann')
+        st = self.client.get('/api/status').json()
+        self.assertEqual(st['running']['starting'], 1)
+        self.assertEqual(st['running_label']['text'], '1 bot starting')
+        self.assertIn('1 starting', st['running_label']['title'])
+        self.assertIn('<span id="nag">%s</span>' % st['running_label']['text'], self.chip(), 'the page and the answer spell it alike')
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'ann', 'harness': 'claude', 'status': 'waiting'}]})
+        self.assertEqual(self.client.get('/api/status').json()['running_label']['text'], '1 bot running')
+        self.assertIn("document.getElementById('nag')", web.ADMIN_ALERT_JS)          # the bell's poll puts the words in the chip
 
     def test_a_running_bot_beside_a_starting_one_says_both(self):
         self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [

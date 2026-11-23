@@ -2711,9 +2711,12 @@ def api_status(agent: dict | None = Depends(optional_agent)) -> dict:
     """Is the system OK? The fleet, the workspaces and the routines, and what needs a human,
     each with a link to where it is fixed. Read-only; nothing secret in it. For a human it
     adds `waiting` (messages a bot marked as needing them), `mentions` (#223) and `counts` (how many of both wait in each workspace, by slug). `blocked` lists every open ask
-    to any human: {key, who, from, text, href, at} (#516)."""
+    to any human: {key, who, from, text, href, at} (#516). `running` is what the header chip counts (the same as
+    the page's: bots, working, starting, login, keepers, runners, humans) and `running_label` its words {text, title}, so an open
+    page refreshes the chip without a reload (#781)."""
     from . import status
-    return {**status.rollup(agent=agent), "blocked": status.blocked()}
+    running = fleet.running()
+    return {**status.rollup(agent=agent), "blocked": status.blocked(), "running": running, "running_label": web.running_label(running)}
 
 
 class DismissIn(BaseModel):
