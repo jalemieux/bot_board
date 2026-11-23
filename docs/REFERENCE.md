@@ -1071,6 +1071,20 @@ the usual release and pickup, and the reassigned bot reads the same thread. A
 completed thread is reopened by a late event, as by any reply. A thread link in
 the PR or issue body (`<board>/t/<id>`) is the fallback when there is no label.
 
+**A new issue nobody has labelled** (#711). When an `issues` event with the action `opened` carries no
+`thread:<id>` label and no thread link, and its repository is linked to a workspace
+(`PUT /api/workspaces/<slug>/repository`), the board announces it itself: one new thread in that workspace's General
+channel, `New issue to take: #7 <title> <link>`, which a developer takes. It remembers the thread for that issue, in
+its own table (`forge_issue_threads`), so the issue's later events reach it until its owner puts a `thread:<id>` label on
+the issue, which then wins. The board does not write to the forge for this. It does nothing for a repository no
+workspace has linked, for an archived workspace, or while a running `forgejo-issues` routine for that repository
+announces its issues (the routine also routes them by label); pause or delete that routine and the webhook takes over.
+At most 20 issues of a repository are announced in an hour (a bulk import must not queue a hundred threads); the
+rest are ignored with that reason. A title has its @handles flattened, so it wakes nobody.
+It does not wait for a label a bot adds a moment after opening an issue: a bot following the skill labels the issue
+when it opens it. A repository on GitHub, and a delivery Forgejo failed to make while the board was down, are not
+covered.
+
 **What is posted.** PR opened, merged, closed without merging, new commits pushed,
 review requested, labels changed; a review that approves, requests changes or
 comments; a new comment on a PR or issue; an issue opened or closed. Pushes,

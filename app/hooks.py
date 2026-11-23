@@ -21,7 +21,9 @@ import hmac
 import json
 import re
 
-from . import db, progress
+from datetime import datetime, timedelta, timezone
+
+from . import db, progress, routines, workspaces
 
 NAMES = ("forgejo",)
 EXCERPT = 200       # characters of a review or comment quoted under the line
@@ -43,6 +45,15 @@ CREATE TABLE IF NOT EXISTS hook_repos (
     last_event TEXT NOT NULL,
     last_outcome TEXT NOT NULL,
     PRIMARY KEY (name, repo)
+);
+-- The thread an issue was announced in (#711): the board's own record, so an event on an issue nobody has labelled
+-- yet still finds its thread. A thread: label on the issue wins over it.
+CREATE TABLE IF NOT EXISTS forge_issue_threads (
+    repo TEXT NOT NULL COLLATE NOCASE,
+    number INTEGER NOT NULL,
+    thread_id INTEGER NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (repo, number)
 );
 """
 
@@ -138,6 +149,11 @@ def verify(name: str, raw: bytes, headers) -> None:
 
 # ------------------------------------------------------------- the event
 
+def _flat(text: str) -> str:
+    """A title or quote with its @handles flattened, so what Forgejo's users write mentions nobody here."""
+    return db.MENTION_RE.sub(r"\1", text)
+
+
 def _first_line(text: str | None) -> str:
     """The first non-empty line, with @handles flattened so the quote mentions nobody here."""
     for line in (text or "").splitlines():
@@ -163,7 +179,7 @@ def describe(event: str, event_type: str, payload: dict) -> tuple[str, str] | No
     obj = pr or issue or {}
     number = payload.get("number") or obj.get("number")
     ref = f"{'PR' if is_pull else 'issue'} #{number}" if number else ("the PR" if is_pull else "the issue")
-    title = (obj.get("title") or "").strip()
+    title = _flat((obj.get("title") or "").strip())
     ref_t = f"{ref} ({title})" if title else ref
     who = _who(payload)
     kind = event_type or event
@@ -217,6 +233,70 @@ def thread_of(payload: dict) -> int | None:
         if m:
             return int(m.group(1))
     return None
+
+
+def _issue_of(payload: dict):
+    """(repo, number) of an issue event, else None. Pull requests are not announced."""
+    issue = payload.get("issue") or {}
+    repo = str((payload.get("repository") or {}).get("full_name") or "")
+    number = issue.get("number") or payload.get("number")
+    if not repo or not isinstance(number, int) or payload.get("pull_request") is not None or not issue:
+        return None
+    return repo, number
+
+
+def _known_thread(payload: dict) -> int | None:
+    """The thread this issue was announced in, when it carries no thread: label of its own."""
+    key = _issue_of(payload)
+    if key is None:
+        return None
+    row = db.conn().execute("SELECT thread_id FROM forge_issue_threads WHERE repo=? AND number=?", key).fetchone()
+    return row["thread_id"] if row else None
+
+
+ANNOUNCE_CAP = 20        # new issues announced per repository per hour: a bulk import must not queue a hundred threads
+
+
+def _announced_lately(repo: str) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    return db.conn().execute("SELECT COUNT(*) n FROM forge_issue_threads WHERE repo=? AND at>=?", (repo, since)).fetchone()["n"]
+
+
+def _announce(name: str, payload: dict) -> tuple[int, str] | tuple[None, str]:
+    """A new issue with no thread, on a repository a workspace has linked: say it once in that workspace's General
+    channel, as a new thread a developer takes, and remember which thread it is. Returns (thread, "") or
+    (None, why not)."""
+    key = _issue_of(payload)
+    if key is None or payload.get("action") != "opened":
+        return None, "no thread:<id> label on the pull request or issue, and no board thread link in its body"
+    repo, number = key
+    ws = workspaces.by_repository(repo)
+    if ws is None:
+        return None, f"no thread:<id> label on the issue, and no workspace has linked {repo}"
+    if ws["archived"]:
+        return None, f"the workspace {ws['slug']} is archived"
+    if routines.announces(repo):
+        return None, f"the issue-feed routine for {repo} announces its issues"
+    if _announced_lately(repo) >= ANNOUNCE_CAP:
+        return None, f"{ANNOUNCE_CAP} issues of {repo} were announced in the last hour: the rest wait for the issue feed or a person"
+    issue = payload.get("issue") or {}
+    title = _flat(" ".join(str(issue.get("title") or "").split()))[:200]
+    url = issue.get("html_url") or ""
+    body = (f"New issue to take: #{number} {title}\n{url}\n\n"
+            f"The thread worker labels the issue as its own on Forgejo: `bot:<your handle>` and `thread:<this "
+            f"thread's id>`, by label id through `POST /repos/{repo}/issues/{number}/labels` (the forgejo-lifecycle "
+            "skill, steps 0 and 1), taking off the `bot:` label of an owner that is not running.")
+    by = progress.board_agent()
+    meta = {"kind": "forgejo", "event": "issue_announced", "repo": repo, "number": number, "url": url}
+    try:
+        msg = db.post_message(workspaces.home_slug(ws), by["id"], body, meta=meta, client_key=f"{name}:announce:{repo}#{number}")
+    except PermissionError as exc:
+        return None, str(exc)
+    tid = msg.get("thread_id") or msg["id"]
+    with db._write_lock, db.conn() as c:
+        c.execute("INSERT OR IGNORE INTO forge_issue_threads (repo, number, thread_id, at) VALUES (?,?,?,?)",
+                  (repo, number, tid, db.now()))
+    return tid, ""
 
 
 def _settle_merge_asks(tid: int, number, merge_id: int, by: int) -> None:
@@ -276,7 +356,16 @@ def deliver(name: str, raw: bytes, headers) -> dict:
                        + (f" ({payload['action']})" if payload.get("action") else ""))
     tid = thread_of(payload)
     if tid is None:
-        return ignored("no thread:<id> label on the pull request or issue, and no board thread link in its body")
+        tid = _known_thread(payload)
+        if tid is not None and payload.get("action") == "opened":      # the announcement was this event: a redelivery
+            _record(name, label, f"replayed: #{(_issue_of(payload) or ('', 0))[1]} is announced in thread {tid}", repo)
+            return {"status": 200, "replayed": True, "thread": tid}
+    if tid is None:
+        announced, why = _announce(name, payload)
+        if announced is None:
+            return ignored(why)
+        _record(name, label, f"announced #{(_issue_of(payload) or ('', 0))[1]} in thread {announced}", repo)
+        return {"status": 201, "announced": True, "thread": announced}
     root = db.get_message(tid)
     if root is None:
         return ignored(f"thread {tid} does not exist on this board")
