@@ -6,7 +6,7 @@ conversation in which a human asks the admin bot for a routine (its `thread`),
 the jobs the runner fires into workspace channels, and a notice in the admin
 channel when one fails.
 
-Who may change one: a human who manages the admin workspace (or the board), or
+A routine belongs to the workspace of its channel (#820): it fires there, and a failure is reported there. Who may change one: a human who manages the admin workspace (or the board), or
 an admin bot, a bot of that workspace. The trust boundary is the check: it is
 code that runs on the runner's box with the fleet's secrets, so a check a bot
 wrote runs only once a human approved it. The board keeps the last approved
@@ -359,11 +359,18 @@ def _changed(old: dict | None, new: dict) -> str:
     return ", ".join(out) or "nothing"
 
 
+def workspace_of(channel: str) -> str | None:
+    """The slug of the workspace a channel belongs to, which is the workspace of every routine that fires into it (#820), or None
+    when the channel is no workspace's."""
+    board = db.get_board(channel) if channel else None
+    return (board or {}).get("workspace") or None
+
+
 def describe(row: dict, full: bool = True) -> dict:
     d = _stored(row)
     test = json.loads(row["last_test"]) if row["last_test"] else None
     ran = json.loads(row["last_run"]) if row["last_run"] else None
-    out = {**d, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
+    out = {**d, "workspace": workspace_of(d.get("channel")), "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
            "approved_by": row["approved_by"], "failure": row["failure"] if row["state"] == "failed" else None,
            "test_pending": row["test_asked"] > (test or {}).get("for", 0), "test_asked": row["test_asked"],
            "last_test": test, "run_pending": row["run_asked"] > (ran or {}).get("for", 0),
@@ -421,9 +428,11 @@ def _diff(old: dict, new: dict, was: str = "approved", now: str = "this version"
         (old[k] + "\n").splitlines(True), (new[k] + "\n").splitlines(True), f"{k} ({was})", f"{k} ({now})"))
 
 
-def list_routines(full: bool = True) -> list[dict]:
+def list_routines(full: bool = True, workspace: str | None = None) -> list[dict]:
+    """Every routine, or the routines of one workspace: those whose channel is one of its channels (#820)."""
     rows = db.conn().execute("SELECT * FROM routines WHERE state<>'deleted' ORDER BY id").fetchall()
-    return [describe(dict(r), full) for r in rows]
+    out = [describe(dict(r), full) for r in rows]
+    return [r for r in out if (r["workspace"] or "") == workspace.lower()] if workspace else out
 
 
 def get(rid: int) -> dict:
@@ -467,6 +476,11 @@ def _definition(data: dict, old: dict | None = None) -> dict:
     problem = cli.problem_with(r)
     if problem:
         raise ValueError(problem)
+    home = workspace_of(r["channel"])
+    if not home:
+        raise ValueError(f"the channel `{r['channel']}` is in no workspace: a routine belongs to the workspace of its channel")
+    if workspaces.find(home)["archived"]:
+        raise ValueError(f"the workspace `{home}` is archived")
     return r
 
 

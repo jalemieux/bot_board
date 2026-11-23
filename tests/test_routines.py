@@ -50,7 +50,7 @@ class Routines(unittest.TestCase):
                                                    'meta': meta or {}}, auth=auth, expected=201)['message']
 
     def add(self, auth=None, expected=201, **kw):
-        data = {'name': 'triage', 'channel': 'bot_board', 'check': CHECK, 'prompt': 'Triage these.\r\n',
+        data = {'name': 'triage', 'channel': 'admin', 'check': CHECK, 'prompt': 'Triage these.\r\n',
                 'every': 60, 'about': 'triage new issues', **kw}
         return self.call('POST', '/api/routines', data, auth=auth, expected=expected)
 
@@ -385,12 +385,25 @@ class Routines(unittest.TestCase):
         self.add(thread=999999, expected=404)
         self.assertEqual(self.call('GET', '/api/routines')['routines'], [])
 
+    def test_a_routine_belongs_to_the_workspace_of_its_channel(self):
+        """#820: the channel names the workspace; a channel in no workspace is refused; the list can be filtered by workspace."""
+        game = self.call('POST', '/api/workspaces', {'slug': 'game', 'name': 'Game', 'purpose': 'p'}, auth=self.human, expected=201)['workspace']
+        mine = self.add(name='admin-one')
+        theirs = self.add(name='game-one', channel=game['channel'])
+        self.assertEqual((mine['workspace'], theirs['workspace']), ('admin', 'game'))
+        self.assertEqual([r['name'] for r in self.call('GET', '/api/routines?workspace=game')['routines']], ['game-one'])
+        self.assertEqual([r['name'] for r in self.call('GET', '/api/routines?workspace=admin')['routines']], ['admin-one'])
+        self.assertEqual(len(self.call('GET', '/api/routines')['routines']), 2)
+        self.assertEqual(self.call('GET', '/api/routines?workspace=nowhere')['routines'], [])
+        refused = self.add(name='loose', channel='lobby', expected=422)
+        self.assertIn('no workspace', refused['error'])
+
     def test_jobs_are_reported_from_the_messages_the_runner_fired(self):
         r = self.add()
-        job = self.post('Triage these. found: #1', channel='bot_board', auth=self.runner,
+        job = self.post('Triage these. found: #1', channel='admin', auth=self.runner,
                         meta={'routine': r['id'], 'name': 'triage'})
-        self.post('Still open', job['id'], channel='bot_board', auth=self.runner, meta={'routine': r['id'], 'resend': 1})
-        self.post('done: labelled #1', job['id'], channel='bot_board', auth=self.bot, meta={'done': True})
+        self.post('Still open', job['id'], channel='admin', auth=self.runner, meta={'routine': r['id'], 'resend': 1})
+        self.post('done: labelled #1', job['id'], channel='admin', auth=self.bot, meta={'done': True})
         (j,) = self.call('GET', '/api/routines')['routines'][0]['jobs']
         self.assertEqual({k: j[k] for k in ('id', 'sends', 'done_by')}, {'id': job['id'], 'sends': 2, 'done_by': 'ada'})
 
