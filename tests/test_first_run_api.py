@@ -79,6 +79,14 @@ class FirstRunApi(unittest.TestCase):
         self.assertEqual(got.json()["steps"]["forge"], {"configured": True, "url": "http://forge.test:3000", "handle": "jac"})
         for secret in ("sekret-token-123", "sekret-read-456", "password"):
             self.assertNotIn(secret, got.text)
+        # an old stored address with credentials in it is never echoed: only the board's fixed sentence says it is not usable
+        with db._write_lock:
+            db.conn().execute("UPDATE fleet_secrets SET value=? WHERE name='FORGEJO_URL'", ("http://fleet:sekret-pw-789@forge.test:3000",))
+            db.conn().commit()
+        got = self.get()
+        self.assertFalse(got.json()["steps"]["forge"]["configured"])
+        self.assertIn("no user, password", got.json()["steps"]["forge"]["problem"])
+        self.assertNotIn("sekret-pw-789", got.text)
 
     def test_the_default_bot_and_its_team_are_the_admin_workspaces_bots_in_the_boards_own_words(self):
         keeper = self.register("keeper-box", "keeper")

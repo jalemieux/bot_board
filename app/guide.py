@@ -61,6 +61,16 @@ def _bot(b: dict, with_log: bool = False) -> dict:
     return out
 
 
+def _forge(human: dict) -> dict:
+    """The address only when it is one the board uses and the Configuration list shows: an old stored address with a user
+    or password in it is never echoed here. Its problem is said in the board's own fixed sentence, with none of its text."""
+    url = fleet.forge_url()
+    problem = fleet.forge_address_problem(url) if url else ""
+    if problem:
+        return {"configured": False, "problem": problem}
+    return {"configured": True, "url": url, "handle": human["handle"]} if forge.configured() else {"configured": False}
+
+
 def facts(human: dict, address: str) -> dict:
     """What the page shows, from what the board already knows. Nothing here is a secret: the forge's address is an
     address, the sign-in is the human's handle, and the forge's password is not here at all (the page names its file as
@@ -73,7 +83,7 @@ def facts(human: dict, address: str) -> dict:
     bots = _bots(workspaces.ADMIN) if admin else []
     steps = {
         "board": {"address": address.rstrip("/"), "handle": human["handle"]},
-        "forge": {"configured": True, "url": fleet.forge_url(), "handle": human["handle"]} if forge.configured() else {"configured": False},
+        "forge": _forge(human),
         "bot": _bot(bots[0], with_log=True) if bots else None,
         "team": [_bot(b) for b in bots[1:]],
         "general": workspaces.home_slug(admin) if admin else None,
