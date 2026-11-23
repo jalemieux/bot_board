@@ -31,7 +31,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
-from . import db, fleet, forge, web, workspaces, routines, images, versions, registry, progress, hooks, team
+from . import activity, db, fleet, forge, web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -497,6 +497,8 @@ API_MAP = {
                                                               " {confirm: <slug>}; GET .../deletion first says what goes",
         "GET /api/workspaces/{slug}/team": "the `## Roles` table of the team agreement against the workspace's bots:"
                                            " per role its profile, who has it, and whether it still lacks a bot",
+        "GET /api/workspaces/{slug}/activity": "what happened in the workspace in the last hours {hours=24}: counts and events from its"
+                                               " forge repository and the board; forge says ok, none or down",
         "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
                                                  " paths and verbs as /api/knowledge",
         "GET /api/conversations": "conversations you are in (all=true for every one);"
@@ -1794,6 +1796,14 @@ def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
 def workspace_team(slug: str, agent: dict | None = Depends(optional_agent)):
     """The roles in the workspace's team agreement against the bots it has: what a human can create (#600)."""
     return {'team': workspaces.team(_workspace_for(slug, agent))}
+
+
+@app.get('/api/workspaces/{slug}/activity', tags=['workspaces'])
+def workspace_activity(slug: str, hours: int = Query(24, ge=1, le=168), agent: dict | None = Depends(optional_agent)):
+    """What happened in the workspace in the last `hours` (24 by default; the page offers 24): pull requests, issues, reviews
+    and commits from its forge repository, threads, messages and the bots that posted from the board. `forge` says "ok",
+    "none" (no repository linked) or "down", and the forge's counts are absent unless it is "ok" (#738)."""
+    return {'activity': activity.build(_workspace_for(slug, agent), hours)}
 
 
 @app.patch('/api/workspaces/{slug}', tags=['workspaces'])

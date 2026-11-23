@@ -136,3 +136,31 @@ def ensure_repository(slug: str, agent: dict, timeout: float | None = None) -> d
         except (ForgeError, workspaces.Conflict) as exc:
             return {"repository": "", "reason": str(exc)}
     return {"repository": full, "reason": ""}
+
+
+def _repo_path(full_name: str, tail: str) -> str:
+    owner, _, name = full_name.partition("/")
+    return "/api/v1/repos/%s/%s%s" % (urllib.parse.quote(valid_name(owner), safe=""), urllib.parse.quote(valid_name(name), safe=""), tail)
+
+
+def _list(full_name: str, tail: str, timeout: float | None) -> list:
+    status, data = _call("GET", _repo_path(full_name, tail), read=True, timeout=timeout)
+    if status != 200 or not isinstance(data, list):
+        raise ForgeError(f"the forge answered {status} for {full_name}{tail.split('?')[0]}")
+    return data
+
+
+def recent_activity(full_name: str, since: str, timeout: float | None = None) -> dict:
+    """What the forge holds for a repository changed since `since` (an ISO time, UTC), for the Activity tab (#738): pull
+    requests (recently updated), issues, commits, and the reviews of the pull requests that moved. Read only, with the read
+    token when there is one, and three or four fixed paths: no path comes from a caller, and the query is quoted."""
+    q = urllib.parse.urlencode({"since": since, "limit": 50})
+    pulls = _list(full_name, "/pulls?" + urllib.parse.urlencode({"state": "all", "sort": "recentupdate", "limit": 50}), timeout)
+    issues = _list(full_name, "/issues?" + urllib.parse.urlencode({"type": "issues", "state": "all", "since": since, "limit": 50}), timeout)
+    commits = _list(full_name, "/commits?" + q + "&stat=false&files=false&verification=false", timeout)
+    reviews = {}
+    for p in pulls[:20]:        # the twenty most recently updated: a busy repository is a sample, not the whole day
+        if isinstance(p, dict) and str(p.get("updated_at") or "") >= since[:19] and isinstance(p.get("number"), int):
+            reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
+    return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews,
+            "capped": max(len(pulls), len(issues), len(commits)) >= 50 or len(pulls) > 20}
