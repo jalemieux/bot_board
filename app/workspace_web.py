@@ -73,8 +73,8 @@ WS_CSS = """
 .ws table.bots td:nth-child(7){order:3;margin-left:auto}
 .ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button,.ws .d-acts button{min-height:44px;min-width:44px;font-size:16px}
-.dlg textarea,.dlg input[type=text]{font-size:16px}.dlg label.check{min-height:44px;align-items:center}.dlg input[type=checkbox]{width:22px;height:22px}
-.dlg select{min-height:44px;font-size:16px}
+.ws .dlg textarea,.ws .dlg input[type=text]{font-size:16px}.ws .dlg label.check{min-height:44px;align-items:center}.ws .dlg input[type=checkbox]{width:22px;height:22px}
+.ws .dlg select{min-height:44px;font-size:16px}
 .ws .wsw>button{min-height:44px;font-size:16px}.ws .tabs a{padding:12px 2px}
 """ + sheet_css(".ws #wsmenu:not([hidden])") + """.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
 .ws pre.diff{max-height:50vh}
@@ -525,8 +525,6 @@ function dialog(title, nodes, buttons) {
   (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
-// Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
-// A bot that waits for work is up, so it offers stop and restart, not start.
 // A bot's drawer (#18527): facts, the threads it holds, and one action for each thing a manager changes. Each calls the endpoint the
 // bots page used, and asks again before anything that cannot be undone.
 function drawer(b, up, ctx) {
@@ -615,6 +613,8 @@ function drawer(b, up, ctx) {
   d.appendChild(acts);
   return d;
 }
+// Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
+// A bot that waits for work is up, so it offers stop and restart, not start.
 function botUp(b) { return !!(b.state && b.state.up); }      // the board says what up means: fleet.bot_state
 function botRows(bots, ctx) {
   return bots.map(function (b) {
