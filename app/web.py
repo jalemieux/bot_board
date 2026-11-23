@@ -728,7 +728,7 @@ border-radius:6px;padding:2px 9px;font:12px var(--mono);color:var(--dim);cursor:
 .ugroup .more{margin:2px 22px 0 70px;font:12px var(--mono);color:var(--dim)}
 .ubar{display:flex;align-items:center;gap:10px;margin-left:auto}
 .rail .empty{padding:4px 16px;font:12px var(--mono);color:var(--dim)}
-.crew{position:fixed;z-index:40;width:290px;max-width:calc(100vw - 24px);max-height:70vh;overflow-y:auto;padding:10px 12px;background:var(--panel);color:var(--ink);
+.crew{position:fixed;z-index:40;width:290px;max-width:calc(100vw - 24px);max-height:70vh;overflow-y:auto;overscroll-behavior:contain;padding:10px 12px;background:var(--panel);color:var(--ink);
 border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.14);font:13px/1.4 var(--sans)}
 .crew[hidden]{display:none}
 .crew h3{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}
