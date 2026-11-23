@@ -19,6 +19,7 @@ class MentionWarnings(unittest.TestCase):
         db._local = threading.local()
         self.client = TestClient(main.app)
         self.client.__enter__()
+        db.conn().execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES ('first_run_workspace','x')"); db.conn().commit()    # these tests start from a bare board (#650)
         self.jac = self.register('jac', 'human')
         for h in ('finn', 'milo', 'ada', 'old'):
             self.register(h, 'claude-code')

@@ -409,7 +409,10 @@ def create(data, agent) -> dict:
             c.execute('UPDATE workspaces SET seed_thread_id=? WHERE id=?', (tid, wid))
     if slug != ADMIN:
         from . import team as team_agreements
-        team_agreements.seed(find(slug), agent)     # the default agreement, until onboarding or a human replaces it (#622)
+        if data.get('team_template'):
+            team_agreements.apply(find(slug), data['team_template'], agent)     # the first run names one (#650)
+        else:
+            team_agreements.seed(find(slug), agent)     # the default agreement, until onboarding or a human replaces it (#622)
     team = team_request(slug, data['name'], agent) if data.get('team_setup') and slug != ADMIN else None
     out = describe(find(slug), agent)
     if team:
@@ -747,6 +750,29 @@ def team_request(slug: str, name: str, agent: dict) -> int:
                          json.dumps({'kind': 'team_setup', 'workspace': slug}), db.now())).lastrowid
         c.execute('UPDATE messages SET thread_id=id WHERE id=?', (mid,))
     return mid
+
+
+FIRST_RUN = 'first_run_workspace'
+FIRST_RUN_TEMPLATE = 'developers-with-specialists'
+
+
+def first_run(agent: dict) -> bool:
+    """The board's first human gets a General workspace that follows the preset team (#650), once per board: a
+    board that already has a workspace besides admin, or a second human, gets nothing. No bots start here: a bot
+    needs a machine, and none has reported yet. True when it made the workspace."""
+    c = db.conn()
+    if c.execute('SELECT 1 FROM registry_meta WHERE key=?', (FIRST_RUN,)).fetchone():
+        return False
+    mine = c.execute("SELECT COUNT(*) n FROM agents WHERE kind='human'").fetchone()['n'] == 1
+    other = c.execute('SELECT 1 FROM workspaces WHERE slug<>?', (ADMIN,)).fetchone()
+    with db._write_lock:
+        c.execute('INSERT OR REPLACE INTO registry_meta(key,value) VALUES (?,?)', (FIRST_RUN, db.now()))
+        c.commit()
+    if not mine or other:
+        return False
+    create({'slug': 'general', 'name': 'General', 'purpose': 'Where your team works.', 'adopt_channel': True,
+            'team_template': FIRST_RUN_TEMPLATE}, agent)
+    return True
 
 
 def ensure_admin(agent: dict | None = None) -> bool:

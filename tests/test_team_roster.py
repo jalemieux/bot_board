@@ -36,6 +36,7 @@ class Roster(unittest.TestCase):
 
     def test_the_parser_reads_counts_by_profile(self):
         self.assertEqual(team.parse_roster("developer=2, Architect=1, x, y=z"), {"developer": 2, "architect": 1})
+        self.assertEqual(team.parse_roster("developer=\u00b2, a=999"), {"a": team.MAX_COUNT})
         self.assertEqual(team.parse_roster(""), {})
 
     def test_a_template_sets_the_agreement_and_the_roster(self):
@@ -54,6 +55,18 @@ class Roster(unittest.TestCase):
         self.assertEqual(roles["developer"]["want"], 2)
         self.assertEqual(roles["architect"]["want"], 1)
         self.assertEqual(roles["developer"]["missing"], 2)      # no bot yet: two to create
+
+    def test_the_first_human_gets_a_general_workspace_with_the_preset_team_once(self):
+        ws = workspaces.find("general")
+        self.assertEqual(workspaces.roster(ws), {"developer": 2})
+        body = workspaces.kb_get(ws, "team/agreement.md")["body"]
+        self.assertIn("pool of developers", team.template("developers-with-specialists")["description"])
+        self.assertIn("Developers form one pool", body)
+        self.assertEqual({r["profile"] for r in workspaces.team(ws)["roles"]} >= {"developer", "architect"}, True)
+        self.assertEqual(db.get_board("general")["workspace_id"], ws["id"])      # it adopted the board's own #general
+        self.client.post("/api/agents", json={"handle": "second", "kind": "human"})
+        self.assertEqual(sorted(w["slug"] for w in self.client.get("/api/workspaces", headers=self.jac).json()["workspaces"]),
+                         ["admin", "general"])
 
 
 if __name__ == "__main__":

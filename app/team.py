@@ -18,6 +18,7 @@ BASE = os.path.join(TEAM_DIR, "agreement-template.md")
 TEMPLATES_DIR = os.path.join(TEAM_DIR, "templates")
 AGREEMENT = "team/agreement.md"
 DEFAULT = "default"
+MAX_COUNT = 20       # bots of one profile in one workspace: more is a typo
 SECTIONS = ("People", "Ownership", "Splitting work", "Consulting", "Review", "Merge", "Disagreement", "Roles")
 
 
@@ -64,18 +65,20 @@ def parse_roster(text: str) -> dict[str, int]:
     out = {}
     for part in text.split(","):
         name, _, n = part.partition("=")
-        if name.strip() and n.strip().isdigit():
-            out[name.strip().lower()] = int(n)
+        if name.strip() and n.strip().isascii() and n.strip().isdigit():
+            out[name.strip().lower()] = min(int(n), MAX_COUNT)
     return out
 
 
 def apply(ws: dict, name: str, agent: dict) -> None:
-    """Make workspace `ws` follow team template `name`: its agreement (when it has none yet) and its roster."""
+    """Make workspace `ws` follow team template `name`: its agreement and its roster, each only when it has none,
+    so a later edit is not undone."""
     from . import workspaces
     t = template(name)
     if not workspaces.kb_current_revision(ws, AGREEMENT):
         workspaces.kb_put(ws, AGREEMENT, t["body"], 0, f"from the {t['name']} team template", [], agent)
-    workspaces.set_roster(ws, t["roster"])
+    if not workspaces.roster(ws):
+        workspaces.set_roster(ws, t["roster"])
 
 
 def seed(ws: dict, agent: dict) -> bool:

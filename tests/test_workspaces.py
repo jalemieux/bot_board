@@ -21,6 +21,7 @@ class Base(unittest.TestCase):
         self.before_start()
         self.client = TestClient(main.app)
         self.client.__enter__()
+        db.conn().execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES ('first_run_workspace','x')"); db.conn().commit()    # these tests start from a bare board (#650)
 
     def before_start(self):
         pass
