@@ -213,17 +213,22 @@ forge_install() {
 existing_forge() {
   local api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} tok
   for c in jq curl; do command -v $c >/dev/null || die "FORGE_ADDRESS needs $c"; done
-  [ -n "${FORGEJO_TOKEN:-}" ] || die "FORGE_ADDRESS needs FORGEJO_TOKEN: the fleet account's write token on that Forgejo"
+  [ -n "$FORGE_WRITE_TOKEN" ] || die "FORGE_ADDRESS needs FORGEJO_TOKEN: the fleet account's write token on that Forgejo"
+  case $FORGE_ADDRESS in *://*@*) die "FORGE_ADDRESS has a user name or password in it: give the address alone" ;; esac
   tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
           -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) \
     || die "could not sign in as $human on $api"
   [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
-  BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=$FORGE_ADDRESS FORGE_EXISTING=1 bash "$SRC/deploy/forge-setup" \
+  BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=$FORGE_ADDRESS FORGE_EXISTING=1 FORGEJO_TOKEN=$FORGE_WRITE_TOKEN FORGEJO_READ_TOKEN=$FORGE_READ_TOKEN \
+    bash "$SRC/deploy/forge-setup" \
     || die "forge-setup failed; run it again from $SRC once the cause is gone"
 }
 
 case $CMD in
   install)
+    # the tokens go to forge-setup alone: the board and the keeper started below are long-lived and must not inherit them
+    FORGE_WRITE_TOKEN=${FORGEJO_TOKEN:-}; FORGE_READ_TOKEN=${FORGEJO_READ_TOKEN:-}
+    [ -z "${FORGE_ADDRESS:-}" ] || unset FORGEJO_TOKEN FORGEJO_READ_TOKEN
     ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
     if [ -n "$FORGE" ]; then
       forge_install
