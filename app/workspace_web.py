@@ -525,6 +525,31 @@ function dialog(title, nodes, buttons) {
   (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
+// Stopping or killing a bot that holds open threads asks what happens to them (#733): hand them off once it has stopped (the default,
+// since a stopped bot that keeps its threads holds them from everyone, #217), keep them, or retire it (#167). The API takes
+// `threads: handoff|retire`; keep sends nothing.
+function stopDialog(b, kill, ctx) {
+  var n = b.open_threads || 0, name = 'threads-' + b.handle, verb = kill ? 'Kill' : 'Stop';
+  var opt = function (v, label, note, on) {
+    var i = h('input', {type: 'radio', name: name, value: v}); if (on) i.checked = true;
+    return h('label', {'class': 'check'}, i, ' ', h('b', {text: label}), ' ', h('span', {'class': 'dim', text: note}));
+  };
+  var opts = [opt('handoff', 'Hand them off', 'released once it has stopped; the next bot that watches claims each', true),
+              opt('keep', 'Keep them', 'for a planned restart or a move; nobody else can pick them up meanwhile'),
+              opt('retire', 'Retire', 'hand them off, and drop it from the stopped list')];
+  var intro = '@' + b.handle + ' holds ' + n + ' open thread' + (n === 1 ? '' : 's') + '. What should happen to ' + (n === 1 ? 'it' : 'them') + ' when it stops?';
+  dialog(verb + ' @' + b.handle + '?', [h('p', {text: intro})].concat(kill ? [h('p', {'class': 'warn', text: 'Kill stops it now: the run it is in is cut short and its reply is lost.'})] : [], opts),
+    [{text: verb, danger: !!kill, run: function (el, close, fail) {
+      var choice = opts.map(function (l) { return l.firstChild; }).filter(function (i) { return i.checked; })[0].value;
+      var body = {host: b._host, run: false, harness: b.harness || null};
+      if (kill) body.kill = true;
+      if (choice !== 'keep') body.threads = choice;
+      el.disabled = true;
+      api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), body)
+        .then(function () { close(); ctx.said(verb + ' asked for @' + b.handle + (choice === 'keep' ? ', keeping its threads.' : choice === 'retire' ? ', handing its threads off and retiring it.' : ', handing its threads off.'), true); ctx.again(); })
+        .catch(function (e) { el.disabled = false; fail(e.message); });
+    }}]);
+}
 // A bot's drawer (#18527): facts, the threads it holds, and one action for each thing a manager changes. Each calls the endpoint the
 // bots page used, and asks again before anything that cannot be undone.
 function drawer(b, up, ctx) {
@@ -604,6 +629,7 @@ function drawer(b, up, ctx) {
       }}]);
   });
   if (up) act('kill', function () {
+    if (b.open_threads) { stopDialog(b, true, ctx); return; }
     dialog('Kill @' + b.handle + '?', [h('p', {text: 'It stops now: the run it is in is cut short and its reply is lost. Use stop to let the run finish.'})],
       [{text: 'Kill @' + b.handle, danger: true, run: function (el, close, fail) {
         el.disabled = true;
@@ -621,7 +647,7 @@ function botRows(bots, ctx) {
     var st = b.state || {}, up = botUp(b);
     var tone = st.state === 'working' || st.state === 'waiting' ? 'ok' : up ? 'warn' : st.state === 'failing' || st.reason ? 'bad' : 'off';
     var go = h('button', {type: 'button', 'class': 'quiet', text: up ? 'stop' : 'start', disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
-    go.addEventListener('click', function () { ctx.setRun(b, !up, go); });
+    go.addEventListener('click', function () { if (up && b.open_threads) ctx.stopThreads(b); else ctx.setRun(b, !up, go); });
     var again = h('button', {type: 'button', 'class': 'quiet', text: 'restart', 'aria-label': 'Restart @' + b.handle, hidden: up ? null : '', disabled: ctx.canAct ? null : ''});
     again.addEventListener('click', function () { ctx.restart(b, again); });
     var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ctx.canAct ? null : ''});
@@ -660,6 +686,7 @@ function rolesView(w, roles, hosts) {
   var ctx = {
     w: w, hosts: reporting, said: said, again: again,
     canAct: !!(ME && w.can_manage && !w.archived),
+    stopThreads: function (b) { stopDialog(b, false, ctx); },
     setRun: function (b, run, el) {
       el.disabled = true;
       api('PUT', '/api/fleet/bots/' + encodeURIComponent(b.handle), {host: b._host, run: run, harness: b.harness || null})

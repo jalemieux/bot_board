@@ -128,7 +128,8 @@ class Workspaces(Base):
         for needle in ("['team', 'Team'], ['channels', 'Channels and knowledge']", "function teamView(", "function rolesView(",
                        "'Outside the agreement'", "/knowledge/team/agreement.md", "ev.key === 'Escape'",
                        "ev.key !== 'Tab'", "root.appendChild(ov)", "(danger ? cancel :", "fail(e.message)",
-                       "'Pause team'", "'Resume team'", "The team is paused", "Promise.allSettled"):
+                       "'Pause team'", "'Resume team'", "The team is paused", "Promise.allSettled",
+                       "function stopDialog(", "body.threads = choice", "stopDialog(b, true, ctx)", "ctx.stopThreads(b)"):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn("botsSection", workspace_web.WS_JS)      # the Channels tab has no Bots card; the Team tab lists the bots
 
