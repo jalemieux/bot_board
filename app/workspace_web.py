@@ -50,7 +50,7 @@ WS_CSS = """
 .ws .changebox textarea{width:100%;box-sizing:border-box;min-height:64px;font:13px var(--mono);background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
 @media (max-width:700px){.ws .changebox textarea{font-size:16px}}
 .ws .repo .linkrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.ws .repo .linkrow input{flex:1 1 220px;width:auto;min-width:0}
-@media (max-width:700px){.ws .repo input[type=text]{font-size:16px;min-height:44px}.ws .repo button{min-height:44px}}
+@media (max-width:700px){.ws .repo input[type=text]{font-size:16px;min-height:44px}.ws .repo button{min-height:44px}.ws .repo summary{min-height:44px;display:flex;align-items:center}}
 .ws .changebox .warn,.ws .proposal .warn{color:var(--accent);font-weight:600}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
@@ -403,36 +403,54 @@ function activityView(w) {
 // The workspace's repository (#715): its link when it has one, else a manager can have the board create it.
 function repositoryCard(w) {
   var sec = h('section', {'class': 'repo'}, h('h2', null, 'Repository')), out = h('p', {'class': 'sub', role: 'status'});
+  var canAct = !!(ME && w.can_manage && !w.archived);
+  var url = '/api/workspaces/' + encodeURIComponent(w.slug) + '/repository';
+  // the field and its button: link a repository by name (#743), also used to change the link (#752)
+  var linkForm = function (label) {
+    var name = h('input', {type: 'text', autocomplete: 'off', 'aria-label': 'Repository to link, owner/name', placeholder: 'owner/name, for example jac/bot_board', 'class': 'mono', disabled: canAct ? null : ''});
+    var link = h('button', {type: 'button', text: label, disabled: ''}), linkOut = h('p', {'class': 'sub'});
+    name.addEventListener('input', function () { link.disabled = !canAct || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(name.value.trim()); });
+    var send = function () {
+      if (link.disabled) return;
+      link.disabled = true; linkOut.setAttribute('role', 'status'); note(linkOut, 'Linking…', true);
+      api('PUT', url, {repository: name.value.trim()})
+        .then(function () { location.reload(); }, function (e) { link.disabled = false; linkOut.setAttribute('role', 'alert'); note(linkOut, e.message); });
+    };
+    link.addEventListener('click', send);
+    name.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') send(); });
+    return h('div', null, h('p', {'class': 'linkrow'}, name, link), linkOut);
+  };
   if (w.repository) {
     sec.appendChild(h('p', null, w.repository_url ? h('a', {href: w.repository_url, 'class': 'mono', text: w.repository}) : h('span', {'class': 'mono', text: w.repository})));
+    if (!canAct) { sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can change or unlink the repository.'})); return sec; }
+    // Change opens the same field; Unlink asks first, since the workspace then has no repository for its bots and routines
+    var change = h('details', {'class': 'repo-change'}, h('summary', {text: 'Change repository'}), linkForm('Link repository'));
+    var unlink = h('button', {type: 'button', 'class': 'quiet danger', text: 'Unlink'}), ask = h('p', {'class': 'sub', hidden: ''});
+    var yes = h('button', {type: 'button', 'class': 'quiet danger', text: 'Unlink ' + w.repository}), no = h('button', {type: 'button', text: 'Cancel'});
+    ask.appendChild(document.createTextNode('The workspace stops using it: its bots read no repository from here, and the repository stays on the forge. '));
+    ask.appendChild(yes); ask.appendChild(document.createTextNode(' ')); ask.appendChild(no);
+    unlink.addEventListener('click', function () { ask.hidden = false; unlink.hidden = true; no.focus(); });
+    no.addEventListener('click', function () { ask.hidden = true; unlink.hidden = false; unlink.focus(); });
+    yes.addEventListener('click', function () {
+      yes.disabled = true; out.setAttribute('role', 'status'); note(out, 'Unlinking…', true);
+      api('PUT', url, {repository: ''})
+        .then(function () { location.reload(); }, function (e) { yes.disabled = false; out.setAttribute('role', 'alert'); note(out, e.message); });
+    });
+    sec.appendChild(change); sec.appendChild(h('p', null, unlink)); sec.appendChild(ask); sec.appendChild(out);
     return sec;
   }
-  var canAct = !!(ME && w.can_manage && !w.archived);
   var btn = h('button', {type: 'button', text: 'Create repository', disabled: canAct ? null : '', title: canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
   btn.addEventListener('click', function () {
-    btn.disabled = true; note(out, 'Asking the forge\u2026', true);
-    api('POST', '/api/workspaces/' + encodeURIComponent(w.slug) + '/repository')
+    btn.disabled = true; note(out, 'Asking the forge…', true);
+    api('POST', url)
       .then(function () { location.reload(); }, function (e) { btn.disabled = false; note(out, e.message); });
   });
   sec.appendChild(h('p', {'class': 'sub', text: 'This workspace has no repository yet. The board creates an empty one on the forge, named after the workspace.'}));
   sec.appendChild(h('p', null, btn));
   if (!canAct) sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can create or link a repository.'}));
-  // a repository that already exists on the forge: link it by name (#743)
-  var name = h('input', {type: 'text', autocomplete: 'off', 'aria-label': 'Repository to link, owner/name', placeholder: 'owner/name, for example jac/bot_board', 'class': 'mono', disabled: canAct ? null : ''});
-  var link = h('button', {type: 'button', text: 'Link repository', disabled: ''}), linkOut = h('p', {'class': 'sub'});
-  name.addEventListener('input', function () { link.disabled = !canAct || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(name.value.trim()); });
-  var send = function () {
-    if (link.disabled) return;
-    link.disabled = true; linkOut.setAttribute('role', 'status'); note(linkOut, 'Linking…', true);
-    api('PUT', '/api/workspaces/' + encodeURIComponent(w.slug) + '/repository', {repository: name.value.trim()})
-      .then(function () { location.reload(); }, function (e) { link.disabled = false; linkOut.setAttribute('role', 'alert'); note(linkOut, e.message); });
-  };
-  link.addEventListener('click', send);
-  name.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') send(); });
   sec.appendChild(h('p', {'class': 'sub', text: 'Or link a repository that already exists on the forge.'}));
-  sec.appendChild(h('p', {'class': 'linkrow'}, name, link));
+  sec.appendChild(linkForm('Link repository'));
   sec.appendChild(out);
-  sec.appendChild(linkOut);
   return sec;
 }
 function teamView(w) {
