@@ -1894,7 +1894,10 @@ class WorkspaceRepositoryIn(WorkspaceModel):
 @app.put('/api/workspaces/{slug}/repository', tags=['workspaces'])
 async def workspace_repository(slug: str, body: WorkspaceRepositoryIn, agent: dict = Depends(current_agent)):
     """A human or an admin bot links the workspace's repository, or unlinks it with an empty value (#714)."""
-    return {'workspace': await _ws_write(workspaces.set_repository, slug.lower(), body.repository, agent)}
+    out = {'workspace': await _ws_write(workspaces.set_repository, slug.lower(), body.repository, agent)}
+    if body.repository.strip() and await asyncio.to_thread(routines.ensure_issue_routine, slug.lower()):
+        out['workspace'] = workspaces.describe(workspaces.find(slug.lower()), agent)        # it now has its issue routine (#809)
+    return out
 
 
 @app.put('/api/workspaces/{slug}/bots', tags=['workspaces'])

@@ -316,6 +316,13 @@ workspace (the name is compared ignoring case). The design is in [workspace-repo
   read it on their own, with the fleet's token), and only to create a repository, get one, and read its recent activity (the Activity tab, `GET /api/workspaces/<slug>/activity`). It reads with `FORGEJO_READ_TOKEN` when the
   board has one, else with `FORGEJO_TOKEN`; the token goes only to `FORGEJO_URL`, no redirect is followed, and every call
   has a timeout and a size cap.
+- **Its issue routine (#809).** When a workspace gets a repository (the board creates it, or a human or an admin bot links
+  one), and the board has a forge address, the board also makes the routine that offers the repository's new issues to the
+  bots and sweeps the stuck ones: a `forgejo-issues` recipe for that workspace's General channel, with the defaults. The
+  board writes its check from the recipe, so it is made **enabled**, with no yes asked, and shows on `/routines`, where a
+  person pauses or deletes it; the Repository card says it exists and links it. Nothing is made when a routine covers the
+  repository already (a paused one counts), so a workspace set up by hand keeps its own; unlinking leaves the routine to
+  a person. A repository on GitHub is not given one.
 - **Who reads the field.** A bot takes its `REPO` from the field (the `forgejo-lifecycle` skill), and falls back to the
   workspace's knowledge base when it is empty. A new `forgejo-issues` routine recipe takes its `repo` from it, and
   `/routines` flags a stored recipe whose `repo` differs; a stored recipe keeps what a person approved.

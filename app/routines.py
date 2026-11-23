@@ -128,17 +128,61 @@ def start_runner(interval: int = 30) -> threading.Thread:
     return t
 
 
-def announces(repo: str) -> bool:
-    """Whether a running forgejo-issues routine announces this repository's new issues (a paused or deleted one does
-    not): the webhook leaves such a repository to it, since the routine also routes them by label (#711)."""
-    for r in db.conn().execute("SELECT definition FROM routines WHERE state IN ('enabled','failed')").fetchall():
+def _forgejo_routine_ids(repo: str, states: str) -> list[int]:
+    out = []
+    for r in db.conn().execute(f"SELECT id, definition FROM routines WHERE state IN ({states}) ORDER BY id").fetchall():
         try:
             rc = (json.loads(r["definition"]) or {}).get("recipe") or {}
         except ValueError:
             continue
         if rc.get("type") == "forgejo-issues" and str(rc.get("repo") or "").lower() == repo.lower():
-            return True
-    return False
+            out.append(r["id"])
+    return out
+
+
+def issue_routine_of(repo: str) -> int | None:
+    """The id of the routine that offers this repository's issues, whatever its state but deleted (#809), or None."""
+    ids = _forgejo_routine_ids(repo, "'enabled','failed','paused'") if repo else []
+    return ids[0] if ids else None
+
+
+def ensure_issue_routine(slug: str) -> int | None:
+    """A workspace that has a repository gets the routine that offers its issues to the bots and sweeps the stuck ones
+    (#809): a `forgejo-issues` recipe for that repository, in the workspace's General channel, enabled from the start. The
+    board writes the check from the recipe, so no bot wrote code that a person has not seen; a person pauses or deletes it
+    on /routines. Nothing is made when the workspace has no repository or the board has no forge address, or when a routine
+    covers the repository already (paused ones count). Forgejo only: a GitHub repository is not given one. Returns the new
+    routine's id, or None. It never raises: a failure here must not undo the repository."""
+    try:
+        ws = workspaces.find(slug)
+        repo = workspaces.repository(ws)
+        forge = fleet.forge_url()
+        if not repo or not forge or ws["archived"] or issue_routine_of(repo):
+            return None
+        owner = db.get_agent_by_id(ws["owner_id"])
+        if not owner:
+            return None
+        r = _definition({"name": f"{ws['slug']}-issues", "channel": workspaces.home_slug(ws),
+                         "recipe": {"type": "forgejo-issues", "repo": repo, "forgejo": forge, "workspace": ws["slug"]}})
+        problem = cli.problem_with(r)
+        if problem:
+            print(f"bot_board: no issue routine for {slug}: {problem}", flush=True)
+            return None
+        with db._write_lock, db.conn() as c:
+            if issue_routine_of(repo):          # another caller made it while this one wrote the definition
+                return None
+            return c.execute("INSERT INTO routines(definition,state,defined_at,approved_definition,resume,created_by,updated_by,"
+                             "created_at,updated_at) VALUES (?,'enabled',?,?,0,?,?,?,?)",
+                             (json.dumps(r), db.cursor(), json.dumps(r), owner["id"], owner["id"], db.now(), db.now())).lastrowid
+    except Exception as exc:        # best effort, like the repository
+        print(f"bot_board: no issue routine for {slug}: {exc}", flush=True)
+        return None
+
+
+def announces(repo: str) -> bool:
+    """Whether a running forgejo-issues routine announces this repository's new issues (a paused or deleted one does
+    not): the webhook leaves such a repository to it, since the routine also routes them by label (#711)."""
+    return bool(_forgejo_routine_ids(repo, "'enabled','failed'"))
 
 
 def init():

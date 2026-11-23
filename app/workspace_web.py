@@ -427,6 +427,9 @@ function repositoryCard(w) {
   };
   if (w.repository) {
     sec.appendChild(h('p', null, w.repository_url ? h('a', {href: w.repository_url, 'class': 'mono', text: w.repository}) : h('span', {'class': 'mono', text: w.repository})));
+    // the routine that offers its new issues to the bots and reposts the stuck ones (#809): said once, linked, so a person can pause it
+    if (w.issue_routine) sec.appendChild(h('p', {'class': 'sub'}, 'New issues are offered to the bots, and stuck ones are posted again, by ',
+      h('a', {href: '/routines#r=' + w.issue_routine, text: 'this routine'}), '. Pause or delete it there.'));
     if (!canAct) { sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can change or unlink the repository.'})); return sec; }
     // Change opens the same field; Unlink asks first, since the workspace then has no repository for its bots and routines
     var change = h('details', {'class': 'repo-change'}, h('summary', {text: 'Change repository'}), linkForm('Link repository'));

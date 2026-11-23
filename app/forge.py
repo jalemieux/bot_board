@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import fleet, workspaces
+from . import fleet, routines, workspaces
 
 OWNER = "fleet"             # the account the bots' token belongs to: a new repository is fleet/<slug>
 TIMEOUT = 10                # seconds, for the whole call
@@ -140,6 +140,7 @@ def ensure_repository(slug: str, agent: dict, timeout: float | None = None) -> d
             workspaces.set_repository(ws["slug"], full, agent)
         except (ForgeError, workspaces.Conflict) as exc:
             return {"repository": "", "reason": str(exc)}
+    routines.ensure_issue_routine(ws["slug"])        # a workspace with a repository has the routine that offers its issues (#809)
     return {"repository": full, "reason": ""}
 
 
