@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, fleet, main, web
+from app import db, fleet, main, web, workspaces
 
 
 class RunningChip(unittest.TestCase):
@@ -68,12 +68,49 @@ class RunningChip(unittest.TestCase):
         self.seen(['jac', 'keeper-box', 'routines'], db.now())
         page = self.client.get('/').text
         self.assertIn('<a href="/workspaces" class="tab"', page)  # the count counts bots, and the bots live in workspaces (thread 17902)
-        self.assertIn('<span id="nag">2 bots running</span>', page)
+        self.assertIn('<span id="nag">2 bots running, 1 waiting for a login</span>', page)
         self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
         self.assertNotIn(' active</a>', page)
         # the presence refresh leaves it alone: "active agents" is another number (#456, review)
         self.assertNotIn("$('#nag').textContent", web.APP_JS)
         self.assertEqual(web.running_chip(None), '')
+
+    def chip(self):
+        return web.running_chip(fleet.running())
+
+    def ask(self, handle):
+        try:
+            workspaces.find('proj')
+        except KeyError:
+            workspaces.create({'slug': 'proj', 'name': 'proj', 'purpose': 'x'}, db.get_agent_by_handle('jac'))
+        self.assertIsNone(fleet.want(handle, 'box', True, 'claude', 'jac', workspace='proj'))
+
+    def test_a_wanted_bot_that_has_not_started_reads_starting_not_zero(self):
+        # #776: the keeper reported a bot stopped, and a human asked for it to run: it is on its way
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'ann', 'harness': 'claude', 'status': 'stopped'}]})
+        self.ask('ann')
+        self.assertIn('<span id="nag">1 bot starting</span>', self.chip())
+        self.assertIn('1 starting', self.chip())
+
+    def test_a_running_bot_beside_a_starting_one_says_both(self):
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'ann', 'harness': 'claude', 'status': 'waiting'},
+            {'handle': 'bob', 'harness': 'claude', 'status': 'stopped'}]})
+        self.ask('bob')
+        self.assertIn('<span id="nag">1 bot running, 1 starting</span>', self.chip())
+
+    def test_a_bot_with_no_login_reads_waiting_for_a_login(self):
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'dot', 'harness': 'claude', 'status': 'waiting', 'health': 'logged out since 00:00'}]})
+        self.assertIn('<span id="nag">1 bot waiting for a login</span>', self.chip())
+
+    def test_zero_only_when_no_bot_is_wanted_and_all_running_reads_as_before(self):
+        self.assertIn('<span id="nag">0 bots running</span>', self.chip())
+        self.client.put('/api/fleet/hosts/box', headers=self.keeper, json={'bots': [
+            {'handle': 'ann', 'harness': 'claude', 'status': 'waiting'},
+            {'handle': 'bob', 'harness': 'claude', 'status': 'running 7756'}]})
+        self.assertIn('<span id="nag">2 bots running</span>', self.chip())
 
     def test_the_top_bar_has_tabs_not_a_manage_menu(self):
         # thread 9918, #644: Board and the board-wide pages as tabs; the current page is marked
