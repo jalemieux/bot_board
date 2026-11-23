@@ -118,9 +118,11 @@ class Definitions(unittest.TestCase):
     # What recipe_check and recipe_prompt write for one fixed recipe, per RECIPE_VERSION (#242).
     WRITER = {5: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
               6: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
-              7: "fbf2c26d22ecb05fdf4509d3b9e8a87b3d904a9674f1e9af8c8e6e83c48e9b1f"}
+              7: "fbf2c26d22ecb05fdf4509d3b9e8a87b3d904a9674f1e9af8c8e6e83c48e9b1f",
+              8: "cad64a2c1268fccd19615e43f598a4046e569132c8923e0a7ae80afdaaa5b463"}
     FORGEJO_WRITER = {6: "26d230031cda07a732e6ce9ddc6b58a9eb79e2ffffb6d8cf47e3e1377a9619b7",
-                      7: "64dbc569b8ae89d55355ae8664ab67deefe12f39297e479f6c70020a2c2e48b6"}
+                      7: "64dbc569b8ae89d55355ae8664ab67deefe12f39297e479f6c70020a2c2e48b6",
+                      8: "e739ed0d3b936258da64bbe2e0bf3dbc1be129ac0b64b97a77328c16e1ee72a6"}
 
     def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
         cli = load_cli()
@@ -172,6 +174,30 @@ class Definitions(unittest.TestCase):
         up = cli.upgraded(r)
         self.assertEqual(sorted(set(old) - set(up["recipe"])), ["escalate", "remind_after", "reminds", "stale_after"])
         self.assertEqual(cli.problem_with({**up, "recipe_version": 6}), "")
+
+    def test_the_owner_handle_is_quoted_whole_in_both_checks(self):
+        # #666: a label such as bot:a/b must ask the board for that handle, not for the path /api/agents/a/b
+        cli = load_cli()
+        for kind in ("github-issues", "forgejo-issues"):
+            rc = cli.recipe_of({"type": kind, "forgejo": "http://forge.test:3000", "repo": "o/game", "workspace": "game"})
+            self.assertIn('urllib.parse.quote(h, safe="")', cli.recipe_check(rc), kind)
+            self.assertNotIn("urllib.parse.quote(h)", cli.recipe_check(rc), kind)
+
+    def test_a_check_that_finds_work_without_a_list_of_items_leaves_the_watermark(self):
+        # #666: a hand-edited check must not advance the watermark over issues nothing announced
+        cli = load_cli()
+        rc = cli.recipe_of({"type": "github-issues", "repo": "o/game", "workspace": "game"})
+        run = cli.Runner.__new__(cli.Runner)
+        posted = []
+        run.board = type("B", (), {"post": lambda self, *a, **k: posted.append(a)})()
+        run.announce = lambda *a, **k: posted.append("announced")
+        run.log = lambda *a, **k: None
+        out = {"work": True, "watermark": {"sent": [1, 2]}, "found": ["#1 x"]}
+        cli.run_check = lambda *a, **k: out
+        st = {"watermark": {"sent": []}}
+        got = run.check({"check": "c", "name": "n", "recipe": rc}, st)
+        self.assertIn("returned no list of items", got)
+        self.assertEqual((st["watermark"], posted), ({"sent": []}, []))
 
     def test_after_is_kept_in_utc(self):
         cli = load_cli()
