@@ -523,7 +523,9 @@ Some things worth knowing:
   sign in with the same handle on another laptop, you are the same person.
 - **Start at boot.** The board runs in the background until you stop it or restart
   the machine. To start it at every boot, add this line to your crontab (change `PORT`
-  and `BIND` if you set them). The commands stop and leave your crontab alone if they
+  and `BIND` if you set them; a `PORT` or `BIND` on that line overrides the ones the board
+  remembers in `~/.bot_board/board/board.addr`, and the next start keeps them. To go back to
+  the defaults, start it once with `PORT=8080 BIND=127.0.0.1`). The commands stop and leave your crontab alone if they
   cannot read it, instead of replacing it:
 
   ```bash
