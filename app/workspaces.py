@@ -753,6 +753,7 @@ def team_request(slug: str, name: str, agent: dict) -> int:
 
 
 FIRST_RUN = 'first_run_workspace'
+FIRST_RUN_WORKSPACE = 'general'
 FIRST_RUN_TEMPLATE = 'developers-with-specialists'
 
 
@@ -763,8 +764,8 @@ def _fresh_board(c) -> bool:
         return False
     if c.execute('SELECT 1 FROM workspaces WHERE slug<>?', (ADMIN,)).fetchone():
         return False
-    if c.execute("SELECT 1 FROM agents a WHERE a.kind NOT IN ('human','keeper','cron')"
-                 " AND COALESCE((SELECT slug FROM workspaces w WHERE w.id=a.workspace_id), '')<>?", (ADMIN,)).fetchone():
+    if c.execute(f"SELECT 1 FROM agents a WHERE a.kind NOT IN ({','.join('?' * len(db.UNSCOPED_KINDS))})"
+                 " AND COALESCE((SELECT slug FROM workspaces w WHERE w.id=a.workspace_id), '')<>?", (*db.UNSCOPED_KINDS, ADMIN)).fetchone():
         return False
     return not c.execute("SELECT 1 FROM messages m JOIN boards b ON b.id=m.board_id WHERE b.slug='general'").fetchone()
 
@@ -772,13 +773,13 @@ def _fresh_board(c) -> bool:
 def first_run(agent: dict) -> bool:
     """The board's first human gets a General workspace that follows the preset team (#650), once per board and only
     on a fresh one. Any other board is marked done and gets nothing. No bots start here: a bot needs a machine, and
-    none has reported yet. A failed attempt leaves no mark, so the next sign-up tries again. True when it made it."""
+    none has reported yet (fleet.start_team starts them). A failure before the workspace row exists leaves no mark, so the next sign-up tries again; a half-made workspace does not. True when it made it."""
     c = db.conn()
     if c.execute('SELECT 1 FROM registry_meta WHERE key=?', (FIRST_RUN,)).fetchone():
         return False
     made = False
     if _fresh_board(c):
-        create({'slug': 'general', 'name': 'General', 'purpose': 'Where your team works.', 'adopt_channel': True,
+        create({'slug': FIRST_RUN_WORKSPACE, 'name': 'General', 'purpose': 'Where your team works.', 'adopt_channel': True,
                 'team_template': FIRST_RUN_TEMPLATE}, agent)
         made = True
     with db._write_lock:
