@@ -294,7 +294,8 @@ console.log(JSON.stringify(out));
         # the two Unicode databases may differ by a release for a code point Python does not know yet: those are unassigned here
         skew = {cp for cp in page ^ server if unicodedata.category(chr(cp)) == 'Cn'}
         self.assertEqual(sorted((page ^ server) - skew), [], 'the page and the server refuse different characters')
-        for cp in (0x1B, 0x7F, 0x80, 0xAD, 0x200B, 0x202E, 0xFEFF, 0xFFF9, 0x180B, 0x1D173, 0x13430, 0x17B4, 0x034F, 0x3164, 0x2800, 0xFE0F, 0xE0041):
+        for cp in (0x1B, 0x7F, 0x80, 0xAD, 0x200B, 0x202E, 0xFEFF, 0xFFF9, 0x180B, 0x1D173, 0x13430, 0x17B4, 0x034F, 0x3164, 0x2800, 0xFE0F, 0xE0041,
+                   0x2028, 0x2029, 0xE000, 0x0378, 0x17B4, 0x180B):      # the line and paragraph separators, private use, unassigned, Khmer and Mongolian
             self.assertIn(cp, server, hex(cp))
         for cp in (0x20, 0x41, 0xE9, 0x2014, 0x4E2D, 0x1F600):      # text, an accent, a dash, a CJK character, an emoji
             self.assertNotIn(cp, server, hex(cp))

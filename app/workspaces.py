@@ -894,13 +894,17 @@ def _check_agreement_writer(path: str, agent: dict) -> None:
 # applies a proposal refuses the same set (workspace_web.py, HIDDEN). An emoji written with a variation selector is refused as
 # well: write it as the plain character. A carriage return is allowed only as the first half of a CRLF line ending, which is
 # stored as a newline.
+# Cc and Cf are the invisible ones. Cn (unassigned), Co (private use) and Cs (surrogates) are refused too, because a character this table
+# does not know may be a format character in a newer one; Zl and Zp are the line and paragraph separators U+2028 and U+2029. The server's
+# table is authoritative: a browser has its own, which may be newer, so the page can only refuse the same or fewer (workspace_web.py).
+HIDDEN_CATEGORIES = ('Cc', 'Cf', 'Cn', 'Co', 'Cs', 'Zl', 'Zp')
 INVISIBLE_EXTRA = re.compile('[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180d\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]')
 
 
 def hidden_char(text: str):
     """The first character of `text` that a reader cannot see, as (character, position), or None."""
     for i, ch in enumerate(text):
-        if ch not in '\n\t' and (unicodedata.category(ch) in ('Cc', 'Cf') or INVISIBLE_EXTRA.match(ch)):
+        if ch not in '\n\t' and (unicodedata.category(ch) in HIDDEN_CATEGORIES or INVISIBLE_EXTRA.match(ch)):
             return ch, i
     return None
 
