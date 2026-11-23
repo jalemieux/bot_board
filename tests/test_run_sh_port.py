@@ -73,6 +73,20 @@ class RunShPort(unittest.TestCase):
         self.assertIn("commit abrm-rf", out)       # the ; and the space are gone
         self.assertNotIn("\x1b", out, "only letters, digits, dot, dash and underscore of the commit are printed")
 
+    def test_the_command_that_keeps_the_board_local_puts_BIND_on_the_right_program(self):
+        body = subprocess.run(["sed", "-n", "/^tilde()/p;/^exposed()/,/^}/p", str(ROOT / "run.sh")], capture_output=True, text=True).stdout
+
+        def say(src, self_):
+            return subprocess.run(["bash", "-c", f'BIND=0.0.0.0 PORT=8080 SRC="{src}" SELF="$1"\n{body}\nexposed', "x", self_],
+                                  capture_output=True, text=True, env={**os.environ, "HOME": self.tmp.name}).stdout
+        curl = "curl -fsSL https://example.test/run.sh | bash -s --"
+        out = say(self.tmp.name + "/none/src", curl)       # no installed bot_board beside this checkout: the curl form
+        self.assertIn("run: curl -fsSL https://example.test/run.sh | BIND=127.0.0.1 bash -s -- up", out, "the variable is for bash, not curl")
+        self.assertNotIn("BIND=127.0.0.1 curl", out)
+        self.assertIn("run: BIND=127.0.0.1 /x/run.sh up", say(self.tmp.name + "/none/src", "/x/run.sh"))
+        inst = Path(self.tmp.name, "inst"); (inst / "src").mkdir(parents=True); (inst / "bot_board").write_text("#!/bin/sh\n"); (inst / "bot_board").chmod(0o755)
+        self.assertIn("run: BIND=127.0.0.1 ~/inst/bot_board restart board", say(str(inst / "src"), curl), "an installed board has its own command")
+
     def test_a_port_in_the_file_that_is_not_a_number_is_not_used(self):
         self.dir.mkdir(exist_ok=True); (self.dir / "board.addr").write_text("PORT=80/../x\nBIND=127.0.0.1\n")
         r = self.run_sh("status")

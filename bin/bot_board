@@ -278,7 +278,7 @@ install_summary() {
   fi
   echo "  Runs:      in the background until you stop it or restart this machine"
   echo "  Manage:    $(tilde "$(dirname "$SRC")")/bot_board status|stop|restart|update|uninstall"
-  case ${BIND:-127.0.0.1} in 127.*|localhost|::1) ;; *) echo "  Bound to $BIND: anyone who can reach this machine on port ${PORT:-8080} can use the board. To keep it on this machine, restart with BIND=127.0.0.1." ;; esac
+  case ${BIND:-127.0.0.1} in 127.*|localhost|::1) ;; *) echo "  Bound to $BIND: anyone who can reach this machine on port ${PORT:-8080} can use the board. To keep it on this machine, run: BIND=127.0.0.1 $(tilde "$(dirname "$SRC")")/bot_board restart board" ;; esac
   echo
   echo "Next:   open $url and sign in with any handle"
 }
