@@ -45,7 +45,7 @@ fi
 PIDFILE="$DIR/board.pid"; LOG="$DIR/board.log"
 
 die() { echo "run.sh: $*" >&2; exit 1; }
-tilde() { printf '%s' "${1/#$HOME/\~}"; }      # a path under $HOME as ~/…, for the output
+tilde() { if [ -n "$HOME" ]; then case $1 in "$HOME"|"$HOME"/*) printf '~%s' "${1#"$HOME"}"; return ;; esac; fi; printf '%s' "$1"; }      # a path under $HOME as ~/…; no ${//} replacement, whose `\~` bash 3.2 prints with its backslash
 
 # The managed checkout is cloned when missing, and otherwise left as it is: the keeper and
 # the bots run from it too, so moving it is `update`'s job, which restarts them all on it.
@@ -106,7 +106,9 @@ case "$CMD" in
     fetch
     start
     healthy || { tail -n 20 "$LOG" >&2; die "the board did not come up; log above, full log in $LOG"; }
-    if [ "$CMD" = update ]; then
+    if [ -n "${BOT_BOARD_QUIET:-}" ]; then
+      :      # under `bot_board install`, which prints the one block itself (#766)
+    elif [ "$CMD" = update ]; then
       echo "bot_board updated to $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown) and running at $URL"
     else
       # what the output holds is what a person needs now (#766); the rest is in the README

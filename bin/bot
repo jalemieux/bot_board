@@ -139,6 +139,10 @@ if [ "${1:-}" = install ]; then
     ln -sfn "$SRC/bin/bot_board" "${BOT_BOARD_DIR:-$HOME/.bot_board}/bot_board"
   fi
   _cfg=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+  # Under `bot_board install` (BOT_BOARD_QUIET) the notes that only inform go to the keeper's log, and that command prints one
+  # block; what a person must do, and every failure, still prints (#766).
+  _quiet=${BOT_BOARD_QUIET:-}
+  _info() { if [ -n "$_quiet" ]; then mkdir -p "$(dirname "$_cfg")"; echo "bot: $*" >> "$(dirname "$_cfg")/keeper.log"; else echo "bot: $*" >&2; fi; }
   # The config is sourced as shell by every bot start: a value that could end its quotes or
   # expand ($, `, ", \, a newline) is refused, not written.
   _set() { case $2 in *[\"\$\`\\]*|*$'\n'*|*$'\r'*) echo "bot: $1 may not contain \", \$, \`, \\ or a newline" >&2; exit 1 ;; esac
@@ -174,14 +178,14 @@ if [ "${1:-}" = install ]; then
       exec 3<&-
       case $_ans in
         ""|[Yy]|[Yy]es) _harness=$_pick ;;
-        [Nn]|[Nn]o) echo "bot: no default bot: add bots with + Add a bot on a workspace's Team tab, at $_board/workspaces" >&2 ;;
+        [Nn]|[Nn]o) _info "no default bot: add bots with + Add a bot on a workspace's Team tab, at $_board/workspaces" ;;
         *) case $(_state "$_ans") in
              ok|unknown|missing) _harness=$_ans ;;
              *) echo "bot: no default bot: $_ans is not a harness on this PATH" >&2 ;;
            esac ;;
       esac
     else
-      echo "bot: no terminal to ask on: starting a default bot with $_pick ($(_words "$_pick"))" >&2
+      _info "no terminal to ask on: starting a default bot with $_pick ($(_words "$_pick"))"
       _harness=$_pick
     fi
   fi
@@ -195,9 +199,9 @@ if [ "${1:-}" = install ]; then
   if [ -n "$_fresh" ] && ! grep -qs '^BOT_RUNTIME=' "$_cfg" && [ -z "${BOT_RUNTIME:-}" ]; then
     _rt=; for _c in docker podman; do command -v "$_c" >/dev/null && "$_c" info >/dev/null 2>&1 && { _rt=$_c; break; }; done
     if [ -z "$_rt" ]; then
-      echo "bot: no container runtime found: the bots run on this machine, with your user's access. Install Docker, then add BOT_RUNTIME=docker to $_cfg and run bot_board restart bots to move them into containers" >&2
+      _info "no container runtime found: the bots run on this machine, with your user's access. Install Docker, then add BOT_RUNTIME=docker to $_cfg and run bot_board restart bots to move them into containers"
     elif [ "$(uname -s)" = Darwin ] && [ "$_harness" = claude ]; then
-      echo "bot: $_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN on $_board/configuration, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots" >&2
+      _info "$_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN on $_board/configuration, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots"
     else
       _set BOT_RUNTIME "$_rt"
       case $_board in
@@ -206,7 +210,7 @@ if [ "${1:-}" = install ]; then
           if [ "$(uname -s)" = Darwin ]; then _net="they can also reach every port this Mac listens on"
           else _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
       esac
-      echo "bot: $_rt found: the bots run in containers. They cannot read the rest of this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
+      _info "$_rt found: the bots run in containers. They cannot read the rest of this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg"
     fi
   fi
   "$SRC/bin/bot" keeper install "$@" || exit $?
@@ -215,13 +219,13 @@ if [ "${1:-}" = install ]; then
   for _i in $(seq 1 "${BOT_INSTALL_WAIT:-30}"); do grep -qs '^# default bot: ' "$_cfg" && break; sleep 2; done
   _note=$(sed -n 's/^# default bot: //p' "$_cfg" | tail -1)
   case $_note in
-    "") echo "bot: the keeper has not heard back from $_board yet; the default bot ($_harness) starts once it does. Watch $_board/workspaces" >&2 ;;
-    waiting:*) echo "bot: open $_board and sign in; your bot ($_harness) starts then, in workspace admin." >&2
-      echo "bot: first sign-in creates Admin > General. After signing in, wait about 15 seconds, then check $_board/workspaces" >&2
-      echo "bot: post in Admin > General ($_board/c/admin) to give your bot work." >&2
-      echo "bot: if you reset the board but your browser still shows a handle, sign out and sign in again." >&2 ;;
-    *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/workspaces" >&2 ;;
-    *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/workspaces" >&2 ;;
+    "") _info "the keeper has not heard back from $_board yet; the default bot ($_harness) starts once it does. Watch $_board/workspaces" ;;
+    waiting:*) _info "open $_board and sign in; your bot ($_harness) starts then, in workspace admin."
+      _info "first sign-in creates Admin > General. After signing in, wait about 15 seconds, then check $_board/workspaces"
+      _info "post in Admin > General ($_board/c/admin) to give your bot work."
+      _info "if you reset the board but your browser still shows a handle, sign out and sign in again." ;;
+    *started) _note=${_note%, started}; _info "started $_note; manage it at $_board/workspaces" ;;
+    *) _info "no default bot: ${_note%% *} is on this box already; manage it at $_board/workspaces" ;;
   esac
   # a bot made here for a harness with no login yet: say what frees it (not for a bot already on the box)
   case $_note in *"on this box"*|*"already"*) ;; *)

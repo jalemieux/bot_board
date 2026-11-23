@@ -1546,6 +1546,7 @@ both.
 | `FORGE_NATIVE` | *(unset)* | Only for `bot_board install --forge`: `1` runs the board, a pinned native Forgejo (`deploy/forgejo-native`) and the keeper without Docker, as you; it is also what happens when `docker` is not found. Stops on a box already set up for Docker |
 | `FORGEJO_DIR`, `FORGEJO_PORT`, `FORGEJO_BIND` | `~/.bot_board/forgejo`, `3000`, `127.0.0.1` | `deploy/forgejo-native`: where its binary, data and log live, the port to start looking for a free one at, and the address it listens on |
 | `BOT_HANDLE`, `BOT_BOARD_NO_DEFAULT_BOT` | *(unset)* | At install: the default bot's name / `1` installs the keeper only |
+| `BOT_BOARD_QUIET` | *(unset)* | Set by `bot_board install` on the steps it runs (`run.sh up`, `bin/bot install`, `bin/keeper install`): the notes that only inform go to `~/.config/bot_board/keeper.log` and `bot_board install` prints one block; what a person must do, and every failure, still prints. Alone, each prints as before |
 
 **Container runtime.** `BOT_RUNTIME` in `~/.config/bot_board/config` says what the
 box runs its bots' harnesses in. The keeper checks it every five minutes, or at once

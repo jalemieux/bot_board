@@ -70,6 +70,18 @@ class RunOutput(unittest.TestCase):
                 self.assertEqual(marker.exists(), handed, f"flag={flag!r}")
                 self.assertEqual(out.startswith("bot_board updated to "), not handed, out)
 
+    def test_tilde_does_not_print_a_backslash_on_the_bash_of_a_mac(self):
+        # macOS ships bash 3.2, where `${1/#$HOME/\\~}` keeps the backslash (jac's run showed `\\~/.bot_board/board`). BASH_COMPAT makes a newer
+        # bash behave like the older one here, so the test sees the difference. The function is the same text in run.sh and bin/bot_board.
+        import re
+        for name in ("run.sh", "bin/bot_board"):
+            fn = re.search(r"^tilde\(\) \{.*?\n", (ROOT / name).read_text(), re.M | re.S).group(0).split("      #")[0]
+            for compat in ("", "42", "32"):
+                with self.subTest(file=name, compat=compat):
+                    script = f'HOME=/home/x\n{fn}\ntilde /home/x/.bot_board/board; echo; tilde /home/x; echo; tilde /opt/x; echo; tilde /home/xy/z; echo\n'
+                    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env={**os.environ, "BASH_COMPAT": compat} if compat else os.environ)
+                    self.assertEqual(r.stdout.split("\n")[:4], ["~/.bot_board/board", "~", "/opt/x", "/home/xy/z"], r.stderr)
+
     def test_what_left_the_output_is_in_the_readme(self):
         readme = (ROOT / "README.md").read_text()
         for piece in ("install bots", "single-user", "A handle is", "sign out and sign in", "@reboot", "start board"):
