@@ -72,6 +72,66 @@ class EntryPoint(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         return r, self.calls.read_text().splitlines()
 
+    def expose_env(self, board="http://127.0.0.1:8080"):
+        """A board and its keeper on this machine, the keeper pointing at it; run.sh records the BIND it was asked for."""
+        self.installed()
+        (self.cfg / "config").write_text(f'BOARD="{board}"\nKEEPER_HOST="m1"\n')
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\necho "run.sh $* BIND=${BIND:-}" >> "$CALLS"\n')
+
+    def test_expose_moves_the_board_and_this_machines_keeper_together(self):
+        # #796: the board's address, the keeper's BOARD and the printed block change together, in one command
+        self.expose_env()
+        r, calls = self.run_bb("expose", "100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9", "bot keeper install", "bot ps --tsv", "bot restart ada"])
+        cfg = (self.cfg / "config").read_text()
+        self.assertIn('BOARD="http://100.64.0.9:8080"', cfg)
+        self.assertNotIn("127.0.0.1", cfg)
+        self.assertIn('KEEPER_HOST="m1"', cfg)                      # nothing else in the config is touched
+        self.assertIn("Open:         http://100.64.0.9:8080", r.stdout)
+        self.assertIn("its keeper reports to http://100.64.0.9:8080", r.stdout)
+        self.assertIn("http://100.64.0.9:8080/machines", r.stdout)
+        self.assertIn("anyone who can reach 100.64.0.9 on port 8080 can use the board", r.stdout)
+
+    def test_expose_a_second_time_changes_nothing(self):
+        self.expose_env("http://100.64.0.9:8080")
+        r, calls = self.run_bb("expose", "100.64.0.9", BIND="100.64.0.9")      # the board already listens there (run.sh kept it)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, [])
+        self.assertIn("nothing changed", r.stdout)
+        self.assertEqual((self.cfg / "config").read_text().count("BOARD="), 1)
+
+    def test_expose_refuses_every_interface_unless_asked_and_a_keeper_follows_on_loopback(self):
+        self.expose_env()
+        r, calls = self.run_bb("expose", "0.0.0.0")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--all-interfaces", r.stderr)
+        self.assertEqual(calls, [])
+        r, calls = self.run_bb("expose", "0.0.0.0", "--all-interfaces")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls[0], "run.sh up BIND=0.0.0.0")
+        self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())   # this machine reaches it on loopback
+
+    def test_expose_leaves_a_keeper_that_reports_to_another_board_alone(self):
+        self.expose_env("http://other-box:8080")
+        r, calls = self.run_bb("expose", "100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9"])
+        self.assertIn('BOARD="http://other-box:8080"', (self.cfg / "config").read_text())
+        self.assertNotIn("its keeper reports", r.stdout)
+
+    def test_expose_needs_a_board_here_and_an_address(self):
+        r, _ = self.run_bb("expose", "100.64.0.9")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("nothing installed here", r.stderr + r.stdout)
+        self.expose_env()
+        r, calls = self.run_bb("expose")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("usage: bot_board expose <address>", r.stderr)
+        r, _ = self.run_bb("expose", "bad address;rm")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(calls, [])
+
     def test_uninstall_names_what_it_acts_on(self):
         r, _ = self.run_bb("uninstall")
         self.assertNotEqual(r.returncode, 0)

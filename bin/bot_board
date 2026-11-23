@@ -14,6 +14,8 @@
 #   stop       board: stop it; bots: stop the keeper and let each bot finish, then exit
 #   restart    both: start again on the code in the checkout; a busy bot finishes first
 #   status     is each one running
+#   expose <address>  make the board on this machine reachable at that address (a Tailscale address is best; 0.0.0.0 needs
+#              --all-interfaces), and point this machine's keeper at it, so other machines can be added to it (#796)
 #   update     pull the checkout (checked; rolled back if it fails), then restart the
 #              board, the keeper and, once idle, each bot on it: the one checkout alone
 #              does not move a running process
@@ -67,7 +69,13 @@ keeper_up() {
 }
 
 CMD=${1:-}; shift || true
-WHAT=""; PURGE=""; FORGE=""
+WHAT=""; PURGE=""; FORGE=""; EXPOSE_ADDR=""; ALL_IFACES=""
+if [ "$CMD" = expose ]; then       # expose <address> [--all-interfaces]: an address, not a component
+  for a in "$@"; do
+    case $a in --all-interfaces) ALL_IFACES=1 ;; -*) usage ;; *) [ -z "$EXPOSE_ADDR" ] || usage; EXPOSE_ADDR=$a ;; esac
+  done
+  set --
+fi
 for a in "$@"; do
   case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; --forge) FORGE=1 ;; *) usage ;; esac
 done
@@ -76,7 +84,7 @@ done
 case $CMD in
   install) WHAT=${WHAT:-all} ;;
   uninstall) [ -n "$WHAT" ] || die "uninstall what? board, bots or all" ;;
-  start|stop|restart|status|update) ;;
+  start|stop|restart|status|update|expose) ;;
   *) usage ;;
 esac
 [ -x "$BOT" ] || [ "$CMD" = install ] || die "no checkout at $SRC: install first"
@@ -295,7 +303,49 @@ existing_forge() {
     || die "forge-setup failed; run it again from $SRC once the cause is gone"
 }
 
+# expose <address> (#796): a native board listens on 127.0.0.1, so another machine cannot reach it. Three things change
+# together: the address the board listens on (run.sh keeps it, so update and restart keep it), this machine's keeper
+# (BOARD in its config, and the keeper restarted), and what is printed: where to open the board and where to add a machine.
+expose() {
+  local addr=$EXPOSE_ADDR port=${PORT:-8080} old=${BIND:-127.0.0.1} reach cfg new mine="" ts
+  has_board || die "no board is installed here: expose changes the address of the board on this machine"
+  if [ -z "$addr" ]; then
+    ts=$(tailscale ip -4 2>/dev/null | head -1 || true)
+    echo "usage: bot_board expose <address> [--all-interfaces]" >&2
+    [ -z "$ts" ] || echo "this machine's Tailscale address is $ts: bot_board expose $ts" >&2
+    exit 1
+  fi
+  case $addr in *[!A-Za-z0-9.-]*) die "$addr is not an address: an IPv4 address or a host name" ;; esac
+  if [ "$addr" = 0.0.0.0 ] && [ -z "$ALL_IFACES" ]; then
+    die "0.0.0.0 listens on every network this machine is on. Give the address of one (a Tailscale address is best), or add --all-interfaces if you mean it"
+  fi
+  reach=$addr; [ "$addr" != 0.0.0.0 ] || reach=127.0.0.1      # this machine reaches an all-interfaces board on loopback
+  new="http://$reach:$port"
+  cfg=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1 || true)
+  if has_bots; then
+    case $cfg in "http://127.0.0.1:$port"|"http://localhost:$port"|"http://$old:$port"|"http://0.0.0.0:$port"|"$new") mine=1 ;; esac
+  fi
+  if [ "$old" = "$addr" ] && { [ -z "$mine" ] || [ "$cfg" = "$new" ]; }; then
+    say "the board is already on $addr:$port: nothing changed"
+  else
+    BIND=$addr board up
+    if [ -n "$mine" ] && [ "$cfg" != "$new" ]; then
+      mkdir -p "$(dirname "$CFG_FILE")"
+      { grep -v '^BOARD=' "$CFG_FILE" || true; printf 'BOARD="%s"\n' "$new"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
+      "$BOT" keeper install
+      for h in $(running_bots); do "$BOT" restart "$h"; done
+    fi
+  fi
+  echo
+  echo "The board is on $addr, port $port."
+  echo "  Open:         $new"
+  [ -z "$mine" ] || echo "  This machine: its keeper reports to $new"
+  echo "  Add a machine: open $new/machines, and run the command it shows on that machine"
+  case $addr in 127.*|localhost) echo "  Reachable:    from this machine only" ;; *) echo "  Warning:      anyone who can reach $addr on port $port can use the board" ;; esac
+}
+
 case $CMD in
+  expose) expose ;;
   install)
     # the tokens go to forge-setup alone: the board and the keeper started below are long-lived and must not inherit them
     FORGE_WRITE_TOKEN=${FORGEJO_TOKEN:-}; FORGE_READ_TOKEN=${FORGEJO_READ_TOKEN:-}

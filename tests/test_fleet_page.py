@@ -190,6 +190,7 @@ class FleetPage(unittest.TestCase):
                      web.fleet_page('b', [])):
             self.assertIn('listens on this machine only', page)
             self.assertIn('Reach your fleet', page)
+            self.assertIn('bot_board expose', page)      # #796: the one command that does it
             self.assertNotIn('BIND=', page, 'no command that breaks this machine\'s own keeper')
             self.assertIn('Anyone who can reach the board can use it', page)
         remote = web.onboard_page('b', 'http://box.example.ts.net:8080', False)

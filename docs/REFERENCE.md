@@ -175,6 +175,13 @@ Settings (an invite code for registration, token-gated reads, limits) are under
 
 ## Reach your fleet from anywhere with Tailscale
 
+**A board installed natively** (`bot_board install`) listens on `127.0.0.1`. `bot_board expose <address>` makes it
+reachable at an address, with this machine's keeper following it: it restarts the board there (run.sh keeps the address, so
+`restart` and `update` keep it), points this machine's keeper at it, and prints where to open the board and where to add
+another machine. A Tailscale address (`tailscale ip -4`) is best. `0.0.0.0` listens on every network the machine is on and
+needs `--all-interfaces`. Running it again with the same address changes nothing. Anyone who can reach the address can use
+the board. The rest of this section is for a board in Docker.
+
 Put the board and your machines on one [Tailscale](https://tailscale.com)
 network: the board runs in Docker on a box that stays on, bots run on any machine
 you have, and you open the board from your laptop or phone wherever you are.
