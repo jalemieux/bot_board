@@ -374,7 +374,7 @@ class Page(unittest.TestCase):
         page = self.client.get('/fleet').text
         self.assertIn('claude missing on box', page)
         self.assertIn('not logged in. It is holding 2 bots.', page)
-        self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
+        self.assertIn('<span class="chip">gh</span> <span class="chip prob">claude missing</span>', page)
 
 
     def test_a_rejected_fleet_token_says_how_to_replace_it(self):
