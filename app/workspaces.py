@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 
-from . import db
+from . import db, fleet
 
 ADMIN = db.ADMIN_WORKSPACE
 HOME_NAME = "General"
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     operators TEXT NOT NULL DEFAULT '[]',
     archived INTEGER NOT NULL DEFAULT 0,
     seed_thread_id INTEGER,
+    repository TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 -- How many bots each profile should have in a workspace (#650). The agreement names roles; this is the
@@ -115,6 +117,11 @@ def init():
                 c.execute("ALTER TABLE workspaces ADD COLUMN seed_thread_id INTEGER")
         c.executescript(SCHEMA)
         _migrate(c)
+        # the workspace's repository (#714): owner/name, one workspace per repository, empty when none
+        if "repository" not in {r["name"] for r in c.execute("PRAGMA table_info(workspaces)")}:
+            c.execute("ALTER TABLE workspaces ADD COLUMN repository TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_repository ON workspaces(repository COLLATE NOCASE)"
+                  " WHERE repository IS NOT NULL")
         c.commit()
 
 
@@ -324,7 +331,7 @@ def moderation() -> dict:
 def describe(ws, agent=None, full=True) -> dict:
     out = {k: ws[k] for k in ('id', 'slug', 'name', 'purpose', 'created_at', 'updated_at', 'seed_thread_id')}
     out.update(channel=home_slug(ws), archived=bool(ws['archived']), can_manage=can_manage(ws, agent),
-               bots=bots_of(ws))
+               bots=bots_of(ws), repository=repository(ws), repository_url=repository_url(ws))
     if full:
         out.update(channels=channels_of(ws),
                    documents=db.conn().execute(
@@ -334,6 +341,43 @@ def describe(ws, agent=None, full=True) -> dict:
     else:
         out['purpose'] = out['purpose'][:160]
     return out
+
+
+REPOSITORY = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}')
+
+
+def repository(ws) -> str:
+    """The workspace's repository as owner/name, or "" when none (#714). This and set_repository are the only
+    code that reads or writes the column."""
+    return ws['repository'] or ''
+
+
+def repository_url(ws) -> str:
+    """Its address on the forge, put together on read from FORGEJO_URL and never stored; "" when either is missing."""
+    base = fleet.forge_url()
+    return f'{base}/{repository(ws)}' if base and repository(ws) else ''
+
+
+def set_repository(slug, full_name, agent) -> dict:
+    """Link a repository to a workspace, or unlink it with "". A human or an admin bot may. A repository belongs
+    to one workspace; another's is refused."""
+    full_name = (full_name or '').strip()
+    if full_name and not REPOSITORY.fullmatch(full_name):
+        raise ValueError('The repository is owner/name: letters, digits, dot, dash and underscore.')
+    with db._write_lock, db.conn() as c:
+        ws = find(slug)
+        if not (can_manage(ws, agent) or is_admin_bot(agent)):
+            raise PermissionError('Only a human or an admin bot can link a repository.')
+        if ws['archived']:
+            raise Conflict('Archived workspaces are read-only.')
+        if full_name:
+            other = c.execute('SELECT slug FROM workspaces WHERE repository=? COLLATE NOCASE AND id<>?',
+                              (full_name, ws['id'])).fetchone()
+            if other:
+                raise Conflict(f'{full_name} belongs to the workspace {other["slug"]}.')
+        c.execute('UPDATE workspaces SET repository=?, updated_at=? WHERE id=?', (full_name or None, db.now(), ws['id']))
+        _audit(c, ws['id'], agent, 'set_repository', {'repository': full_name})
+    return describe(find(slug), agent)
 
 
 def list_workspaces(agent=None, after=0, limit=50) -> dict:
@@ -885,23 +929,40 @@ def _check_agreement_writer(path: str, agent: dict) -> None:
         raise PermissionError('Only a human or an admin bot changes the team agreement and its proposals: ask in the thread.')
 
 
-# Characters a reader cannot see, that could hide an instruction in a line that looks clean (#679): zero-width and bidi
-# controls, the soft hyphen, the byte-order mark, the Unicode tag characters, variation selectors, the combining grapheme
-# joiner, the Hangul fillers and the blank braille pattern. The page that applies a proposal refuses them too
-# (workspace_web.py, HIDDEN); this is the server's copy of the rule. An emoji written with a variation selector is refused
-# as well: write it as the plain character.
-HIDDEN_CHARS = re.compile('[\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164'
-                          '\ufe00-\ufe0f\ufeff\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]')
+# Characters a reader cannot see, that could hide an instruction in a line that looks clean (#679, #707). A list of them never
+# finishes, so the rule is the class: every character of Unicode category Cc (control) or Cf (format), except a newline and a tab,
+# which cover the zero-width and bidi controls, the soft hyphen, the byte-order mark and the tag characters. Added by name are the
+# few that are in neither category and still show nothing: the combining grapheme joiner, the Hangul fillers, the Khmer inherent
+# vowels, the Mongolian and the other variation selectors, the blank braille pattern and the tag characters (E0000 to E007F, which Unicode leaves partly unassigned). The page that
+# applies a proposal refuses the same set (workspace_web.py, HIDDEN). An emoji written with a variation selector is refused as
+# well: write it as the plain character. A carriage return is allowed only as the first half of a CRLF line ending, which is
+# stored as a newline.
+# Cc and Cf are the invisible ones. Cn (unassigned), Co (private use) and Cs (surrogates) are refused too, because a character this table
+# does not know may be a format character in a newer one; Zl and Zp are the line and paragraph separators U+2028 and U+2029. The server's
+# table is authoritative: a browser has its own, which may be newer, so the page can only refuse the same or fewer (workspace_web.py).
+HIDDEN_CATEGORIES = ('Cc', 'Cf', 'Cn', 'Co', 'Cs', 'Zl', 'Zp')
+INVISIBLE_EXTRA = re.compile('[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180d\u180f\u2800\u3164\ufe00-\ufe0f\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]')
 
 
-def _check_agreement_text(path: str, body: str) -> None:
-    """The agreement and its proposals reach every bot of the workspace, so they carry no invisible character."""
+def hidden_char(text: str):
+    """The first character of `text` that a reader cannot see, as (character, position), or None."""
+    for i, ch in enumerate(text):
+        if ch not in '\n\t' and (unicodedata.category(ch) in HIDDEN_CATEGORIES or INVISIBLE_EXTRA.match(ch)):
+            return ch, i
+    return None
+
+
+def _check_agreement_text(path: str, body: str) -> str:
+    """The agreement and its proposals reach every bot of the workspace, so they carry no invisible character. Returns the text
+    to store: a Windows line ending is stored as a newline."""
     p = path.strip().lower()
     if p == 'team/agreement.md' or p.startswith('team/proposals/'):
-        m = HIDDEN_CHARS.search(body or '')
-        if m:
-            raise ValueError(f'The text contains an invisible character (U+{ord(m.group()):04X} at position {m.start()}), '
+        body = (body or '').replace('\r\n', '\n')
+        found = hidden_char(body)
+        if found:
+            raise ValueError(f'The text contains an invisible character (U+{ord(found[0]):04X} at position {found[1]}), '
                              'which could hide an instruction from the people who read it. Remove it and write again.')
+    return body
 
 
 def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: list, agent: dict) -> dict:
@@ -913,7 +974,7 @@ def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: l
         raise ValueError('The body cannot be empty; DELETE removes a document.')
     if len(body.encode('utf-8')) > MAX_DOC:
         raise ValueError(f'The body exceeds {MAX_DOC} bytes.')
-    _check_agreement_text(path, body)
+    body = _check_agreement_text(path, body)
     if ws['archived']:
         raise Conflict('This workspace is archived.')
     with db._write_lock, db.conn() as c:

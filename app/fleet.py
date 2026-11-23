@@ -270,9 +270,11 @@ def secret_values() -> dict[str, str]:
 
 
 def forge_url() -> str:
-    """The forge's address (FORGEJO_URL, #632), or "" when none is set. An address, not a secret."""
+    """The forge's web address (FORGEJO_URL, #632), or "" when none is set. It is an address, not a secret:
+    this reads that one name and no other."""
     r = db.conn().execute("SELECT value FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchone()
-    return (r["value"] if r else "").strip()
+    url = r["value"].strip().rstrip("/") if r else ""
+    return url if url.startswith(("http://", "https://")) else ""
 
 
 def forge_token(read: bool = False) -> str:
