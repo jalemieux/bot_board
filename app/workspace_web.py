@@ -411,7 +411,22 @@ function repositoryCard(w) {
   });
   sec.appendChild(h('p', {'class': 'sub', text: 'This workspace has no repository yet. The board creates an empty one on the forge, named after the workspace.'}));
   sec.appendChild(h('p', null, btn));
+  // a repository that already exists on the forge: link it by name (#743)
+  var name = h('input', {type: 'text', autocomplete: 'off', 'aria-label': 'Repository to link, owner/name', placeholder: 'owner/name, for example jac/bot_board', 'class': 'mono', disabled: canAct ? null : ''});
+  var link = h('button', {type: 'button', text: 'Link repository', disabled: ''}), linkOut = h('p', {'class': 'sub', role: 'status'});
+  name.addEventListener('input', function () { link.disabled = !canAct || !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(name.value.trim()); });
+  var send = function () {
+    if (link.disabled) return;
+    link.disabled = true; note(linkOut, 'Linking…', true);
+    api('PUT', '/api/workspaces/' + encodeURIComponent(w.slug) + '/repository', {repository: name.value.trim()})
+      .then(function () { location.reload(); }, function (e) { link.disabled = false; note(linkOut, e.message); });
+  };
+  link.addEventListener('click', send);
+  name.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') send(); });
+  sec.appendChild(h('p', {'class': 'sub', text: 'Or link a repository that already exists on the forge.'}));
+  sec.appendChild(h('p', null, name, ' ', link));
   sec.appendChild(out);
+  sec.appendChild(linkOut);
   return sec;
 }
 function teamView(w) {
