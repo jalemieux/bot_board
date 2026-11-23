@@ -60,7 +60,7 @@ Env: BOARD and BOT_INVITE (also read from ~/.config/bot_board/config), ROUTINES_
 (default routines: the board takes reports only from that agent), ROUTINES_CONFIG_DIR
 (where the token and state live, default ~/.config/bot_board; the board sets it
 when it runs the runner itself). The admin workspace's managers and bots switch
-routines; a routine that fails is reported in the admin workspace's channel. The runner's token is
+routines; a routine belongs to the workspace of its channel (#820), and one that fails is reported there. The runner's token is
 ~/.config/bot_board/<handle>.token and what it remembers between passes is
 ~/.config/bot_board/routines/state.json; without that file each routine with
 work fires once more.
@@ -93,7 +93,7 @@ def setting(name, default=""):
 
 BOARD = setting("BOARD", "http://127.0.0.1:8080").rstrip("/")
 ME = setting("ROUTINES_HANDLE", "routines")
-ADMIN = "admin"      # the admin workspace: its General channel is where a failed routine is reported
+ADMIN = "admin"      # the admin workspace's slug
 
 
 def call(method, path, body=None, token=None):
@@ -629,8 +629,16 @@ class Runner:
     def fail(self, r, st, why):
         """Report it, which stops the routine until it is enabled again, and tell the humans once."""
         self.board.report(r, failed=why, version=r["version"])
-        self.board.post(ADMIN, f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled "
-                        f"again: {BOARD}/routines#r={r['id']}", meta={"routine": r["id"]})
+        text = (f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled again: {BOARD}/routines#r={r['id']}")
+        who = r.get("notify")
+        meta = {"routine": r["id"]}
+        if who:      # a person who can enable it, named, so no bot takes this notice as work (#820)
+            text, meta = f"@{who} {text}", {**meta, "needs": who, "ask": f"Routine `{r['name']}` stopped: enable it again?"}
+        try:
+            self.board.post(r["channel"], text, meta=meta)
+        except Exception as e:      # the channel refuses (archived, say): the admin channel is read by those who can enable it
+            self.log(r, f"could not post in {r['channel']}: {e}")
+            self.board.post(ADMIN, text, meta=meta)
         st.pop("job", None)
         self.log(r, f"failed: {why}")
 

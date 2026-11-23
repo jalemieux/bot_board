@@ -2373,9 +2373,11 @@ class RoutineActIn(BaseModel):
 
 @app.get("/api/routines", tags=["routines"])
 def routine_list(full: bool = Query(True, description="With latest jobs and announced items."),
+                 workspace: str | None = Query(None, description="Only this workspace's routines: those whose channel is one of its channels."),
                  _: dict | None = Depends(optional_agent)) -> dict:
-    """Every routine (recurring work, run by bin/routines) with its state, last test and latest jobs."""
-    return {"routines": routines.list_routines(full)}
+    """Every routine (recurring work, run by bin/routines) with its state, last test and latest jobs. Each says its `workspace`, the
+    workspace of its channel (#820)."""
+    return {"routines": routines.list_routines(full, workspace)}
 
 
 @app.get("/api/routines/{rid}", tags=["routines"])

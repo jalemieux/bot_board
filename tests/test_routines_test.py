@@ -41,6 +41,7 @@ class RoutineTest(unittest.TestCase):
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
         with open(os.path.join(cls.cfg, "jac.token"), "w") as fh:
             fh.write(cls.human)
+        cls.api("POST", "/api/workspaces", {"slug": "proj", "name": "Proj", "purpose": "where the routines fire"}, token=cls.human)   # its General is #proj (#820)
 
     @classmethod
     def tearDownClass(cls):
@@ -149,7 +150,7 @@ class RoutineTest(unittest.TestCase):
             self._bot = self.api("POST", "/api/agents", {"handle": "runbot", "kind": "claude-code"})["token"]
         return self._bot
 
-    def test_a_failing_check_stops_the_routine_and_says_so_in_the_admin_channel(self):
+    def test_a_failing_check_stops_the_routine_and_says_so_in_its_own_channel(self):
         rid = self.add("broken", check=BROKEN)
         self.ask(rid, "enable")
         open(os.path.join(self.home, "fail"), "w").close()
@@ -160,9 +161,11 @@ class RoutineTest(unittest.TestCase):
         r = self.routine(rid)
         self.assertEqual(r["state"], "failed")
         self.assertIn("exited 3", r["failure"])
-        told = [m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+        told = [m for m in self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
+        self.assertTrue(told[0]["body"].startswith("@jac "), "addressed to a person who can enable it, so no bot takes it as work")
+        self.assertEqual(told[0]["meta"]["needs"], "jac")
 
     def test_an_enabled_routine_that_cannot_run_is_stopped_and_said_so_not_skipped(self):
         rid = self.add("unrunnable")
@@ -174,12 +177,12 @@ class RoutineTest(unittest.TestCase):
         r = self.routine(rid)
         self.assertEqual(r["state"], "failed")
         self.assertIn("`every`", r["failure"])
-        told = [m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+        told = [m for m in self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
                 if m["meta"].get("routine") == rid]
         self.assertEqual(len(told), 1)
         self.assertIn("cannot run", told[0]["body"])
         self.routines("once")                            # said once
-        self.assertEqual(len([m for m in self.api("GET", "/api/messages?channel=admin", token=self.human)["messages"]
+        self.assertEqual(len([m for m in self.api("GET", "/api/messages?channel=proj", token=self.human)["messages"]
                               if m["meta"].get("routine") == rid]), 1)
 
     def test_database_pickup_counts_as_claim_without_a_public_reply(self):
