@@ -246,6 +246,26 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
         skill = (Path(__file__).resolve().parents[1] / 'docs/skills/team-setup/SKILL.md').read_text()
         self.assertIn('`Amendment request for <workspace>, agreement revision <n>:`', skill)
 
+    def test_the_phone_rules_cascade_the_way_they_are_written(self):
+        # #647: a base rule written after a media rule with the same specificity wins, so the back button vanished; and a
+        # scrim behind its own sheet's background turned the panel grey
+        from app import web, workspace_web
+        css = workspace_web.WS_CSS
+        base = css.index('.ws .kb-back{display:none')
+        phone = css.index('.ws .kb-back{display:inline-flex')
+        self.assertLess(base, phone, 'the phone rule must come after the base rule')
+        self.assertNotIn('.ws .kb-back{display:none', css[phone:], 'nothing after the phone rule hides the button again')
+        sel = '.ws #wsmenu:not([hidden])'
+        self.assertIn(sel + '{position:fixed', css)
+        self.assertIn('background:var(--panel)', css[css.index(sel + '{position:fixed'):][:400])
+        self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', css)        # the dimming is the sheet's own outer shadow, so scrolling cannot lose it
+        self.assertIn(sel + '::before{content:"";position:fixed;inset:0;z-index:-1}', css)
+        self.assertNotIn('::after{content:"";position:absolute', css)
+        self.assertIn('.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;', web.APP_CSS, 'the tab bar sits under the top bar, so a sheet covers it')
+        self.assertIn('z-index:5', web.TOPNAV_CSS)
+        for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # one function writes every sheet
+            self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', text)
+
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']

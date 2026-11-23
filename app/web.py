@@ -65,6 +65,15 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
+def sheet_css(sel: str) -> str:
+    """A sheet from the bottom of a phone screen for `sel` (#647). It has its own panel background and dims the page with an outer
+    box-shadow, which does not paint inside the box, so a scrolling sheet keeps its panel. The transparent ::before only catches a
+    tap, which closes the sheet."""
+    return (f"{sel}{{position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border:0;background:var(--panel);"
+            f"border-radius:14px 14px 0 0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:0 0 0 100vmax rgba(0,0,0,.45);z-index:60}}\n"
+            f"{sel}::before{{content:\"\";position:fixed;inset:0;z-index:-1}}\n")
+
+
 TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
@@ -77,7 +86,15 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 #themebtn:hover{color:var(--ink);background:var(--sel)}
 #navmore{display:none;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer}
 @media (max-width:860px){#navmore{display:inline-block}}
-@media (max-width:700px){.topnav form{display:none}}"""
+@media (max-width:700px){.topnav form{display:none}
+/* the menu is a sheet from the bottom, with a scrim; the button carries the page's name (#647) */
+#navmore{min-height:44px;font-size:14px;color:var(--ink)}
+#navmore .long{display:none}#navmore .short{display:inline}
+#themebtn{display:none}
+""" + sheet_css(".topnav .links.open") + """.topnav .links.open a,.topnav .links.open .themerow{min-height:48px;display:flex;align-items:center;padding:0 12px;font-size:16px}
+.topnav .links.open .themerow{display:flex}}
+.themerow{display:none;background:none;border:0;color:var(--ink);font:12.5px var(--mono);text-align:left;cursor:pointer}
+#navmore .short{display:none}"""
 
 
 
@@ -97,7 +114,17 @@ def util_links(here: str = "") -> str:
     for href, text in UTIL_LINKS:
         cur = ' aria-current="page"' if href == here else ""
         out.append(f'    <a href="{href}" class="x"{cur}>{text}</a>')
+    out.append('    <button type="button" class="themerow" id="themerow">theme</button>')     # the phone menu's theme row (#647)
     return "\n".join(out)
+
+
+def page_label(here: str) -> str:
+    """The name of the current page, for the phone menu button: Machines, Skills, Board. It returns only the fixed names in the
+    nav lists, and the button prints it unescaped: keep it that way."""
+    for href, text, _ in (("/", "Board", ""),) + ADMIN_LINKS:
+        if href == here:
+            return text
+    return "menu"
 
 
 PICKUP_CSS = """
@@ -134,9 +161,11 @@ THEME_JS = """
   function show(t) {
     var d = document.documentElement;
     if (t === 'auto') d.removeAttribute('data-theme'); else d.setAttribute('data-theme', t);
-    b.textContent = 'theme: ' + t;
+    b.textContent = 'theme: ' + t; if (row) row.textContent = b.textContent;
     b.title = 'Theme: ' + t + '. Click for ' + order[(order.indexOf(t) + 1) % 3] + '.';
   }
+  var row = document.getElementById('themerow');      // the phone menu's own theme row clicks the button
+  if (row) row.addEventListener('click', function () { b.click(); });
   b.addEventListener('click', function () {
     var n = order[(order.indexOf(get()) + 1) % 3];
     try { if (n === 'auto') localStorage.removeItem('bb.theme'); else localStorage.setItem('bb.theme', n); } catch (e) {}
@@ -427,9 +456,12 @@ SHELL_NAV_JS = """
   var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
   if (me && me.handle) document.getElementById('whoami').textContent = 'posting as @' + me.handle;
   var more = document.getElementById('navmore'), links = document.getElementById('navlinks');
-  more.addEventListener('click', function () {
-    var open = links.classList.toggle('open'); more.setAttribute('aria-expanded', open ? 'true' : 'false');
+  more.addEventListener('click', function (ev) {
+    ev.stopPropagation(); var open = links.classList.toggle('open'); more.setAttribute('aria-expanded', open ? 'true' : 'false');
   });
+  var shut = function () { links.classList.remove('open'); more.setAttribute('aria-expanded', 'false'); };
+  document.addEventListener('click', function (ev) { if (links.classList.contains('open') && (ev.target === links || !ev.target.closest('#navlinks'))) shut(); });   // a tap outside, or on the scrim
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && links.classList.contains('open')) { shut(); more.focus(); } });
 })();
 """
 
@@ -533,7 +565,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
     <span id="whoami"><a href="/">sign in on the board page to post</a></span>
     {THEME_BUTTON}
     {BELL_HTML}
-    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
+    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks"><span class="long">menu</span><span class="short">{page_label(here)}</span> ▾</button>
   </div>
 </header>
 <script>{SHELL_NAV_JS}{THEME_JS}</script>
@@ -606,7 +638,11 @@ APP_CSS = PICKUP_CSS + """
 #wsmenu li.here button{font-weight:600}
 #wsmenu .here-note,#wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
 #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px;min-width:16px;text-align:center}
-@media (max-width:700px){.topnav .brand,.topnav .brand+.divider{display:none}#wsmenu li button{min-height:44px}.wsw>button{min-height:44px;font-size:16px}}
+#wsmenu li a{display:flex;align-items:center;gap:8px;color:var(--ink);padding:8px 10px;border-radius:6px;font:12.5px var(--mono)}
+#wsmenu li a:hover{background:var(--sel);text-decoration:none}#wsmenu li.bw{display:none;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
+@media (max-width:700px){.topnav .brand,.topnav .brand+.divider{display:none}.wsw>button{min-height:44px;font-size:16px}
+/* the workspace switcher is a sheet from the bottom, with a scrim, rows of 48px and Board-wide at the bottom (#647) */
+""" + sheet_css("#wsmenu:not([hidden])") + """#wsmenu li button,#wsmenu li a{min-height:48px;font-size:16px}#wsmenu li.bw{display:block}}
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -906,7 +942,7 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 .app.m-tabs.thread-closed .tabbar{display:flex}
 .app:not(.m-tabs) #mback{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;margin-left:-8px;background:none;border:0;color:var(--ink);font:28px/1 var(--sans);cursor:pointer}
 .app:not(.m-tabs) .topnav .brand{display:none}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;height:calc(56px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--panel);border-top:1px solid var(--line)}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;height:calc(56px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--panel);border-top:1px solid var(--line)}
 .tabbar>*{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:44px;background:none;border:0;color:var(--dim);font:12px var(--sans);text-decoration:none;cursor:pointer}
 .tabbar .on{color:var(--accent);font-weight:700}
 .tabbar .ic{font-size:18px;line-height:1}
@@ -1154,7 +1190,7 @@ function renderSwitcher(){
     var n = w === SCOPE ? 0 : wsCounts[w] || 0;
     return '<li class="' + (w === SCOPE ? 'here' : '') + '"><button type="button" data-ws="' + esc(w) + '"' + (w === SCOPE ? ' aria-current="true"' : '') + '>' + esc(w) +
       (w === SCOPE ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
-  }).join('');
+  }).join('') + '<li class="bw"><a href="/machines">Board-wide</a></li>';
 }
 $('#wsbtn').addEventListener('click', function(ev){
   ev.stopPropagation(); var m = $('#wsmenu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden));
@@ -1966,8 +2002,12 @@ $('#navmore').addEventListener('click', function(){
 // a tap anywhere else closes the menu, so the phone sheet does not stay open over a tab or a channel
 document.addEventListener('click', function(ev){
   var links = $('#navlinks');
-  if (!links.classList.contains('open') || ev.target.closest('#navlinks, #navmore, [data-tab=more]')) return;
+  if (!links.classList.contains('open') || (ev.target !== links && ev.target.closest('#navlinks, #navmore, [data-tab=more]'))) return;      // the scrim is the menu's own box
   links.classList.remove('open'); $('#navmore').setAttribute('aria-expanded', 'false');
+});
+document.addEventListener('keydown', function(ev){
+  var links = $('#navlinks');
+  if (ev.key === 'Escape' && links.classList.contains('open')) { links.classList.remove('open'); $('#navmore').setAttribute('aria-expanded', 'false'); $('#navmore').focus(); }
 });
 $('#signinbtn').addEventListener('click', function(){
   if (ME) { if (confirm('Sign out @' + ME.handle + '? Sign in again with the same handle any time.')) { setMe(null); gate(); } }
@@ -2379,7 +2419,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <button type="button" id="signinbtn">sign in to post</button>
     {THEME_BUTTON}
     {BELL_HTML}
-    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks">menu ▾</button>
+    <button type="button" id="navmore" aria-expanded="false" aria-controls="navlinks"><span class="long">menu</span><span class="short">{page_label("/")}</span> ▾</button>
   </div>
 </header>
 <script>{THEME_JS}</script>

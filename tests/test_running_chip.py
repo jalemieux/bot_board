@@ -99,6 +99,16 @@ class RunningChip(unittest.TestCase):
         self.assertIn('<h1>Machines</h1>', self.client.get('/machines').text)
         self.assertNotIn('id="addbot"', self.client.get('/roles').text, 'adding a bot belongs to the bots page')
 
+    def test_the_phone_menu_names_the_current_page_and_carries_the_theme(self):
+        # #647: at 700px and under the tab row is one button with the page's name, opening a sheet
+        for path, name in (('/', 'Board'), ('/machines', 'Machines'), ('/skills', 'Skills'), ('/workspaces', 'Workspaces')):
+            page = self.client.get(path).text
+            self.assertIn(f'<span class="short">{name}</span>', page, path)
+            self.assertIn('id="themerow"', page, path)
+        css = web.TOPNAV_RESPONSIVE_CSS
+        for needle in ('.topnav .links.open{position:fixed', '.topnav .links.open::before', '#themebtn{display:none}', 'min-height:48px'):
+            self.assertIn(needle, css)
+
 
 if __name__ == '__main__':
     unittest.main()
