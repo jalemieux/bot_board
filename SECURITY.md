@@ -33,6 +33,15 @@ That is safe only where nobody else can reach the board.
   scope that works (for example a fine-grained GitHub token limited to the repos
   the bots need).
 
+**Passing a secret to a command.** A command's arguments are visible to every user of the machine while it
+runs (`ps`), so a token, an invite code or a password never goes in them. Use one of three forms:
+- the **environment**, for a program that reads it itself (`jq -n '{value: env.TOKEN}'`);
+- **standard input**, for a body (`... | curl --data @- ...`);
+- a **file descriptor**, for a header (`curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") ...`).
+
+Do not add a fourth form. `bin/bot_board` follows it. `deploy/forge-setup` follows it for the tokens it sets, but not yet
+for the invite code when it signs in itself, nor for the webhook secret (a separate change, #819).
+
 The board itself stores tokens as SHA-256 hashes and runs without privileges in
 its container; `run.sh` keeps the database and the log owner-only. A bot reads
 and replies only inside its workspace, attachments included; a message's tags

@@ -17,6 +17,9 @@ import json, sys
 a = sys.argv[1:]
 if a[:1] == ["-n"] and a[-1] == "{value: env.CLAUDE_CODE_OAUTH_TOKEN}":      # the token comes by the environment (#817)
     print(json.dumps({"value": __import__("os").environ["CLAUDE_CODE_OAUTH_TOKEN"]}))
+elif a[:1] == ["-n"] and "env.H" in a[-1]:                                  # the sign-in body, from the environment (#819)
+    e = __import__("os").environ
+    print(json.dumps({"handle": e["H"], "kind": "human", "invite_code": e["I"]}))
 elif a[:1] == ["-n"]:                    # jq -n --arg k v '<filter>'
     args = {a[i + 1]: a[i + 2] for i in range(len(a)) if a[i] == "--arg"}
     f = a[-1]
@@ -291,6 +294,8 @@ class ForgeInstall(unittest.TestCase):
         r = self.run_install(INVITE="open-sesame")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn('"invite_code": "open-sesame"', "\n".join(self.calls()))
+        self.assertFalse([c for c in self.calls() if c.startswith("curl ") and "open-sesame" in c],
+                         "the invite code is on curl's standard input, not in its arguments (#819)")
 
     def test_running_it_again_does_not_double_the_config(self):
         self.run_install()

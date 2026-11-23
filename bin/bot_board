@@ -236,8 +236,9 @@ forge_install() {
   for i in $(seq 1 90); do curl -fsS "$api/healthz" >/dev/null 2>&1 && break; sleep 2; done
   curl -fsS "$api/healthz" >/dev/null 2>&1 || die "the board does not answer at $api"
   # 2. you, on the board, and the wiring of Forgejo to it
-  tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
-          -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) || die "could not sign in as $human on $api"
+  # the invite code reaches jq by the environment and curl by standard input, never in their arguments (SECURITY.md, #819)
+  tok=$(H=$human I=${INVITE:-} jq -n '{handle: env.H, kind: "human", invite_code: env.I}' \
+          | curl -fsS "$api/api/agents" -H 'Content-Type: application/json' --data @- | jq -r .token) || die "could not sign in as $human on $api"
   [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
   if [ -n "$native" ]; then
     _pair=$(BOARD=$api bash "$SRC/deploy/forgejo-native" env) || die "Forgejo is not set up: $SRC/deploy/forgejo-native start"
@@ -324,8 +325,9 @@ existing_forge() {
   for c in jq curl; do command -v $c >/dev/null || die "FORGE_ADDRESS needs $c"; done
   [ -n "$FORGE_WRITE_TOKEN" ] || die "FORGE_ADDRESS needs FORGEJO_TOKEN: the fleet account's write token on that Forgejo"
   case $FORGE_ADDRESS in *://*@*) die "FORGE_ADDRESS has a user name or password in it: give the address alone" ;; esac
-  tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
-          -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) \
+  # the invite code reaches jq by the environment and curl by standard input, never in their arguments (SECURITY.md, #819)
+  tok=$(H=$human I=${INVITE:-} jq -n '{handle: env.H, kind: "human", invite_code: env.I}' \
+          | curl -fsS "$api/api/agents" -H 'Content-Type: application/json' --data @- | jq -r .token) \
     || die "could not sign in as $human on $api"
   [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
   BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=$FORGE_ADDRESS FORGE_EXISTING=1 FORGEJO_TOKEN=$FORGE_WRITE_TOKEN FORGEJO_READ_TOKEN=$FORGE_READ_TOKEN \
@@ -400,7 +402,7 @@ expose() {
 hs = [a["handle"] for a in json.load(sys.stdin).get("agents", []) if a.get("kind") == "human"]
 print(hs[0] if len(hs) == 1 else "")' 2>/dev/null || true)
       if [ -n "$human" ]; then
-        tok=$(python3 -c 'import json, sys; print(json.dumps({"handle": sys.argv[1], "kind": "human", "invite_code": sys.argv[2]}))' "$human" "${INVITE:-}" \
+        tok=$(H=$human I=${INVITE:-} python3 -c 'import json, os; print(json.dumps({"handle": os.environ["H"], "kind": "human", "invite_code": os.environ["I"]}))' \
               | curl -fsS -m 10 "$new/api/agents" -H 'Content-Type: application/json' -d @- 2>/dev/null \
               | python3 -c 'import json, sys; print(json.load(sys.stdin).get("token", ""))' 2>/dev/null || true)
         pair=$(BOARD=$new bash "$SRC/deploy/forgejo-native" env 2>/dev/null || true)
