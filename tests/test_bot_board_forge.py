@@ -297,6 +297,9 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("--- forge-setup", log)
         self.assertIn("--- forgejo-native start", log)
         self.assertNotIn("tok-human", log, "the human's board token is not in the log")
+        self.assertNotIn("tok-human", r.stdout + r.stderr, "nor on the screen")
+        self.assertEqual(oct((self.cfg.parent / "keeper.log").stat().st_mode & 0o777), "0o600", "the log is owner-only")
+        self.assertEqual(oct(self.cfg.parent.stat().st_mode & 0o777), "0o700", "and so is its directory")
         self.assertIn("the settings allow webhooks to private, not loopback", r.stderr, "an action line of the step still prints")
 
     def test_the_forgejo_line_has_a_fallback_when_status_says_nothing(self):

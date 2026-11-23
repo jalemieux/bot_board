@@ -142,7 +142,7 @@ if [ "${1:-}" = install ]; then
   # Under `bot_board install` (BOT_BOARD_QUIET) the notes that only inform go to the keeper's log, and that command prints one
   # block; what a person must do, and every failure, still prints (#766).
   _quiet=${BOT_BOARD_QUIET:-}
-  _info() { if [ -n "$_quiet" ]; then mkdir -p "$(dirname "$_cfg")"; echo "bot: $*" >> "$(dirname "$_cfg")/keeper.log"; else echo "bot: $*" >&2; fi; }
+  _info() { if [ -n "$_quiet" ]; then ( umask 077; mkdir -p "$(dirname "$_cfg")"; echo "bot: $*" >> "$(dirname "$_cfg")/keeper.log" ); else echo "bot: $*" >&2; fi; }
   # The config is sourced as shell by every bot start: a value that could end its quotes or
   # expand ($, `, ", \, a newline) is refused, not written.
   _set() { case $2 in *[\"\$\`\\]*|*$'\n'*|*$'\r'*) echo "bot: $1 may not contain \", \$, \`, \\ or a newline" >&2; exit 1 ;; esac

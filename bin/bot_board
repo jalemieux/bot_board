@@ -167,10 +167,12 @@ forge_summary() {
 # The steps of `install --forge` run quietly (#769): their output goes to the keeper's log, and a step that fails prints the last
 # lines of it, so the cause is on the screen. What a person must do is printed.
 install_log() { echo "$(dirname "$CFG_FILE")/keeper.log"; }
-note() { local log; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "bot_board: $*" >> "$log"; }
+# the log's directory is 700 and the file 600 before the first write: it quotes what the steps print
+log_ready() { local log; log=$(install_log); mkdir -p "$(dirname "$log")"; chmod 700 "$(dirname "$log")"; [ -e "$log" ] || (umask 077; : > "$log"); chmod 600 "$log"; }
+note() { log_ready; echo "bot_board: $*" >> "$(install_log)"; }
 # quietly LABEL COMMAND...: the log gets the label and the output, never the command line, which may carry a token (BOARD_HUMAN_TOKEN=...).
 quietly() {
-  local log rc=0 label=$1; shift; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "--- $label" >> "$log"
+  local log rc=0 label=$1; shift; log_ready; log=$(install_log); echo "--- $label" >> "$log"
   "$@" >> "$log" 2>&1 || { rc=$?; tail -n 20 "$log" >&2; return $rc; }
 }
 forge_install() {

@@ -57,6 +57,7 @@ class Install(unittest.TestCase):
                                                 **(env or {})})
             self.assertEqual(r.returncode, 0, r.stderr)
             self.log = (home / "keeper.log").read_text() if (home / "keeper.log").exists() else ""      # the quiet install's notes (#766)
+            self.log_mode = oct((home / "keeper.log").stat().st_mode & 0o777) if (home / "keeper.log").exists() else None
             return r, config.read_text()
 
     CLAUDE_OK = [("claude", "ok", ""), ("codex", "missing", "not logged in"), ("copilot", "absent", ""),
@@ -108,6 +109,7 @@ class Install(unittest.TestCase):
         r, config = self.install(self.CLAUDE_OK, note="@ada (claude) in workspace admin, started", commands=up, env={"BOT_BOARD_QUIET": "1"})
         self.assertEqual(r.stdout.splitlines(), ["keeper", "install"])
         self.assertEqual(r.stderr, "", "nothing informative on the screen")
+        self.assertEqual(self.log_mode, "0o600", "the log is owner-only")
         for line in ("no terminal to ask on: starting a default bot with claude", "docker found: the bots run in containers", "started @ada (claude) in workspace admin"):
             self.assertIn(line, self.log)
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
