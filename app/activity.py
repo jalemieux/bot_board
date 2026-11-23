@@ -76,6 +76,18 @@ def _forge_events(data: dict, since: datetime, base: str) -> list[dict]:
     return out
 
 
+def _capped(data: dict, since: datetime) -> bool:
+    """A forge list holds its newest fifty, so it is a sample when it is full and its oldest item is still inside the
+    window: older items may have been cut. Judged per window, so a short one is not called capped by a week's worth."""
+    for items, stamp in ((data["pulls"], lambda p: p.get("updated_at")), (data["issues"], lambda i: i.get("updated_at")),
+                         (data["commits"], lambda c: ((c.get("commit") or {}).get("committer") or {}).get("date"))):
+        if len(items) >= 50:
+            oldest = _when(stamp(items[-1]))
+            if oldest is None or oldest >= since:
+                return True
+    return len(data["pulls"]) > 20 and (_when(data["pulls"][19].get("updated_at")) or since) >= since
+
+
 def _board_events(ws, since: datetime) -> tuple[list[dict], int, list[str]]:
     """(thread events, messages posted, handles of the bots that posted) in the workspace's channels since `since`."""
     c = db.conn()
@@ -142,7 +154,7 @@ def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
         try:
             data = _forge_data(repo, now - timedelta(hours=MAX_HOURS))       # always the widest window: `hours` cannot cause a fetch
             events += _forge_events(data, since, repo)
-            state, capped = "ok", bool(data.get("capped"))
+            state, capped = "ok", _capped(data, since)
         except forge.ForgeError as exc:
             state, reason = "down", str(exc)
     events.sort(key=lambda e: e["at"], reverse=True)

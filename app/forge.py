@@ -181,5 +181,4 @@ def recent_activity(full_name: str, since: str, timeout: float | None = None) ->
     for p in pulls[:20]:        # the twenty most recently updated: a busy repository is a sample, not the whole day
         if isinstance(p, dict) and _after(p.get("updated_at"), since) and isinstance(p.get("number"), int):
             reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
-    return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews,
-            "capped": max(len(pulls), len(issues), len(commits)) >= 50 or len(pulls) > 20}
+    return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews}
