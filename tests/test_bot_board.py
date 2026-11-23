@@ -165,8 +165,12 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("[log]\nROOT_PATH = /x", ini.read_text(), "the rest of the settings stay")
         self.assertIn("forgejo-native stop BOARD=http://100.64.0.9:8080", calls)
         self.assertIn("forgejo-native start BOARD=http://100.64.0.9:8080", calls)
-        self.assertIn("events stop reaching threads until you run: BOARD=http://100.64.0.9:8080 bash", r.stdout)
+        # forge-setup takes its native path only with the environment forgejo-native env gives (FORGEJO_BIN, FORGE ...)
+        self.assertIn('eval "$(BOARD=http://100.64.0.9:8080 bash ', r.stdout)
+        self.assertIn("deploy/forgejo-native env)\"; BOARD=http://100.64.0.9:8080 bash ", r.stdout)
         self.assertIn("deploy/forge-setup", r.stdout)
+        self.assertIn("it asks for your handle on the board", r.stdout)
+        self.assertIn("events stop reaching threads", r.stdout)
 
     def test_expose_leaves_forgejo_alone_when_it_already_allows_the_host_or_there_is_none(self):
         self.expose_env()
