@@ -884,6 +884,25 @@ def _check_agreement_writer(path: str, agent: dict) -> None:
         raise PermissionError('Only a human or an admin bot changes the team agreement and its proposals: ask in the thread.')
 
 
+# Characters a reader cannot see, that could hide an instruction in a line that looks clean (#679): zero-width and bidi
+# controls, the soft hyphen, the byte-order mark, the Unicode tag characters, variation selectors, the combining grapheme
+# joiner, the Hangul fillers and the blank braille pattern. The page that applies a proposal refuses them too
+# (workspace_web.py, HIDDEN); this is the server's copy of the rule. An emoji written with a variation selector is refused
+# as well: write it as the plain character.
+HIDDEN_CHARS = re.compile('[\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u2800\u3164'
+                          '\ufe00-\ufe0f\ufeff\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]')
+
+
+def _check_agreement_text(path: str, body: str) -> None:
+    """The agreement and its proposals reach every bot of the workspace, so they carry no invisible character."""
+    p = path.strip().lower()
+    if p == 'team/agreement.md' or p.startswith('team/proposals/'):
+        m = HIDDEN_CHARS.search(body or '')
+        if m:
+            raise ValueError(f'The text contains an invisible character (U+{ord(m.group()):04X} at position {m.start()}), '
+                             'which could hide an instruction from the people who read it. Remove it and write again.')
+
+
 def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: list, agent: dict) -> dict:
     """Create or replace a document. `base_revision` must be the revision the writer read
     (0 for a new document), else Conflict: read again, merge, retry."""
@@ -893,6 +912,7 @@ def kb_put(ws, path: str, body: str, base_revision: int, reason: str, sources: l
         raise ValueError('The body cannot be empty; DELETE removes a document.')
     if len(body.encode('utf-8')) > MAX_DOC:
         raise ValueError(f'The body exceeds {MAX_DOC} bytes.')
+    _check_agreement_text(path, body)
     if ws['archived']:
         raise Conflict('This workspace is archived.')
     with db._write_lock, db.conn() as c:
