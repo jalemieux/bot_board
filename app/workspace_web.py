@@ -59,6 +59,7 @@ WS_CSS = """
 .ws .roles h2 button+button{margin-left:8px}
 .ws table.bots tr.drawer td{padding:10px 12px;background:var(--bg);flex:1 1 100%}
 .ws .d-facts{display:flex;flex-wrap:wrap;gap:4px 16px;font:12px var(--mono);color:var(--dim)}.ws .d-facts b{color:var(--ink);font-weight:600}
+.ws .d-host{margin-top:12px}.ws .d-host h4{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}.ws .d-apps{margin:4px 0 0;padding-left:18px;font-size:13px}
 .ws .d-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ws .d-threads{margin:4px 0 0;padding-left:18px;font-size:13px}
 .ws table.bots tr[hidden]{display:none}
 .ws .drawer p.clamp{max-height:5.5em;overflow:auto;margin:4px 0}
@@ -525,6 +526,51 @@ function dialog(title, nodes, buttons) {
   (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
+// A host bot's block (#733, from the bots page's #595): how it runs, who set it and when, why, whether its Mac listed it, its apps
+// (a warning for one the Mac does not have), and the two things a manager does: edit the reason and apps, move it back to a container.
+function hostBlock(b, ctx) {
+  var box = (ctx.allHosts || []).filter(function (x) { return x.name === b._host; })[0] || {}, silent = !box.reporting, url = '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/host';
+  var lc = function (x) { return String(x).toLowerCase(); };
+  var listed = silent || (box.host_allowed || []).map(lc).indexOf(lc(b.handle)) >= 0;
+  var found = {}; (box.apps || []).forEach(function (a) { if (a && a.name) found[lc(a.name)] = a.version || ''; });
+  var runs = b.on_host && b.runmode === 'host' ? 'on its Mac, outside a container' : b.on_host ? 'in a container now, and on its Mac from its next start'
+    : 'in a container (its Mac\'s host switch is off, or it moved)';
+  var d = h('div', {'class': 'd-host'}, h('h4', {text: 'Runs on the host'}));
+  d.appendChild(h('div', {'class': 'd-facts'}, h('span', null, 'runs ', h('b', {text: runs})),
+    h('span', null, 'set by ', h('b', {text: b.host_by || '?'}), b.host_at ? ' ' + ago(b.host_at) : ''),
+    silent ? h('span', {'class': 'warn'}, 'its Mac is not reporting, so whether it is listed and which apps it has are not known')
+           : listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
+  if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac.'), d.firstChild.nextSibling);
+  d.appendChild(h('p', {'class': 'sub clamp'}, h('b', {text: 'Why it needs the host: '}), b.host_reason || ''));
+  if ((b.host_apps || []).length) d.appendChild(h('ul', {'class': 'd-apps'}, b.host_apps.map(function (n) {
+    var v = found[lc(n)];
+    return silent ? h('li', null, n) : v === undefined ? h('li', {'class': 'warn'}, n + ' ', h('b', {text: 'not found in /Applications on this Mac'})) : h('li', null, n + ' ', h('b', {text: v}));
+  })));
+  var acts = h('div', {'class': 'd-acts'});
+  var act = function (text, fn, cls) {
+    var el = h('button', {type: 'button', 'class': cls || 'quiet', text: text, disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
+    el.addEventListener('click', fn); acts.appendChild(el);
+  };
+  act('edit why and apps…', function () {
+    var why = h('input', {type: 'text', maxlength: '200', 'aria-label': 'why it needs the host'}), apps = h('input', {type: 'text', 'aria-label': 'apps'});
+    why.value = b.host_reason || ''; apps.value = (b.host_apps || []).join(', ');
+    dialog('Host details of @' + b.handle, [h('label', null, 'Why does it need the host? One line.', why), h('label', null, 'The apps it uses, separated by commas', apps)],
+      [{text: 'Save', run: function (el, close, fail) {
+        el.disabled = true;
+        api('PUT', url, {reason: why.value.trim(), apps: apps.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean)})
+          .then(function () { close(); ctx.said('Host details of @' + b.handle + ' saved.', true); ctx.again(); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  act('move back to a container…', function () {
+    dialog('Move @' + b.handle + ' back to a container?', [h('p', {text: 'It runs there from its next start and keeps its conversation where its harness allows. This cannot be undone: to run it on the host again, start a new host bot.'})],
+      [{text: 'Move it back', danger: true, run: function (el, close, fail) {
+        el.disabled = true;
+        api('DELETE', url).then(function () { close(); ctx.said('@' + b.handle + ' moves back to a container at its next start.', true); ctx.again(); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  }, 'quiet danger');
+  d.appendChild(acts);
+  return d;
+}
 // Stopping or killing a bot that holds open threads asks what happens to them (#733): hand them off once it has stopped (the default,
 // since a stopped bot that keeps its threads holds them from everyone, #217), keep them, or retire it (#167). The API takes
 // `threads: handoff|retire`; keep sends nothing.
@@ -637,6 +683,7 @@ function drawer(b, up, ctx) {
       }}]);
   }, 'quiet danger');
   d.appendChild(acts);
+  if (b.host_flag) d.appendChild(hostBlock(b, ctx));
   return d;
 }
 // Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
@@ -684,7 +731,7 @@ function rolesView(w, roles, hosts) {
   var said = function (text, ok) { note(out, text, ok); };
   var again = function () { setTimeout(function () { location.reload(); }, 2500); };
   var ctx = {
-    w: w, hosts: reporting, said: said, again: again,
+    w: w, hosts: reporting, allHosts: hosts, said: said, again: again,
     canAct: !!(ME && w.can_manage && !w.archived),
     stopThreads: function (b) { stopDialog(b, false, ctx); },
     setRun: function (b, run, el) {
