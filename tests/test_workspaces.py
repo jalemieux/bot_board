@@ -336,7 +336,8 @@ for (const s of ['stopped', 'moved', '', undefined]) assert.equal(botUp({status:
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(fleet.UP, ('waiting', 'running'), 'the page copies this list: change both together')
-        self.assertIn("'/fleet#bot-' + encodeURIComponent(b.handle), text: 'details'", js)
+        for needle in ("text: 'details ▾'", "function drawer(", "url + '/profile'", "url + '/claims'", "url + '/channels'", "url + '/voice'", "url + '/reset'", "url + '/move'"):
+            self.assertIn(needle, js)      # the drawer: details, and an action for each thing a manager changes
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']

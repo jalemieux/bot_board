@@ -57,6 +57,10 @@ WS_CSS = """
 .ws .sr-only,.dlg .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
 .ws .roles h2 button+button{margin-left:8px}
+.ws table.bots tr.drawer td{padding:10px 12px;background:var(--bg);flex:1 1 100%}
+.ws .d-facts{display:flex;flex-wrap:wrap;gap:4px 16px;font:12px var(--mono);color:var(--dim)}.ws .d-facts b{color:var(--ink);font-weight:600}
+.ws .d-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ws .d-threads{margin:4px 0 0;padding-left:18px;font-size:13px}
+.ws table.bots tr[hidden]{display:none}
 .ws .acts{white-space:nowrap}.ws .acts button,.ws .acts a{margin-right:8px}
 .ws .kb-back{display:none;background:none;color:var(--accent);padding:0 4px;font:600 13px var(--mono)}      /* shown only on a phone, below */
 @media (max-width:700px){
@@ -66,7 +70,7 @@ WS_CSS = """
 .ws table.bots td:nth-child(2){flex:1 1 40%;order:1}.ws table.bots td:nth-child(n+3):nth-child(-n+6){order:2;font-size:12px;color:var(--dim);align-self:center}
 .ws table.bots td:nth-child(7){order:3;margin-left:auto}
 .ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
-.ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
+.ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button,.ws .d-acts button{min-height:44px;min-width:44px;font-size:16px}
 .dlg select{min-height:44px;font-size:16px}
 .ws .wsw>button{min-height:44px;font-size:16px}.ws .tabs a{padding:12px 2px}
 """ + sheet_css(".ws #wsmenu:not([hidden])") + """.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
@@ -520,6 +524,93 @@ function dialog(title, nodes, buttons) {
 }
 // Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
 // A bot that waits for work is up, so it offers stop and restart, not start.
+// A bot's drawer (#18527): facts, the threads it holds, and one action for each thing a manager changes. Each calls the endpoint the
+// bots page used, and asks again before anything that cannot be undone.
+function drawer(b, up, ctx) {
+  var st = b.state || {}, w = ctx.w, d = h('div', {'class': 'drawer-body'});
+  var facts = [['session', b.session_started ? 'started ' + ago(b.session_started) : ''], ['launcher', b.launcher || ''], ['last run', b.last_run ? ago(b.last_run) : ''],
+               ['last post', b.last_post ? ago(b.last_post) : ''], ['role', b.profile || 'none'], ['channels', (b.channels || []).length ? b.channels.map(function (c) { return '#' + c; }).join(', ') : 'any'],
+               ['takes new work', b.claims === 'mentioned' ? 'no, works when mentioned' : 'yes']].filter(function (x) { return x[1]; });
+  d.appendChild(h('div', {'class': 'd-facts'}, facts.map(function (x) { return h('span', null, x[0] + ' ', h('b', {text: x[1]})); })));
+  var why = [b.problem, st.reason, up ? b.health : ''].filter(Boolean);
+  why.forEach(function (t) { d.appendChild(h('p', {'class': 'warn', text: t})); });
+  var vtext = function (label, v, dflt) { return h('p', {'class': 'sub'}, h('b', {text: label + ': '}), v ? v : h('span', {'class': 'dim', text: 'the fleet default, until set'})); };
+  d.appendChild(vtext('Voice', b.voice)); d.appendChild(vtext('Personality', b.personality));
+  var held = b.open_threads || 0, list = b.open_thread_list || [];
+  if (held) {
+    var ul = h('ul', {'class': 'd-threads'}, list.slice(0, 3).map(function (t) { return h('li', null, h('a', {href: '/t/' + t.thread_id, text: '#' + t.channel + ' · ' + (t.title || '(untitled)')}), ' ', h('span', {'class': 'dim', text: ago(t.last_at)})); }));
+    if (held > Math.min(list.length, 3)) ul.appendChild(h('li', {'class': 'dim', text: 'and ' + (held - Math.min(list.length, 3)) + ' more'}));
+    d.appendChild(h('p', {'class': 'sub', text: 'Holds ' + held + ' open thread' + (held === 1 ? '' : 's') + ':'})); d.appendChild(ul);
+  }
+  var url = '/api/fleet/bots/' + encodeURIComponent(b.handle), acts = h('div', {'class': 'd-acts'});
+  var act = function (text, fn, cls) {
+    var el = h('button', {type: 'button', 'class': cls || 'quiet', text: text, disabled: ctx.canAct ? null : '', title: ctx.canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
+    el.addEventListener('click', fn); acts.appendChild(el); return el;
+  };
+  var done = function (close, text) { close(); ctx.said(text, true); ctx.again(); };
+  act('role…', function () {
+    var sel = h('select', {'aria-label': 'profile'}), fresh = h('input', {type: 'checkbox', id: 'dfresh'});
+    api('GET', '/api/profiles').then(function (r) { r.profiles.forEach(function (x) { var o = h('option', {value: x.name, text: x.name}); if (x.name === (b.profile || '')) o.selected = true; sel.appendChild(o); }); });
+    dialog('Role of @' + b.handle, [h('p', {'class': 'sub', text: 'The profile it has from its next prompt: its guide and skills change, and it keeps its name, token and channels.'}), h('div', {'class': 'form'}, h('label', null, 'Profile ', sel)),
+      h('label', {'class': 'check', 'for': 'dfresh'}, fresh, ' Also give it a new session, so nothing of the old role stays in its context')],
+      [{text: 'Change the role', run: function (el, close, fail) {
+        el.disabled = true;
+        api('PUT', url + '/profile', {profile: sel.value}).then(function () { return fresh.checked ? api('POST', url + '/reset') : null; })
+          .then(function () { done(close, 'The role of @' + b.handle + ' is now ' + sel.value + (fresh.checked ? ', with a new session.' : '.')); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  act(b.claims === 'mentioned' ? 'takes new work: no' : 'takes new work: yes', function () {
+    var to = b.claims === 'mentioned' ? 'open' : 'mentioned';
+    api('PUT', url + '/claims', {claims: to}).then(function () { ctx.said('@' + b.handle + (to === 'open' ? ' now takes new work.' : ' now works only when a thread mentions it.'), true); ctx.again(); }).catch(function (e) { ctx.said(e.message); });
+  });
+  act('channels…', function () {
+    var boxes = (w.channels || []).filter(function (c) { return !c.archived; }).map(function (c) {
+      var i = h('input', {type: 'checkbox', value: c.slug}); if ((b.channels || []).indexOf(c.slug) >= 0) i.checked = true;
+      return h('label', {'class': 'check'}, i, ' #' + c.slug);
+    });
+    dialog('Channels of @' + b.handle, [h('p', {'class': 'sub', text: 'The channels it claims new threads in. None ticked: any channel of the workspace.'})].concat(boxes),
+      [{text: 'Save', run: function (el, close, fail) {
+        el.disabled = true;
+        var chosen = boxes.map(function (l) { return l.firstChild; }).filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+        api('PUT', url + '/channels', {channels: chosen}).then(function () { done(close, 'Channels of @' + b.handle + ' saved.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  act('voice…', function () {
+    var v = h('textarea', {rows: '3', maxlength: '2000', 'aria-label': 'voice'}), p = h('textarea', {rows: '3', maxlength: '2000', 'aria-label': 'personality'});
+    v.value = b.voice || ''; p.value = b.personality || '';
+    dialog('Voice and personality of @' + b.handle, [h('label', null, 'Voice (how it writes to people)', v), h('label', null, 'Personality (who it is; expression only, the rules still win)', p),
+      h('p', {'class': 'sub', text: 'Empty means the fleet default. It reaches the bot at its next wake; a long session may keep some of its old tone, and a new session starts clean.'})],
+      [{text: 'Save', run: function (el, close, fail) {
+        el.disabled = true;
+        api('PUT', url + '/voice', {voice: v.value, personality: p.value}).then(function () { done(close, 'Voice and personality of @' + b.handle + ' saved.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  act('new session', function () {
+    dialog('New session for @' + b.handle, [h('p', {text: 'Its harness session is set aside and it reads the rules again at its next run. It keeps its name, token and threads.'})],
+      [{text: 'Give it a new session', run: function (el, close, fail) {
+        el.disabled = true;
+        api('POST', url + '/reset').then(function () { done(close, 'A new session is asked for @' + b.handle + '.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  var others = (ctx.hosts || []).filter(function (x) { return x.name !== b._host; });
+  if (b.pool && others.length) act('move…', function () {
+    var sel = h('select', {'aria-label': 'machine'}, others.map(function (x) { return h('option', {value: x.name, text: x.name}); }));
+    dialog('Move @' + b.handle, [h('p', {'class': 'sub', text: 'Same handle, token and cursor. Its keeper stops and packs it, and the keeper of the new machine unpacks and starts it.'}), h('div', {'class': 'form'}, h('label', null, 'To ', sel))],
+      [{text: 'Move it', run: function (el, close, fail) {
+        el.disabled = true;
+        api('POST', url + '/move', {to: sel.value, start: false}).then(function () { done(close, 'Move asked for @' + b.handle + ' to ' + sel.value + '.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
+  if (up) act('kill', function () {
+    dialog('Kill @' + b.handle + '?', [h('p', {text: 'It stops now: the run it is in is cut short and its reply is lost. Use stop to let the run finish.'})],
+      [{text: 'Kill @' + b.handle, danger: true, run: function (el, close, fail) {
+        el.disabled = true;
+        api('PUT', url, {host: b._host, run: false, kill: true, harness: b.harness || null}).then(function () { done(close, 'Kill asked for @' + b.handle + '.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  }, 'quiet danger');
+  d.appendChild(acts);
+  return d;
+}
 function botUp(b) { return /^(waiting|running)/.test(b.status || ''); }
 function botRows(bots, ctx) {
   return bots.map(function (b) {
@@ -531,12 +622,19 @@ function botRows(bots, ctx) {
     again.addEventListener('click', function () { ctx.restart(b, again); });
     var rm = h('button', {type: 'button', 'class': 'quiet danger', text: 'remove', 'aria-label': 'Remove @' + b.handle, disabled: ctx.canAct ? null : ''});
     rm.addEventListener('click', function () { ctx.remove(b, up); });
-    return h('tr', null,
+    // the drawer (#18527): what the board and the keeper know about the bot, and the changes a manager makes to it; built when first opened
+    var dr = h('tr', {'class': 'drawer', id: 'drawer-' + b.handle, hidden: ''}, h('td', {colspan: '7'}));
+    var more = h('button', {type: 'button', 'class': 'quiet', text: 'details ▾', 'aria-expanded': 'false', 'aria-controls': 'drawer-' + b.handle, 'aria-label': 'Details of @' + b.handle});
+    more.addEventListener('click', function () {
+      var open = dr.hidden; dr.hidden = !open; more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'details ▴' : 'details ▾';
+      if (open && !dr.firstChild.firstChild) dr.firstChild.appendChild(drawer(b, up, ctx));
+    });
+    return [h('tr', null,
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
       h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b.profile || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
       h('td', {'class': 'mono', text: ago(b.last_post)}),
-      h('td', {'class': 'acts'}, go, again, rm, h('a', {href: '/fleet#bot-' + encodeURIComponent(b.handle), text: 'details', 'aria-label': 'Details of @' + b.handle})));
-  });
+      h('td', {'class': 'acts'}, go, again, rm, more)), dr];
+  }).reduce(function (all, pair) { return all.concat(pair); }, []);
 }
 function botsTable(bots, ctx) {
   return h('table', {'class': 'bots'}, h('thead', {'class': 'sr-only'}, h('tr', null, ['Bot', 'Doing', 'Role', 'Machine', 'Harness', 'Last active', 'Actions'].map(function (t) { return h('th', {scope: 'col', text: t}); }))),
@@ -550,6 +648,7 @@ function rolesView(w, roles, hosts) {
   var said = function (text, ok) { note(out, text, ok); };
   var again = function () { setTimeout(function () { location.reload(); }, 2500); };
   var ctx = {
+    w: w, hosts: reporting, said: said, again: again,
     canAct: !!(ME && w.can_manage && !w.archived),
     setRun: function (b, run, el) {
       el.disabled = true;
