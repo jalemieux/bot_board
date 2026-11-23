@@ -174,9 +174,11 @@ def problem_with(routine):
 # 7: no routing job and no follow-up (#663): each new issue is posted once in the workspace's General channel
 #    (or the channel a label rule names), and an issue whose bot:<handle> owner stopped is free, not re-offered.
 # 8: the owner's handle is quoted whole in the check, so a label such as bot:a/b asks for that handle and not a path (#666).
-RECIPE_VERSION = 8
+# 9: a forgejo-issues recipe also sweeps (#795): it posts a free issue again when nobody touched it for `stale_days`, at most once
+#    every `repost_days`; it nudges a running owner whose thread is complete while the issue is open; it lists finished issues.
+RECIPE_VERSION = 9
 RECIPE_DEFAULTS = {"forgejo": "", "unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
-                   "batch": 5, "after": "", "rules": []}
+                   "batch": 5, "after": "", "rules": [], "stale_days": 3, "repost_days": 7}
 # Settings an earlier release wrote and this one ignores (#663): a stored recipe may hold them, and still runs.
 RETIRED_RECIPE_KEYS = {"remind_after", "reminds", "escalate", "stale_after"}
 REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
@@ -233,6 +235,9 @@ def recipe_problem(rc):
         return "the recipe `batch` must be a whole number from 1 to 50"
     if not isinstance(rc.get("after"), str) or (rc["after"] and not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", rc["after"])):
         return "the recipe `after` must be empty or an ISO time in UTC (2026-10-14T21:00:00Z)"
+    for key in ("stale_days", "repost_days"):
+        if type(rc.get(key)) is not int or not 1 <= rc[key] <= 365:
+            return f"the recipe `{key}` must be a whole number of days from 1 to 365"
     rules = rc.get("rules")
     if not isinstance(rules, list) or not all(isinstance(x, dict) and set(x) == {"label", "channel"}
                                               and isinstance(x["label"], str) and x["label"].strip()
@@ -271,19 +276,20 @@ def get(path):     # one page of the API, and whether a next page follows
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r), 'rel="next"' in (r.headers.get("Link") or "")
 
-def pages(path):
+def pages(path, cap=200):
     page, out = 1, []
     while True:
         got, more = get(f"{path}&limit=50&page={page}")
         out += got
-        if not more or page >= 200:
+        if not more or page >= cap:
             return out
         page += 1
 
 try:
     me = get("/user")[0]["login"]     # the account every bot shares: its assignment says nothing
     issues = pages(f"/repos/{repo}/issues?state=open&type=issues")
-    pulls = pages(f"/repos/{repo}/pulls?state=open") if cfg["no_linked_pr"] else []
+    pulls = pages(f"/repos/{repo}/pulls?state=open")
+    closed = pages(f"/repos/{repo}/pulls?state=closed", 4)     # the 200 most recent: what merged lately
 except urllib.error.HTTPError as e:
     if e.code in (502, 503, 504):
         print(json.dumps({"work": False, "note": f"Forgejo answered {e.code}, retrying next pass"}))
@@ -330,11 +336,63 @@ for i in sorted(issues, key=lambda i: i["number"]):
         continue
     new.append(item)
 batch = new[:cfg["batch"]]
-print(json.dumps({"work": bool(batch),
-                  "found": [f"#{i['number']} {i['title']} {i['url']}" + (f" (rule: {i['channel']})" if i["channel"] else "")
-                            for i in batch] + ([f"and {len(new) - len(batch)} more after these"] if len(new) > len(batch) else []),
-                  "items": batch,
-                  "watermark": {"sent": sorted(sent | {i["number"] for i in batch})}}))
+# The sweep (#795): what nobody did with an issue that was announced. The watermark also holds when each was last posted,
+# nudged or listed, so none of it repeats before `repost_days`.
+now = datetime.now(timezone.utc)
+def days_since(t):     # a time Forgejo or this check wrote; unknown reads as long ago
+    try:
+        return (now - datetime.fromisoformat(str(t).replace("Z", "+00:00"))).total_seconds() / 86400
+    except (ValueError, TypeError):
+        return 1e6
+def note(key):
+    got = mark.get(key) if isinstance(mark, dict) else None
+    return {str(k): v for k, v in got.items()} if isinstance(got, dict) else {}
+posted, nudged, listed = note("posted"), note("nudged"), note("listed")
+stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+def completed(tid):     # the board's word on a thread: complete, or not (or not known)
+    try:
+        with urllib.request.urlopen(os.environ["BOARD"] + "/api/messages/" + str(tid), timeout=20) as r:
+            m = json.load(r)
+        return (m.get("message") or m).get("completed_through") is not None
+    except Exception:
+        return False
+CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd]?)?|resolve[sd]?)\s+#(\d+)\b", re.I)
+merged = {int(n) for p in closed if p.get("merged") or p.get("merged_at") for n in CLOSING.findall(p.get("body") or "")}
+reposts, nudges, finished = [], [], []
+for i in sorted(issues, key=lambda i: i["number"]):
+    n, labels = i["number"], [l["name"] for l in i.get("labels") or []]
+    if skip & set(labels) or n in linked or n in {x["number"] for x in new}:
+        continue
+    item = {"number": n, "title": i["title"], "url": i["html_url"], "labels": labels,
+            "channel": next((rules[l] for l in labels if l in rules), "")}
+    if n in merged:     # every pull request that closes it has merged and nothing is open: it is finished, and a person closes it
+        if days_since(listed.get(str(n))) >= cfg["repost_days"]:
+            finished.append({**item, "kind": "finished"})
+        continue
+    owner = next((l[4:] for l in labels if l.startswith("bot:") and len(l) > 4), "")
+    quiet = days_since(i.get("updated_at")) >= cfg["stale_days"]
+    if cfg["unassigned"] and owner and owner_runs(owner):
+        tid = next((int(l[7:]) for l in labels if re.fullmatch(r"thread:\d+", l)), 0)
+        if quiet and tid and days_since(nudged.get(str(n))) >= cfg["repost_days"] and completed(tid):
+            nudges.append({**item, "kind": "nudge", "owner": owner, "thread": tid})
+        continue
+    if cfg["unassigned"] and any(a["login"] != me for a in i.get("assignees") or []):
+        continue
+    if n in sent and quiet and days_since(posted.get(str(n))) >= cfg["repost_days"]:
+        who = next((l[6:] for l in labels if l.startswith("needs:") and len(l) > 6), "")     # waiting on a person's decision
+        reposts.append({**item, "kind": "repost", **({"needs": who} if who else {})})
+reposts, nudges, finished = reposts[:cfg["batch"]], nudges[:cfg["batch"]], finished[:20]
+items = batch + reposts + nudges + finished
+posted.update({str(i["number"]): stamp for i in batch + reposts})
+nudged.update({str(i["number"]): stamp for i in nudges})
+listed.update({str(i["number"]): stamp for i in finished})
+lines = ([f"#{i['number']} {i['title']} {i['url']}" + (f" (rule: {i['channel']})" if i["channel"] else "") for i in batch]
+         + ([f"and {len(new) - len(batch)} more after these"] if len(new) > len(batch) else [])
+         + [f"post #{i['number']} again: free and untouched for {cfg['stale_days']} days" + (f", waits on {i['needs']}" if i.get("needs") else "") for i in reposts]
+         + [f"nudge @{i['owner']} in thread {i['thread']}: #{i['number']} is open and the thread is complete" for i in nudges]
+         + [f"#{i['number']} is finished and still open" for i in finished])
+print(json.dumps({"work": bool(items), "found": lines, "items": items,
+                  "watermark": {"sent": sorted(sent | {i["number"] for i in batch}), "posted": posted, "nudged": nudged, "listed": listed}}))
 """
 
 
@@ -350,6 +408,7 @@ def recipe_check(rc):
     (a refused token, a missing repository) stops the routine."""
     cfg = {k: rc[k] for k in ("unassigned", "no_linked_pr", "skip_labels", "batch", "after", "rules")}
     if on_forgejo(rc):
+        cfg.update({k: rc[k] for k in ("stale_days", "repost_days")})
         return (FORGEJO_CHECK.replace("__REPO__", rc["repo"]).replace("__FORGEJO__", rc["forgejo"])
                 .replace("__CFG__", json.dumps(json.dumps(cfg, sort_keys=True)))
                 .replace("__FORGEJO_JSON__", json.dumps(rc["forgejo"])).replace("__REPO_JSON__", json.dumps(rc["repo"])))
@@ -413,9 +472,12 @@ PY
 
 
 def recipe_prompt(rc):
+    again = (f" It posts a free issue again after {rc['stale_days']} quiet days, at most once every {rc['repost_days']} days, "
+             "nudges a running owner whose thread is complete while the issue is open, and lists finished issues that are still "
+             "open." if on_forgejo(rc) else "")
     return (f"Nothing for a bot to do: the runner posts each new {forge_name(rc)} issue of {rc['repo']} once, in the "
             f"General channel of workspace {rc['workspace']} (or the channel a label rule names). A developer that takes "
-            "new work picks it up there.")
+            "new work picks it up there." + again)
 
 
 def recipe_summary(rc):
@@ -428,7 +490,12 @@ def recipe_summary(rc):
              + f"; each is announced once, {rc['batch']} at a time.",
              f"- Posts each in the General channel of workspace `{rc['workspace']}`"
              + ("; label rules: " + ", ".join(f"`{x['label']}` → {x['channel']}" for x in rc["rules"]) if rc["rules"] else "")
-             + ". No bot is asked to route it, and nothing follows it up."]
+             + ". No bot is asked to route it."
+             + ("" if on_forgejo(rc) else " Nothing follows it up.")]
+    if on_forgejo(rc):
+        lines.append(f"- Sweeps: posts a free issue again when it was untouched for {rc['stale_days']} days (at most once every {rc['repost_days']} days; "
+                     "one labelled `needs:<handle>` goes to that person's inbox); nudges a running owner whose thread is complete while the "
+                     "issue is open and no pull request names it; lists open issues that a merged pull request closes.")
     return "\n".join(lines) + "\n"
 
 
@@ -714,23 +781,58 @@ class Runner:
         rc = r["recipe"]
         home, groups = self.workspace(rc["workspace"])
         items_st = st.setdefault("items", {})
+        finished = []
         for i in items:
-            if str(i["number"]) in items_st:       # each issue once
+            kind = i.get("kind", "new")
+            if kind == "nudge":
+                self.nudge(r, i)
+                continue
+            if kind == "finished":
+                finished.append(i)
+                continue
+            if kind == "new" and str(i["number"]) in items_st:       # a new issue once
                 continue
             route = (routes or {}).get(i["number"]) or {}
             group = i.get("channel") or str(route.get("channel") or route.get("group") or "")
             why = "label rule" if i.get("channel") else str(route.get("why") or "").strip()[:300]
             channel = groups.get(group.removeprefix(rc["workspace"] + "."), home)    # economy or game.economy
-            body = (f"New issue to take: #{i['number']} {i['title']}\n{i['url']}\n\n"
-                    + (f"Routed to {group}: {why}.\n" if channel != home and why else
-                       f"Routed to {group}.\n" if channel != home else "")
-                    + (forge_take(rc, i["number"]) if on_forgejo(rc) else
-                       f"The thread worker labels the issue as its own: `gh issue edit {i['number']} -R {rc['repo']} "
-                       f"--add-label bot:<your handle>` (`gh label create` it first if the repo has none)."))
-            m = self.board.post(channel, body, meta={"routine": r["id"], "name": r["name"],
-                                                     "routine_item": {"repo": rc["repo"], "number": i["number"]}})
+            routed = (f"Routed to {group}: {why}.\n" if channel != home and why else
+                      f"Routed to {group}.\n" if channel != home else "")
+            meta = {"routine": r["id"], "name": r["name"], "routine_item": {"repo": rc["repo"], "number": i["number"]}}
+            if kind == "repost" and i.get("needs"):
+                # it waits on a person's decision (a needs:<handle> label): it goes to their inbox, once a week at most
+                body = (f"Waiting on @{i['needs']}: #{i['number']} {i['title']}\n{i['url']}\n\n"
+                        f"It is open, nobody has it, and it carries `needs:{i['needs']}`. Reply here with the decision, or take the label off.")
+                meta["needs"] = i["needs"]
+                meta["ask"] = f"#{i['number']} {i['title']}: your decision"[:200]
+            else:
+                head = "Still open and nobody has it" if kind == "repost" else "New issue to take"
+                body = (f"{head}: #{i['number']} {i['title']}\n{i['url']}\n\n" + routed
+                        + (forge_take(rc, i["number"]) if on_forgejo(rc) else
+                           f"The thread worker labels the issue as its own: `gh issue edit {i['number']} -R {rc['repo']} "
+                           f"--add-label bot:<your handle>` (`gh label create` it first if the repo has none)."))
+            m = self.board.post(channel, body, meta=meta)
             items_st[str(i["number"])] = {"msg": m["id"], "channel": channel, "sent_at": time.time()}
-            self.log(r, f"announced #{i['number']} in #{channel} as message {m['id']}")
+            self.log(r, f"{'announced again' if kind == 'repost' else 'announced'} #{i['number']} in #{channel} as message {m['id']}")
+        if finished:
+            lines = "\n".join(f"- #{i['number']} {i['title']} {i['url']}" for i in finished)
+            m = self.board.post(home, "Finished but still open: each has a merged pull request that closes it and no open one. "
+                                "Someone with the rights closes them, or says here why one stays open.\n\n" + lines,
+                                meta={"routine": r["id"], "name": r["name"], "sweep": "finished"})
+            self.log(r, f"listed {len(finished)} finished issue(s) as message {m['id']}")
+
+    def nudge(self, r, i):
+        """A running bot holds an open issue whose thread is complete and which no pull request names: ask it, in that thread."""
+        try:
+            root = call("GET", f"/api/threads/{i['thread']}", token=self.board.token)["messages"][0]
+        except (ConnectionError, KeyError, IndexError) as e:
+            return self.log(r, f"no nudge for #{i['number']}: thread {i['thread']} not readable ({e})")
+        body = (f"@{i['owner']} #{i['number']} {i['title']} ({i['url']}) is still open with your `bot:{i['owner']}` label, "
+                "this thread is complete, and no pull request names it. Open one that says `Closes #" + str(i["number"]) + "`, "
+                "or take your label off so the issue is free, or say here what is in the way.")
+        m = self.board.post(root["channel"], body, reply_to=i["thread"],
+                            meta={"routine": r["id"], "name": r["name"], "sweep": "nudge"})
+        self.log(r, f"nudged @{i['owner']} about #{i['number']} in thread {i['thread']} as message {m['id']}")
 
 
 # ---------------------------------------------------------------- commands
