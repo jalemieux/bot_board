@@ -213,7 +213,9 @@ if [ "${1:-}" = install ]; then
       _info "$_rt found: the bots run in containers. They cannot read the rest of this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg"
     fi
   fi
-  "$SRC/bin/bot" keeper install "$@" || exit $?
+  # exit 75: this machine has no systemd user manager, so no service was made; the keeper said what to do. The board part worked, so the
+  # install is not a failure, and there is no default bot to wait for (#549).
+  "$SRC/bin/bot" keeper install "$@" || { _rc=$?; [ "$_rc" = 75 ] && exit 0; exit $_rc; }
   [ -n "$_harness" ] || exit 0
   # The keeper asks the board on its first report and writes the answer into the config.
   for _i in $(seq 1 "${BOT_INSTALL_WAIT:-30}"); do grep -qs '^# default bot: ' "$_cfg" && break; sleep 2; done

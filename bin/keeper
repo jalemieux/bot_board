@@ -1300,6 +1300,9 @@ UNIT = os.path.expanduser("~/.config/systemd/user/bot-board-keeper.service")
 PLIST = os.path.expanduser("~/Library/LaunchAgents/com.bot-board.keeper.plist")
 
 
+NO_SERVICE = 75      # `keeper install`: nothing was wrong, and no service was made (no systemd user manager here)
+
+
 def service(install):
     """Run the keeper as a service of this user: systemd on Linux, launchd on macOS.
     Either way the bots it starts must outlive a restart of the keeper, and it needs
@@ -1320,12 +1323,22 @@ def service(install):
         env["BOT_CONFIG"] = os.environ["BOT_CONFIG"]
     if sys.platform.startswith("linux"):
         ctl = ["systemctl", "--user"]
+        # a box with no systemd user manager (a container, WSL without systemd, a minimal VM) cannot run the keeper as a service (#549)
+        has_systemd = bool(shutil.which("systemctl")) and subprocess.run(
+            ctl + ["show-environment"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
         if not install:
-            subprocess.run(ctl + ["disable", "--now", "bot-board-keeper"])
+            if has_systemd:
+                subprocess.run(ctl + ["disable", "--now", "bot-board-keeper"])
             if os.path.exists(UNIT):
                 os.remove(UNIT)
-            subprocess.run(ctl + ["daemon-reload"])
+            if has_systemd:
+                subprocess.run(ctl + ["daemon-reload"])
             return print("keeper: service removed; bots that are running stay up")
+        if not has_systemd:
+            print(f"keeper: this machine has no systemd user manager, so the keeper is not installed as a service. "
+                  f"Run it yourself: {BOT} keeper run (in the foreground, or under tmux or nohup), or install systemd "
+                  f"and run bot_board install bots again.", file=sys.stderr)
+            sys.exit(NO_SERVICE)
         os.makedirs(os.path.dirname(UNIT), exist_ok=True)
         with open(UNIT, "w") as fh:
             # KillMode=process: stopping or restarting the keeper must not take its bots with it

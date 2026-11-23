@@ -251,7 +251,9 @@ install_summary() {
   add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
   if [ -n "$BOARD_ON" ]; then echo "bot_board is up at $url"; else echo "bot_board is installed; the board is at $url"; fi
   [ -z "$BOARD_ON" ] || add "the board, in $(tilde "$DATA") (data: board.db, back it up; log: board.log)"
-  if [ -n "$BOTS_ON" ]; then
+  if [ -n "$BOTS_ON" ] && ! has_bots; then      # no keeper service: a box with no systemd user manager (#549)
+    add "no keeper service: this machine has no systemd user manager. Run it yourself: $(tilde "$BOT") keeper run"
+  elif [ -n "$BOTS_ON" ]; then
     note=$(sed -n 's/^# default bot: //p' "$CFG_FILE" 2>/dev/null | tail -1)
     harness=$(sed -n 's/^KEEPER_DEFAULT_BOT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1)
     # what the bots can reach stays on the screen whatever the default bot's state: it is the isolation notice (#670)
