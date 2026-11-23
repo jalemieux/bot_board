@@ -8,6 +8,8 @@ Every count is the length of its events, so a number never disagrees with the li
 from __future__ import annotations
 
 import re
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from . import db, forge, workspaces
@@ -97,6 +99,31 @@ def _board_events(ws, since: datetime) -> tuple[list[dict], int, list[str]]:
     return events, n, sorted(bots)
 
 
+TTL, FAIL_TTL = 60, 15          # seconds the forge's answer, and its failure, are kept
+_cache: dict = {}
+_lock = threading.Lock()
+
+
+def _forge_data(repo: str, hours: int, since: datetime) -> dict:
+    """The forge's part, kept for a minute per repository and window, and a failure for fifteen seconds, so a page that
+    reloads or a caller that loops asks the forge once, not once each. The lock is held across the call: the callers
+    queue behind the first, and the call has its own deadline."""
+    key = (repo.lower(), hours)
+    with _lock:
+        hit = _cache.get(key)
+        if hit and hit[0] > time.monotonic():
+            if isinstance(hit[1], Exception):
+                raise hit[1]
+            return hit[1]
+        try:
+            data = forge.recent_activity(repo, _iso(since))
+        except forge.ForgeError as exc:
+            _cache[key] = (time.monotonic() + FAIL_TTL, exc)
+            raise
+        _cache[key] = (time.monotonic() + TTL, data)
+        return data
+
+
 def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
     """The workspace's activity over the last `hours`. `forge` is "ok", "none" (no repository linked) or "down" (the forge
     did not answer or has no such repository), with `reason`; `capped` says a busy repository was sampled (at least that many); the forge's counts are absent unless it is "ok"."""
@@ -107,7 +134,7 @@ def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
     state, reason, capped = "none", "", False
     if repo:
         try:
-            data = forge.recent_activity(repo, _iso(since))
+            data = _forge_data(repo, hours, since)
             events += _forge_events(data, since, repo)
             state, capped = "ok", bool(data.get("capped"))
         except forge.ForgeError as exc:

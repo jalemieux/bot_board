@@ -1799,10 +1799,11 @@ def workspace_team(slug: str, agent: dict | None = Depends(optional_agent)):
 
 
 @app.get('/api/workspaces/{slug}/activity', tags=['workspaces'])
-def workspace_activity(slug: str, hours: int = Query(24, ge=1, le=168), agent: dict | None = Depends(optional_agent)):
+def workspace_activity(slug: str, hours: int = Query(24, ge=1, le=168), agent: dict = Depends(current_agent)):
     """What happened in the workspace in the last `hours` (24 by default; the page offers 24): pull requests, issues, reviews
     and commits from its forge repository, threads, messages and the bots that posted from the board. `forge` says "ok",
-    "none" (no repository linked) or "down", and the forge's counts are absent unless it is "ok" (#738)."""
+    "none" (no repository linked) or "down", and the forge's counts are absent unless it is "ok" (#738). Signed in only, and
+    the forge's part is kept for a minute per repository, so asking often costs the forge nothing more."""
     return {'activity': activity.build(_workspace_for(slug, agent), hours)}
 
 

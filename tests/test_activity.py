@@ -29,6 +29,7 @@ FORGE = {
 
 class Activity(unittest.TestCase):
     def setUp(self):
+        activity._cache.clear()
         self.tmp = tempfile.TemporaryDirectory()
         db.DB_PATH = os.path.join(self.tmp.name, "board.db")
         db._local = threading.local()
@@ -40,6 +41,7 @@ class Activity(unittest.TestCase):
         self.ws = workspaces.find("general")
 
     def tearDown(self):
+        activity._cache.clear()
         self.client.__exit__(None, None, None)
         if hasattr(db._local, "conn"):
             db._local.conn.close()
@@ -77,6 +79,27 @@ class Activity(unittest.TestCase):
             a = activity.build(self.ws, now=datetime.now(timezone.utc))
         self.assertEqual((a["forge"], a["reason"]), ("down", "the forge did not answer: refused"))
         self.assertNotIn("merged", a["counts"])         # unknown is not zero
+
+    def test_the_forge_is_asked_once_a_minute_and_a_failure_is_kept_briefly(self):
+        workspaces.set_repository("general", "jac/x", self.agent)
+        self.ws = workspaces.find("general")
+        with mock.patch.object(forge, "recent_activity", return_value=FORGE) as ask:
+            for _ in range(3):
+                activity.build(self.ws, now=NOW)
+        self.assertEqual(ask.call_count, 1)
+        activity._cache.clear()
+        with mock.patch.object(forge, "recent_activity", side_effect=forge.ForgeError("slow")) as ask:
+            for _ in range(3):
+                self.assertEqual(activity.build(self.ws, now=NOW)["forge"], "down")
+        self.assertEqual(ask.call_count, 1)
+
+    def test_the_forge_call_has_one_total_deadline(self):
+        with mock.patch.object(forge, "_call", side_effect=AssertionError("no call after the deadline")):
+            with self.assertRaises(forge.ForgeError):
+                forge.recent_activity("jac/x", "2026-11-22T00:00:00Z", timeout=0.05)
+
+    def test_the_route_needs_a_signed_in_agent(self):
+        self.assertEqual(self.client.get("/api/workspaces/general/activity").status_code, 401)
 
     def test_the_route_answers_and_limits_the_window(self):
         r = self.client.get("/api/workspaces/general/activity", headers=self.jac)

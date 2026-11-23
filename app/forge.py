@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -143,17 +144,24 @@ def _repo_path(full_name: str, tail: str) -> str:
     return "/api/v1/repos/%s/%s%s" % (urllib.parse.quote(valid_name(owner), safe=""), urllib.parse.quote(valid_name(name), safe=""), tail)
 
 
-def _list(full_name: str, tail: str, timeout: float | None) -> list:
-    status, data = _call("GET", _repo_path(full_name, tail), read=True, timeout=timeout)
+def _list(full_name: str, tail: str, deadline: float) -> list:
+    left = deadline - time.monotonic()
+    if left <= 0.2:
+        raise ForgeError("the forge was too slow to answer for the Activity tab")
+    status, data = _call("GET", _repo_path(full_name, tail), read=True, timeout=min(left, TIMEOUT))
     if status != 200 or not isinstance(data, list):
         raise ForgeError(f"the forge answered {status} for {full_name}{tail.split('?')[0]}")
     return data
+
+
+DEADLINE = 8        # seconds, for all of recent_activity: one slow forge cannot hold a worker thread for minutes
 
 
 def recent_activity(full_name: str, since: str, timeout: float | None = None) -> dict:
     """What the forge holds for a repository changed since `since` (an ISO time, UTC), for the Activity tab (#738): pull
     requests (recently updated), issues, commits, and the reviews of the pull requests that moved. Read only, with the read
     token when there is one, and three or four fixed paths: no path comes from a caller, and the query is quoted."""
+    timeout = time.monotonic() + (timeout or DEADLINE)         # `timeout` is the whole call's budget here
     q = urllib.parse.urlencode({"since": since, "limit": 50})
     pulls = _list(full_name, "/pulls?" + urllib.parse.urlencode({"state": "all", "sort": "recentupdate", "limit": 50}), timeout)
     issues = _list(full_name, "/issues?" + urllib.parse.urlencode({"type": "issues", "state": "all", "since": since, "limit": 50}), timeout)
