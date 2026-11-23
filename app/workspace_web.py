@@ -61,6 +61,8 @@ WS_CSS = """
 .ws .d-facts{display:flex;flex-wrap:wrap;gap:4px 16px;font:12px var(--mono);color:var(--dim)}.ws .d-facts b{color:var(--ink);font-weight:600}
 .ws .d-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ws .d-threads{margin:4px 0 0;padding-left:18px;font-size:13px}
 .ws table.bots tr[hidden]{display:none}
+.ws .drawer p.clamp{max-height:5.5em;overflow:auto;margin:4px 0}
+.ws button.switch[aria-checked=true]::after{content:": on"}.ws button.switch[aria-checked=false]::after{content:": off"}
 .ws .acts{white-space:nowrap}.ws .acts button,.ws .acts a{margin-right:8px}
 .ws .kb-back{display:none;background:none;color:var(--accent);padding:0 4px;font:600 13px var(--mono)}      /* shown only on a phone, below */
 @media (max-width:700px){
@@ -71,6 +73,7 @@ WS_CSS = """
 .ws table.bots td:nth-child(7){order:3;margin-left:auto}
 .ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button,.ws .d-acts button{min-height:44px;min-width:44px;font-size:16px}
+.dlg textarea,.dlg input[type=text]{font-size:16px}.dlg label.check{min-height:44px;align-items:center}.dlg input[type=checkbox]{width:22px;height:22px}
 .dlg select{min-height:44px;font-size:16px}
 .ws .wsw>button{min-height:44px;font-size:16px}.ws .tabs a{padding:12px 2px}
 """ + sheet_css(".ws #wsmenu:not([hidden])") + """.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
@@ -531,10 +534,10 @@ function drawer(b, up, ctx) {
   var facts = [['session', b.session_started ? 'started ' + ago(b.session_started) : ''], ['launcher', b.launcher || ''], ['last run', b.last_run ? ago(b.last_run) : ''],
                ['last post', b.last_post ? ago(b.last_post) : ''], ['role', b.profile || 'none'], ['channels', (b.channels || []).length ? b.channels.map(function (c) { return '#' + c; }).join(', ') : 'any'],
                ['takes new work', b.claims === 'mentioned' ? 'no, works when mentioned' : 'yes']].filter(function (x) { return x[1]; });
-  d.appendChild(h('div', {'class': 'd-facts'}, facts.map(function (x) { return h('span', null, x[0] + ' ', h('b', {text: x[1]})); })));
   var why = [b.problem, st.reason, up ? b.health : ''].filter(Boolean);
-  why.forEach(function (t) { d.appendChild(h('p', {'class': 'warn', text: t})); });
-  var vtext = function (label, v, dflt) { return h('p', {'class': 'sub'}, h('b', {text: label + ': '}), v ? v : h('span', {'class': 'dim', text: 'the fleet default, until set'})); };
+  why.forEach(function (t) { d.appendChild(h('p', {'class': 'warn', text: t})); });      // what is wrong comes first
+  d.appendChild(h('div', {'class': 'd-facts'}, facts.map(function (x) { return h('span', null, x[0] + ' ', h('b', {text: x[1]})); })));
+  var vtext = function (label, v, dflt) { return h('p', {'class': 'sub clamp'}, h('b', {text: label + ': '}), v ? v : h('span', {'class': 'dim', text: 'the fleet default, until set'})); };
   d.appendChild(vtext('Voice', b.voice)); d.appendChild(vtext('Personality', b.personality));
   var held = b.open_threads || 0, list = b.open_thread_list || [];
   if (held) {
@@ -559,10 +562,11 @@ function drawer(b, up, ctx) {
           .then(function () { done(close, 'The role of @' + b.handle + ' is now ' + sel.value + (fresh.checked ? ', with a new session.' : '.')); }).catch(function (e) { el.disabled = false; fail(e.message); });
       }}]);
   });
-  act(b.claims === 'mentioned' ? 'takes new work: no' : 'takes new work: yes', function () {
+  var sw = act('Takes new work', function () {
     var to = b.claims === 'mentioned' ? 'open' : 'mentioned';
     api('PUT', url + '/claims', {claims: to}).then(function () { ctx.said('@' + b.handle + (to === 'open' ? ' now takes new work.' : ' now works only when a thread mentions it.'), true); ctx.again(); }).catch(function (e) { ctx.said(e.message); });
-  });
+  }, 'quiet switch');
+  sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(b.claims !== 'mentioned'));
   act('channels…', function () {
     var boxes = (w.channels || []).filter(function (c) { return !c.archived; }).map(function (c) {
       var i = h('input', {type: 'checkbox', value: c.slug}); if ((b.channels || []).indexOf(c.slug) >= 0) i.checked = true;
@@ -585,7 +589,7 @@ function drawer(b, up, ctx) {
         api('PUT', url + '/voice', {voice: v.value, personality: p.value}).then(function () { done(close, 'Voice and personality of @' + b.handle + ' saved.'); }).catch(function (e) { el.disabled = false; fail(e.message); });
       }}]);
   });
-  act('new session', function () {
+  act('new session…', function () {
     dialog('New session for @' + b.handle, [h('p', {text: 'Its harness session is set aside and it reads the rules again at its next run. It keeps its name, token and threads.'})],
       [{text: 'Give it a new session', run: function (el, close, fail) {
         el.disabled = true;
@@ -625,10 +629,16 @@ function botRows(bots, ctx) {
     // the drawer (#18527): what the board and the keeper know about the bot, and the changes a manager makes to it; built when first opened
     var dr = h('tr', {'class': 'drawer', id: 'drawer-' + b.handle, hidden: ''}, h('td', {colspan: '7'}));
     var more = h('button', {type: 'button', 'class': 'quiet', text: 'details ▾', 'aria-expanded': 'false', 'aria-controls': 'drawer-' + b.handle, 'aria-label': 'Details of @' + b.handle});
-    more.addEventListener('click', function () {
-      var open = dr.hidden; dr.hidden = !open; more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'details ▴' : 'details ▾';
+    var toggle = function (open) {
+      dr.hidden = !open; more.setAttribute('aria-expanded', String(open)); more.textContent = open ? 'details ▴' : 'details ▾';
       if (open && !dr.firstChild.firstChild) dr.firstChild.appendChild(drawer(b, up, ctx));
-    });
+      try {      // the page reloads after an action: this browser tab reopens the drawers that were open
+        var list = JSON.parse(sessionStorage.getItem('bb.drawers') || '[]').filter(function (x) { return x !== b.handle; });
+        sessionStorage.setItem('bb.drawers', JSON.stringify(open ? list.concat(b.handle) : list));
+      } catch (e) {}
+    };
+    more.addEventListener('click', function () { toggle(dr.hidden); });
+    try { if (JSON.parse(sessionStorage.getItem('bb.drawers') || '[]').indexOf(b.handle) >= 0) toggle(true); } catch (e) {}
     return [h('tr', null,
       h('td', null, h('span', {'class': 'dot ' + tone}), h('a', {href: '/a/' + encodeURIComponent(b.handle), 'class': 'mono', text: '@' + b.handle})),
       h('td', {'class': 'dim', text: st.words || b.status || ''}), h('td', {'class': 'mono', text: b.profile || ''}), h('td', {'class': 'mono', text: b._host}), h('td', {'class': 'mono', text: b.harness || ''}),
