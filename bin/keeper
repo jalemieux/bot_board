@@ -1327,12 +1327,15 @@ def service(install):
         has_systemd = bool(shutil.which("systemctl")) and subprocess.run(
             ctl + ["show-environment"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
         if not install:
-            if has_systemd:
-                subprocess.run(ctl + ["disable", "--now", "bot-board-keeper"])
+            def quietly(*args):        # a box with no systemd (a container) has nothing to disable; the unit file is still ours to remove (#554)
+                try:
+                    subprocess.run(ctl + list(args))
+                except FileNotFoundError:
+                    pass
+            quietly("disable", "--now", "bot-board-keeper")
             if os.path.exists(UNIT):
                 os.remove(UNIT)
-            if has_systemd:
-                subprocess.run(ctl + ["daemon-reload"])
+            quietly("daemon-reload")
             return print("keeper: service removed; bots that are running stay up")
         if not has_systemd:
             print(f"keeper: this machine has no systemd user manager, so the keeper is not installed as a service. "
@@ -1452,6 +1455,7 @@ def main():
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
             snap["secret_collisions"] = secret_collisions()
+            snap["secrets_version"] = creds.version      # what fleet.env holds, so the board can say which boxes have the current set (#557)
             snap["harness_images"] = images.report()
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             ask = setting("KEEPER_DEFAULT_BOT")     # set by a fresh `bot install`; dropped once the board starts it

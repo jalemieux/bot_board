@@ -18,6 +18,9 @@
 #
 #   PORT=9000        another port                (default 8080)
 #   BIND=0.0.0.0     reachable from other machines; a tailscale IP is better
+#   Each start keeps its PORT and BIND in $BOT_BOARD_DIR/board.addr, and status, stop and update read them back. A PORT
+#   or BIND in the environment of a run (a crontab line included) overrides the file, and the next start keeps it. To
+#   go back to the defaults, run `PORT=8080 BIND=127.0.0.1 ... up`.
 #   BOT_BOARD_DIR    where the venv, db and log live (default ~/.bot_board/board)
 #   BOT_BOARD_SRC    the checkout (default ~/.bot_board/src)
 #
@@ -26,9 +29,15 @@ set -euo pipefail
 trap 'echo "run.sh: failed at line $LINENO (exit $?)" >&2' ERR
 
 CMD=${1:-up}
+DIR=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
+# The port and address the board was last started with are kept in $DIR/board.addr (#551), so status, stop, update and a
+# restart find it without PORT in the environment. A PORT or BIND named in this run wins, and the next start keeps it.
+ADDR="$DIR/board.addr"
+[ -n "${PORT:-}" ] || PORT=$({ sed -n 's/^PORT=//p' "$ADDR" 2>/dev/null || true; } | tail -1)
+[ -n "${BIND:-}" ] || BIND=$({ sed -n 's/^BIND=//p' "$ADDR" 2>/dev/null || true; } | tail -1)
+case $PORT in ''|*[!0-9]*) PORT= ;; esac       # a port is a number, whatever the file holds
 PORT=${PORT:-8080}
 BIND=${BIND:-127.0.0.1}
-DIR=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
 REPO=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}
 REF=${BOT_BOARD_REF:-main}
 URL="http://${BIND/0.0.0.0/127.0.0.1}:$PORT"
@@ -56,6 +65,18 @@ fetch() {
     mkdir -p "$(dirname "$SRC")"; git clone -q --depth 1 -b "$REF" "$REPO" "$SRC"
   fi
   ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
+}
+
+# A board bound to more than this machine is said so wherever its address is printed: the address shows 127.0.0.1 for 0.0.0.0 (#551)
+exposed() {
+  case $BIND in 127.*|localhost|::1) return 0 ;; esac
+  local fix
+  if [ -x "$(dirname "$SRC")/bot_board" ]; then fix="BIND=127.0.0.1 $(tilde "$(dirname "$SRC")")/bot_board restart board"      # the installed board
+  else case $SELF in
+    curl*) fix="${SELF/| bash/| BIND=127.0.0.1 bash} up" ;;      # the variable goes to bash, not to curl
+    *) fix="BIND=127.0.0.1 $SELF up" ;;
+  esac; fi
+  echo "  Bound to $BIND: anyone who can reach this machine on port $PORT can use the board. To keep it on this machine, run: $fix"
 }
 
 running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
@@ -106,6 +127,7 @@ case "$CMD" in
     fetch
     start
     healthy || { tail -n 20 "$LOG" >&2; die "the board did not come up; log above, full log in $LOG"; }
+    printf 'PORT=%s\nBIND=%s\n' "$PORT" "$BIND" > "$ADDR"      # only an address that answered is kept (#801)
     if [ -n "${BOT_BOARD_QUIET:-}" ]; then
       :      # under `bot_board install`, which prints the one block itself (#766)
     elif [ "$CMD" = update ]; then
@@ -120,11 +142,16 @@ bot_board is up at $URL
 
 Next:   open $URL and sign in with any handle
 TXT
+      exposed
     fi
     ;;
   stop)   stop || true ;;
   status)
-    if curl -fs "$URL/healthz" 2>/dev/null; then echo; else echo "not running on $URL"; exit 1; fi
+    if health=$(curl -fs "$URL/healthz" 2>/dev/null); then
+      commit=$(printf '%s' "$health" | sed -n 's/.*"commit": *"\([^"]*\)".*/\1/p' | tr -cd 'A-Za-z0-9._-')
+      echo "running on $URL${commit:+, commit ${commit:0:12}}"
+      exposed
+    else echo "not running on $URL"; exit 1; fi
     ;;
   logs)   tail -n 50 -f "$LOG" ;;
   *) die "unknown command: $CMD (up, stop, status, logs, update)" ;;

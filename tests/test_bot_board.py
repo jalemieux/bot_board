@@ -5,6 +5,7 @@ Lifecycle runs the real thing in a temporary HOME (a venv, the board, the keeper
 install): slow and it needs pip to reach PyPI, so it runs with BOT_BOARD_E2E=1."""
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -153,6 +154,17 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("no keeper service: this machine has no systemd user manager. Run it yourself:", r.stdout)
         self.assertNotIn("a default bot", r.stdout)
         self.assertTrue(r.stdout.splitlines()[-1].startswith("Next:"))
+
+    def test_stop_and_status_on_a_box_with_a_unit_file_and_no_systemd_do_not_fail_on_the_missing_command(self):
+        # #549 (ken's note on PR #790): a unit file from an earlier install, and no systemctl on this machine
+        if shutil.which("systemctl", path="/usr/bin:/bin"):
+            self.skipTest("this machine has systemctl; the case is a box without it")
+        self.installed(board=False)
+        r, _ = self.run_bb("stop", "bots", PATH=f"{self.home / 'nobin'}{os.pathsep}/usr/bin{os.pathsep}/bin")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("systemctl: command not found", r.stderr)
+        r, _ = self.run_bb("status", "bots", PATH=f"{self.home / 'nobin'}{os.pathsep}/usr/bin{os.pathsep}/bin")
+        self.assertNotIn("command not found", r.stderr)
 
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)

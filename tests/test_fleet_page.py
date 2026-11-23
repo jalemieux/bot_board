@@ -183,6 +183,19 @@ class FleetPage(unittest.TestCase):
         self.assertNotIn('href="/onboard" class="x"', page)
         self.assertIn('id="themerow"', page, 'the phone menu keeps its theme row')
 
+    def test_a_board_on_localhost_says_why_no_other_machine_can_use_its_command(self):
+        # #552: the Add a machine command carries the address the board was opened at; on localhost it cannot work, so both
+        # places say so and how to change it, instead of leaving the person to find an address
+        for page in (web.onboard_page('b', 'http://127.0.0.1:8080', False), web.onboard_page('b', 'http://localhost:8080', False),
+                     web.fleet_page('b', [])):
+            self.assertIn('listens on this machine only', page)
+            self.assertIn('Reach your fleet', page)
+            self.assertNotIn('BIND=', page, 'no command that breaks this machine\'s own keeper')
+            self.assertIn('Anyone who can reach the board can use it', page)
+        remote = web.onboard_page('b', 'http://box.example.ts.net:8080', False)
+        self.assertIn('Your board address is already filled in.', remote)
+        self.assertNotIn('listens on this machine only', remote)
+
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),

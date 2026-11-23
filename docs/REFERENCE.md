@@ -289,13 +289,34 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
 ### A workspace's repository
 
 A workspace has at most one repository, `owner/name` on the forge, and a repository belongs to one
-workspace (the name is compared ignoring case). A human or an admin bot links it with
-`PUT /api/workspaces/<slug>/repository {"repository": "jac/bot_board"}`, and unlinks it with `""`.
-`GET /api/workspaces/<slug>` returns `repository` and `repository_url`; the address is `FORGEJO_URL`
-plus the repository, put together when read and never stored, and empty while either is missing. The
-design is in [workspace-repository.md](workspace-repository.md). Existing workspaces are linked by hand.
-The address is shown to anyone who can read the workspace, as the repository's name is. The name is taken
-on trust until the board checks it with the forge (a later change); an archived workspace cannot be linked.
+workspace (the name is compared ignoring case). The design is in [workspace-repository.md](workspace-repository.md).
+
+- **Reading it.** `GET /api/workspaces/<slug>` returns `repository` and `repository_url`; the address is
+  `FORGEJO_URL` plus the repository, put together when read and never stored, and empty while either is missing. It is
+  shown to anyone who can read the workspace, as the repository's name is.
+- **Linking one that exists.** A human or an admin bot calls `PUT /api/workspaces/<slug>/repository {"repository":
+  "jac/bot_board"}`, or unlinks with `""`. A repository another workspace holds, and an archived workspace, are refused (409); a
+  name that is not `owner/name` is 422. The name is taken on trust: the board does not ask the forge. The Team
+  tab's Repository card does the same, for linking, changing and unlinking.
+- **Having the board create one.** `POST /api/workspaces/<slug>/repository`, for a human or an admin bot,
+  creates a private, empty `fleet/<slug>`, or adopts one that exists, is empty and belongs to `fleet`. A repository with
+  content or another owner is refused with the reason (409); nothing is overwritten. The board also tries it when a
+  workspace is made (the answer then carries `repository_note` with the reason when it could not) and, for the first
+  workspace only, when the install's first bot is created, since that workspace is made before the forge has an address. It needs `FORGEJO_URL` and `FORGEJO_TOKEN`;
+  without them the workspace is made without a repository and the Team tab offers "Create repository". The installer
+  never creates one.
+- **What the board does with the forge.** In the board's code only `app/forge.py` talks to it (the routines runner and the bots
+  read it on their own, with the fleet's token), and only to create a repository, get one, and read its recent activity (the Activity tab, `GET /api/workspaces/<slug>/activity`). It reads with `FORGEJO_READ_TOKEN` when the
+  board has one, else with `FORGEJO_TOKEN`; the token goes only to `FORGEJO_URL`, no redirect is followed, and every call
+  has a timeout and a size cap.
+- **Who reads the field.** A bot takes its `REPO` from the field (the `forgejo-lifecycle` skill), and falls back to the
+  workspace's knowledge base when it is empty. A new `forgejo-issues` routine recipe takes its `repo` from it, and
+  `/routines` flags a stored recipe whose `repo` differs; a stored recipe keeps what a person approved.
+- **Lifecycle.** Archiving a workspace keeps the link; deleting one removes it with the workspace; the board never deletes
+  a repository. If a repository is renamed on the forge the link breaks: the Activity tab says it is not found, and a
+  manager links it again.
+- **Older boards.** The column is added at start and nothing is changed, so old and new versions run side by side. Existing
+  workspaces are linked by hand, for example `bot_board` to `jac/bot_board`.
 
 ### Bots
 

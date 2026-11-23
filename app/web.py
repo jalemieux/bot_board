@@ -2858,7 +2858,7 @@ if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
     + boardOrigin + ' bash -s -- install bots';
   machineCopy.disabled = localBoard;
   machineStatus.textContent = localBoard
-    ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'
+    ? 'This board listens on this machine only, so no other machine can reach it. Exposing it takes more than one step (the address it listens on, this machine\\u2019s own keeper, and the restart after a reboot), so it is not given here as one command. The Docker install on a tailnet is in docs/REFERENCE.md, "Reach your fleet from anywhere with Tailscale". Anyone who can reach the board can use it, so use a tailnet or a network you trust.'
     : 'Your board address is already filled in.';
 }
 machineCopy.addEventListener('click', async function () {
@@ -3313,13 +3313,24 @@ function claudeCard(list) {
       sEl('li', null, 'On a machine with a browser, run ', cmd, ' ', copy, ' and copy the token it prints.'),
       sEl('li', null, x ? 'Use Replace on its row below.' : 'Add it below as CLAUDE_CODE_OAUTH_TOKEN.'))));
 }
+// Above the table, once, because the board's version is one hash of the whole set: how many machines hold the current set. A machine
+// that does not say reads as unknown, never as no (#557).
+function machineLine(boxes) {
+  var live = boxes.filter(function (b) { return b.reporting; });
+  var got = live.filter(function (b) { return b.received === true; }).length;
+  var behind = live.filter(function (b) { return b.received === false; }).map(function (b) { return b.host; });
+  var unknown = boxes.length - live.length + live.filter(function (b) { return b.received === null; }).length;
+  if (!boxes.length) return null;
+  return sEl('p', {'class': 'sub', id: 'secretmachines', text: got + ' of ' + boxes.length + (boxes.length === 1 ? ' machine has' : ' machines have') + ' the current secrets' +
+    (behind.length ? '; ' + behind.join(', ') + (behind.length === 1 ? ' is' : ' are') + ' behind' : '') + (unknown ? '; ' + unknown + ' unknown' : '') + '.'});
+}
 function listSecrets() {
   var box = document.getElementById('secretlist');
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
     claudeCard(d.secrets);
     box.textContent = '';
-    var body = sEl('tbody');
+    var body = sEl('tbody'), boxes = d.boxes || [];
     d.secrets.forEach(function (x) {
       var cell = sEl('td', {'data-label': 'Value', 'class': 'mono', text: x.plain && x.value ? x.value : '\\u2026' + x.ends}), acts = sEl('td', {'class': 'secret-acts'});
       var rep = sEl('button', {type: 'button', text: 'Replace', 'aria-label': 'Replace ' + x.name});
@@ -3327,7 +3338,11 @@ function listSecrets() {
       rep.addEventListener('click', function () { replaceRow(x, cell, acts); });
       rm.addEventListener('click', function () { removeSecret(x); });
       acts.appendChild(rep); acts.appendChild(rm);
-      body.appendChild(sEl('tr', null, sEl('td', {'class': 'mono secret-name', text: x.name}), cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
+      // where the boxes stand (#557): who has the board's current set, and whose own environment also holds this name
+      var clash = boxes.filter(function (b) { return (b.collisions || []).indexOf(x.name) >= 0; }).map(function (b) { return b.host; });
+      var nameCell = sEl('td', {'class': 'mono secret-name', text: x.name});
+      if (clash.length) nameCell.appendChild(sEl('div', {'class': 'sub secret-clash', text: 'also set in the environment of ' + clash.join(', ') + '; the value set here is used where the harness reads it'}));
+      body.appendChild(sEl('tr', null, nameCell, cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
     });
     var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
     var SECRET_NAME = new RegExp('^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|' + plainName + ')$');      // the server checks it too; this only helps while typing
@@ -3347,6 +3362,7 @@ function listSecrets() {
     add.addEventListener('click', function () { add.disabled = true; saveSecret(name.value.trim(), val.value, function () {}); });
     body.appendChild(sEl('tr', {'class': 'secret-new'}, sEl('td', {'data-label': 'New secret'}, name, hint), sEl('td', {colspan: '3'}, val), sEl('td', {'class': 'secret-acts'}, add)));
     var head = sEl('tr', null, sEl('th', {text: 'Name'}), sEl('th', {text: 'Value'}), sEl('th', {text: 'Set by'}), sEl('th', {text: 'When'}), sEl('th', {'class': 'sr-only', text: 'Actions'}));
+    var line = machineLine(boxes); if (line) box.appendChild(line);
     box.appendChild(sEl('table', {'class': 'secrets'}, sEl('thead', null, head), body));
   }, function (e) { box.textContent = e.message; });
 }
@@ -4098,8 +4114,10 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
 
     blocks = "".join(block(*h) for h in HARNESSES)
     machine_note = (
-        "Open this board by its network or tailnet address first and copy the line from there: "
-        "localhost on the new machine would point to itself."
+        "This board listens on this machine only, so no other machine can reach it. Exposing it takes more than one step "
+        "(the address it listens on, this machine\u2019s own keeper, and the restart after a reboot), so it is not given "
+        "here as one command. The Docker install on a tailnet is in <code>docs/REFERENCE.md</code>, \u201cReach your fleet "
+        "from anywhere with Tailscale\u201d. Anyone who can reach the board can use it, so use a tailnet or a network you trust."
         if re.match(r"https?://(localhost|127\.0\.0\.1|\[::1\])(:|/|$)", base)
         else "Your board address is already filled in."
     )

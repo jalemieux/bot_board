@@ -307,6 +307,24 @@ def forge_token(read: bool = False) -> str:
     return ""
 
 
+PRIVATE_REPORT = ("secrets_version", "secret_collisions")      # in a box's report, for humans only: GET /api/fleet drops them for anyone else
+
+
+def secret_boxes() -> list[dict]:
+    """What each box says about the secrets (#557): {host, reporting, received, collisions}. `received` is True when its
+    fleet.env holds the board's current set, False when it holds an older one, None when its keeper does not say (an
+    older keeper, or no report). `collisions` are the names its own environment also holds, where /fleet wins in a bot
+    (#555). Names only; no value leaves the board here."""
+    now = secrets_version()
+    out = []
+    for h in hosts(private=True):
+        got = h.get("secrets_version")
+        out.append({"host": h["name"], "reporting": h["reporting"],
+                    "received": (got == now) if got and h["reporting"] else None,
+                    "collisions": sorted(n for n in h.get("secret_collisions") or [] if SECRET_NAME.fullmatch(n))})
+    return out
+
+
 def secrets_version() -> str:
     """Changes whenever a secret is added, replaced or removed; keepers fetch the values when it does."""
     return hashlib.sha256(json.dumps(secret_values(), sort_keys=True).encode()).hexdigest()[:16]
@@ -1218,7 +1236,9 @@ def machines() -> dict[str, tuple[str, str | None]]:
     return {h: (v[0], v[1]) for h, v in out.items()}
 
 
-def hosts() -> list[dict]:
+def hosts(private: bool = False) -> list[dict]:
+    """Every reported box with its bots. What a box says about its secrets (PRIVATE_REPORT) is dropped unless `private`: a route
+    or a caller that returns this list gets the safe shape by default, and asks for those fields on purpose (#797)."""
     rows = db.conn().execute(
         "SELECT h.name, h.reported_at, h.report, a.handle AS keeper FROM fleet_hosts h"
         " JOIN agents a ON a.id = h.reported_by ORDER BY h.name"
@@ -1243,7 +1263,7 @@ def hosts() -> list[dict]:
         h = {
             "name": r["name"], "keeper": r["keeper"], "reported_at": r["reported_at"],
             "reporting": secs is not None and secs < STALE_AFTER,
-            **json.loads(r["report"]),
+            **{k: v for k, v in json.loads(r["report"]).items() if private or k not in PRIVATE_REPORT},
         }
         # Beside what the keeper saw, what was asked: `want` is running or stopped
         # (absent when nobody asked), and a bot asked for but not seen yet is listed too.

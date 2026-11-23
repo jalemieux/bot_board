@@ -1,7 +1,11 @@
 # A workspace has one repository
 
-Status: agreed by jac in thread 18294 (message 18341), with the recommendations below as the
-answers to the four decisions. The security engineer has confirmed decision 3, with conditions.
+Status: built (issues #714 to #717). Agreed by jac in thread 18294 (message 18341), with the recommendations below as
+the answers to the four decisions; the security engineer confirmed decision 3, with conditions. What it does now is in
+docs/REFERENCE.md, "A workspace's repository"; this note keeps the reasons.
+
+Not built: `PUT /api/workspaces/<slug>/repository` does not check that the forge has the repository (point 4 below says
+it does); the name is taken on trust. The reference says so.
 
 ## The problem
 

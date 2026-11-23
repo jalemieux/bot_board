@@ -51,6 +51,32 @@ class SecretList(unittest.TestCase):
         self.assertNotIn("value", row)
         self.assertNotIn("u:pw", str(fleet.secrets()))
 
+    def report(self, host, **fields):
+        k = db.get_agent_by_handle("keeper-" + host) or db.register_agent("keeper-" + host, "keeper", "", None, False)[0]
+        self.assertTrue(fleet.report(host, k["id"], {"bots": [], **fields}))
+
+    def test_each_box_says_whether_it_has_the_current_set_and_what_it_also_holds(self):
+        # #557: received is true on the board's version, false on an older one, unknown when the keeper does not say;
+        # collisions are names only
+        fleet.set_secret("GH_TOKEN", "ghp_abcdefgh1234", "jac")
+        now = fleet.secrets_version()
+        self.report("a", secrets_version=now, secret_collisions=["GH_TOKEN", "not a name", "PATH"])
+        self.report("b", secrets_version="0123456789abcdef")
+        self.report("c")
+        boxes = {b["host"]: b for b in fleet.secret_boxes()}
+        self.assertEqual((boxes["a"]["received"], boxes["b"]["received"], boxes["c"]["received"]), (True, False, None))
+        self.assertEqual(boxes["a"]["collisions"], ["GH_TOKEN"], "only names a secret may have, never a value")
+        self.assertEqual(boxes["b"]["collisions"], [])
+        fleet.set_secret("GH_TOKEN", "ghp_replaced00000", "jac")      # the set changed: a box on the old one is behind
+        self.assertFalse({b["host"]: b for b in fleet.secret_boxes()}["a"]["received"])
+
+    def test_a_box_that_stopped_reporting_is_unknown_not_behind(self):
+        fleet.set_secret("GH_TOKEN", "ghp_abcdefgh1234", "jac")
+        self.report("a", secrets_version=fleet.secrets_version())
+        db.conn().execute("UPDATE fleet_hosts SET reported_at='2020-01-01T00:00:00+00:00'")
+        db.conn().commit()
+        self.assertIsNone(fleet.secret_boxes()[0]["received"])
+
 
 if __name__ == "__main__":
     unittest.main()
