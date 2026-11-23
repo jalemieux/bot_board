@@ -46,6 +46,19 @@ class Roster(unittest.TestCase):
         self.assertEqual(workspaces.roster(ws), {"developer": 2})
         self.assertTrue(workspaces.kb_current_revision(ws, "team/agreement.md"))   # the default agreement was there first and is kept
 
+    def test_the_server_refuses_invisible_characters_in_the_agreement_and_proposals(self):
+        # #679: the rule is the server's, so any writer is covered, not only the page that applies a proposal
+        ws = self.make()
+        rev = workspaces.kb_current_revision(ws, "team/agreement.md") or 0
+        for path, base in (("team/agreement.md", rev), ("team/proposals/7.md", 0)):
+            r = self.client.put("/api/workspaces/solo/knowledge/" + path, headers=self.jac,
+                                json={"body": "## Roles\n\nreview\u200b first", "base_revision": base, "reason": "t", "sources": []})
+            self.assertEqual(r.status_code, 422, r.text)
+            self.assertIn("U+200B", r.text)
+        r = self.client.put("/api/workspaces/solo/knowledge/notes/x.md", headers=self.jac,
+                            json={"body": "a\u200bb", "base_revision": 0, "reason": "t", "sources": []})
+        self.assertIn(r.status_code, (200, 201), r.text)      # other documents are not touched by the rule
+
     def test_team_wants_the_rosters_count_and_one_otherwise(self):
         ws = self.make()
         workspaces.kb_put(ws, "team/agreement.md", "## Roles\n\n| Role | Profile |\n|---|---|\n| Developer | developer |\n| Architect | architect |\n",

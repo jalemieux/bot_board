@@ -376,9 +376,10 @@ function proposalDocs(w) {
   }, function () { return []; });
 }
 // Characters a reader cannot see, that could hide an instruction in a line that looks clean: zero-width and bidi controls,
-// the soft hyphen, the byte-order mark and the Unicode tag characters. The agreement reaches every bot, so a proposal with one
+// the soft hyphen, the byte-order mark, the Unicode tag characters, variation selectors, the Hangul fillers and the blank
+// braille pattern (the server refuses the same set, workspaces.py HIDDEN_CHARS). The agreement reaches every bot, so a proposal with one
 // is shown with the character spelled out and cannot be applied.
-var HIDDEN = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]|[\u{E0000}-\u{E007F}]/gu;
+var HIDDEN = /[\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0]|[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 function showHidden(line) { return line.replace(HIDDEN, function (c) { return '<U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + '>'; }); }
 function lineDiff(a, b) {
   var x = a.split('\n'), y = b.split('\n');
