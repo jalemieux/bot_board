@@ -24,18 +24,22 @@ WELCOME_CSS = """
 .fr .tag.on{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,var(--line))}.fr .tag.w{color:var(--accent);border-color:var(--accent)}
 .fr .cmd{display:inline-flex;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 4px 2px 10px;font:12.5px var(--mono);max-width:100%}
 .fr .team{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}
-.fr .team li{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;padding:6px 10px;background:var(--panel);font-size:13.5px}
-.fr .team .nm{font:600 13px var(--mono)}
-.fr textarea{width:100%;min-height:72px;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font:16px/1.4 var(--sans);resize:vertical}
+.fr .team li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:center;border:1px solid var(--line);border-radius:8px;padding:4px 10px;background:var(--panel);font-size:13.5px}
+.fr .team .nm{font:600 13px var(--mono);overflow-wrap:anywhere}.fr .team .rl{grid-column:1 / -1;color:var(--dim);font-size:12px}
+.fr details summary{cursor:pointer;color:var(--accent);min-height:44px;display:flex;align-items:center}
+.fr a.btnlink{display:inline-flex;align-items:center;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:0 12px;color:var(--ink);text-decoration:none;font-weight:600}
+.fr textarea{width:100%;min-height:72px;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font:16px/1.4 var(--sans);resize:vertical;min-height:132px}
+@media (max-width:700px){.fr textarea{min-height:200px}}
 .fr .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
 .fr button{font:inherit;cursor:pointer;min-height:44px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}
 .fr button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:0 14px}
 .fr button:disabled{opacity:.5;cursor:default}
-.fr button.skip{background:none;border:0;color:var(--dim);text-decoration:underline}
+.fr button.skip{background:none;border:0;color:var(--dim);text-decoration:underline;padding:0}
 .fr .msg-err{color:var(--accent)}.fr .toast{font-size:12.5px;color:var(--dim);margin-top:12px}
 .fr .toast a{min-height:44px;display:inline-flex;align-items:center}
+.fr .toast.one{margin-bottom:0}
 .topnav .links,.topnav #navmore,.topnav form{display:none}
-.fr .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}
+.fr .head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap}.fr .head>div{flex:1 1 320px;min-width:0}
 """
 
 WELCOME_JS = r"""
@@ -112,7 +116,7 @@ function steps(s) {
       bot.harness === 'claude' ? h('ol', {style: 'margin:6px 0 0;padding-left:20px;font-size:13.5px'},
         h('li', null, 'On a machine with a browser, run ', cmdBox(cmd)),
         h('li', null, 'Paste what it prints on the ', h('a', {href: '/configuration', text: 'Configuration page'}), ', as ', h('span', {'class': 'k', text: 'CLAUDE_CODE_OAUTH_TOKEN'}), '.')) : h('p', {'class': 'dim', text: bot.reason || bot.words}),
-      h('div', {'class': 'row'}, h('a', {href: '/configuration', 'class': 'k'}, 'Open Configuration')),
+      h('div', {'class': 'row'}, h('a', {href: '/configuration', 'class': 'btnlink', text: 'Open Configuration'})),
       h('p', {'class': 'dim', style: 'font-size:12.5px', text: 'If you are already logged in on this machine it may start without this. This page checks again by itself.'})]});
   } else if (bk === 'failed') {
     var again = h('button', {type: 'button', text: 'Check again'});
@@ -128,11 +132,14 @@ function steps(s) {
   return out;
 }
 function teamList(team) {
-  return h('ul', {'class': 'team'}, team.map(function (b) { return h('li', null, h('span', {'class': 'nm', text: b.handle}), h('span', {text: b.role || b.harness}), botTag(kind(b))); }));
+  var list = h('ul', {'class': 'team'}, team.map(function (b) { return h('li', null, h('span', {'class': 'nm', text: b.handle}), botTag(kind(b)), h('span', {'class': 'rl', text: b.role || b.harness})); }));
+  var alike = team.length > 3 && team.every(function (b) { return kind(b) === kind(team[0]); }) && kind(team[0]) !== 'running';
+  return alike ? h('details', null, h('summary', {text: 'Show the ' + team.length + ' bots'}), list) : list;
 }
 function workStep(s) {
   if (work) return work;
   textBox = h('textarea', {'aria-label': 'First message to the team'}); textBox.value = FIRST;
+  textBox.addEventListener('input', function () { textBox.style.height = 'auto'; textBox.style.height = textBox.scrollHeight + 'px'; });      // grows to fit what is written
   sendBtn = h('button', {type: 'button', 'class': 'primary', text: 'Send and open General'});
   sendNote = h('span', {'class': 'dim', style: 'font-size:12.5px'});
   sendErr = h('span', {'class': 'msg-err', role: 'alert'});        // empty from the start, so a screen reader hears what is put in it
@@ -178,7 +185,8 @@ function draw(d) {
     root.appendChild(h('div', {'class': 'head'}, h('div', null, h('h1', {text: 'Welcome, ' + s.board.handle + '. Let’s get bot_board working.'}),
       h('p', {'class': 'lead', text: 'This page is shown once. It updates by itself while your bots start. Sending the message takes you to General, where a developer answers.'})), skipBtn));
     root.appendChild(progBox); root.appendChild(ol);
-    root.appendChild(h('p', {'class': 'toast'}, to, '. Skipping is saved on the board for you, so this page does not come back. You can open it again from Setup guide, at the bottom of every page.'));
+    root.appendChild(h('p', {'class': 'toast one'}, to));
+    root.appendChild(h('p', {'class': 'toast'}, 'Skipping is saved on the board for you, so this page does not come back. You can open it again from Setup guide, at the bottom of every page.'));
     ol.appendChild(w);
   }
   // keep the focus on a button of a replaced step (Check again, Copy) by its words
