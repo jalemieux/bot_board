@@ -632,7 +632,8 @@ function rolesView(w, roles, hosts) {
   roles.forEach(function (r) {
     var bots = mine.filter(function (b) { return (b.profile || '').toLowerCase() === r.profile.toLowerCase(); });
     bots.forEach(function (b) { seen[b.handle] = 1; });
-    group(r.role, r.profile, bots, r.exists ? '' : 'this profile does not exist yet', r);
+    var up = bots.filter(isUp).length;
+    group(r.role, r.profile, bots, !r.exists ? 'this profile does not exist yet' : r.want > 1 || up > r.want ? 'expected ' + r.want + ', ' + up + ' running' : '', r);
   });
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');

@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
     seed_thread_id INTEGER,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+-- How many bots each profile should have in a workspace (#650). The agreement names roles; this is the
+-- count a team starts with, kept as data so the board can say when what runs does not match it.
+CREATE TABLE IF NOT EXISTS workspace_roster (
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    profile TEXT NOT NULL COLLATE NOCASE,
+    count INTEGER NOT NULL CHECK (count >= 0),
+    PRIMARY KEY (workspace_id, profile)
+);
 CREATE TABLE IF NOT EXISTS knowledge_docs (
     id INTEGER PRIMARY KEY,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
@@ -240,10 +248,24 @@ def bots_of(ws) -> list[str]:
         "SELECT handle FROM agents WHERE workspace_id=? ORDER BY handle COLLATE NOCASE", (ws['id'],))]
 
 
+def roster(ws) -> dict[str, int]:
+    """profile (lower case) -> how many bots the workspace should have. A profile with no row wants one."""
+    return {r['profile'].lower(): r['count'] for r in db.conn().execute(
+        'SELECT profile, count FROM workspace_roster WHERE workspace_id=?', (ws['id'],))}
+
+
+def set_roster(ws, counts: dict[str, int]) -> None:
+    """Replace the workspace's roster."""
+    with db._write_lock, db.conn() as c:
+        c.execute('DELETE FROM workspace_roster WHERE workspace_id=?', (ws['id'],))
+        c.executemany('INSERT INTO workspace_roster(workspace_id, profile, count) VALUES (?,?,?)',
+                      [(ws['id'], p.lower(), int(n)) for p, n in counts.items()])
+
+
 def team(ws) -> dict:
     """What the agreement's `## Roles` table asks for, against what exists: each role's profile, which of the
     workspace's bots carry it, and what is still to create (#600). The agreement names roles, not how many
-    bots fill them: a role with no bot is missing one, and starting more is the human's call on /fleet.
+    bots fill them: the count is the workspace's roster (#650), one for a profile it does not list.
     A table that is not there gives no roles; the human reads the agreement."""
     from . import fleet, registry
     try:
@@ -254,6 +276,7 @@ def team(ws) -> dict:
     profiles = {p['name'].lower(): p for p in registry.list_profiles()}
     mine = {b.lower() for b in bots_of(ws)}
     roles = []
+    wanted = roster(ws)
     for line in (section.group(1) if section else '').splitlines():
         cells = [c.strip().strip('`') for c in line.strip().strip('|').split('|')]
         if (len(cells) < 2 or not line.strip().startswith('|') or not cells[1]
@@ -265,7 +288,7 @@ def team(ws) -> dict:
         asked = [r['handle'] for r in db.conn().execute(
             "SELECT handle FROM fleet_bots WHERE run=1 AND lower(workspace)=? AND lower(profile)=?", (ws['slug'].lower(), cells[1].lower()))]
         starting = [b for b in asked if b.lower() not in {x.lower() for x in have}]
-        want = 1
+        want = wanted.get(cells[1].lower(), 1)
         roles.append({'role': cells[0], 'profile': cells[1], 'exists': prof is not None,
                       'want': want, 'have': have, 'starting': starting,
                       'claims': (fleet.default_claims(cells[1]) if prof else ''),

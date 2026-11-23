@@ -1,6 +1,7 @@
 ---
 name: developers-with-specialists
 title: Developers with specialists
+roster: developer=2
 description: A pool of developers who own the work, a UI designer pulled in when a change touches what a user sees, and an architect and a security engineer whose reviews every pull request needs.
 ---
 

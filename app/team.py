@@ -54,7 +54,28 @@ def template(name: str) -> dict:
         raise KeyError(f"no team template named {name}")
     front, body = registry.parse_front(_read(path))
     return {"name": name, "title": str(front.get("title") or name),
-            "description": str(front.get("description") or ""), "body": body.strip() + "\n"}
+            "description": str(front.get("description") or ""), "body": body.strip() + "\n",
+            "roster": parse_roster(str(front.get("roster") or ""))}
+
+
+def parse_roster(text: str) -> dict[str, int]:
+    """`developer=2, architect=1` -> {"developer": 2, "architect": 1}: how many bots a template starts with, by
+    profile. A profile it does not list wants one (#650)."""
+    out = {}
+    for part in text.split(","):
+        name, _, n = part.partition("=")
+        if name.strip() and n.strip().isdigit():
+            out[name.strip().lower()] = int(n)
+    return out
+
+
+def apply(ws: dict, name: str, agent: dict) -> None:
+    """Make workspace `ws` follow team template `name`: its agreement (when it has none yet) and its roster."""
+    from . import workspaces
+    t = template(name)
+    if not workspaces.kb_current_revision(ws, AGREEMENT):
+        workspaces.kb_put(ws, AGREEMENT, t["body"], 0, f"from the {t['name']} team template", [], agent)
+    workspaces.set_roster(ws, t["roster"])
 
 
 def seed(ws: dict, agent: dict) -> bool:

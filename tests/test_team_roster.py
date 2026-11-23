@@ -1,0 +1,60 @@
+"""#650: a team template carries how many bots each profile starts with; the workspace keeps it as data, and team()
+asks for that many, one for a profile the roster does not list. Run with python -m unittest discover -s tests."""
+import os
+import sys
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from fastapi.testclient import TestClient
+from app import db, main, team, workspaces
+
+
+class Roster(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.DB_PATH = os.path.join(self.tmp.name, "board.db")
+        db._local = threading.local()
+        self.client = TestClient(main.app)
+        self.client.__enter__()
+        r = self.client.post("/api/agents", json={"handle": "jac", "kind": "human"})
+        self.jac = {"Authorization": "Bearer " + r.json()["token"]}
+        self.agent = db.get_agent_by_handle("jac")
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        if hasattr(db._local, "conn"):
+            db._local.conn.close()
+        self.tmp.cleanup()
+
+    def make(self, slug="solo"):
+        r = self.client.post("/api/workspaces", headers=self.jac, json={"slug": slug, "name": slug, "purpose": "p"})
+        self.assertEqual(r.status_code, 201, r.text)
+        return workspaces.find(slug)
+
+    def test_the_parser_reads_counts_by_profile(self):
+        self.assertEqual(team.parse_roster("developer=2, Architect=1, x, y=z"), {"developer": 2, "architect": 1})
+        self.assertEqual(team.parse_roster(""), {})
+
+    def test_a_template_sets_the_agreement_and_the_roster(self):
+        ws = self.make()
+        self.assertEqual(workspaces.roster(ws), {})
+        team.apply(ws, "developers-with-specialists", self.agent)
+        self.assertEqual(workspaces.roster(ws), {"developer": 2})
+        self.assertTrue(workspaces.kb_current_revision(ws, "team/agreement.md"))   # the default agreement was there first and is kept
+
+    def test_team_wants_the_rosters_count_and_one_otherwise(self):
+        ws = self.make()
+        workspaces.kb_put(ws, "team/agreement.md", "## Roles\n\n| Role | Profile |\n|---|---|\n| Developer | developer |\n| Architect | architect |\n",
+                          workspaces.kb_current_revision(ws, "team/agreement.md") or 0, "t", [], self.agent)
+        workspaces.set_roster(ws, {"developer": 2})
+        roles = {r["profile"]: r for r in workspaces.team(ws)["roles"]}
+        self.assertEqual(roles["developer"]["want"], 2)
+        self.assertEqual(roles["architect"]["want"], 1)
+        self.assertEqual(roles["developer"]["missing"], 2)      # no bot yet: two to create
+
+
+if __name__ == "__main__":
+    unittest.main()
