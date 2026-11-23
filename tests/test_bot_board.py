@@ -72,6 +72,167 @@ class EntryPoint(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         return r, self.calls.read_text().splitlines()
 
+    def expose_env(self, board="http://127.0.0.1:8080"):
+        """A board and its keeper on this machine, the keeper pointing at it; run.sh records the BIND it was asked for."""
+        self.installed()
+        (self.cfg / "config").write_text(f'BOARD="{board}"\nKEEPER_HOST="m1"\n')
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\necho "run.sh $* BIND=${BIND:-}" >> "$CALLS"\n')
+        self.fake_curl(0)
+
+    def fake_curl(self, code):
+        """The board's health check: 0 answers, anything else does not."""
+        curl = self.home / "fakebin/curl"
+        curl.write_text(f"#!/usr/bin/env bash\nexit {code}\n"); curl.chmod(0o755)
+
+    def test_expose_moves_the_board_and_this_machines_keeper_together(self):
+        # #796: the board's address, the keeper's BOARD and the printed block change together, in one command
+        self.expose_env()
+        r, calls = self.run_bb("expose", "100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9", "bot keeper install", "bot ps --tsv", "bot restart ada"])
+        cfg = (self.cfg / "config").read_text()
+        self.assertIn('BOARD="http://100.64.0.9:8080"', cfg)
+        self.assertNotIn("127.0.0.1", cfg)
+        self.assertIn('KEEPER_HOST="m1"', cfg)                      # nothing else in the config is touched
+        self.assertIn("Open:         http://100.64.0.9:8080", r.stdout)
+        self.assertIn("its keeper reports to http://100.64.0.9:8080", r.stdout)
+        self.assertIn("http://100.64.0.9:8080/machines", r.stdout)
+        self.assertIn("anyone who can reach 100.64.0.9 on port 8080 can use the board", r.stdout)
+        self.assertIn("BOT_BOARD_INVITE_CODE", r.stdout)
+
+    def test_expose_a_second_time_changes_nothing(self):
+        self.expose_env("http://100.64.0.9:8080")
+        r, calls = self.run_bb("expose", "100.64.0.9", BIND="100.64.0.9")      # the board already listens there (run.sh kept it)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, [])
+        self.assertIn("nothing changed", r.stdout)
+        self.assertEqual((self.cfg / "config").read_text().count("BOARD="), 1)
+
+    def test_expose_refuses_every_interface_unless_asked_and_a_keeper_follows_on_loopback(self):
+        self.expose_env()
+        r, calls = self.run_bb("expose", "0.0.0.0")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--all-interfaces", r.stderr)
+        self.assertEqual(calls, [])
+        r, calls = self.run_bb("expose", "0.0.0.0", "--all-interfaces")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls[0], "run.sh up BIND=0.0.0.0")
+        self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())   # this machine reaches it on loopback
+
+    def test_expose_needs_a_flag_for_a_public_address_and_not_for_a_private_one(self):
+        self.expose_env()
+        for ok in ("10.1.2.3", "192.168.1.5", "172.20.0.4", "100.64.0.9", "100.127.255.1", "169.254.1.1", "my-box.tailnet.ts.net"):
+            r, _ = self.run_bb("expose", ok)
+            self.assertEqual(r.returncode, 0, (ok, r.stderr))
+        (self.cfg / "config").write_text('BOARD="http://127.0.0.1:8080"\n')
+        for bad in ("8.8.8.8", "100.128.0.1", "172.32.0.1", "11.0.0.1"):
+            r, calls = self.run_bb("expose", bad)
+            self.assertNotEqual(r.returncode, 0, bad)
+            self.assertIn("public address", r.stderr)
+            self.assertEqual(calls, [], bad)
+        r, calls = self.run_bb("expose", "8.8.8.8", "--public")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls[0], "run.sh up BIND=8.8.8.8")
+
+    def test_expose_says_so_and_leaves_the_keeper_when_the_board_does_not_answer(self):
+        self.expose_env()
+        self.fake_curl(22)
+        r, calls = self.run_bb("expose", "100.64.0.9", BOT_BOARD_EXPOSE_WAIT="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did not answer at http://100.64.0.9:8080", r.stderr)
+        self.assertIn("bot_board expose 127.0.0.1", r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9"], "the keeper is not moved to an address that does not answer")
+        self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())
+
+    def native_forgejo(self, allowed="127.0.0.1"):
+        """A Forgejo beside the board: its settings allow webhooks to one host, and its control script records its calls."""
+        forgejo = self.home / "forgejo"
+        ini = forgejo / "work/custom/conf/app.ini"
+        ini.parent.mkdir(parents=True)
+        ini.write_text(f"[webhook]\nALLOWED_HOST_LIST = {allowed}\n[log]\nROOT_PATH = /x\n")
+        ctl = self.src / "deploy/forgejo-native"
+        ctl.parent.mkdir(parents=True, exist_ok=True)
+        ctl.write_text('#!/usr/bin/env bash\necho "forgejo-native $1 BOARD=$BOARD" >> "$CALLS"\n'); ctl.chmod(0o755)
+        return forgejo, ini
+
+    def test_expose_lets_a_native_forgejo_deliver_to_the_new_address_and_says_what_is_left(self):
+        # a board with a Forgejo beside it has a fourth address: where Forgejo may deliver its webhook
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        ini.chmod(0o600)
+        old_umask = os.umask(0o022)       # a loose umask must not loosen the file
+        self.addCleanup(os.umask, old_umask)
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 100.64.0.9\n", ini.read_text())
+        self.assertIn("[log]\nROOT_PATH = /x", ini.read_text(), "the rest of the settings stay")
+        self.assertEqual(oct(ini.stat().st_mode & 0o777), "0o600", "app.ini holds secret keys: owner-only, whatever the umask")
+        self.assertIn("forgejo-native stop BOARD=http://100.64.0.9:8080", calls)
+        self.assertIn("forgejo-native start BOARD=http://100.64.0.9:8080", calls)
+        # forge-setup takes its native path only with the environment forgejo-native env gives (FORGEJO_BIN, FORGE ...)
+        self.assertIn('eval "$(BOARD=http://100.64.0.9:8080 bash ', r.stdout)
+        self.assertIn("deploy/forgejo-native env)\"; BOARD=http://100.64.0.9:8080 bash ", r.stdout)
+        self.assertIn("deploy/forge-setup", r.stdout)
+        self.assertIn("it asks for your handle on the board", r.stdout)
+        self.assertIn("events stop reaching threads", r.stdout)
+
+    def test_expose_adds_the_allow_list_when_the_settings_have_none(self):
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        ini.write_text("[webhook]\n[log]\nROOT_PATH = /x\n")
+        r, _ = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(ini.read_text(), "[webhook]\nALLOWED_HOST_LIST = 100.64.0.9\n[log]\nROOT_PATH = /x\n")
+        ini.write_text("[log]\nROOT_PATH = /x\n")
+        (self.cfg / "config").write_text('BOARD="http://127.0.0.1:8080"\n')
+        r, _ = self.run_bb("expose", "100.64.0.8", FORGEJO_DIR=str(forgejo))
+        self.assertTrue(ini.read_text().endswith("[webhook]\nALLOWED_HOST_LIST = 100.64.0.8\n"), ini.read_text())
+
+    def test_expose_leaves_forgejo_alone_when_it_already_allows_the_host_or_there_is_none(self):
+        self.expose_env()
+        forgejo, ini = self.native_forgejo(allowed="100.64.0.9")
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse([c for c in calls if c.startswith("forgejo-native")], calls)
+        self.assertNotIn("site webhook", r.stdout)
+
+    def test_expose_to_every_interface_leaves_forgejo_on_loopback(self):
+        # Forgejo still reaches an all-interfaces board on 127.0.0.1, so its settings are right as they are
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        r, calls = self.run_bb("expose", "0.0.0.0", "--all-interfaces", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 127.0.0.1\n", ini.read_text())
+        self.assertFalse([c for c in calls if c.startswith("forgejo-native")], calls)
+
+    def test_expose_back_to_loopback_puts_forgejo_back_too(self):
+        self.expose_env("http://100.64.0.9:8080")
+        forgejo, ini = self.native_forgejo(allowed="100.64.0.9")
+        r, calls = self.run_bb("expose", "127.0.0.1", FORGEJO_DIR=str(forgejo), BIND="100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 127.0.0.1\n", ini.read_text())
+        self.assertIn("still points at 100.64.0.9", r.stdout)
+
+    def test_expose_leaves_a_keeper_that_reports_to_another_board_alone(self):
+        self.expose_env("http://other-box:8080")
+        r, calls = self.run_bb("expose", "100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9"])
+        self.assertIn('BOARD="http://other-box:8080"', (self.cfg / "config").read_text())
+        self.assertNotIn("its keeper reports", r.stdout)
+
+    def test_expose_needs_a_board_here_and_an_address(self):
+        r, _ = self.run_bb("expose", "100.64.0.9")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("nothing installed here", r.stderr + r.stdout)
+        self.expose_env()
+        r, calls = self.run_bb("expose")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("usage: bot_board expose <address>", r.stderr)
+        r, _ = self.run_bb("expose", "bad address;rm")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(calls, [])
+
     def test_uninstall_names_what_it_acts_on(self):
         r, _ = self.run_bb("uninstall")
         self.assertNotEqual(r.returncode, 0)

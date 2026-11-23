@@ -2858,7 +2858,7 @@ if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
     + boardOrigin + ' bash -s -- install bots';
   machineCopy.disabled = localBoard;
   machineStatus.textContent = localBoard
-    ? 'This board listens on this machine only, so no other machine can reach it. Exposing it takes more than one step (the address it listens on, this machine\\u2019s own keeper, and the restart after a reboot), so it is not given here as one command. The Docker install on a tailnet is in docs/REFERENCE.md, "Reach your fleet from anywhere with Tailscale". Anyone who can reach the board can use it, so use a tailnet or a network you trust.'
+    ? 'This board listens on this machine only, so no other machine can reach it. To expose it, run bot_board expose <address> here (a Tailscale address is best: tailscale ip -4); it moves the board and this machine\\u2019s own keeper together, and this page then shows the command for the other machine. A board in Docker is in docs/REFERENCE.md, "Reach your fleet from anywhere with Tailscale". Anyone who can reach the board can use it, so use a tailnet or a network you trust.'
     : 'Your board address is already filled in.';
 }
 machineCopy.addEventListener('click', async function () {
@@ -3341,7 +3341,7 @@ function listSecrets() {
       // where the boxes stand (#557): who has the board's current set, and whose own environment also holds this name
       var clash = boxes.filter(function (b) { return (b.collisions || []).indexOf(x.name) >= 0; }).map(function (b) { return b.host; });
       var nameCell = sEl('td', {'class': 'mono secret-name', text: x.name});
-      if (clash.length) nameCell.appendChild(sEl('div', {'class': 'sub secret-clash', text: 'also set in the environment of ' + clash.join(', ') + '; the value set here is used'}));
+      if (clash.length) nameCell.appendChild(sEl('div', {'class': 'sub secret-clash', text: 'also set in the environment of ' + clash.join(', ') + '; the value set here is used where the harness reads it'}));
       body.appendChild(sEl('tr', null, nameCell, cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
     });
     var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
@@ -4114,10 +4114,11 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
 
     blocks = "".join(block(*h) for h in HARNESSES)
     machine_note = (
-        "This board listens on this machine only, so no other machine can reach it. Exposing it takes more than one step "
-        "(the address it listens on, this machine\u2019s own keeper, and the restart after a reboot), so it is not given "
-        "here as one command. The Docker install on a tailnet is in <code>docs/REFERENCE.md</code>, \u201cReach your fleet "
-        "from anywhere with Tailscale\u201d. Anyone who can reach the board can use it, so use a tailnet or a network you trust."
+        "This board listens on this machine only, so no other machine can reach it. To expose it, run "
+        "<code>bot_board expose &lt;address&gt;</code> here (a Tailscale address is best: <code>tailscale ip -4</code>); it moves the "
+        "board and this machine\u2019s own keeper together, and this page then shows the command for the other machine. A board "
+        "in Docker is in <code>docs/REFERENCE.md</code>, \u201cReach your fleet from anywhere with Tailscale\u201d. Anyone who can "
+        "reach the board can use it, so use a tailnet or a network you trust."
         if re.match(r"https?://(localhost|127\.0\.0\.1|\[::1\])(:|/|$)", base)
         else "Your board address is already filled in."
     )

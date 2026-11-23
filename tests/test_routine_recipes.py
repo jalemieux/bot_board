@@ -78,8 +78,9 @@ class FakeForgejo(http.server.BaseHTTPRequestHandler):
             return self.reply(200, {"login": "fleet"})
         m = re.fullmatch(r"/api/v1/repos/o/game/(issues|pulls)", u.path)
         if m:
+            name = m.group(1) + ("-closed" if m.group(1) == "pulls" and q.get("state") == ["closed"] else "")
             try:
-                items = json.load(open(os.path.join(self.home, f"forgejo-{m.group(1)}.json")))
+                items = json.load(open(os.path.join(self.home, f"forgejo-{name}.json")))
             except OSError:
                 items = []
             limit, page = min(int(q.get("limit", ["50"])[0]), 2), int(q.get("page", ["1"])[0])
@@ -119,10 +120,12 @@ class Definitions(unittest.TestCase):
     WRITER = {5: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
               6: "89b05609a7b8f8a5d7e7e230c344874340d3d38d374cc6d95548c2c2f5889be0",
               7: "fbf2c26d22ecb05fdf4509d3b9e8a87b3d904a9674f1e9af8c8e6e83c48e9b1f",
-              8: "cad64a2c1268fccd19615e43f598a4046e569132c8923e0a7ae80afdaaa5b463"}
+              8: "cad64a2c1268fccd19615e43f598a4046e569132c8923e0a7ae80afdaaa5b463",
+              9: "cad64a2c1268fccd19615e43f598a4046e569132c8923e0a7ae80afdaaa5b463"}     # a GitHub recipe does not sweep: its writer is v8's
     FORGEJO_WRITER = {6: "26d230031cda07a732e6ce9ddc6b58a9eb79e2ffffb6d8cf47e3e1377a9619b7",
                       7: "64dbc569b8ae89d55355ae8664ab67deefe12f39297e479f6c70020a2c2e48b6",
-                      8: "e739ed0d3b936258da64bbe2e0bf3dbc1be129ac0b64b97a77328c16e1ee72a6"}
+                      8: "e739ed0d3b936258da64bbe2e0bf3dbc1be129ac0b64b97a77328c16e1ee72a6",
+                      9: "a60299e9e4750b09838d9d7f9f4c8eb1cf499173022570d2c6dbc22276d182f9"}
 
     def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
         cli = load_cli()
@@ -422,8 +425,8 @@ class Recipes(unittest.TestCase):
                 self.assertEqual(out.returncode, 1, out.stdout)
                 self.assertIn(shown, out.stderr)
 
-    def forgejo_files(self, issues=None, pulls=None, views=()):
-        for name, items in (("issues", issues), ("pulls", pulls)):
+    def forgejo_files(self, issues=None, pulls=None, views=(), closed=None):
+        for name, items in (("issues", issues), ("pulls", pulls), ("pulls-closed", closed)):
             with open(os.path.join(self.home, f"forgejo-{name}.json"), "w") as fh:
                 json.dump(items or [], fh)
         for v in views:
@@ -447,7 +450,8 @@ class Recipes(unittest.TestCase):
         self.once()
         st = self.state(thread)
         self.assertNotIn("job", st)
-        self.assertEqual(st["watermark"], {"sent": [1, 2, 7, 8]})
+        self.assertEqual(st["watermark"]["sent"], [1, 2, 7, 8])
+        self.assertEqual(sorted(st["watermark"]["posted"]), ["1", "2", "7", "8"], "when each was posted, for the sweep (#795)")
         announced = self.announced(thread)
         self.assertEqual({n: [c for c, _ in v] for n, v in announced.items()}, {1: ["game.art"], 2: ["game"], 7: ["game"], 8: ["game"]})
         body = self.api("GET", f"/api/messages/{announced[7][0][1]}", token=self.human)["message"]["body"]
@@ -467,12 +471,99 @@ class Recipes(unittest.TestCase):
                               cwd=self.tmp.name, env={**os.environ, "HOME": self.home, "BOARD": self.board, "ROUTINE_WATERMARK": "[61]",
                                                       "FORGEJO_TOKEN": FakeForgejo.TOKEN, **(env or {})})
 
+
+    # ---- the sweep (#795): what nobody did with an issue that was announced
+
+    def sweep_check(self, watermark):
+        out = self.run_forgejo_check({"ROUTINE_WATERMARK": json.dumps(watermark)})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)
+
+    def thread(self, complete):
+        """A thread on the board by jac, complete or not: the issue label `thread:<id>` points at it."""
+        root = self.api("POST", "/api/messages", {"channel": "game", "body": "take issue"}, self.human)["message"]
+        if complete:
+            self.api("POST", f"/api/threads/{root['id']}/complete", {"through": root["id"]}, self.human)
+        return root["id"]
+
+    def test_the_sweep_reposts_nudges_and_lists_by_its_rules(self):
+        self.api("GET", "/api/me", token=self.bot)         # ada runs
+        now = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
+        done, open_ = self.thread(True), self.thread(False)
+        recent = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 2 * 86400))
+        fresh = lambda n, labels=(): {**fissue(n, labels), "updated_at": now}
+        self.forgejo_files(
+            issues=[fissue(71), fissue(72), fresh(73), fissue(74, ["needs:jac"]),
+                    fissue(75, ["bot:ada", f"thread:{done}"]), fissue(76, ["bot:ada", f"thread:{open_}"]),
+                    {**fissue(77, ["bot:ada", f"thread:{done}"]), "updated_at": now}, fissue(78), fissue(79), fissue(81, ["claimed"]),
+                    fissue(82, ["needs:jac @all"]), fissue(83, ["needs:nobody-here"]), fissue(84, ["needs:ada"])],
+            pulls=[{"number": 90, "state": "open", "body": "Closes #79."}],
+            closed=[{"number": 91, "state": "closed", "merged": True, "body": "Closes #78.\n\nBoard thread: x"},
+                    {"number": 92, "state": "closed", "merged": False, "body": "Closes #71."}])
+        sent = [71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84]
+        got = self.sweep_check({"sent": sent, "posted": {"72": recent}})
+        kinds = {(i["number"], i["kind"]) for i in got["items"] if "kind" in i}
+        self.assertEqual(kinds, {(71, "repost"), (74, "repost"), (75, "nudge"), (78, "finished"), (82, "repost"), (83, "repost"), (84, "repost")},
+                         "free and quiet reposts (a closed unmerged PR does not finish it); 72 was posted 2 days ago, 73 and 77 are not quiet, "
+                         "76's thread is not complete, 79 has an open PR, 81 is claimed; 78 is finished, so it is not offered as free")
+        by = {i["number"]: i for i in got["items"] if "kind" in i}
+        self.assertEqual(by[74].get("needs"), "jac")
+        self.assertNotIn("needs", by[71])
+        for n in (82, 83, 84):     # not a handle, a handle the board does not know, a bot: all are plain free issues
+            self.assertNotIn("needs", by[n], n)
+        self.assertEqual((by[75]["owner"], by[75]["thread"]), ("ada", done))
+        mark = got["watermark"]
+        self.assertEqual((sorted(mark["posted"]), sorted(mark["nudged"]), sorted(mark["listed"])), (["71", "72", "74", "82", "83", "84"], ["75"], ["78"]))
+        # the next pass with that watermark does none of it again
+        again = self.sweep_check(mark)
+        self.assertEqual([i for i in again["items"] if "kind" in i], [])
+
+    def test_the_sweep_posts_where_it_should(self):
+        self.api("GET", "/api/me", token=self.bot)
+        rc = {"type": "forgejo-issues", "forgejo": self.forgejo, "repo": "o/game", "workspace": "game", "batch": 5}
+        thread = self.api("POST", "/api/routines", {"name": "sweep", "recipe": rc, "every": 1}, self.human)["id"]
+        self.assertEqual(self.api("GET", f"/api/routines/{thread}")["recipe"]["stale_days"], 3)
+        self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
+        done = self.thread(True)
+        self.forgejo_files(issues=[{**fissue(71), "title": "ping @everyone about 71"}, {**fissue(74, ["needs:jac"]), "title": "decide @everyone 74"},
+                                   {**fissue(75, ["bot:ada", f"thread:{done}"]), "title": "mention @everyone 75"}, {**fissue(78), "title": "done @everyone 78"}],
+                           closed=[{"number": 91, "state": "closed", "merged": True, "body": "Fixes #78"}])
+        # the routine has announced these before: a watermark that says so, and nothing posted since
+        self.once()                                                    # first pass announces the new ones: 71, 74, 78 (75 is ada's)
+        self.state(thread, lambda st: st.update(checked_at=0, watermark={"sent": [71, 74, 75, 78]}))
+        self.once()
+        general = self.channel("game")
+        mine = [m for m in general if m["meta"].get("routine") == thread]
+        again = [m for m in mine if m["body"].startswith("Still open and nobody has it: #71")]
+        self.assertEqual(len(again), 1)
+        self.assertIn("`bot:<your handle>`", again[0]["body"], "a free issue is posted like a new one")
+        needs = [m for m in mine if m["body"].startswith("Waiting on @jac: #74")]
+        self.assertEqual(len(needs), 1)
+        self.assertEqual((needs[0]["meta"]["needs"], needs[0]["meta"]["ask"]), ("jac", "#74 decide everyone 74: your decision"))
+        listing = [m for m in mine if m["meta"].get("sweep") == "finished"]
+        self.assertEqual(len(listing), 1)
+        self.assertIn("#78", listing[0]["body"])
+        self.assertNotIn("#71", listing[0]["body"])
+        nudge = [m for m in self.api("GET", f"/api/threads/{done}", token=self.human)["messages"] if m["meta"].get("sweep") == "nudge"]
+        self.assertEqual(len(nudge), 1)
+        self.assertEqual(nudge[0]["reply_to"], done)
+        self.assertIn("mention everyone 75", nudge[0]["body"])
+        self.assertIn("@ada #75", nudge[0]["body"])
+        self.assertIn("take your label off", nudge[0]["body"])
+        # a title from the forge cannot mention anyone, in any of the posts
+        self.assertIn("ping everyone", [m for m in mine if "ping everyone" in m["body"]][0]["body"])
+        self.assertTrue(all("@everyone" not in m["body"] for m in mine + nudge))
+        # and none of it again on the next pass
+        before = len(self.channel("game"))
+        self.state(thread, lambda st: st.update(checked_at=0)); self.once()
+        self.assertEqual(len(self.channel("game")), before)
+
     def test_forgejo_out_of_reach_is_no_work_and_a_refused_token_or_missing_repo_stops_the_routine(self):
         self.forgejo_files(issues=[fissue(61), fissue(62), fissue(63)])
         out = self.run_forgejo_check()
         got = json.loads(out.stdout)
-        self.assertEqual([i["number"] for i in got["items"]], [62, 63], out.stderr)     # three pages of two, one sent before
-        self.assertEqual(got["watermark"], {"sent": [61, 62, 63]})
+        self.assertEqual([i["number"] for i in got["items"] if "kind" not in i], [62, 63], out.stderr)     # three pages of two, one sent before
+        self.assertEqual(got["watermark"]["sent"], [61, 62, 63])
         fail = os.path.join(self.home, "forgejo-fail")
         try:
             for code in (502, 503, 504):
