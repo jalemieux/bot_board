@@ -232,6 +232,8 @@ class Board(unittest.TestCase):
         self.assertEqual({h for _, h in team}, {'codex'})
         again = self.report(bots=[{'handle': 'ada', 'harness': 'codex', 'status': 'waiting'}], ask={'harness': 'codex'})
         self.assertEqual(len([w for w in again['want'] if w['workspace'] == 'general']), len(team))
+        [q] = [m for m in self.client.get('/api/messages?channel=general', headers=self.keeper).json()['messages'] if (m['meta'] or {}).get('kind') == 'first_run_question']
+        self.assertIn('What are you building?', q['body'])      # asked once, from the board (#650 part 2c)
 
     def test_with_no_admin_profile_the_first_bot_still_starts(self):
         self.make_admin()

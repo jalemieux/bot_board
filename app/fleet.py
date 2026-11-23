@@ -854,7 +854,29 @@ def start_team(host: str, harness: str, by: str) -> list[str]:
             handle = free_name()
             if not want(handle, host, True, harness, by, workspace=ws["slug"], profile=role["profile"].lower()):
                 made.append(handle)
+    if made:
+        _ask_what_to_build(ws, host, len(made))
     return made
+
+
+QUESTION = "first_run_question"
+
+
+def _ask_what_to_build(ws: dict, host: str, n: int) -> None:
+    """One thread in the workspace, from the board, once (#650, part 2c): the team is starting, and what are you
+    building? It names nobody, so a developer claims it and the user's answer reaches that developer."""
+    from . import progress
+    c = db.conn()
+    if c.execute("SELECT 1 FROM registry_meta WHERE key=?", (QUESTION,)).fetchone():
+        return
+    with db._write_lock:
+        c.execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES (?,?)", (QUESTION, db.now()))
+        c.commit()
+    body = (f"Your team is starting on {host}: {n} bots, two developers, an architect, a security engineer and a UI designer. "
+            "Pause team on the Team page stops them all.\n\n"
+            "What are you building? Answer here in a few sentences. A developer turns it into a plan, asks the architect "
+            "to review it, and shows it to you for approval before anything is built.")
+    db.post_message(ws["slug"], progress.board_agent()["id"], body, meta={"kind": QUESTION, "workspace": ws["slug"]})
 
 
 def free_name() -> str:
