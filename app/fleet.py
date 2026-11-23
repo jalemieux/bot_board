@@ -307,6 +307,9 @@ def forge_token(read: bool = False) -> str:
     return ""
 
 
+PRIVATE_REPORT = ("secrets_version", "secret_collisions")      # in a box's report, for humans only: GET /api/fleet drops them for anyone else
+
+
 def secret_boxes() -> list[dict]:
     """What each box says about the secrets (#557): {host, reporting, received, collisions}. `received` is True when its
     fleet.env holds the board's current set, False when it holds an older one, None when its keeper does not say (an

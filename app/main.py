@@ -1028,9 +1028,13 @@ def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dic
 
 
 @app.get("/api/fleet", tags=["fleet"])
-def fleet_hosts(_: dict | None = Depends(optional_agent)) -> dict:
-    """Every box a keeper has reported, with its load and its bots."""
-    return {"hosts": fleet.hosts(), "stale_after": fleet.STALE_AFTER}
+def fleet_hosts(agent: dict | None = Depends(optional_agent)) -> dict:
+    """Every box a keeper has reported, with its load and its bots. What a box says about its secrets (a hash of the set it
+    holds, the names its environment also holds) goes to a human only (#557)."""
+    hosts = fleet.hosts()
+    if not (agent and agent["kind"] == "human"):
+        hosts = [{k: v for k, v in h.items() if k not in fleet.PRIVATE_REPORT} for h in hosts]
+    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER}
 
 
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
