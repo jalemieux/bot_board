@@ -31,7 +31,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
-from . import activity, db, fleet, forge, guide, web, workspaces, routines, images, versions, registry, progress, hooks, team
+from . import activity, db, fleet, forge, guide, web, welcome_web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -2641,6 +2641,13 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
         max_image_attachment_bytes=images.MAX_BYTES,
         max_file_attachment_bytes=MAX_FILE_ATTACHMENT_BYTES,
     )
+
+
+@app.get("/welcome", response_class=HTMLResponse, include_in_schema=False)
+def page_welcome() -> str:
+    """The first-run guide. It shows whatever the saved state is when a person opens it on purpose; the board page's script
+    sends the signed-in person here only while it is pending (web.FIRST_RUN_REDIRECT_JS)."""
+    return welcome_web.welcome_page(BOARD_NAME)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)

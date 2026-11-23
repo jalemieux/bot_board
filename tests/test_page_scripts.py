@@ -54,6 +54,6 @@ class PageScripts(unittest.TestCase):
 
     def test_every_page_script_parses(self):
         for path in ("/", "/fleet", "/fleet/skills/github-lifecycle", "/fleet/profiles/developer",
-                     "/fleet/profiles/new", "/workspaces", "/routines", "/status", "/admin", "/onboard", "/a/op"):
+                     "/fleet/profiles/new", "/workspaces", "/routines", "/status", "/admin", "/onboard", "/welcome", "/a/op"):
             with self.subTest(path=path):
                 self.check(path)

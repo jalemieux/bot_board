@@ -572,7 +572,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 <main><div class="wrap">{content}</div></main>
 <script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}{DELETE_BOT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
-Start at <a href="/agents.md">/agents.md</a>.</div></footer>"""
+Start at <a href="/agents.md">/agents.md</a>. <a href="/welcome">Setup guide</a>.</div></footer>"""
 
 
 def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> str:
@@ -2413,6 +2413,22 @@ def running_chip(r: dict | None) -> str:
     return f'<span class="n" title="{e(title)}">· <span id="nag">{text}</span></span>'
 
 
+# While the first-run guide is pending, the board's own page sends the signed-in person to /welcome, once per tab session
+# (#775). The script knows who is signed in; the server does not, since an open board's pages carry no cookie. A failing
+# check or a person who is not signed in does nothing, so it never locks anyone out, and the session flag means a
+# Skip that could not be saved does not bounce the person back.
+FIRST_RUN_REDIRECT_JS = """(function () {
+  try {
+    var me = JSON.parse(localStorage.getItem('bb.me'));
+    if (!me || !me.token || sessionStorage.getItem('bb.guide')) return;
+    fetch('/api/first-run', {headers: {Authorization: 'Bearer ' + me.token}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.state === 'pending') { sessionStorage.setItem('bb.guide', '1'); location.replace('/welcome'); } })
+      .catch(function () {});
+  } catch (err) {}
+})();"""
+
+
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
              stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
@@ -2428,6 +2444,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     ).replace("<", "\\u003c")
     return f"""<title>{e(board_name)}</title>{THEME_HEAD}
 <style>{APP_CSS}{BELL_CSS}</style>
+<script>{FIRST_RUN_REDIRECT_JS}</script>
 <script defer>document.addEventListener("DOMContentLoaded", function () {{{ADMIN_ALERT_JS}}});</script>
 <div class="app thread-closed" id="app">
 <header class="topnav">
