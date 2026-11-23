@@ -11,6 +11,7 @@ the board page, #660) are built as HTML with every value escaped.
 from __future__ import annotations
 
 from .web import shell, sheet_css, WS_SWITCHER_JS
+from .workspace_routines_web import ROUTINES_CSS, ROUTINES_JS
 
 WS_CSS = """
 .ws .l2{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
@@ -294,7 +295,7 @@ function workspaceBar(current, tab) {
     try { localStorage.setItem('bb.scope', JSON.stringify(w)); } catch (e) {}
     location.href = '/workspaces/' + encodeURIComponent(w);
   });
-  var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge'], ['activity', 'Activity']].map(function (t) {
+  var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge'], ['activity', 'Activity'], ['routines', 'Routines']].map(function (t) {
     return h('a', {href: '#' + t[0], 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
   }));
   return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('span', {'class': 'lab', text: 'Workspace'}), h('div', {'class': 'wsw'}, btn, menu), tabs);
@@ -303,7 +304,7 @@ function wsView() {
   api('GET', '/api/workspaces/' + encodeURIComponent(SLUG)).then(function (d) {
     var w = d.workspace, shown = null;
     var draw = function () {
-      var tab = location.hash === '#channels' ? 'channels' : location.hash === '#activity' ? 'activity' : 'team';
+      var tab = location.hash === '#channels' ? 'channels' : location.hash === '#activity' ? 'activity' : /^#routines(\/\d+)?$/.test(location.hash) ? 'routines' : 'team';
       if (tab === shown) return; shown = tab;
       root.textContent = '';
       root.appendChild(workspaceBar(w.slug, tab));
@@ -311,6 +312,7 @@ function wsView() {
       if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
       if (tab === 'team') { teamView(w); return; }
       if (tab === 'activity') { activityView(w); return; }
+      if (tab === 'routines') { routinesView(w); return; }
       root.appendChild(knowledgeNote(w));
       root.appendChild(channelsSection(w));
       root.appendChild(knowledgeSection(w));
@@ -1263,6 +1265,10 @@ function deleteSection(w) {
 if (SLUG) wsView(); else listView();
 })();
 """
+
+# the Routines tab (#820) lives in its own module and is joined in here
+WS_CSS += ROUTINES_CSS
+WS_JS = WS_JS.replace("// The Team tab (#645): the agreement first", ROUTINES_JS + "// The Team tab (#645): the agreement first", 1)
 
 
 def workspaces_page(name: str) -> str:
