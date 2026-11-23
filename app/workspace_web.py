@@ -231,7 +231,7 @@ function listView() {
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     if (moved) {
-      if (movedFrom === 'routines') root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'Routines moved: each workspace has a Routines tab, the Admin workspace too.'}));
+      if (movedFrom === 'routines') root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The routines page moved. Each workspace has a Routines tab, the Admin workspace too: open one to see its routines. The ones the board ships, such as the daily review, are in the Admin workspace.'}));
       else root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and Configuration have their own pages in the top bar.'}));
       history.replaceState(null, '', '/workspaces');
     }

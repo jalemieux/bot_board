@@ -20,5 +20,5 @@ MOVED_JS = r"""
 
 def routines_moved_page(board_name: str) -> str:
     return shell(board_name, "workspaces", here="/workspaces", content=
-                 '<p class="sub">Routines moved: each workspace has a Routines tab. <a href="/workspaces?from=routines">Open the workspaces</a>.</p>'
+                 '<p class="sub">The routines page moved. Each workspace has a Routines tab, the Admin workspace too. <a href="/workspaces?from=routines">Open the workspaces</a>.</p>'
                  '<script>' + MOVED_JS + '</script>')
