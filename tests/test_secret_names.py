@@ -1,5 +1,5 @@
 """The rule for a fleet secret's name is spelled in five places (the board, the keeper, bin/bot twice, the
-Configuration form). They must agree: GH_TOKEN and FORGEJO_URL pass; FORGEJO_URLS, PATH and BOARD do not (#632)."""
+Configuration page's script). They must agree: GH_TOKEN and FORGEJO_URL pass; FORGEJO_URLS, PATH and BOARD do not (#632)."""
 import re
 import subprocess
 import sys
@@ -40,7 +40,7 @@ class SecretNames(unittest.TestCase):
         self.check(lambda n: subprocess.run(["grep", "-E", ere], input=n + "\n", text=True, capture_output=True).returncode == 0)
 
     def test_the_configuration_form(self):
-        rx = re.compile(spelled("app/web.py", r'name="name" placeholder="GH_TOKEN" aria-label="name" pattern="([^"]+)"'))
+        rx = re.compile(spelled("app/web.py", r"var SECRET_NAME = /\^(.+)\$/;"))
         self.check(lambda n: rx.fullmatch(n))
 
 
