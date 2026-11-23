@@ -269,6 +269,13 @@ def secret_values() -> dict[str, str]:
     return {r["name"]: r["value"] for r in db.conn().execute("SELECT name, value FROM fleet_secrets ORDER BY name")}
 
 
+def forge_url() -> str:
+    """The forge's web address (FORGEJO_URL, #632), or "" when none is set. It is an address, not a secret:
+    this reads that one name and no other."""
+    r = db.conn().execute("SELECT value FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchone()
+    return r["value"].strip().rstrip("/") if r else ""
+
+
 def secrets_version() -> str:
     """Changes whenever a secret is added, replaced or removed; keepers fetch the values when it does."""
     return hashlib.sha256(json.dumps(secret_values(), sort_keys=True).encode()).hexdigest()[:16]
