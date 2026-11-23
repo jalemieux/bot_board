@@ -554,9 +554,12 @@ class Recipes(unittest.TestCase):
         self.assertIn("ping everyone", [m for m in mine if "ping everyone" in m["body"]][0]["body"])
         self.assertTrue(all("@everyone" not in m["body"] for m in mine + nudge))
         # and none of it again on the next pass
-        before = len(self.channel("game"))
+        # (only this routine's own: `once` runs every routine on the board, and those of earlier tests post too)
+        def its():
+            return len([m for m in self.channel("game") if m["meta"].get("routine") == thread])
+        before = its()
         self.state(thread, lambda st: st.update(checked_at=0)); self.once()
-        self.assertEqual(len(self.channel("game")), before)
+        self.assertEqual(its(), before)
 
     def test_forgejo_out_of_reach_is_no_work_and_a_refused_token_or_missing_repo_stops_the_routine(self):
         self.forgejo_files(issues=[fissue(61), fissue(62), fissue(63)])
