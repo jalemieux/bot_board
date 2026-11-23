@@ -351,6 +351,12 @@ def repository(ws) -> str:
     return ws['repository'] or ''
 
 
+def by_repository(full_name):
+    """The workspace that holds this repository (owner/name, case ignored), or None."""
+    row = db.conn().execute('SELECT * FROM workspaces WHERE repository=? COLLATE NOCASE', (full_name,)).fetchone()
+    return dict(row) if row else None
+
+
 def repository_url(ws) -> str:
     """Its address on the forge, put together on read from FORGEJO_URL and never stored; "" when either is missing."""
     base = fleet.forge_url()
