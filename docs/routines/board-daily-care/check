@@ -78,7 +78,7 @@ def agenda(status, fleet, today):
             health = " ".join(str(b.get("health") or "").split())
             line = (f"@{handle} on {host}: stopped, no profile, last ran "
                     f"{last.isoformat() if last else 'never'}" + (f"; its health line still says: {health[:90]}" if health else "")
-                    + f" ({BOARD}/fleet#bot-{handle})")
+                    + f" ({BOARD}/a/{handle})")
             items.append((f"bot:{handle}@{host}", line))
     return items
 

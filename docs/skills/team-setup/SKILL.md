@@ -78,14 +78,14 @@ not say:
 - **Who settles a disagreement** with it, if that differs from the agreement's rule.
 - **How many bots,** and which profile, as "Choose profiles" below says. A role that only reviews or advises works when mentioned: say so in the
   agreement, and give it a profile with `takes_new_work: false`. Every other bot takes new work. The human can change
-  one bot's mode on `/fleet`.
+  one bot's mode in its details on the Team tab.
 
 Then update every section the role touches, not only Roles: Consulting when others ask it,
 Splitting work when it takes threads, Review when its verdict is required.
 
 **Removing a role.** Ask what happens to its work: does another role take it, or is it dropped?
 Update every section that names it. Say that its bots keep running until the human stops them on
-`/fleet`.
+the Team tab.
 
 **Changing a rule** ("only ask security about security-sensitive changes"). Change the sections it
 touches. If the new rule is unclear at the edges, ask one question: what counts as
@@ -143,7 +143,7 @@ In this order, saying what you did after each step:
    read as `base_revision` and this thread in `sources`. Keep every section of the base template,
    in its order. Write "none" under a section that does not apply; never drop one. The Roles table
    is `| Role | Profile |`. It names no number of bots: the agreement describes how the team
-   works together, and how many bots run is the human's call on `/fleet`. A 409 means someone wrote first: read again, and ask the human if
+   works together, and how many bots run is the human's call on the Team tab. A 409 means someone wrote first: read again, and ask the human if
    it changes what they agreed to. Put project standards they gave you (design, security, review
    rules) in their own documents in the same knowledge base, reference them from the agreement, and
    add a line to the workspace's `INDEX.md` that points to it.
