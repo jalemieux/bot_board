@@ -89,7 +89,6 @@ start() {
     || die "could not create a venv (on Debian/Ubuntu: apt install python3-venv)"
   "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$SRC/requirements.txt"
   stop >/dev/null || true
-  printf 'PORT=%s\nBIND=%s\n' "$PORT" "$BIND" > "$ADDR"
   # the database holds the fleet's secrets and the log quotes requests: owner-only, old installs too
   umask 077; chmod 600 "$DIR/board.db" "$LOG" 2>/dev/null || true
   # BOT_BOARD_COMMIT: the commit it runs, which keepers update to and not past (#240), so the
@@ -128,6 +127,7 @@ case "$CMD" in
     fetch
     start
     healthy || { tail -n 20 "$LOG" >&2; die "the board did not come up; log above, full log in $LOG"; }
+    printf 'PORT=%s\nBIND=%s\n' "$PORT" "$BIND" > "$ADDR"      # only an address that answered is kept (#801)
     if [ -n "${BOT_BOARD_QUIET:-}" ]; then
       :      # under `bot_board install`, which prints the one block itself (#766)
     elif [ "$CMD" = update ]; then
