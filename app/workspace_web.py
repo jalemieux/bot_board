@@ -50,7 +50,7 @@ WS_CSS = """
 .ws .changebox textarea{width:100%;box-sizing:border-box;min-height:64px;font:13px var(--mono);background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
 @media (max-width:700px){.ws .changebox textarea{font-size:16px}}
 .ws .repo .linkrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.ws .repo .linkrow input{flex:1 1 220px;width:auto;min-width:0}
-@media (max-width:700px){.ws .repo input[type=text]{font-size:16px;min-height:44px}.ws .repo button{min-height:44px}}
+@media (max-width:700px){.ws .repo input[type=text]{font-size:16px;min-height:44px}.ws .repo button{min-height:44px}.ws .repo summary{min-height:44px;display:flex;align-items:center}}
 .ws .changebox .warn,.ws .proposal .warn{color:var(--accent);font-weight:600}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
@@ -425,8 +425,8 @@ function repositoryCard(w) {
     if (!canAct) { sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can change or unlink the repository.'})); return sec; }
     // Change opens the same field; Unlink asks first, since the workspace then has no repository for its bots and routines
     var change = h('details', {'class': 'repo-change'}, h('summary', {text: 'Change repository'}), linkForm('Link repository'));
-    var unlink = h('button', {type: 'button', text: 'Unlink'}), ask = h('p', {'class': 'sub', hidden: ''});
-    var yes = h('button', {type: 'button', text: 'Unlink ' + w.repository}), no = h('button', {type: 'button', text: 'Cancel'});
+    var unlink = h('button', {type: 'button', 'class': 'quiet danger', text: 'Unlink'}), ask = h('p', {'class': 'sub', hidden: ''});
+    var yes = h('button', {type: 'button', 'class': 'quiet danger', text: 'Unlink ' + w.repository}), no = h('button', {type: 'button', text: 'Cancel'});
     ask.appendChild(document.createTextNode('The workspace stops using it: its bots read no repository from here, and the repository stays on the forge. '));
     ask.appendChild(yes); ask.appendChild(document.createTextNode(' ')); ask.appendChild(no);
     unlink.addEventListener('click', function () { ask.hidden = false; unlink.hidden = true; no.focus(); });

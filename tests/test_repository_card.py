@@ -50,6 +50,7 @@ assert.deepEqual(calls[0], ['PUT', '/api/workspaces/game/repository', {repositor
 const unlink = sec.all('button').find(b => b.textContent === 'Unlink');
 const yes = sec.all('button').find(b => b.textContent === 'Unlink jac/old'), no = sec.all('button').find(b => b.textContent === 'Cancel');
 assert.equal(calls.length, 1, 'nothing sent yet');
+assert.equal(unlink.attrs['class'], 'quiet danger'); assert.equal(yes.attrs['class'], 'quiet danger');
 unlink.click(); assert.equal(unlink.hidden, true); assert.equal(no.focused, true, 'the safe button has focus');
 no.click(); assert.equal(unlink.hidden, false);
 unlink.click(); yes.click();
