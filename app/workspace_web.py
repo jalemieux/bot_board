@@ -26,6 +26,16 @@ WS_CSS = """
 .ws #wsmenu li.bw{display:none;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
 .ws #wsmenu .here-note,.ws #wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
 .ws #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px}
+.ws .actstrip{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:12px 0}
+.ws .actstrip .stat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:inherit;text-align:left}
+.ws .actstrip button.stat{cursor:pointer;min-height:44px}.ws .actstrip button.stat[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.ws .actstrip .stat b{font:600 20px var(--mono)}.ws .actstrip .stat span{color:var(--dim);font-size:12px}
+.ws .actfeed{list-style:none;margin:0 0 12px;padding:0}.ws .actfeed .ev{display:grid;grid-template-columns:72px 20px 1fr;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.ws .actfeed .day{padding:10px 0 4px;font:600 12px var(--mono);color:var(--dim);border-top:1px solid var(--line)}.ws .actfeed .day+.ev{border-top:0}
+.ws .actfeed time{color:var(--dim);font:12px var(--mono)}.ws .actfeed .ic{text-align:center;color:var(--accent)}
+.ws .activity .warn{padding:10px 12px;margin:8px 0;border-left:4px solid var(--accent);background:var(--accent-soft)}
+.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:32px}@media (max-width:700px){.ws .activity .quiet,.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:44px}}
+.ws .activity .empty{padding:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .ws .tabs{display:flex;gap:4px 18px}
 .ws .tabs a{padding:6px 2px;color:var(--ink);text-decoration:none;border-bottom:2px solid transparent}
 .ws .tabs a[aria-current=page]{border-color:var(--accent);font-weight:600}
@@ -277,7 +287,7 @@ function workspaceBar(current, tab) {
     try { localStorage.setItem('bb.scope', JSON.stringify(w)); } catch (e) {}
     location.href = '/workspaces/' + encodeURIComponent(w);
   });
-  var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge']].map(function (t) {
+  var tabs = h('div', {'class': 'tabs'}, [['team', 'Team'], ['channels', 'Channels and knowledge'], ['activity', 'Activity']].map(function (t) {
     return h('a', {href: '#' + t[0], 'aria-current': t[0] === tab ? 'page' : null, text: t[1]});
   }));
   return h('nav', {'class': 'l2', 'aria-label': 'workspace'}, h('span', {'class': 'lab', text: 'Workspace'}), h('div', {'class': 'wsw'}, btn, menu), tabs);
@@ -286,13 +296,14 @@ function wsView() {
   api('GET', '/api/workspaces/' + encodeURIComponent(SLUG)).then(function (d) {
     var w = d.workspace, shown = null;
     var draw = function () {
-      var tab = location.hash === '#channels' ? 'channels' : 'team';
+      var tab = location.hash === '#channels' ? 'channels' : location.hash === '#activity' ? 'activity' : 'team';
       if (tab === shown) return; shown = tab;
       root.textContent = '';
       root.appendChild(workspaceBar(w.slug, tab));
       root.appendChild(h('h1', null, w.name || w.slug, w.archived ? h('span', {'class': 'badge archived', text: 'archived'}) : null));
       if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
       if (tab === 'team') { teamView(w); return; }
+      if (tab === 'activity') { activityView(w); return; }
       root.appendChild(knowledgeNote(w));
       root.appendChild(channelsSection(w));
       root.appendChild(knowledgeSection(w));
@@ -301,6 +312,87 @@ function wsView() {
     };
     window.addEventListener('hashchange', draw); draw();
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
+}
+// The Activity tab (#738, option A): what happened in the last 24 hours, as counts and one feed. A click on a count
+// narrows the feed to that kind. Everything from the forge is put on the page as text, and a link is made only when its
+// address starts with http, https or /: a forge cannot send a script: address into a href.
+var ACT_STATS = [['merged', 'PRs merged'], ['opened', 'PRs and issues opened'], ['closed', 'issues closed'], ['review', 'reviews'],
+                 ['commit', 'commits'], ['thread', 'threads started or completed'], ['message', 'messages'], ['bots', 'bots active']];
+var ACT_ICON = {merged: '\u2713', opened: '+', closed: '\u2713', review: '\u25cf', commit: '\u2325', thread: '\u2022'};
+function safeHref(u) { u = u || ''; return /^(https?:\/\/|\/(?![\/\\]))/.test(u) && !/[\\\u0000-\u001f\u007f]/.test(u) ? u : null; }
+function dayName(t) {      // "Today", "Yesterday", else the date: a 24-hour window spans two days
+  var midnight = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+  var days = Math.round((midnight(new Date()) - midnight(t)) / 86400000);
+  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : t.toLocaleDateString([], {month: 'short', day: 'numeric'});
+}
+function activityView(w) {
+  var sec = h('section', {'class': 'activity'}), body = h('div', {'aria-live': 'polite'}), filter = null;
+  sec.appendChild(h('h2', null, 'Activity'));
+  sec.appendChild(body);
+  root.appendChild(sec);
+  var load = function () {
+    body.textContent = '';
+    body.appendChild(h('p', {'class': 'sub', 'aria-busy': 'true', text: 'Loading the last 24 hours\u2026'}));
+    api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/activity?hours=24').then(function (d) { draw(d.activity); })
+      .catch(function (e) {
+        body.textContent = '';
+        var retry = h('button', {type: 'button', 'class': 'quiet', text: 'Retry'}); retry.addEventListener('click', load);
+        body.appendChild(h('p', {'class': 'msg-err', role: 'alert'}, e.message + ' ', retry));
+      });
+  };
+  var draw = function (a) {
+    body.textContent = '';
+    var since = new Date(a.since);
+    body.appendChild(h('p', {'class': 'sub', title: since.toISOString(), text: 'Since ' + since.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' \u00b7 last ' + a.hours + ' hours'}));
+    if (a.forge === 'none') {
+      body.appendChild(h('div', {'class': 'warn', role: 'status'}, h('b', null, 'No repository is linked to ' + (w.name || w.slug) + '. '),
+        'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. ', h('a', {href: '#team', text: 'A manager can have the board create one on the Team tab.'})));
+    } else if (a.forge === 'down') {
+      var retry = h('button', {type: 'button', 'class': 'quiet', text: 'Retry'}); retry.addEventListener('click', load);
+      body.appendChild(h('div', {'class': 'warn', role: 'alert'}, h('b', null, 'The forge did not answer. '),
+        'Showing threads and messages from the board only. Pull requests, issues, reviews and commits will appear when it answers. ', retry,
+        h('details', null, h('summary', {text: 'Details'}), h('span', {'class': 'sub', text: a.reason}))));
+    }
+    if (!a.events.length && !a.counts.message) {
+      body.appendChild(h('div', {'class': 'empty'}, h('h3', {text: 'Nothing in the last ' + a.hours + ' hours'}),
+        h('p', {text: 'No ' + (a.forge === 'ok' ? 'pull request, issue, commit, ' : '') + 'thread or message in ' + (w.name || w.slug) + ' in this time.'})));
+    } else {
+      var strip = h('div', {'class': 'actstrip'}), feed = h('ul', {'class': 'actfeed'});
+      var fill = function () {
+        feed.textContent = '';
+        var shown = a.events.filter(function (e) { return !filter || e.kind === filter; }), day = '';
+        shown.forEach(function (e) {
+          var href = safeHref(e.url), when = new Date(e.at), d = dayName(when);
+          if (d !== day) { day = d; feed.appendChild(h('li', {'class': 'day', text: d})); }
+          feed.appendChild(h('li', {'class': 'ev ' + e.kind},
+            h('time', {datetime: e.at, title: when.toISOString(), text: when.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}),
+            h('span', {'class': 'ic', 'aria-hidden': 'true', text: ACT_ICON[e.kind] || '\u2022'}),
+            h('div', null, href ? h('a', {href: href, rel: 'noopener noreferrer', text: e.text}) : h('span', {text: e.text}),
+              h('div', {'class': 'sub', text: e.by ? '@' + e.by : 'author not named'}))));
+        });
+        if (filter) feed.insertBefore(h('li', {'class': 'sub', text: 'Showing ' + shown.length + ' of ' + a.events.length + '.'}), feed.firstChild);
+        if (!shown.length) feed.appendChild(h('li', {'class': 'sub', text: filter ? 'Nothing of that kind in this time.' : 'Nothing to list.'}));
+      };
+      ACT_STATS.forEach(function (s) {
+        if (a.counts[s[0]] === undefined) return;       // the forge's counts are absent, not zero, when the forge is
+        var n = h('b', {text: String(a.counts[s[0]])}), label = h('span', {text: s[1]});
+        if (a.events.some(function (e) { return e.kind === s[0]; })) {
+          var b = h('button', {type: 'button', 'class': 'stat', 'aria-pressed': String(filter === s[0])}, n, label);
+          b.addEventListener('click', function () {
+            filter = filter === s[0] ? null : s[0];
+            Array.prototype.forEach.call(strip.querySelectorAll('button'), function (x) { x.setAttribute('aria-pressed', 'false'); });
+            if (filter) b.setAttribute('aria-pressed', 'true');
+            fill();
+          });
+          strip.appendChild(b);
+        } else strip.appendChild(h('div', {'class': 'stat'}, n, label));
+      });
+      body.appendChild(strip); body.appendChild(feed); fill();
+    }
+    body.appendChild(h('p', {'class': 'sub', text: (a.forge === 'ok' ? 'Pull requests, issues, reviews and commits come from ' + a.repository + ' on the forge; threads and messages come from the board.' + (a.capped ? ' This repository is busy: the forge lists are cut at fifty items, so the counts are at least these.' : '')
+      : 'Threads and messages come from the board.')}));
+  };
+  load();
 }
 // The Team tab (#645): the agreement first, then the bots under the roles the agreement names.
 // The workspace's repository (#715): its link when it has one, else a manager can have the board create it.

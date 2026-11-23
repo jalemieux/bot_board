@@ -72,6 +72,12 @@ class Activity(unittest.TestCase):
         self.assertEqual([e["by"] for e in a["events"] if e["kind"] == "commit"], [""])         # unknown reads as unknown
         self.assertEqual([e["at"] for e in a["events"]], sorted((e["at"] for e in a["events"]), reverse=True))
 
+    def test_capped_is_judged_for_the_callers_window(self):
+        pulls = [{"number": n, "updated_at": "2026-11-%02dT10:00:00Z" % (23 - n // 8)} for n in range(50)]      # full list, newest first
+        data = {**FORGE, "pulls": pulls}
+        self.assertTrue(activity._capped(data, datetime(2026, 11, 16, tzinfo=timezone.utc)))       # the oldest is inside this window
+        self.assertFalse(activity._capped(data, datetime(2026, 11, 23, tzinfo=timezone.utc)))      # and outside this shorter one
+
     def test_a_forge_that_does_not_answer_leaves_the_boards_part_and_says_why(self):
         workspaces.set_repository("general", "jac/x", self.agent)
         self.ws = workspaces.find("general")
