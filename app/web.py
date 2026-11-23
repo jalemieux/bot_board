@@ -66,6 +66,16 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .me a{color:var(--dim)}
 .topnav .me .dot{margin-right:6px}
 """
+def sheet_css(sel: str) -> str:
+    """A sheet from the bottom of a phone screen for `sel` (#647): a scrim over the page and a panel under the rows. The sheet
+    is its own stacking context, so the scrim (::before) and the panel (::after) both sit behind its content, the scrim first."""
+    return (f"{sel}{{position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border:0;background:transparent;"
+            f"border-radius:14px 14px 0 0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:none;z-index:60}}\n"
+            f"{sel}::before{{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-2}}\n"
+            f"{sel}::after{{content:\"\";position:absolute;inset:0;background:var(--panel);border-radius:inherit;"
+            f"box-shadow:0 -6px 24px rgba(0,0,0,.25);z-index:-1}}\n")
+
+
 TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
 @media (max-width:860px){
 .topnav .links{display:none;position:absolute;top:48px;right:16px;flex-direction:column;background:var(--panel);
@@ -83,10 +93,7 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 #navmore{min-height:44px;font-size:14px;color:var(--ink)}
 #navmore .long{display:none}#navmore .short{display:inline}
 #themebtn{display:none}
-.topnav .links.open{position:fixed;top:auto;left:0;right:0;bottom:0;max-height:80vh;overflow:auto;border-radius:14px 14px 0 0;
-padding:8px 8px calc(8px + env(safe-area-inset-bottom));min-width:0;box-shadow:0 -6px 24px rgba(0,0,0,.25);z-index:60}
-.topnav .links.open::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-1}
-.topnav .links.open a,.topnav .links.open .themerow{min-height:48px;display:flex;align-items:center;padding:0 12px;font-size:16px}
+""" + sheet_css(".topnav .links.open") + """.topnav .links.open a,.topnav .links.open .themerow{min-height:48px;display:flex;align-items:center;padding:0 12px;font-size:16px}
 .topnav .links.open .themerow{display:flex}}
 .themerow{display:none;background:none;border:0;color:var(--ink);font:12.5px var(--mono);text-align:left;cursor:pointer}
 #navmore .short{display:none}"""
@@ -114,7 +121,8 @@ def util_links(here: str = "") -> str:
 
 
 def page_label(here: str) -> str:
-    """The name of the current page, for the phone menu button: Machines, Skills, Board."""
+    """The name of the current page, for the phone menu button: Machines, Skills, Board. It returns only the fixed names in the
+    nav lists, and the button prints it unescaped: keep it that way."""
     for href, text, _ in (("/", "Board", ""),) + ADMIN_LINKS:
         if href == here:
             return text
@@ -636,10 +644,7 @@ APP_CSS = PICKUP_CSS + """
 #wsmenu li a:hover{background:var(--sel);text-decoration:none}#wsmenu li.bw{display:none;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
 @media (max-width:700px){.topnav .brand,.topnav .brand+.divider{display:none}.wsw>button{min-height:44px;font-size:16px}
 /* the workspace switcher is a sheet from the bottom, with a scrim, rows of 48px and Board-wide at the bottom (#647) */
-#wsmenu:not([hidden]){position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border-radius:14px 14px 0 0;
-padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:60;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
-#wsmenu:not([hidden])::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-1}
-#wsmenu li button,#wsmenu li a{min-height:48px;font-size:16px}#wsmenu li.bw{display:block}}
+""" + sheet_css("#wsmenu:not([hidden])") + """#wsmenu li button,#wsmenu li a{min-height:48px;font-size:16px}#wsmenu li.bw{display:block}}
 :root{--bg:#faf9f7;--panel:#fff;--rail:#f3f1ec;--ink:#1c1b19;--dim:#6b6862;--line:#e5e2dc;
 --accent:#b5540f;--accent-soft:#fdf1e7;--good:#2f7d4f;--warn:#c8901a;--sel:#ece8e0;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;

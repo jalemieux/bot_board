@@ -9,7 +9,7 @@ HTML.
 """
 from __future__ import annotations
 
-from .web import shell
+from .web import shell, sheet_css
 
 WS_CSS = """
 .ws .l2{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line);font:12.5px var(--mono)}
@@ -57,6 +57,7 @@ WS_CSS = """
 .ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
 .ws .roles h2 button+button{margin-left:8px}
 .ws .acts{white-space:nowrap}.ws .acts button,.ws .acts a{margin-right:8px}
+.ws .kb-back{display:none;background:none;color:var(--accent);padding:0 4px;font:600 13px var(--mono)}      /* shown only on a phone, below */
 @media (max-width:700px){
 .ws table.bots,.ws table.bots tbody{display:block}
 .ws table.bots tr{display:flex;flex-wrap:wrap;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line)}
@@ -67,14 +68,10 @@ WS_CSS = """
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
 .dlg select{min-height:44px;font-size:16px}
 .ws .wsw>button{min-height:44px;font-size:16px}.ws .tabs a{padding:12px 2px}
-.ws #wsmenu:not([hidden]){position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border-radius:14px 14px 0 0;
-padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:60;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
-.ws #wsmenu:not([hidden])::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-1}
-.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
+""" + sheet_css(".ws #wsmenu:not([hidden])") + """.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
 .ws pre.diff{max-height:50vh}
 .ws .kb-side{max-width:none;flex-basis:100%}.ws .kb-reader{flex-basis:100%}
 .ws .kb.reading .kb-side{display:none}.ws .kb:not(.reading) .kb-reader{display:none}.ws .kb-back{display:inline-flex;align-items:center;min-height:44px}}
-.ws .kb-back{display:none;background:none;color:var(--accent);padding:0 4px;font:600 13px var(--mono)}
 .ws .kb:not(.reading) .kb-back{display:none}
 .ws .sub{color:var(--dim);font-size:13px}
 .ws section{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 14px}
