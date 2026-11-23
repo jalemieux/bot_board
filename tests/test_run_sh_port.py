@@ -64,7 +64,7 @@ class RunShPort(unittest.TestCase):
         r = self.run_sh("up", PORT=str(self.port), BIND="0.0.0.0")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("Bound to 0.0.0.0: anyone who can reach this machine", r.stdout)
-        self.assertIn("BIND=127.0.0.1", r.stdout)
+        self.assertTrue("BIND=127.0.0.1" in r.stdout or "bot_board expose 127.0.0.1" in r.stdout, r.stdout)     # which one depends on whether bot_board is installed beside the checkout
         r = self.run_sh("status")            # the stored BIND: still said, though the address shows 127.0.0.1
         self.assertIn(f"running on http://127.0.0.1:{self.port}", r.stdout)
         self.assertIn("Bound to 0.0.0.0", r.stdout)
@@ -87,7 +87,7 @@ class RunShPort(unittest.TestCase):
         self.assertNotIn("BIND=127.0.0.1 curl", out)
         self.assertIn("run: BIND=127.0.0.1 /x/run.sh up", say(self.tmp.name + "/none/src", "/x/run.sh"))
         inst = Path(self.tmp.name, "inst"); (inst / "src").mkdir(parents=True); (inst / "bot_board").write_text("#!/bin/sh\n"); (inst / "bot_board").chmod(0o755)
-        self.assertIn("run: BIND=127.0.0.1 ~/inst/bot_board restart board", say(str(inst / "src"), curl), "an installed board has its own command")
+        self.assertIn("run: ~/inst/bot_board expose 127.0.0.1", say(str(inst / "src"), curl), "an installed board has its own command, which moves the keeper and Forgejo with it")
 
     def test_a_start_that_never_answers_does_not_change_the_kept_address(self):      # #801
         self.assertEqual(self.run_sh("up", PORT=str(self.port)).returncode, 0)
