@@ -71,7 +71,7 @@ class FirstRunApi(unittest.TestCase):
         self.assertTrue(steps["board"]["address"].startswith("http"))
         self.assertEqual(steps["forge"], {"configured": False})
         self.assertIsNone(steps["bot"])
-        self.assertEqual((steps["team"], steps["general"]), ([], "admin"))
+        self.assertEqual((steps["team"], steps["general"]), ([], "general"), "General is the preset team's workspace, not Admin's")
         fleet.set_secret("FORGEJO_URL", "http://forge.test:3000", "jac")
         fleet.set_secret("FORGEJO_TOKEN", "sekret-token-123", "jac")
         fleet.set_secret("FORGEJO_READ_TOKEN", "sekret-read-456", "jac")
@@ -88,12 +88,12 @@ class FirstRunApi(unittest.TestCase):
         self.assertIn("no user, password", got.json()["steps"]["forge"]["problem"])
         self.assertNotIn("sekret-pw-789", got.text)
 
-    def test_the_default_bot_and_its_team_are_the_admin_workspaces_bots_in_the_boards_own_words(self):
+    def test_the_default_bot_is_the_admin_workspaces_and_the_team_is_the_general_workspaces(self):
         keeper = self.register("keeper-box", "keeper")
         self.client.put("/api/fleet/hosts/box", headers=keeper, json={"bots": []}).raise_for_status()      # a box must have reported
-        for handle, profile in (("ada", "admin"), ("bea", "developer")):
+        for handle, profile, ws in (("ada", "admin", "admin"), ("bea", "developer", "general")):
             r = self.client.put(f"/api/fleet/bots/{handle}", headers=self.jac,
-                                json={"host": "box", "run": True, "harness": "claude", "workspace": "admin", "profile": profile})
+                                json={"host": "box", "run": True, "harness": "claude", "workspace": ws, "profile": profile})
             self.assertEqual(r.status_code, 200, r.text)
         r = self.client.put("/api/fleet/hosts/box", headers=keeper, json={"bots": [
             {"handle": "ada", "harness": "claude", "status": "waiting"},
@@ -102,7 +102,8 @@ class FirstRunApi(unittest.TestCase):
         steps = self.get().json()["steps"]
         self.assertEqual((steps["bot"]["handle"], steps["bot"]["harness"], steps["bot"]["state"], steps["bot"]["up"]), ("ada", "claude", "waiting", True))
         self.assertNotIn("log", steps["bot"], "the keeper log is named only for a bot that failed")
-        self.assertEqual([b["handle"] for b in steps["team"]], ["bea"])
+        self.assertEqual([b["handle"] for b in steps["team"]], ["bea"], "the team is General's bots, not Admin's other bots")
+        self.assertEqual(steps["general"], "general")
         self.assertTrue(steps["team"][0]["role"], "the role comes from its profile")
         self.assertEqual(json.loads(json.dumps(steps))["team"][0]["state"], steps["team"][0]["state"])
 

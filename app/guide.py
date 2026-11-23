@@ -34,11 +34,18 @@ def start(handle: str) -> None:
         save(handle, "pending")
 
 
-def _bots(admin_slug: str) -> list[dict]:
+def _find(slug: str):
+    try:
+        return workspaces.find(slug)
+    except KeyError:
+        return None
+
+
+def _bots(slug: str) -> list[dict]:
     seen, out = set(), []
     for h in fleet.hosts():
         for b in h["bots"]:
-            if b.get("workspace") != admin_slug or b["handle"].lower() in seen:
+            if b.get("workspace") != slug or b["handle"].lower() in seen:
                 continue
             seen.add(b["handle"].lower())
             out.append(b)
@@ -72,20 +79,20 @@ def _forge(human: dict) -> dict:
 
 
 def facts(human: dict, address: str) -> dict:
-    """What the page shows, from what the board already knows. Nothing here is a secret: the forge's address is an
+    """What the page shows, from what the board already knows. `bot` is the Admin workspace's default bot; `team` and
+    `general` are the preset team's workspace's (workspaces.FIRST_RUN_WORKSPACE): its bots, and the channel the first
+    message goes to. Without that workspace, General is the Admin workspace's and the team is empty. Nothing here is a secret: the forge's address is an
     address, the sign-in is the human's handle, and the forge's password is not here at all (the page names its file as
     text from the install). The only path is the keeper log's, which the design shows."""
-    admin = None
-    try:
-        admin = workspaces.find(workspaces.ADMIN)
-    except KeyError:
-        pass
-    bots = _bots(workspaces.ADMIN) if admin else []
+    admin = _find(workspaces.ADMIN)
+    team_ws = _find(workspaces.FIRST_RUN_WORKSPACE)      # the preset team's workspace (#650), where the first message goes
+    admin_bots = _bots(workspaces.ADMIN) if admin else []
+    team = _bots(workspaces.FIRST_RUN_WORKSPACE) if team_ws else []
     steps = {
         "board": {"address": address.rstrip("/"), "handle": human["handle"]},
         "forge": _forge(human),
-        "bot": _bot(bots[0], with_log=True) if bots else None,
-        "team": [_bot(b) for b in bots[1:]],
-        "general": workspaces.home_slug(admin) if admin else None,
+        "bot": _bot(admin_bots[0], with_log=True) if admin_bots else None,
+        "team": [_bot(b) for b in team],
+        "general": workspaces.home_slug(team_ws or admin) if (team_ws or admin) else None,
     }
     return {"state": state(human["handle"]), "steps": steps}

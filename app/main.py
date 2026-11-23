@@ -500,7 +500,7 @@ API_MAP = {
         "GET /api/workspaces/{slug}/team": "the `## Roles` table of the team agreement against the workspace's bots:"
                                            " per role its profile, who has it, and whether it still lacks a bot",
         "GET /api/first-run": "a human's first-run guide: {state: pending|skipped|done, or null when there is no guide, steps: the"
-                              " board's address, the forge, the admin workspace's default bot and its team, and General's slug};"
+                              " board's address, the forge, the admin workspace's default bot, the `general` workspace's team and its General's slug};"
                               " a bot gets 403",
         "PUT /api/first-run": "a human saves {state: pending|skipped|done} for their own guide; idempotent",
         "GET /api/workspaces/{slug}/activity": "what happened in the workspace in the last hours {hours=24}: counts and events from its"
