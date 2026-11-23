@@ -248,10 +248,11 @@ def hand_off(host: str, bots: list[dict]) -> None:
 
 def secrets() -> list[dict]:
     """The fleet's secrets without their values: name, who set it, when, and its last 4 characters. FORGEJO_URL is an
-    address, not a secret (#632), so its row also carries `value`, in full, and nothing else's does (#701)."""
+    address, not a secret (#632), so its row also carries `value`, in full, and nothing else's does (#701). Not an address
+    that has credentials in it, stored before they were refused (#762): that row shows its last four characters like a secret."""
     return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:],
              "plain": r["name"] == PLAIN_SECRET,
-             **({"value": r["value"]} if r["name"] == PLAIN_SECRET else {})}
+             **({"value": r["value"]} if r["name"] == PLAIN_SECRET and not forge_address_problem(r["value"]) else {})}
             for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
 
 

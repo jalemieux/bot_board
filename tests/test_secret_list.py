@@ -42,6 +42,15 @@ class SecretList(unittest.TestCase):
         self.assertEqual(fleet.forge_url(), "https://forge.example:3000/sub")
         fleet.set_secret("GH_TOKEN", "http://user:pw@not-an-address", "jac")      # any other name takes any value
 
+    def test_an_address_stored_with_credentials_before_the_rule_is_not_shown_in_full(self):
+        c = db.conn()
+        c.execute("INSERT INTO fleet_secrets (name, value, set_by, set_at) VALUES ('FORGEJO_URL', 'http://u:pw@forge.example', 'jac', ?)", (db.now(),))
+        c.commit()
+        row = fleet.secrets()[0]
+        self.assertTrue(row["plain"])
+        self.assertNotIn("value", row)
+        self.assertNotIn("u:pw", str(fleet.secrets()))
+
 
 if __name__ == "__main__":
     unittest.main()

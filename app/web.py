@@ -3294,11 +3294,11 @@ function listSecrets() {
       acts.appendChild(rep); acts.appendChild(rm);
       body.appendChild(sEl('tr', null, sEl('td', {'class': 'mono secret-name', text: x.name}), cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
     });
+    var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
+    var SECRET_NAME = new RegExp('^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|' + plainName + ')$');      // the server checks it too; this only helps while typing
     var name = sEl('input', {autocomplete: 'off', 'aria-label': 'Name of a new secret', placeholder: 'NEW_SECRET_NAME', 'aria-describedby': 'secrethint'});
     var val = sEl('input', {type: 'password', autocomplete: 'new-password', 'aria-label': 'Value of the new secret', placeholder: 'value'});
     var add = sEl('button', {type: 'button', 'class': 'primary', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: shape});
-    var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
-    var SECRET_NAME = new RegExp('^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|' + plainName + ')$');      // the server checks it too; this only helps while typing
     var check = function () {
       var bad = name.value && !SECRET_NAME.test(name.value);
       hint.className = 'sub' + (bad ? ' secret-err' : '');

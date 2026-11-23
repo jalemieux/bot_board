@@ -171,6 +171,7 @@ class FleetPage(unittest.TestCase):
         self.assertIn("if (val.type !== want) { val.value = '';", page)
         self.assertIn("type: x.plain ? 'text' : 'password'", page)
         self.assertNotIn("isUrl", page)
+        self.assertLess(page.index("var plainName = d.plain_name"), page.index("hint = sEl("), "the hint's text is defined before it is used")
         self.assertNotIn("FORGEJO_URL", page.split("function secretCall")[1].split("listSecrets();")[0], "the script never spells the name")
         self.assertIn('<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>', page)
         self.assertNotIn('<summary>Shared secrets', page)
