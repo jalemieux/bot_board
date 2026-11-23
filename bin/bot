@@ -258,7 +258,7 @@ fi
 # keeper was handed them in BOT_OWN_SECRETS (from the first bin/bot, before any load_fleet_env), so
 # use that when it is set, and this process's environment otherwise (#572).
 if [ -n "${BOT_OWN_SECRETS+x}" ]; then _OWN_SECRETS="$BOT_OWN_SECRETS"
-else _OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"; fi
+else _OWN_SECRETS=" $(compgen -e | grep -E '^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|FORGEJO_URL)$' | tr '\n' ' ' || true)"; fi
 _FLEET_SET=" "
 load_fleet_env() {
   local _kv _k now=" "
