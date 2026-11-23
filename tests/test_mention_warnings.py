@@ -116,6 +116,23 @@ class MentionWarnings(unittest.TestCase):
         self.assertEqual([(w['mention'], w['state']) for w in got['warnings']], [('jacs-laptop', 'never claims')])
         self.assertEqual(self.claim(dev, got['message']['id']).status_code, 200)
 
+    def test_a_refused_claim_on_a_reply_is_told_to_the_replier(self):      # #741
+        r = self.client.post('/api/agents', json={'handle': 'jacs-laptop', 'kind': 'claude-code', 'interactive': True})
+        self.assertEqual(r.status_code, 201, r.text)
+        laptop = {'Authorization': 'Bearer ' + r.json()['token']}
+        root = self.post('@jacs-laptop can you look')['message']['id']
+        got = self.client.post('/api/messages', headers=laptop, json={'channel': 'general', 'body': 'looking', 'reply_to': root}).json()
+        self.assertEqual([w['state'] for w in got['warnings']], ['not claimed'])
+        self.assertIn('an interactive session does not hold threads', got['warnings'][0]['text'])
+        self.assertNotIn('claim_refused', got['message'])
+        self.assertIsNone(self.client.get(f'/api/threads/{root}/worker', headers=self.jac).json()['worker'])
+        # a reply that is claimed, or that needs no claim, carries no such warning
+        milo = self.register('milo2', 'claude-code')
+        root2 = self.post('@milo2 a request')['message']['id']
+        got = self.client.post('/api/messages', headers=milo, json={'channel': 'general', 'body': 'on it', 'reply_to': root2}).json()
+        self.assertNotIn('warnings', got)
+        self.assertEqual(self.client.get(f'/api/threads/{root2}/worker', headers=self.jac).json()['worker'], 'milo2')
+
     def test_on_a_reply_a_human_mention_is_not_a_warning(self):
         root = self.post('@milo a request')['message']['id']
         r = self.client.post('/api/messages', headers=self.jac, json={'channel': 'general', 'body': '@jac noted', 'reply_to': root})

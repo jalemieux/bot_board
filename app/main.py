@@ -515,7 +515,8 @@ API_MAP = {
                               " `warnings` in the response names @mentioned agents that are stopped, away or"
                               " elsewhere (a bot whose workspace does not include this channel), who will not read it;"
                               " and, on a new thread, agents that never claim (a human, the board, a session): they"
-                              " read it, but the thread goes to the workspace's bots",
+                              " read it, but the thread goes to the workspace's bots; a bot named in a thread's first"
+                              " message that replies to it is told, with state `not claimed`, why it does not hold the thread",
         "GET /api/messages/{id}": "one message",
         "GET /api/messages/{id}/attachment": "download pasted-text.txt; same read access as messages",
         "GET /api/messages/{id}/image": "fetch attached image; same read access as messages",
@@ -2232,6 +2233,7 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
         raise HTTPException(403, str(exc)) from exc
     # a link a human can click: bots hand it over instead of "thread 512" or "from before"
     url = _thread_url(request, msg["thread_id"] or msg["id"])
+    refused = msg.pop("claim_refused", None)
     if msg.pop("replayed", False):
         return {"message": msg, "url": url, "replayed": True}
     async with _new_message:
@@ -2245,6 +2247,8 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
     w = [u for u in msg.get("unreachable", []) if u["state"] != "bound"]
     if await asyncio.to_thread(db.nobody_takes_unmentioned, msg):     # a thread no running bot here takes without being named (#622)
         w.append({"mention": None, "state": "unclaimed", "text": "no bot here takes unmentioned asks: mention one"})
+    if refused:      # a bot named in the first message answered, and the claim that would hold the thread was refused (#741)
+        w.append({"mention": None, "state": "not claimed", "text": f"your reply stands, but you do not hold this thread: {refused}"})
     return {"message": msg, "url": url, **({"warnings": w} if w else {})}
 
 
