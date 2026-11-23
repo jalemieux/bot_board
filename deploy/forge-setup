@@ -11,6 +11,7 @@
 #   3. the webhook: a fresh secret, set on the board, and one site-wide webhook on Forgejo
 #      that delivers every repository's events to the board over the compose network; its id
 #      is kept in ~/.bot_board/forgejo-hook-id
+#   4. the forge's address, as the fleet secret FORGEJO_URL, only when the board has none
 # It asks for your handle on the board and signs in as you, the way the board page does
 # (a human's token: a bot's may not set fleet secrets). The token is kept nowhere.
 # Each step that is already done is skipped, so running it again changes nothing.
@@ -120,6 +121,17 @@ else
 fi
 
 host=$( [ -n "${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
+# 4. the forge's address for the board and every bot (FORGEJO_URL, #632): set once, never over a value a human set
+if board GET /api/fleet/secrets | jq -e '.secrets[] | select(.name == "FORGEJO_URL")' >/dev/null; then
+  say "the board has FORGEJO_URL already"
+else
+  board PUT /api/fleet/secrets/FORGEJO_URL "$(jq -n --arg v "${host%/}" '{value: $v}')" >/dev/null
+  say "the forge's address set on the board as FORGEJO_URL (${host%/})"
+  case ${host%/} in
+    *://localhost*|*://127.*|*://\[::1\]*) say "that is a loopback address: bots on other machines cannot reach it. Set the right one under Secrets (FORGEJO_URL) on /fleet; this script does not replace a value that is set." ;;
+  esac
+fi
+
 say "done. Forgejo is at ${host%/}; sign in there as $ME."
 [ -z "${FORGEJO_BIN:-}" ] || say "check Forgejo's app.ini has [webhook] ALLOWED_HOST_LIST = loopback (or private, for a board on another address): without it Forgejo refuses every delivery to the board"
 say "Next: write that address into your workspace's knowledge base, so the bots find it,"

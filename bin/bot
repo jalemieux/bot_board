@@ -258,7 +258,7 @@ fi
 # keeper was handed them in BOT_OWN_SECRETS (from the first bin/bot, before any load_fleet_env), so
 # use that when it is set, and this process's environment otherwise (#572).
 if [ -n "${BOT_OWN_SECRETS+x}" ]; then _OWN_SECRETS="$BOT_OWN_SECRETS"
-else _OWN_SECRETS=" $(compgen -e | grep -E '^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$' | tr '\n' ' ' || true)"; fi
+else _OWN_SECRETS=" $(compgen -e | grep -E '^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|FORGEJO_URL)$' | tr '\n' ' ' || true)"; fi
 _FLEET_SET=" "
 load_fleet_env() {
   local _kv _k now=" "
@@ -269,7 +269,7 @@ load_fleet_env() {
     done < <(python3 - "$HOME/.config/bot_board/fleet.env" <<'PY' || true
 import re,shlex,sys
 for line in open(sys.argv[1],encoding="utf-8",errors="replace"):
-    m=re.match(r"\s*(?:export\s+)?([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
+    m=re.match(r"\s*(?:export\s+)?(FORGEJO_URL|[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
     if not m: continue
     try: v="".join(shlex.split(m.group(2),comments=True)[:1])
     except ValueError: continue

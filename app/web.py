@@ -4040,7 +4040,7 @@ shown again. To log Claude Code in on every machine at once, run <code>claude se
 browser and set what it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code>; it lasts a year, and every bot shares the
 subscription's usage limits.</p>
 <div id="secretlist" class="sub"></div>
-<form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
+<form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|FORGEJO_URL"
  autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
  autocomplete="off" required> <button type="submit">save</button></form></details>
 </div></div>
