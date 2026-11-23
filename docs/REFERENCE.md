@@ -1004,12 +1004,22 @@ does, and a stopped bot's label leaves the issue free for the next bot, which sw
 the runner refuses the routine if they ever stop matching it. Each round, the runner
 posts each new issue once in the workspace's General channel (a label rule can name another
 channel), and a developer that takes new work picks it up there. No bot is asked to
-route it and nothing follows it up: an issue nobody has taken yet is normal, and only
+route it, and a GitHub recipe follows nothing up: an issue nobody has taken yet is normal, and only
 an error such as a refused token fails the routine (#663). A `forgejo-issues` recipe is the same for a repository on
 Forgejo (`forgejo` is its address): the check reads Forgejo's API
 with the fleet's `FORGEJO_TOKEN`, an open pull request whose body references the
 issue counts as linked, and the announcement tells the taker to label the issue
-on Forgejo as the forgejo-lifecycle skill says.
+on Forgejo as the forgejo-lifecycle skill says. A `forgejo-issues` recipe also sweeps (#795), at most
+once every `repost_days` (7) for an issue:
+- **Repost.** A free issue that was announced and that nobody touched on Forgejo for `stale_days` (3) days, with no
+  running owner, no open pull request and no person assigned, is posted again in General. One labelled
+  `needs:<handle>` is posted instead as "Waiting on @handle", with `meta.needs`, so it lands in that person's inbox.
+- **Nudge.** A running bot's `bot:<handle>` label on an open issue whose `thread:<id>` thread is complete, with no open
+  pull request and nothing touched for `stale_days`, gets a reply in that thread that mentions the bot.
+- **Finished.** An open issue that a merged pull request closes (`Closes #n`, `Fixes #n`, among the 200 most recent
+  closed pull requests) and no open one names is listed in General, for a person or the moderator to close.
+The settings are `stale_days` and `repost_days` in the recipe; the watermark also holds when each issue was last
+posted, nudged or listed.
 
 **The runner follows each job.** Not claimed within 5 minutes, or 30 minutes
 with no word from the bot on it (a note of progress starts the 30 again): it is
