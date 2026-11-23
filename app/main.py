@@ -31,7 +31,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
-from . import activity, db, fleet, forge, web, workspaces, routines, images, versions, registry, progress, hooks, team
+from . import activity, db, fleet, forge, guide, web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -122,18 +122,19 @@ def _on_stop_signals() -> None:
         signal.signal(sig, handler)
 
 
-def _ensure_admin_workspace(agent: dict | None = None) -> None:
+def _ensure_admin_workspace(agent: dict | None = None) -> bool:
     """Best effort: a slug taken by something that cannot be adopted must not stop the board
-    from starting, nor turn a successful unlock into an error."""
+    from starting, nor turn a successful unlock into an error. True when it made the workspace now."""
     try:
-        workspaces.ensure_admin(agent)
+        made = workspaces.ensure_admin(agent)
     except (KeyError, PermissionError, ValueError, sqlite3.IntegrityError) as exc:
         print(f"bot_board: no admin workspace created ({workspaces.ADMIN}): {exc}", flush=True)
-        return
+        return False
     try:
         routines.seed()           # the board's own chores, paused until a human says yes
     except (sqlite3.Error, OSError, ValueError) as exc:
         print(f"bot_board: shipped routines not seeded: {exc}", flush=True)
+    return made
 
 
 @app.on_event("startup")
@@ -498,6 +499,10 @@ API_MAP = {
                                                               " {confirm: <slug>}; GET .../deletion first says what goes",
         "GET /api/workspaces/{slug}/team": "the `## Roles` table of the team agreement against the workspace's bots:"
                                            " per role its profile, who has it, and whether it still lacks a bot",
+        "GET /api/first-run": "a human's first-run guide: {state: pending|skipped|done, or null when there is no guide, steps: the"
+                              " board's address, the forge, the admin workspace's default bot, the `general` workspace's team and its General's slug};"
+                              " a bot gets 403",
+        "PUT /api/first-run": "a human saves {state: pending|skipped|done} for their own guide; idempotent",
         "GET /api/workspaces/{slug}/activity": "what happened in the workspace in the last hours {hours=24}: counts and events from its"
                                                " forge repository and the board; forge says ok, none or down",
         "GET /api/workspaces/{slug}/knowledge": "the workspace's knowledge base, for humans and admin bots; the same"
@@ -719,7 +724,8 @@ def register(body: RegisterIn, response: Response) -> dict:
     agent, token = db.register_agent(body.handle, body.kind, body.description, workspace_id, body.interactive)
     # the board's first human gets the admin workspace (#181)
     if agent["kind"] == "human":
-        _ensure_admin_workspace(agent)
+        if _ensure_admin_workspace(agent):
+            guide.start(agent["handle"])        # a fresh board: its first human is shown the first-run guide (#774)
         try:
             workspaces.first_run(agent)       # the preset team's workspace, for a solo developer (#650)
         except (KeyError, PermissionError, ValueError, workspaces.Conflict, sqlite3.IntegrityError) as exc:
@@ -1801,6 +1807,29 @@ def workspace_get(slug: str, agent: dict | None = Depends(optional_agent)):
 def workspace_team(slug: str, agent: dict | None = Depends(optional_agent)):
     """The roles in the workspace's team agreement against the bots it has: what a human can create (#600)."""
     return {'team': workspaces.team(_workspace_for(slug, agent))}
+
+
+class FirstRunIn(BaseModel):
+    state: str = Field(description="pending (reopen the guide), skipped or done.")
+
+
+@app.get('/api/first-run', tags=['workspaces'])
+def first_run_get(request: Request, agent: dict = Depends(current_agent)) -> dict:
+    """The first-run guide's saved state for this human and the facts it shows (#774). null: no guide, as on every board
+    that existed before it. Humans only: a bot gets 403. Nothing here is a secret."""
+    if agent["kind"] != "human":
+        raise HTTPException(403, "the first-run guide is for a person")
+    return guide.facts(agent, str(request.base_url))
+
+
+@app.put('/api/first-run', tags=['workspaces'])
+def first_run_put(body: FirstRunIn, agent: dict = Depends(current_agent)) -> dict:
+    if agent["kind"] != "human":
+        raise HTTPException(403, "the first-run guide is for a person")
+    try:
+        return {"state": guide.save(agent["handle"], body.state)}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @app.get('/api/workspaces/{slug}/activity', tags=['workspaces'])
