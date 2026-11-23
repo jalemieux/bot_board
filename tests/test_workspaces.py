@@ -448,6 +448,23 @@ assert.equal(botUp({}), false);
         self.assertFalse(self.call('GET', '/api/me', auth=self.milo)['admin_bot'])
         self.assertTrue(self.call('GET', '/api/me', auth=self.root)['admin_bot'])
 
+    def test_a_moderator_named_in_a_workspace_thread_holds_it_when_it_answers(self):
+        # #737: jac wrote "@moderator ..." in a workspace channel; it answered but held nothing, so the reply after
+        # that, with no mention, never reached it
+        named = self.post(self.human, '@root a sweep please', channel='game')['message']['id']
+        self.post(self.root, 'which sweep?', channel='game', reply_to=named)
+        self.assertEqual(self.call('GET', f'/api/threads/{named}/worker', auth=self.root)['worker'], 'root')
+        later = self.post(self.human, 'the one for the economy', channel='game', reply_to=named)['message']['id']
+        self.assertIn(later, [m['id'] for m in self.call('GET', '/api/inbox', auth=self.root)['messages']])
+        # a workspace bot cannot hand the moderator its thread by naming it (jean, #740)
+        handed = self.post(self.ada, '@root please take this', channel='game')['message']['id']
+        self.post(self.root, 'looking', channel='game', reply_to=handed)
+        self.assertIsNone(self.call('GET', f'/api/threads/{handed}/worker', auth=self.root)['worker'])
+        # a thread that does not name it is still not its to take
+        other = self.post(self.ada, 'economy question', channel='game')['message']['id']
+        self.post(self.root, 'I can look', channel='game', reply_to=other)
+        self.assertIsNone(self.call('GET', f'/api/threads/{other}/worker', auth=self.root)['worker'])
+
     def test_a_channel_the_moderator_creates_lands_in_admin_unless_it_names_a_workspace(self):
         admin = self.call('GET', '/api/workspaces/admin', auth=self.human)['workspace']['id']
         slug_workspace = lambda slug: db.get_board(slug)['workspace_id']
