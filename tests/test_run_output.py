@@ -59,6 +59,8 @@ class RunOutput(unittest.TestCase):
         readme = (ROOT / "README.md").read_text()
         for piece in ("install bots", "single-user", "A handle is", "sign out and sign in", "@reboot", "start board"):
             self.assertIn(piece, readme, piece)
+        self.assertIn('*"no crontab"*', readme)       # an unreadable crontab is left alone, not replaced by one line
+        self.assertNotIn("crontab -l 2>/dev/null;", readme)
         run = (ROOT / "run.sh").read_text()
         for gone in ("/fleet", "single-user", "crontab", "sign out"):
             self.assertNotIn(gone, run, gone)
