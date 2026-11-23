@@ -37,6 +37,11 @@ _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedire
 _make = threading.Lock()      # one board process: a double click or the first box's report cannot both create
 
 
+def configured() -> bool:
+    """Whether the board has a forge address and a token to read with. A bool only: the token's value stays in this module."""
+    return bool(fleet.forge_url() and fleet.forge_token(read=True))
+
+
 def valid_name(part: str) -> str:
     if not isinstance(part, str) or not _PART.fullmatch(part) or part.lower().endswith(".git"):
         raise ForgeError(f"{part!r} is not a name the forge client will send: letters, digits, dot, dash and underscore, "

@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import db, fleet, forge, workspaces
+from . import db, forge, workspaces
 
 BOT_LABEL = re.compile(r"^bot:\s*(\S+)$", re.I)
 SIGNED = re.compile(r"^bot\s+(\S+?),\s*board thread", re.I)
@@ -150,7 +150,7 @@ def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
     events, messages, bots = _board_events(ws, since)
     repo = workspaces.repository(ws)
     state, reason, capped = "none", "", False
-    if repo and not (fleet.forge_url() and fleet.forge_token(read=True)):
+    if repo and not forge.configured():
         state = "unset"       # the board was never told where the forge is: nothing is asked and nothing failed (#754)
     elif repo:
         try:
