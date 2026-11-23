@@ -126,6 +126,8 @@ class Workspaces(Base):
                        "ev.key !== 'Tab'", "root.appendChild(ov)", "(danger ? cancel :", "fail(e.message)",
                        "'Pause team'", "'Resume team'", "The team is paused", "Promise.allSettled"):
             self.assertIn(needle, workspace_web.WS_JS)
+        self.assertNotIn("botsSection", workspace_web.WS_JS)      # the Channels tab has no Bots card; the Team tab lists the bots
+            self.assertIn(needle, workspace_web.WS_JS)
 
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
         # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it

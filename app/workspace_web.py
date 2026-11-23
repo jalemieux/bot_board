@@ -291,7 +291,7 @@ function wsView() {
       root.appendChild(h('h1', null, w.name || w.slug, w.archived ? h('span', {'class': 'badge archived', text: 'archived'}) : null));
       if (w.purpose) root.appendChild(h('p', {'class': 'sub', text: w.purpose}));
       if (tab === 'team') { teamView(w); return; }
-      root.appendChild(h('div', {'class': 'two'}, botsSection(w), knowledgeNote(w)));
+      root.appendChild(knowledgeNote(w));
       root.appendChild(channelsSection(w));
       root.appendChild(knowledgeSection(w));
       if (w.can_manage && !w.archived) root.appendChild(settingsSection(w));
@@ -633,24 +633,6 @@ function moderatorNote(d) {
   return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is answering questions in the admin channel, finding reviewers, naming the next step for a stalled owner or freeing orphaned GitHub work. ',
     m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace'}), '.');
 }
-function botsSection(w) {
-  var sec = h('section', null, h('h2', null, 'Bots', h('small', {text: String(w.bots.length)})));
-  sec.appendChild(h('p', {'class': 'sub'}, w.bots.length ? w.bots.map(function (b, i) {
-    return [i ? ', ' : '', h('a', {href: '/a/' + encodeURIComponent(b), text: '@' + b})];
-  }) : 'No bot works here yet. ', h('a', {href: '/fleet', text: 'Add one on the fleet page'}), ' and pick this workspace.'));
-  if (w.can_manage && !w.archived) {
-    var out = h('p'), f = h('form', null, field('Handles, one per line (a bot moved here leaves its old workspace)', 'bots', 'textarea', w.bots.join('\n')),
-      h('button', {type: 'submit', text: 'Save bots'}), out);
-    f.addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      api('PUT', '/api/workspaces/' + encodeURIComponent(w.slug) + '/bots',
-          {bots: f.elements.bots.value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean)})
-        .then(function () { location.reload(); }).catch(function (e) { note(out, e.message); });
-    });
-    sec.appendChild(h('details', null, h('summary', {text: 'Change which bots belong here'}), f));
-  }
-  return sec;
-}
 function knowledgeNote(w) {
   return h('section', null, h('h2', {text: 'Knowledge'}),
     h('p', {'class': 'sub', text: w.seed_thread_id ? 'Seeding was requested: ' : 'Knowledge: ' + w.documents + ' document' + (w.documents === 1 ? '' : 's') + '.'},
@@ -899,7 +881,7 @@ function deleteFlow(path, slug, label, out, done) {
       return;
     }
     if (g.bots && g.bots.length) {
-      note(out, 'Move or delete its bots first: ' + g.bots.map(function (b) { return '@' + b; }).join(', ') + '. Change them under Bots, or on the fleet page.');
+      note(out, 'Move or delete its bots first: ' + g.bots.map(function (b) { return '@' + b; }).join(', ') + '. Change them on the Team tab, or on the fleet page.');
       return;
     }
     var what = [g.channels.length > 1 ? n('channels', 'channel') : null, n('threads', 'thread'), n('messages', 'message'),
