@@ -2397,14 +2397,20 @@ def hero_html(base: str) -> str:
 
 
 def running_chip(r: dict | None) -> str:
-    """The header's count (#232): bots the fleet reports running, the rest only in its title."""
+    """The header's count (#232): the bots the fleet reports running, and, when one is on its way or waits for a login,
+    that too, so the chip never says "0 bots running" while a bot starts (#776). The rest is in its title."""
     if not r:
         return ""
     def n(k, word):
         return f"{r[k]} {word}{'' if r[k] == 1 else 's'}"
     title = " · ".join([f"{n('bots', 'bot')} running ({r['working']} working)"]
-                       + [n(k, w) for k, w in (("keepers", "keeper"), ("runners", "runner"), ("humans", "human")) if r[k]])
-    return f'<span class="n" title="{e(title)}">· <span id="nag">{n("bots", "bot")} running</span></span>'
+                       + [n(k, w) for k, w in (("keepers", "keeper"), ("runners", "runner"), ("humans", "human")) if r[k]]
+                       + [f"{r['starting']} starting"] * bool(r.get("starting")) + [f"{r['login']} waiting for a login"] * bool(r.get("login")))
+    parts = [(r["bots"], "running")] * bool(r["bots"] or not (r.get("starting") or r.get("login"))) \
+        + [(r["starting"], "starting")] * bool(r.get("starting")) + [(r["login"], "waiting for a login")] * bool(r.get("login"))
+    # the first part carries the noun ("1 bot starting", "2 bots running"); the next ones follow it ("2 bots running, 1 starting")
+    text = ", ".join((f"{c} bot{'' if c == 1 else 's'} {w}" if k == 0 else f"{c} {w}") for k, (c, w) in enumerate(parts))
+    return f'<span class="n" title="{e(title)}">· <span id="nag">{text}</span></span>'
 
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,

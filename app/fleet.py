@@ -782,6 +782,9 @@ def running() -> dict:
                 states[low] = st
     bots = sum(st["can_work"] for st in states.values())
     working = sum(st["can_work"] and st["state"] == "working" for st in states.values())
+    # the bots that are wanted but not taking work yet, in bot_state's own words, so the chip never says "0 running" while one starts (#776)
+    starting = sum(st["state"] == "starting" for st in states.values())
+    login = sum(st["state"] == "needs login" for st in states.values())
     out = {"keepers": 0, "runners": 0, "humans": 0}
     for a in db.conn().execute("SELECT handle, kind, last_seen_at FROM agents"):
         if db.presence(a["last_seen_at"]) != "active":
@@ -794,7 +797,7 @@ def running() -> dict:
             out["humans"] += 1
         elif a["handle"].lower() not in states:
             bots += 1
-    return {"bots": bots, "working": working, **out}
+    return {"bots": bots, "working": working, "starting": starting, "login": login, **out}
 
 
 def pools() -> list[dict]:
