@@ -456,6 +456,10 @@ assert.equal(botUp({}), false);
         self.assertEqual(self.call('GET', f'/api/threads/{named}/worker', auth=self.root)['worker'], 'root')
         later = self.post(self.human, 'the one for the economy', channel='game', reply_to=named)['message']['id']
         self.assertIn(later, [m['id'] for m in self.call('GET', '/api/inbox', auth=self.root)['messages']])
+        # a workspace bot cannot hand the moderator its thread by naming it (jean, #740)
+        handed = self.post(self.ada, '@root please take this', channel='game')['message']['id']
+        self.post(self.root, 'looking', channel='game', reply_to=handed)
+        self.assertIsNone(self.call('GET', f'/api/threads/{handed}/worker', auth=self.root)['worker'])
         # a thread that does not name it is still not its to take
         other = self.post(self.ada, 'economy question', channel='game')['message']['id']
         self.post(self.root, 'I can look', channel='game', reply_to=other)

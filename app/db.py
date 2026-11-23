@@ -1072,7 +1072,11 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
     # a thread whose first message names the moderator is addressed to it, wherever it is: without this the
     # claim on its first reply was refused and swallowed, so it answered but held nothing and never saw the
     # replies after (#737)
-    named_here = named or any(r["handle"].lower() == agent["handle"].lower() and not r["self_mention"] for r in mentioned)
+    # ...but only when a human or an admin bot wrote it: another workspace's bot cannot hand the moderator its thread
+    author = c.execute("SELECT kind, workspace_id FROM agents WHERE id=(SELECT agent_id FROM messages WHERE id=?)", (tid,)).fetchone()
+    from_admin_side = bool(author) and (author["kind"] == "human" or workspace_slug(author["workspace_id"]) == ADMIN_WORKSPACE)
+    named_here = named or (from_admin_side and any(
+        r["handle"].lower() == agent["handle"].lower() and not r["self_mention"] for r in mentioned))
     if root["kind"] == "channel" and agent.get("workspace_id") and scope(agent) is None \
             and board.get("workspace_id") != agent["workspace_id"] and not _team_setup_root(root) and not named_here:
         # the moderator reads and replies everywhere but claims in the admin workspace, or where it is named (#319)
