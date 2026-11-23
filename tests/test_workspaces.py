@@ -258,6 +258,8 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
         for sel in ('.ws #wsmenu:not([hidden])',):
             self.assertIn(sel + '::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-2}', css)
             self.assertIn(sel + '::after{content:"";position:absolute;inset:0;background:var(--panel)', css)
+        self.assertIn('.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;', web.APP_CSS, 'the tab bar sits under the top bar, so a sheet covers it')
+        self.assertIn('z-index:5', web.TOPNAV_CSS)
         for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # one function writes every sheet
             self.assertIn('::after{content:"";position:absolute;inset:0;background:var(--panel)', text)
 

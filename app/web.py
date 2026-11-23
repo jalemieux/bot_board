@@ -944,7 +944,7 @@ aside.thread{position:fixed;inset:0;left:auto;width:min(420px,100%);z-index:10;b
 .app.m-tabs.thread-closed .tabbar{display:flex}
 .app:not(.m-tabs) #mback{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;margin-left:-8px;background:none;border:0;color:var(--ink);font:28px/1 var(--sans);cursor:pointer}
 .app:not(.m-tabs) .topnav .brand{display:none}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;height:calc(56px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--panel);border-top:1px solid var(--line)}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;height:calc(56px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:var(--panel);border-top:1px solid var(--line)}
 .tabbar>*{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:44px;background:none;border:0;color:var(--dim);font:12px var(--sans);text-decoration:none;cursor:pointer}
 .tabbar .on{color:var(--accent);font-weight:700}
 .tabbar .ic{font-size:18px;line-height:1}
