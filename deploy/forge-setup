@@ -96,9 +96,11 @@ has_user() { awk 'NR>1 {print $2}' <<<"$users" | grep -qxF "$1"; }
 if has_user "$ME"; then
   say "admin account $ME is there"
 else
-  pw=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-24)
-  forgejo admin user create --admin --username "$ME" --password "$pw" --email "$ME@forge.local" \
-    --must-change-password=false >/dev/null
+  # Forgejo makes the password and prints it, so it is not in this command's arguments (SECURITY.md, #832)
+  made=$(forgejo admin user create --admin --username "$ME" --random-password --email "$ME@forge.local" \
+    --must-change-password=false)
+  pw=$(sed -n "s/^generated random password is '\(.*\)'\$/\1/p" <<<"$made")
+  [ -n "$pw" ] || die "Forgejo made the account $ME but did not print its password: delete the account and run this again"
   mkdir -p "$(dirname "$PWFILE")"; (umask 077; echo "$pw" > "$PWFILE")
   say "admin account $ME made; its password is in $PWFILE"
 fi

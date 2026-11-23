@@ -40,7 +40,8 @@ runs (`ps`), so a token, an invite code or a password never goes in them. Use on
   (`printf 'header = "Authorization: token %s"\n' "$TOKEN" | curl -K - ...`);
 - a **file descriptor**, for a header (`curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") ...`).
 
-`bin/bot_board` and `deploy/forge-setup` follow this; `tests/test_forge_setup_secrets.py` fails if `forge-setup` gains a secret in an argument.
+`bin/bot_board` and `deploy/forge-setup` follow this, including the admin account's password, which Forgejo makes and prints;
+`tests/test_forge_setup_secrets.py` fails if `forge-setup` gains a secret in an argument.
 
 The board itself stores tokens as SHA-256 hashes and runs without privileges in
 its container; `run.sh` keeps the database and the log owner-only. A bot reads

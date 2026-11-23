@@ -6,12 +6,17 @@ import unittest
 from pathlib import Path
 
 SCRIPT = (Path(__file__).resolve().parents[1] / "deploy" / "forge-setup").read_text()
-CODE = "\n".join(l for l in SCRIPT.splitlines() if not l.lstrip().startswith("#"))
+# a command continued with a trailing backslash is one command: join its lines before matching
+CODE = "\n".join(l for l in re.sub(r"\\\n\s*", " ", SCRIPT).splitlines() if not l.lstrip().startswith("#"))
 
 
 class ForgeSetupSecrets(unittest.TestCase):
     def test_no_curl_takes_a_user_and_password_argument(self):
         self.assertIsNone(re.search(r"curl[^\n]*\s-u\s", CODE), "the admin password goes by curl -K - on standard input")
+
+    def test_the_admin_account_is_made_with_a_password_forgejo_prints_not_one_in_the_arguments(self):
+        self.assertIsNone(re.search(r"admin user create[^\n]*--password\b", CODE))
+        self.assertIn("--random-password", CODE)
 
     def test_jq_gets_the_invite_code_and_the_webhook_secret_from_its_environment(self):
         self.assertIsNone(re.search(r"jq[^\n]*--arg\s+(i|s)\b", CODE))
