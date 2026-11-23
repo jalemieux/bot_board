@@ -180,6 +180,28 @@ class FleetPage(unittest.TestCase):
         self.assertIn('class="chip prob">claude missing', page)
         self.assertNotIn('pip bad', page.split('Host bots')[1].split('</div>')[0], 'off is not a warning')
 
+    def test_the_update_and_runtime_pills_read_each_result_the_keeper_writes(self):
+        for result, word, fine in (
+                ('up to date', 'up to date', True), ('updated abc123 -> def456', 'up to date', True),
+                ("waiting for the board's release commit", 'update waiting', True),
+                ("ahead of the board's release abc; waiting for it", 'update waiting', True),
+                ("the board's release abc is not on origin yet", 'update waiting', True),
+                ('cannot move to abc: dirty', 'update needs a look', False),
+                ('abc failed its checks and was rolled back to def: x', 'update needs a look', False),
+                ('fetch failed: no route', 'update needs a look', False),
+                ('update check failed: boom', 'update needs a look', False)):
+            with self.subTest(result=result):
+                page, sections = self.render([host('m', [], update={'revision': 'v1', 'result': result})])
+                self.assertIn(word, sections['fleet-machines'])
+                pill = page.split(f'title="{web.e(result)}">')[1].split('</span>')[0]
+                self.assertEqual(pill, word)
+                self.assertEqual('class="pill prob" title="' + web.e(result) in page, not fine)
+        for state, text, prob in (('ok', 'in containers', False), ('missing', 'runtime missing', True), ('down', 'runtime down', True)):
+            with self.subTest(runtime=state):
+                page, sections = self.render([host('m', [], runtime={'setting': 'docker', 'state': state, 'detail': 'why'})])
+                self.assertIn(text, sections['fleet-machines'])
+                self.assertEqual(f'class="pill prob" title="why">{text}' in page, prob)
+
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),

@@ -2763,6 +2763,16 @@ def _host_banner(hosts: list) -> str:
             f'<ul>{lis}</ul></section>')
 
 
+def _update_word(result: str) -> tuple[str, bool]:
+    """The word for a keeper's update result, and whether it is no trouble. The prefixes are the keeper's
+    own (bin/keeper, the updater): a result it writes that is not here reads as needing a look."""
+    if result.startswith(("up to date", "updated ")):
+        return "up to date", True
+    if result.startswith(("waiting", "ahead of", "the board's release")):
+        return "update waiting", True
+    return "update needs a look", False
+
+
 def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
     """The Mac's card (#595): the host-bots switch, its host bots, the apps and handles it reports, and, with the
     switch on, the short form that creates a new host bot. Nothing on a box that is not a Mac."""
@@ -3855,12 +3865,14 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         how = ""
         if rt:
             in_box = (rt.get("setting") or "host") != "host"
-            how = (f'<span class="pill" title="{e(rt.get("setting") or "")}">{"in containers" if in_box else "on the host"}</span>')
+            rt_ok = rt.get("state") in (None, "ok")
+            label = ("in containers" if in_box else "on the host") if rt_ok else f'runtime {e(rt.get("state") or "")}'
+            how = f'<span class="pill{"" if rt_ok else " prob"}" title="{e(rt.get("detail") or rt.get("setting") or "")}">{label}</span>'
         res = u.get("result") or ""
         upd = ""
         if u and res:
-            fine = res.startswith("up to date")
-            upd = (f'<span class="pill{"" if fine else " prob"}" title="{e(res)}">{"up to date" if fine else "update waiting" if res.startswith("waiting") else "update needs a look"}</span>')
+            word, fine = _update_word(res)
+            upd = f'<span class="pill{"" if fine else " prob"}" title="{e(res)}">{word}</span>'
         pills = f'<div class="pills">{how}{upd}</div>' if how or upd else ""
         details = f'<details class="mdetails"><summary>Details</summary>{code}</details>' if code else ""
         srt = _sort_value
