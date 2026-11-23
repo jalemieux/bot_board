@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_UVICORN = """#!/usr/bin/env python3
 import http.server, json, os, sys
+if os.environ.get("FAKE_FAIL"):
+    sys.exit(1)
 port = int(sys.argv[sys.argv.index("--port") + 1])
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -86,6 +88,14 @@ class RunShPort(unittest.TestCase):
         self.assertIn("run: BIND=127.0.0.1 /x/run.sh up", say(self.tmp.name + "/none/src", "/x/run.sh"))
         inst = Path(self.tmp.name, "inst"); (inst / "src").mkdir(parents=True); (inst / "bot_board").write_text("#!/bin/sh\n"); (inst / "bot_board").chmod(0o755)
         self.assertIn("run: BIND=127.0.0.1 ~/inst/bot_board restart board", say(str(inst / "src"), curl), "an installed board has its own command")
+
+    def test_a_start_that_never_answers_does_not_change_the_kept_address(self):      # #801
+        self.assertEqual(self.run_sh("up", PORT=str(self.port)).returncode, 0)
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); other = s.getsockname()[1]; s.close()
+        r = self.run_sh("up", PORT=str(other), FAKE_FAIL="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did not come up", r.stderr)
+        self.assertEqual((self.dir / "board.addr").read_text(), f"PORT={self.port}\nBIND=127.0.0.1\n", "the address that answered stays")
 
     def test_a_port_in_the_file_that_is_not_a_number_is_not_used(self):
         self.dir.mkdir(exist_ok=True); (self.dir / "board.addr").write_text("PORT=80/../x\nBIND=127.0.0.1\n")
