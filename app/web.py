@@ -2767,6 +2767,16 @@ def _host_banner(hosts: list) -> str:
             f'<ul>{lis}</ul></section>')
 
 
+def _update_word(result: str) -> tuple[str, bool]:
+    """The word for a keeper's update result, and whether it is no trouble. The prefixes are the keeper's
+    own (bin/keeper, the updater): a result it writes that is not here reads as needing a look."""
+    if result.startswith(("up to date", "updated ")):
+        return "up to date", True
+    if result.startswith(("waiting", "ahead of", "the board's release")):
+        return "update waiting", True
+    return "update needs a look", False
+
+
 def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
     """The Mac's card (#595): the host-bots switch, its host bots, the apps and handles it reports, and, with the
     switch on, the short form that creates a new host bot. Nothing on a box that is not a Mac."""
@@ -2775,7 +2785,9 @@ def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
     on, name = bool(h["host_bots"]), e(h["name"])
     mine = [b for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
     bots = ", ".join(f'<a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
-    apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in h.get("apps") or [] if isinstance(a, dict)) or "none found"
+    found = [a for a in h.get("apps") or [] if isinstance(a, dict)]
+    napps = len(found)
+    apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in found) or "none found"
     allowed = ", ".join(e(x) for x in h.get("host_allowed") or []) or "nobody yet"
     form = ""
     if on and h["reporting"]:
@@ -2794,12 +2806,14 @@ def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
                 '<label class="chk"><input type="checkbox" name="ack" required> I understand this bot can read everything my user can.</label>'
                 '<button type="submit" class="act needs-me">Start the host bot</button>'
                 '<p class="dim">After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.</p></form></details>')
+    state = '<span class="pip ok"></span>on' if on else "off"      # off is a normal state: no colour
     return (f'<div class="hostbox" data-host="{name}"><b>Host bots</b> '
-            f'<span class="pip {"ok" if on else "bad"}"></span>{"on" if on else "off"} '
+            f'{state} '
             f'<button type="button" class="act host-switch needs-me" data-host="{name}" data-on="{0 if on else 1}">'
             f'turn {"off" if on else "on"}</button>'
             f'<div class="by">{"bots here that run as the user: " + bots if on or mine else "off: every bot here runs in a container"}</div>'
-            f'<div class="by">apps found: {apps}</div><div class="by">allowed on this Mac: {allowed}</div>{form}</div>')
+            f'<div class="by">allowed on this Mac: {allowed}</div>'
+            f'<details class="by apps"><summary>{napps} apps found</summary>{apps}</details>{form}</div>')
 
 
 def _drawer(b: dict, host: str, acts: str, danger: str, question: str, k: str) -> str:
@@ -3612,6 +3626,14 @@ FLEET_CSS = """
 .fleet-page table.bots tr:first-child td{border-top:0}
 .fleet-page table.bots tr:target td{background:var(--accent-soft)}
 .fleet-page table.bots td.who{font-family:var(--mono);white-space:nowrap}
+.fleet-page table.machines td.who{white-space:normal;overflow-wrap:anywhere}
+.fleet-page table.machines td{overflow-wrap:anywhere}
+.fleet-page .pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.fleet-page .pill,.fleet-page .chip{display:inline-block;padding:1px 8px;border:1px solid var(--line);border-radius:10px;font:12px var(--sans);white-space:nowrap}
+.fleet-page .pill.prob,.fleet-page .chip.prob{border-color:var(--accent)}
+.fleet-page .chip{margin:0 4px 4px 0}
+.fleet-page .mdetails{margin-top:4px;font-size:12px}.fleet-page .mdetails summary,.fleet-page .hostbox .apps summary{cursor:pointer;color:var(--dim)}
+.fleet-page .hostbox .apps{overflow-wrap:anywhere}
 .fleet-page table.bots td.doing{min-width:180px}
 .fleet-page table.bots td.acts{text-align:right;white-space:nowrap}
 .fleet-page table.bots td.acts>*{margin-left:4px}
@@ -3806,8 +3828,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
         gauges = (_gauge("", load, cores, f"{load:.1f}/{cores}" if load is not None and cores else ""),
                   _gauge("", None if free is None or total is None else total - free, total,
                          f"{(free or 0) / 1024:.0f} of {(total or 0) / 1024:.0f} GB free"))
-        creds = ", ".join(f'<span class="{"" if c["state"] == "ok" else "prob"}">{e(c["name"])}'
-                           f'{"" if c["state"] == "ok" else " " + e(c["state"])}</span>' for c in h.get("credentials") or [])
+        creds = " ".join(f'<span class="chip{"" if c["state"] == "ok" else " prob"}">{e(c["name"])}'
+                          f'{"" if c["state"] == "ok" else " " + e(c["state"])}</span>' for c in h.get("credentials") or [])
         # drain: every pool bot up here goes to the least loaded other box
         drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
         drain = (f'<button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
@@ -3842,12 +3864,27 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                                   f'{e((i.get("digest") or "").replace("sha256:", "")[:12]) or e(i.get("state") or "")}'
                                   f'{"" if i.get("state") in ("ok", None) or not i.get("digest") else " " + e(i["state"])}</span>'
                                   for i in imgs) + "</div>")
+        # one line says how the bots run here (a container runtime, or on the host), and one pill the update state
+        # in a word; the sentences and the rest stay under Details (#17869)
+        how = ""
+        if rt:
+            in_box = (rt.get("setting") or "host") != "host"
+            rt_ok = rt.get("state") in (None, "ok")
+            label = ("in containers" if in_box else "on the host") if rt_ok else f'runtime {e(rt.get("state") or "")}'
+            how = f'<span class="pill{"" if rt_ok else " prob"}" title="{e(rt.get("detail") or rt.get("setting") or "")}">{label}</span>'
+        res = u.get("result") or ""
+        upd = ""
+        if u and res:
+            word, fine = _update_word(res)
+            upd = f'<span class="pill{"" if fine else " prob"}" title="{e(res)}">{word}</span>'
+        pills = f'<div class="pills">{how}{upd}</div>' if how or upd else ""
+        details = f'<details class="mdetails"><summary>Details</summary>{code}</details>' if code else ""
         srt = _sort_value
         bad = sum(c["state"] != "ok" for c in h.get("credentials") or [])
         machines.append(
-            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{code}</td>'
+            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{pills}{details}</td>'
             f'<td data-label="status" class="nw"{srt(int(h["reporting"]))}>{seen}</td>'
-            f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up · {len(bots) - len(up)} stopped</td>'
+            f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up</td>'
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
             f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
             # how many of its logins are in trouble
