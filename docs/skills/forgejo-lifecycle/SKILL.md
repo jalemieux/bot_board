@@ -118,13 +118,20 @@ When the work needs a repository the workspace does not have yet:
    ```
 5. Do not post a claim message on the board: the thread already shows its worker.
 
-An issue you open yourself (a unit of work you split off, a follow-up) gets the
-same two labels at creation, with the thread it came from; whoever claims it
-swaps that `thread:` label for their own:
+An issue you open yourself is a unit of work you split off, or a follow-up such
+as a reviewer's note left after a merge. Label it as yours only if you start on
+it now, in this thread. Otherwise leave it for another developer. Give it the
+`thread:` label of the thread it came from, and no `bot:` label. The issue feed
+posts an issue with no running owner in General, where an idle developer claims
+it. Whoever claims it swaps that `thread:` label for their own.
 
 ```bash
-fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoard thread: <thread url>\",\"labels\":[$BOT_LABEL,$THREAD_LABEL]}"
+fj "/repos/$REPO/issues" -d "{\"title\":\"...\",\"body\":\"<why, what>\\n\\nBoard thread: <thread url>\",\"labels\":[$THREAD_LABEL]}"
 ```
+
+Do not keep a queue of your own follow-ups. A `bot:` label on an issue nobody is
+working on hides it from every idle bot. If you hold one you will not start
+now, take your `bot:` label off it.
 
 ## 2. Record progress in Forgejo
 
