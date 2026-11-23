@@ -54,6 +54,7 @@ setTimeout(() => { const sec = root.kids[0]; %s }, 20);
           assert.ok(hrefs.includes('/c/admin'));
           assert.deepEqual(sec.all('button').map(b => b.textContent), [], 'no greyed buttons');
           assert.ok(t.includes('enabled, a new version waits'));
+          assert.ok(sec.all('span').some(x => x.attrs['class'] === 'st waits'), 'a waiting version is not the healthy green');
           assert.ok(t.includes('The admin workspace\\u2019s owner (@jac) has been told.'));
         """)
 

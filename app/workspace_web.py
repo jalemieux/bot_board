@@ -1268,7 +1268,9 @@ if (SLUG) wsView(); else listView();
 
 # the Routines tab (#820) lives in its own module and is joined in here
 WS_CSS += ROUTINES_CSS
-WS_JS = WS_JS.replace("// The Team tab (#645): the agreement first", ROUTINES_JS + "// The Team tab (#645): the agreement first", 1)
+_ANCHOR = "// The Team tab (#645): the agreement first"
+assert _ANCHOR in WS_JS, "the Routines tab joins the page script at this comment"
+WS_JS = WS_JS.replace(_ANCHOR, ROUTINES_JS + _ANCHOR, 1)
 
 
 def workspaces_page(name: str) -> str:

@@ -8,7 +8,8 @@ ROUTINES_CSS = """
 .ws .rtcard.bad{border-left:4px solid var(--accent)}
 .ws .rtcard h3{margin:0 0 4px;font-size:15px;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center}
 .ws .rtcard .st{font:600 11px var(--mono);border-radius:4px;padding:1px 7px;background:var(--line);color:var(--ink)}
-.ws .rtcard .st.enabled{background:var(--good);color:#fff}.ws .rtcard .st.failed{background:var(--accent);color:#fff}
+.ws section.routines{border:0;background:none;padding:0;margin:0}
+.ws .rtcard .st.enabled{background:var(--good);color:#fff}.ws .rtcard .st.waits{background:none;color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}.ws .rtcard .st.failed{background:var(--accent);color:#fff}
 .ws .rtcard .about{margin:0 0 8px;font-size:14px}
 .ws .rtcard .prob{color:var(--accent);font-size:13px;white-space:pre-wrap;margin:6px 0}
 .ws .rtcard .facts{color:var(--dim);font:12px var(--mono);margin:6px 0 8px}
@@ -42,7 +43,6 @@ function diffLines(text) {
 }
 function routinesView(w) {
   var sec = h('section', {'class': 'routines'}), body = h('div', {'aria-live': 'polite'});
-  sec.appendChild(h('h2', null, 'Routines'));
   sec.appendChild(h('p', {'class': 'sub', text: 'What runs on a timer in ' + (w.name || w.slug) + ', and how it is doing.'}));
   sec.appendChild(body);
   root.appendChild(sec);
@@ -125,7 +125,7 @@ function routinesView(w) {
       canAct ? button('Delete this routine', 'quiet', function (b) { call(b, 'DELETE', path, 'Delete the routine ' + name + '? It stops for good.'); }) : null);
     if (String(openId) === String(r.id)) details.open = true;
     return h('article', {'class': 'rtcard' + (bad || waiting ? ' bad' : ''), id: 'r-' + r.id},
-      h('h3', null, name, h('span', {'class': 'st ' + (r.state || ''), text: waiting && r.state === 'enabled' ? 'enabled, a new version waits' : (r.state || '?')})),
+      h('h3', null, name, h('span', {'class': 'st ' + (waiting ? 'waits' : (r.state || '')), text: waiting && r.state === 'enabled' ? 'enabled, a new version waits' : (r.state || '?')})),
       r.about ? h('p', {'class': 'about', text: r.about}) : null,
       r.problem ? h('p', {'class': 'prob', text: 'Invalid, so it never runs: ' + r.problem}) : null,
       r.failure ? h('p', {'class': 'prob'}, 'Failed: ' + r.failure + (r.state === 'failed' ? ' It has stopped.' : ''), r.notify ? ' The admin workspace’s owner (@' + r.notify + ') has been told.' : '') : null,
