@@ -1,6 +1,8 @@
 # A workspace has one repository
 
-Status: proposal. A human has to agree before anything here is built.
+Status: agreed by jac in thread 18294 (message 18341), with the recommendations below as the
+answers to the four decisions. The read-only token (decision 3) is still for the security
+engineer to confirm before issue 2 is built.
 
 ## The problem
 
@@ -94,17 +96,18 @@ Rules that follow:
 Issue 1 can ship alone and does nothing until 2 or a human uses it. Each issue is small
 enough for one review.
 
-## Decisions for the human
+## Decisions
 
-1. The owner of a new repository: `fleet/<slug>` (my recommendation: it is the account
-   the bots' token belongs to), or the human's own account.
-2. Who may link: a human or an admin bot (my recommendation, as for the agreement), or
-   also a workspace's own manager bot.
+Agreed on 18341 ("i agree", to the four recommendations). Read as follows; a correction in
+the thread changes this note.
+
+1. The owner of a new repository is `fleet/<slug>`, the account the bots' token belongs to.
+2. Who may link: a human or an admin bot, as for the agreement.
 3. The board needs the value of `FORGEJO_TOKEN` to create and read. `fleet.secret_values()`
-   is documented as for keepers only. My recommendation is one narrow accessor that only
+   is documented as for keepers only. The plan is one narrow accessor that only
    `app/forge.py` calls, and, for the Activity tab, a second read-only secret
    (`FORGEJO_READ_TOKEN`) so the board reads with less than it creates with. The security
-   engineer should answer this one.
+   engineer confirms this one.
 4. Existing workspaces by hand, as agreed in thread 18018.
 
 ## Risks
