@@ -3458,8 +3458,20 @@ function claudeCard(list) {
   box.textContent = '';
   var cmd = sEl('code', {text: 'claude setup-token'}), copy = sEl('button', {type: 'button', text: 'Copy'});
   copy.addEventListener('click', function () {
-    var done = function () { copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy'; }, 1500); };
-    if (navigator.clipboard) navigator.clipboard.writeText('claude setup-token').then(done, function () {}); else done();
+    var text = 'claude setup-token', reset = function (ms) { setTimeout(function () { copy.textContent = 'Copy'; }, ms); };
+    var done = function () { copy.textContent = 'Copied'; reset(1500); };
+    // nothing copied: select the command and say so, rather than claim it worked (a plain-http board has no clipboard API)
+    var fail = function () {
+      var r = document.createRange(); r.selectNodeContents(cmd); var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      copy.textContent = 'Press Ctrl+C'; reset(4000);
+    };
+    var legacy = function () {
+      var ta = sEl('textarea', {readonly: '', 'aria-hidden': 'true', style: 'position:fixed;opacity:0'}), ok = false;
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove(); if (ok) done(); else fail();
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, legacy); else legacy();
   });
   var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
   var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
@@ -3802,6 +3814,10 @@ FLEET_CSS = """
 .fleet-page .claude-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px 16px;margin:0 0 16px}
 .fleet-page .claude-card h3{margin:0 0 2px;font-size:15px}.fleet-page .claude-card ol{margin:8px 0 0;padding-left:20px}.fleet-page .claude-card li{margin:4px 0}
 .fleet-page .claude-card li button{margin-left:4px;min-height:28px}
+.fleet-page table.secrets button,.fleet-page .claude-card button,.secret-dlg button{font:12px var(--mono);border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:3px 9px;cursor:pointer}
+.fleet-page table.secrets button:hover,.fleet-page .claude-card button:hover,.secret-dlg button:hover{border-color:var(--accent)}
+.fleet-page table.secrets button.danger,.secret-dlg button.danger{border-color:var(--accent);color:var(--accent)}
+.fleet-page table.secrets button:disabled,.secret-dlg button:disabled{opacity:.5;cursor:default}
 .fleet-page .status{display:inline-block;border-radius:12px;padding:1px 10px;font:600 12px var(--mono)}
 .fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}
 .fleet-page table.secrets{width:100%;border-collapse:collapse;margin:0 0 8px;border:1px solid var(--line);border-radius:10px}
