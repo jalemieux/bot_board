@@ -95,7 +95,7 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(calls, ["run.sh up QUIET=1", "bot install QUIET=1"])
         self.assertEqual(r.stdout, "bot_board is up at http://127.0.0.1:8080\n"
                                    "  Installed: the board, in ~/.bot_board/board (data: board.db, back it up; log: board.log)\n"
-                                   "             a keeper and a default bot, @ada (claude), running as you, with your user's access\n"
+                                   "             a keeper (log: keeper.log) and a default bot, @ada (claude), running as you, with your user's access\n"
                                    "  Runs:      in the background until you stop it or restart this machine\n"
                                    "  Manage:    ~/.bot_board/bot_board status|stop|restart|update|uninstall\n"
                                    "\n"
@@ -109,7 +109,7 @@ class EntryPoint(unittest.TestCase):
             'printf \'BOT_RUNTIME="docker"\\n# default bot: ada is on this box already\\n\' >> "$HOME/.config/bot_board/config"; fi\n')
         r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("a keeper; a default bot, ada, was already here", r.stdout)
+        self.assertIn("a keeper (log: keeper.log); a default bot, ada, was already here", r.stdout)
         self.assertEqual(len(r.stdout.splitlines()), 7, r.stdout)
 
     def test_the_install_block_keeps_what_the_bots_can_reach(self):
@@ -131,6 +131,17 @@ class EntryPoint(unittest.TestCase):
         self.tearDown(); self.setUp()
         out = block(base, "Linux", {})
         self.assertIn("running as you, with your user's access", out)
+
+    def test_the_keepers_default_bot_note_has_the_forms_its_two_readers_know(self):
+        # the note in the config is written by bin/keeper and read by bin/bot (its outcome lines) and bin/bot_board (the block)
+        keeper = (ROOT / "bin/keeper").read_text()
+        for written in ('"# default bot: waiting: ', "in workspace {got.get('workspace') or 'admin'}, started", "already on this box"):
+            self.assertIn(written, keeper)
+        bot = (ROOT / "bin/bot").read_text()
+        block = (ROOT / "bin/bot_board").read_text()
+        for read in ("waiting:*)", "*started)"):
+            self.assertIn(read, bot)
+            self.assertIn(read, block)
 
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)

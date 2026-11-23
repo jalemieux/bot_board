@@ -228,10 +228,11 @@ install_summary() {
       esac
     fi
     case $note in
-      *started) who=${note%, started}; add "a keeper and a default bot, ${who%% in workspace*}, $where" ;;
-      waiting:*) add "a keeper and a default bot, $harness, which starts when you sign in" ;;
-      "") if [ -n "$harness" ]; then add "a keeper and a default bot, $harness, which starts when the keeper reaches the board"; else add "a keeper (no default bot)"; fi ;;
-      *) add "a keeper; a default bot, ${note%% *}, was already here" ;;
+      # the forms of the keeper's note, written by bin/keeper (set_default_note) and read here and in bin/bot
+      *started) who=${note%, started}; add "a keeper (log: keeper.log) and a default bot, ${who%% in workspace*}, $where" ;;
+      waiting:*) add "a keeper (log: keeper.log) and a default bot, $harness, which starts when you sign in" ;;
+      "") if [ -n "$harness" ]; then add "a keeper (log: keeper.log) and a default bot, $harness, which starts when the keeper reaches the board"; else add "a keeper (log: keeper.log), no default bot"; fi ;;
+      *) add "a keeper (log: keeper.log); a default bot, ${note%% *}, was already here" ;;
     esac
   fi
   echo "  Runs:      in the background until you stop it or restart this machine"
