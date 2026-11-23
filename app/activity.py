@@ -143,14 +143,16 @@ def _forge_data(repo: str, since: datetime) -> dict:
 
 
 def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
-    """The workspace's activity over the last `hours`. `forge` is "ok", "none" (no repository linked) or "down" (the forge
+    """The workspace's activity over the last `hours`. `forge` is "ok", "none" (no repository linked), "unset" (the board has no forge address or token) or "down" (the forge
     did not answer or has no such repository), with `reason`; `capped` says a busy repository was sampled (at least that many); the forge's counts are absent unless it is "ok"."""
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(hours=hours)
     events, messages, bots = _board_events(ws, since)
     repo = workspaces.repository(ws)
     state, reason, capped = "none", "", False
-    if repo:
+    if repo and not forge.configured():
+        state = "unset"       # the board was never told where the forge is: nothing is asked and nothing failed (#754)
+    elif repo:
         try:
             data = _forge_data(repo, now - timedelta(hours=MAX_HOURS))       # always the widest window: `hours` cannot cause a fetch
             events += _forge_events(data, since, repo)
