@@ -128,21 +128,21 @@ open_signed_in() {
 # on 127.0.0.1 through host networking. Every step is safe to run again.
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
-# as you, not in containers (#651). Linux only until Forgejo is installed natively on a Mac.
+# as you, not in containers (#651). A Mac always takes this path: its containers cannot reach the board on
+# 127.0.0.1, and Forgejo comes from Homebrew (deploy/forgejo-native).
 # a native Forgejo (deploy/forgejo-native) lives with the board: it starts and stops with it, and --purge removes its data
 FORGEJO_HOME=${FORGEJO_DIR:-$HOME/.bot_board/forgejo}
 has_native_forgejo() { [ -f "$FORGEJO_HOME/work/custom/conf/app.ini" ]; }
 native_forgejo() { BOARD=http://127.0.0.1:${PORT:-8080} bash "$SRC/deploy/forgejo-native" "$1"; }
-forge_native() { local d=${DOCKER:-docker}; [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
+forge_native() { local d=${DOCKER:-docker}; [ "$(uname -s)" = Darwin ] || [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
   local tok i _pair native=
   ! forge_native || native=1
   if [ -n "$native" ]; then
-    [ "$(uname -s)" = Linux ] || die "install --forge without Docker needs Linux for now: Forgejo has no macOS binary (install Docker, or see README)"
-    d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c"; done
+    d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c$([ "$(uname -s)" != Darwin ] || echo " (brew install $c)")"; done
     grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this box is set up for Docker (BOT_RUNTIME in $CFG_FILE): install --forge keeps using Docker here, and a native install is for a box that never ran it"
-    say "native install ($([ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found")): the bots will run as you, with your user's access, not in containers"
+    say "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
   fi
   [ -n "$native" ] || [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
   [ -n "$native" ] || for c in $d jq openssl curl python3; do command -v "${c%% *}" >/dev/null || die "install --forge needs $c"; done

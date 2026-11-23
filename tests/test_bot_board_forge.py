@@ -262,8 +262,8 @@ class ForgeInstall(unittest.TestCase):
         script(uname, "#!/bin/sh\necho Darwin\n")
         r = self.run_install()
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("only Linux has", r.stderr)
-        self.assertEqual(self.started(), [], "a Mac: nothing was started")
+        self.assertIn("a Mac, Forgejo from Homebrew", r.stdout + r.stderr, "a Mac takes the native path, with or without Docker (#651)")
+        self.assertEqual(self.started(), [], "a Mac never starts Docker")
         uname.unlink()
         r = self.run_install(HANDLE="a")                                  # not a handle
         self.assertNotEqual(r.returncode, 0)

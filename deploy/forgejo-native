@@ -7,9 +7,11 @@
 #   deploy/forgejo-native status    running or not, and the address
 #   deploy/forgejo-native env       the variables deploy/forge-setup takes for this Forgejo
 #
-# Linux, amd64 or arm64, as the user that will own it (not root). Forgejo publishes no macOS binary:
-# on a Mac, install it with Homebrew (a later unit). The release is pinned below and checked against the
-# pinned checksum; it is stored as forgejo-<version>, so a new pin is a new file and the old one stays.
+# Linux, amd64 or arm64, as the user that will own it (not root). The release is pinned below and checked
+# against the pinned checksum; it is stored as forgejo-<version>, so a new pin is a new file and the old one stays.
+# macOS: Forgejo publishes no macOS binary, so a Mac uses the one Homebrew installs (brew install forgejo, which
+# this script runs when there is none; Homebrew checks it). It is not checked against the pin: the script says
+# when its version differs. Homebrew has a bottle for Apple silicon; an Intel Mac builds it from source.
 # SQLite, no ssh, no sign-up: the human and the bots' account are made by forge-setup.
 #
 # The port is the first free one from 3000, kept in the settings file afterwards; the board is at BOARD
@@ -17,7 +19,8 @@
 #
 # Env: FORGEJO_DIR (default ~/.bot_board/forgejo), FORGEJO_PORT (a port to start the search at),
 # FORGEJO_BIND (default 127.0.0.1), FORGEJO_HOST (the name in its address, default localhost),
-# BOARD. For a test only: FORGEJO_BASE_URL (where the release files are) and FORGEJO_SHA256 (their checksum),
+# BOARD. A Mac's Forgejo older than the pin is refused unless FORGEJO_ALLOW_OLDER=1. For a test only: FORGEJO_PS_ONLY
+# (look for the process with ps, as a Mac does), FORGEJO_BASE_URL (where the release files are) and FORGEJO_SHA256 (their checksum),
 # both together; the script says so when it uses them instead of the pin. The free-port check looks at
 # 127.0.0.1 only, which is right for the default FORGEJO_BIND.
 set -euo pipefail
@@ -35,27 +38,67 @@ BOARD=${BOARD:-http://127.0.0.1:8080}
 BIND=${FORGEJO_BIND:-127.0.0.1}
 HOST=${FORGEJO_HOST:-localhost}
 
+# a launchd or ssh shell on a Mac does not have Homebrew on its PATH
+[ "$(uname -s)" != Darwin ] || PATH=$PATH:/opt/homebrew/bin:/usr/local/bin
+# the binary: the pinned download on Linux, Homebrew's on a Mac (empty until it is installed)
+if [ "$(uname -s)" = Darwin ]; then BIN=$(command -v forgejo || true); else BIN=$DIR/forgejo-$VERSION; fi
+
 say() { echo "forgejo-native: $*"; }
 die() { echo "forgejo-native: $*" >&2; exit 1; }
 # the pid file may outlive a reboot, and the pid may then be another process: it counts only if it is our binary
 running() {
-  local pid bin=$DIR/forgejo-$VERSION
+  local pid
   pid=$(cat "$PIDFILE" 2>/dev/null || true)
-  # the binary itself, or (a script, as in the tests) a process that was started with it as an argument
-  [ -n "$pid" ] && { [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$bin" ] \
-    || tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qxF "$bin"; } && return 0
+  if [ -n "$pid" ] && [ -n "$BIN" ]; then
+    # the binary itself, or (a script, as in the tests) a process that was started with it as an argument
+    [ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$BIN" ] && return 0
+    if [ -z "${FORGEJO_PS_ONLY:-}" ] && [ -r "/proc/$pid/cmdline" ]; then
+      tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -qxF "$BIN" && return 0
+    else      # macOS has no /proc: ps -o comm= is the path the process was started from, so it must be ours, not a word on its command line
+      local comm; comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
+      [ -n "$comm" ] && { [ "$comm" = "$BIN" ] || [ "$comm" = "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN" 2>/dev/null)" ]; } && return 0
+    fi
+  fi
   rm -f "$PIDFILE"; return 1        # no process, or another one: the file is stale
 }
 port() { sed -n 's/^HTTP_PORT *= *//p' "$INI" 2>/dev/null | head -1; }
 free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
+# older A B: version A is lower than B (numbers separated by dots; sort -V is not on every Mac)
+older() {
+  local a=$1 b=$2 x y i
+  for i in 1 2 3; do
+    x=$(echo "$a" | cut -d. -f$i); y=$(echo "$b" | cut -d. -f$i)
+    [ "${x:-0}" -lt "${y:-0}" ] && return 0
+    [ "${x:-0}" -gt "${y:-0}" ] && return 1
+  done
+  return 1
+}
+
 fetch() {
-  local arch sum base bin=$DIR/forgejo-$VERSION tmp
+  local arch sum base bin=$BIN tmp ver
+  if [ "$(uname -s)" = Darwin ]; then
+    if [ -z "$BIN" ]; then
+      command -v brew >/dev/null || die "Forgejo has no macOS download: install Homebrew (https://brew.sh), then run this again, or run brew install forgejo yourself"
+      say "installing Forgejo with Homebrew"
+      brew install forgejo || die "brew install forgejo failed"
+      BIN=$(command -v forgejo || true); [ -n "$BIN" ] || die "brew installed Forgejo, but it is not on the PATH: $PATH"
+    fi
+    ver=$("$BIN" --version 2>/dev/null | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+    if [ -z "$ver" ]; then say "this Mac's Forgejo has an unknown version, the pin is $VERSION"
+    elif [ "$ver" != "$VERSION" ]; then
+      if older "$ver" "$VERSION" && [ -z "${FORGEJO_ALLOW_OLDER:-}" ]; then
+        die "this Mac's Forgejo is $ver, older than the pin $VERSION: run brew upgrade forgejo, or set FORGEJO_ALLOW_OLDER=1 to use it anyway"
+      fi
+      say "this Mac's Forgejo is $ver, the pin is $VERSION"
+    fi
+    return 0
+  fi
   [ -x "$bin" ] && return 0
   case $(uname -s)-$(uname -m) in
     Linux-x86_64) arch=amd64; sum=$SHA256_amd64 ;;
     Linux-aarch64|Linux-arm64) arch=arm64; sum=$SHA256_arm64 ;;
-    *) die "no Forgejo binary for $(uname -s) $(uname -m): on a Mac, use Homebrew" ;;
+    *) die "no Forgejo binary for $(uname -s) $(uname -m)" ;;
   esac
   base=https://codeberg.org/forgejo/forgejo/releases/download/v$VERSION
   if [ -n "${FORGEJO_SHA256:-}${FORGEJO_BASE_URL:-}" ]; then
@@ -117,11 +160,11 @@ EOF
 
 start() {
   [ "$(id -u)" != 0 ] || die "run this as the user that will own Forgejo, not root"
-  for c in curl sha256sum; do command -v $c >/dev/null || die "needs $c"; done
+  for c in curl $([ "$(uname -s)" = Darwin ] || echo sha256sum); do command -v $c >/dev/null || die "needs $c"; done
   mkdir -p "$DIR"; chmod 700 "$DIR"
   if running; then say "already running at http://$HOST:$(port)/"; return 0; fi
   fetch; settings
-  ( cd "$WORK" && exec ${SETSID:-} "$DIR/forgejo-$VERSION" --work-path "$WORK" web ) >"$LOG" 2>&1 </dev/null &
+  ( cd "$WORK" && exec ${SETSID:-} "$BIN" --work-path "$WORK" web ) >"$LOG" 2>&1 </dev/null &
   echo $! > "$PIDFILE"; disown
   local i
   sleep 0.2      # the new process must have exec'd before running looks at it
@@ -149,6 +192,6 @@ case ${1:-} in
           [ "$(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$INI")" = "$want" ] \
             || say "the settings allow webhooks to $(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$INI"), not $want (BOARD): change ALLOWED_HOST_LIST in $INI and restart" ;;
   env) [ -f "$INI" ] || die "not set up: deploy/forgejo-native start"
-       printf 'export FORGE=%q FORGEJO_BIN=%q FORGEJO_WORK_PATH=%q\n' "http://127.0.0.1:$(port)" "$DIR/forgejo-$VERSION" "$WORK" ;;
+       printf 'export FORGE=%q FORGEJO_BIN=%q FORGEJO_WORK_PATH=%q\n' "http://127.0.0.1:$(port)" "$BIN" "$WORK" ;;
   *) die "usage: forgejo-native start|stop|status|env" ;;
 esac
