@@ -595,6 +595,17 @@ class ContainerRun(unittest.TestCase):
         self.assertIn("FORGEJO_URL is http://localhost:3000", r.stderr)
         self.assertFalse(any(a.startswith("FORGEJO_URL=") for a in run), run)
 
+    def test_the_host_of_a_tailnet_forge_url_is_mapped_into_a_bridge_container(self):      # #697
+        host = socket.gethostname()                       # a name that resolves here, as the board-name test uses
+        ip = self._resolve(host)
+        if ip is None or ip.startswith("127.") or ip == "::1":
+            self.skipTest("this box's name does not resolve to a non-loopback address")
+        r, run = self.run_forge_url(FORGEJO_URL="http://%s:3000" % host)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        pairs = [run[i + 1] for i, a in enumerate(run) if a == "--add-host"]
+        self.assertIn("%s:%s" % (host, ip), pairs)
+        self.assertEqual(len([p for p in pairs if p.startswith("minipc-2.taild87368.ts.net:")]), 1, "the registry host once")
+
     def test_a_forge_url_that_is_not_loopback_is_left_alone(self):
         r, run = self.run_forge_url(FORGEJO_URL="http://forge.example.ts.net:3000", BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal")
         self.assertFalse(any(a.startswith("FORGEJO_URL=") for a in run), run)
