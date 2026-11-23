@@ -40,8 +40,7 @@ ADMIN_LINKS = (("/workspaces", "Workspaces", "Channels, bots and knowledge per w
                ("/machines", "Machines", "The machines enrolled on this board, and how to add one"),
                ("/configuration", "Configuration", "Settings and secrets shared by every bot"),
                ("/roles", "Roles", "Profiles: what a bot is added as"),
-               ("/skills", "Skills", "Instructions bots load"),
-               ("/routines", "Routines", "Scheduled checks that post work"))
+               ("/skills", "Skills", "Instructions bots load"))
 UTIL_LINKS = ()
 TOPNAV_CSS = """/* top bar: brand, search, site links and who you are; the rail below is only channels and conversations */
 .topnav{grid-column:1/-1;display:flex;align-items:center;gap:18px;height:48px;padding:0 16px;background:var(--panel);
@@ -2600,12 +2599,12 @@ def status_html(st: dict | None, overview: bool = True) -> str:
         + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
         for p in st["workspaces"]) or "<li>No workspace yet.</li>"
     def every(s):
-        for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):    # as /routines says it: 1d, not 1440 min
+        for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):    # as the Routines tab says it: 1d, not 1440 min
             if s and s >= n and s % n == 0:
                 return f"every {s // n}{unit}" if unit != "min" else f"every {s // n} min"
         return f"every {s}s" if s else ""
     rts = "".join(
-        f'<li><a href="/routines#r={r["id"]}">{e(r["name"])}</a> '
+        f'<li><a href="{e(r["url"])}">{e(r["name"])}</a> '
         f'<span class="{"bad" if r["state"] == "failed" else "dim" if r["state"] == "paused" else ""}">{e(r["state"])}</span>'
         f' · #{e(r["channel"])} {every(r["every"])}'
         + (f' · last job {e(ago(r["last_job"]["at"]))}' + (f', done by @{e(r["last_job"]["done_by"])}' if r["last_job"]["done_by"] else ", not done yet")
@@ -2613,7 +2612,7 @@ def status_html(st: dict | None, overview: bool = True) -> str:
     return (f'<style>{STATUS_CSS}</style>{head}<div class="stgrid">'
             f'<section><h2><a href="/machines">Machines</a></h2><ul>{boxes}</ul></section>'
             f'<section><h2><a href="/workspaces">Workspaces</a></h2><ul>{projs}</ul></section>'
-            f'<section><h2><a href="/routines">Routines</a></h2><ul>{rts}</ul></section></div>')
+            f'<section><h2>Routines</h2><ul>{rts}</ul></section></div>')
 
 
 STATUS_CSS = """

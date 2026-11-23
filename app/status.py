@@ -1,6 +1,6 @@
 """System status: the fleet, the workspaces and the routines in one rollup (#92).
 
-It reads what /fleet, /workspaces and /routines read, and says in one list what
+It reads what the fleet, workspace and routine data say, and says in one list what
 needs a human, each item pointing to where it is fixed. GET /api/status returns it;
 /fleet shows it at the top.
 
@@ -215,11 +215,11 @@ def _routines(attention: list) -> list:
     out = []
     for r in rows:
         last = r["jobs"][0] if r.get("jobs") else None
-        row = {"id": r["id"], "name": r["name"], "state": r["state"], "channel": r["channel"],
+        row = {"id": r["id"], "name": r["name"], "state": r["state"], "channel": r["channel"], "url": r["url"],
                "every": r.get("every"), "failure": r.get("failure"), "problem": r.get("problem") or "",
                "last_job": last and {"at": last["created_at"], "done_by": last["done_by"]},
                "last_test": r.get("last_test") and {"ok": r["last_test"].get("ok"), "at": r["last_test"].get("at")}}
-        href = f"/routines#r={r['id']}"
+        href = r["url"]
         if r["state"] == "failed":
             attention.append(_item(f"routine {r['name']} failed: {r.get('failure') or 'see its page'}", href, "routines"))
         elif r["state"] == "enabled" and row["problem"]:
@@ -233,13 +233,13 @@ def _routines(attention: list) -> list:
         attention.append(_item(f"{n} routine change{'s' if n != 1 else ''} wait{'' if n != 1 else 's'} for your yes: "
                                + ", ".join(f"{r['name']} v{r['version']}" for r in waiting)
                                + (", " if waiting and ups else "") + ", ".join(f"{r['name']} (recipe v{r['upgrade']['to']})" for r in ups),
-                               "/routines#approvals", "routines"))
+                               (waiting or ups)[0]["url"], "routines"))
     stalled = [r["name"] for r in out if r["state"] == "enabled"]
     if stalled and (seen is None or seen > RUNNER_STALE):    # one item: it is the runner that is down
         attention.append(_item(f"{len(stalled)} enabled routine(s) ({', '.join(stalled)}) but the runner "
                                f"(@{routines.cli.ME}) " + ("has never connected" if seen is None
                                                           else f"was last seen {int(seen // 60)} min ago"),
-                               "/routines", "routines"))
+                               routines.page_url(None), "routines"))
     return out
 
 

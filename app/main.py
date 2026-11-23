@@ -464,7 +464,7 @@ API_MAP = {
                               " claim_timeout?, done_timeout?, resends?, about?, skill?, thread?}; thread: the message"
                               " it was asked for in. Human managers of the admin workspace and admin bots (its bots)",
         "PATCH /api/routines/{id}": "a new version of a routine (the fields sent); one that changes the check waits for a"
-                                    " human's yes on /routines, one that does not keeps running",
+                                    " human's yes on its workspace's Routines tab, one that does not keeps running",
         "POST /api/routines/{id}/approve": "a human manager's yes to a waiting version: the runner tests it, and it is"
                                            " enabled again when the test passes if it was enabled before",
         "POST /api/routines/{id}/{enable|pause|test|run}": "{approved_by?}: an admin bot's enable and test cite a human"
@@ -2369,6 +2369,8 @@ class RoutineIn(BaseModel):
 class RoutineActIn(BaseModel):
     approved_by: int | None = Field(None, description="For an admin bot's enable or test: the id of the human's"
                                     " reply in the routine's thread, after its current version, that said yes to it.")
+    version: int | None = Field(None, description="For approve and enable: the version the person was shown. Refused when the routine"
+                               " has changed since, so a yes is never given to a version nobody looked at (#820).")
 
 
 @app.get("/api/routines", tags=["routines"])
@@ -2425,7 +2427,7 @@ async def routine_act(rid: int, action: str = Path(pattern="^(approve|enable|pau
     waits for one (#380); the runner tests it, and it is enabled again when the test passes if it was
     enabled before the change. An admin bot's enable and test of a waiting version cite the human's yes.
     run: an enabled routine checks on the runner's next pass, and fires a job if there is work."""
-    return await _routine_call(routines.act, rid, action, agent, body.approved_by)
+    return await _routine_call(routines.act, rid, action, agent, body.approved_by, body.version)
 
 
 @app.delete("/api/routines/{rid}", tags=["routines"])
@@ -2772,8 +2774,7 @@ def page_admin(_: dict | None = Depends(page_gate)) -> str:
     return web.shell(BOARD_NAME, "administration", here="/admin", content=
                      '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
                      + web.status_html(status.rollup(), overview=False) + '</div>'
-                     '<p><a href="/machines">Machines</a> · <a href="/workspaces">Workspaces</a> · '
-                     '<a href="/routines">Routines</a></p>')
+                     '<p><a href="/machines">Machines</a> · <a href="/workspaces">Workspaces</a></p>')
 
 
 @app.get("/fleet", include_in_schema=False)
@@ -2853,8 +2854,10 @@ def page_projects(slug: str = "") -> RedirectResponse:
 
 @app.get("/routines", response_class=HTMLResponse, include_in_schema=False)
 def page_routines(_: dict | None = Depends(page_gate)) -> str:
-    from .routines_web import routines_page
-    return routines_page(BOARD_NAME)
+    """The routines page is gone (#820): each workspace has a Routines tab. The page's script sends an old #r=<id> link to its routine
+    there (the server never sees a fragment) and anything else to the workspaces, which say where the routines went."""
+    from .routines_web import routines_moved_page
+    return routines_moved_page(BOARD_NAME)
 
 
 @app.get("/a/{handle}", response_class=HTMLResponse, include_in_schema=False)

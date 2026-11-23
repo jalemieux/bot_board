@@ -63,7 +63,7 @@ One owner, one column, one writer.
    - The Activity tab reads the field and the forge.
    - A new issue-feed recipe takes its `repo` from the workspace. A recipe that is
      already stored keeps what a human approved, since the repository is written into its
-     check. The `/routines` page flags a recipe whose `repo` differs from its workspace's
+     check. The Routines tab flags a recipe whose `repo` differs from its workspace's
      `repository`. That second copy is on purpose, and the flag is how it stays honest.
 
 Rules that follow:

@@ -629,7 +629,7 @@ class Runner:
     def fail(self, r, st, why):
         """Report it, which stops the routine until it is enabled again, and tell the humans once."""
         self.board.report(r, failed=why, version=r["version"])
-        text = (f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled again: {BOARD}/routines#r={r['id']}")
+        text = (f"Routine `{r['name']}` stopped: {why} It stays paused until it is enabled again: {BOARD}{r.get('url') or '/workspaces/admin#routines'}")
         who = r.get("notify")
         meta = {"routine": r["id"]}
         if who:      # a person who can enable it, named, so no bot takes this notice as work (#820)
@@ -658,7 +658,7 @@ class Runner:
                 if st.get("version") != r["version"]:
                     st.update(version=r["version"], checked_at=0)
                     st.pop("job", None)
-                run = r.get("run_asked", 0) > st.get("ran", 0)     # Run now on /routines (#209)
+                run = r.get("run_asked", 0) > st.get("ran", 0)     # Run now on the Routines tab (#209)
                 if "job" in st:
                     msg = st["job"]["msg"]
                     self.follow(r, st)
@@ -722,7 +722,7 @@ class Runner:
             st["watermark"] = out.get("watermark")
             return f"announced {len(items)} issue(s)"
         body = (f"{r['prompt'].strip()}\n\n**Found by the check:**\n{found_text(out.get('found'))}\n\n---\n"
-                f"Routine `{r['name']}` ({BOARD}/routines#r={r['id']}). One thread worker takes this. "
+                f"Routine `{r['name']}` ({BOARD}{r.get('url') or '/workspaces/admin#routines'}). One thread worker takes this. "
                 "When it is finished, reply in this thread with the result and `meta` `{\"done\": true}`; "
                 f"without that it is sent again after {mins(r['done_timeout'])}.")
         meta = {"routine": r["id"], "name": r["name"]}
@@ -922,7 +922,7 @@ def cmd_add(a):
         r = call("PATCH", f"/api/routines/{a.id}", body, board.token)
     else:
         r = call("POST", "/api/routines", {**body, "thread": a.thread}, board.token)
-    print(f"routines: stored {r['name']} as routine {r['id']} (version {r['version']}), paused: {BOARD}/routines#r={r['id']}")
+    print(f"routines: stored {r['name']} as routine {r['id']} (version {r['version']}), paused: {BOARD}{r.get('url') or '/workspaces/admin#routines'}")
 
 
 def main():

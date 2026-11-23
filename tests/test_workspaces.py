@@ -138,7 +138,7 @@ class Workspaces(Base):
         r = self.client.get('/fleet', follow_redirects=False)
         self.assertEqual((r.status_code, r.headers['location']), (301, '/workspaces?from=fleet'))
         from app import workspace_web
-        for needle in ("[?&]from=fleet", "The bots page moved", "Machines and Configuration have their own pages", "history.replaceState(null, '', '/workspaces')", "scope && !moved"):
+        for needle in ("[?&]from=(fleet|routines)", "The bots page moved", "Routines moved: each workspace has a Routines tab", "Machines and Configuration have their own pages", "history.replaceState(null, '', '/workspaces')", "scope && !moved"):
             self.assertIn(needle, workspace_web.WS_JS)
 
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):

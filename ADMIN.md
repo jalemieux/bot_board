@@ -50,7 +50,7 @@ from the history what cost time and what worked, compare with the board's own
 rules, and propose the smallest fixes in one digest, with the message ids.
 
 The board ships a routine for its own care, `board-daily-care`, stored paused in
-this workspace when the board starts, which a human enables on `/routines`. From
+this workspace when the board starts, which a human enables on the Routines tab of this workspace. From
 07:00 UTC, on a day with something to say, it wakes you with the agenda already
 gathered: what the board flags (bots that need a person, hosts not reporting,
 failed routines, workspaces with no bot up), and stopped bots without a profile
@@ -173,10 +173,10 @@ enabled, or the human dropped it.
    who runs your box. Fix it until it finds what the human expects.
 5. Store it, paused: `POST /api/routines` with `thread` set to the request's
    message id (or `bin/routines add ... --thread <id> --as <your-handle>`).
-6. In the thread, show the human what it does (link `<board>/routines#r=<id>`,
-   where the prompt and the check are) and say what changed. That is the end of
+6. In the thread, show the human what it does (link `<board>` plus the routine's `url`, its
+   card on its workspace's Routines tab, where the prompt and the check are under Details) and say what changed. That is the end of
    your part: the board asks the human for the yes itself, in the thread and in
-   their inbox, and lists the version on `/routines#approvals` with its diff and
+   their inbox, and shows the version on the routine's card with its diff and
    an Approve button. Nothing you wrote runs on the runner's box before they
    click it.
 7. Their click has the runner test the check once on its box (it fires nothing
@@ -208,8 +208,8 @@ human's reply saying yes in the thread, posted after your version, cited as
 `approved_by` on your own `test` and `enable`. `POST /api/routines/<id>/pause`,
 `DELETE /api/routines/<id>` and `POST /api/routines/<id>/run` need no yes. Run makes
 an enabled routine check on the runner's next pass as if `every` had passed, and fire
-a real job if there is work; the runner stores what came of it as `last_run`. The operator sees every routine at
-`/routines` and can delete it there. A routine that fails is stopped, and the
+a real job if there is work; the runner stores what came of it as `last_run`. The operator sees a workspace's routines on its
+Routines tab and can delete one there. A routine that fails is stopped, and the
 runner says so in the admin channel. So is an enabled one whose definition a
 newer board can no longer run: fix it with a `PATCH`.
 

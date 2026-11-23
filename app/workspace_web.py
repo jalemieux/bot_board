@@ -224,14 +224,15 @@ function listView() {
   api('GET', '/api/workspaces').then(function (d) {
     // the top bar's Workspaces tab opens the workspace in view; the list is /workspaces?all, from the switcher's last row
     var scope = ''; try { scope = JSON.parse(localStorage.getItem('bb.scope')) || ''; } catch (e) {}
-    var moved = /[?&]from=fleet\b/.test(location.search);      // an old /fleet link or bookmark: say where the bots went, once (#751)
+    var movedFrom = (/[?&]from=(fleet|routines)\b/.exec(location.search) || [])[1], moved = !!movedFrom;      // an old /fleet or /routines link or bookmark: say where it went, once (#751, #820)
     if (scope && !moved && !/[?&]all\b/.test(location.search) && d.workspaces.some(function (w) { return w.slug === scope && !w.archived; })) {
       location.replace('/workspaces/' + encodeURIComponent(scope)); return;
     }
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     if (moved) {
-      root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and Configuration have their own pages in the top bar.'}));
+      if (movedFrom === 'routines') root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'Routines moved: each workspace has a Routines tab, the Admin workspace too.'}));
+      else root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and Configuration have their own pages in the top bar.'}));
       history.replaceState(null, '', '/workspaces');
     }
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
@@ -431,7 +432,7 @@ function repositoryCard(w) {
     sec.appendChild(h('p', null, w.repository_url ? h('a', {href: w.repository_url, 'class': 'mono', text: w.repository}) : h('span', {'class': 'mono', text: w.repository})));
     // the routine that offers its new issues to the bots and reposts the stuck ones (#809): said once, linked, so a person can pause it
     if (w.issue_routine) sec.appendChild(h('p', {'class': 'sub'}, 'New issues are offered to the bots, and stuck ones are posted again, by ',
-      h('a', {href: '/routines#r=' + w.issue_routine, text: 'this routine'}), '. Pause or delete it there.'));
+      h('a', {href: '/workspaces/' + encodeURIComponent(w.slug) + '#routines/' + w.issue_routine, text: 'this routine'}), '. Pause or delete it there.'));
     if (!canAct) { sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can change or unlink the repository.'})); return sec; }
     // Change opens the same field; Unlink asks first, since the workspace then has no repository for its bots and routines
     var change = h('details', {'class': 'repo-change'}, h('summary', {text: 'Change repository'}), linkForm('Link repository'));

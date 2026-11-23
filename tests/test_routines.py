@@ -258,8 +258,8 @@ class Routines(unittest.TestCase):
         self.assertEqual((asked[2]['needs'], asked[2]['routine']), ('jac', r['id']))
         inbox = self.call('GET', '/api/status')
         self.assertEqual([(m['where'], m['text']) for m in inbox['waiting'] if m['href'] == f"/t/{ask['id']}"],
-                         [('@board', 'approve version 1 of routine triage on /routines#approvals')])
-        bell = [a for a in self.call('GET', '/api/status')['attention'] if a['href'] == '/routines#approvals']
+                         [('@board', "approve version 1 of routine triage on its workspace's Routines tab")])
+        bell = [a for a in self.call('GET', '/api/status')['attention'] if a['text'].endswith('for your yes: triage v1')]
         self.assertEqual(bell[0]['text'], '1 routine change waits for your yes: triage v1')
 
         path = f"/api/routines/{r['id']}"
@@ -271,7 +271,7 @@ class Routines(unittest.TestCase):
         said = self.thread_bodies(ask['id'])[-1]
         self.assertEqual((said[0], said[1], said[2]['resolved']), ('board', 'Version 1 approved by jac. Enabled.', True))
         self.assertFalse(any(m['href'] == f"/t/{ask['id']}" for m in self.call('GET', '/api/status')['waiting']))
-        self.assertEqual([a for a in self.call('GET', '/api/status')['attention'] if a['href'] == '/routines#approvals'], [])
+        self.assertEqual([a for a in self.call('GET', '/api/status')['attention'] if 'wait' in a['text'] and 'yes' in a['text']], [])
 
         # a new check pauses it and asks again; Approve tests it, and the passing test switches it back on
         v2 = self.call('PATCH', path, {'check': CHECK + '# v2\n'}, auth=self.bot)
@@ -279,7 +279,9 @@ class Routines(unittest.TestCase):
         self.assertIn('+# v2', v2['waiting']['diff'])
         self.assertIn('and it is enabled again', self.thread_bodies(ask['id'])[-1][1])
         self.call('POST', path + '/test', auth=self.bot, expected=422)          # a bot's test of a waiting version needs the yes
-        ok = self.call('POST', path + '/approve')
+        stale = self.call('POST', path + '/approve', {'version': v2['version'] - 1}, expected=422)     # a yes to a version nobody looked at (#820)
+        self.assertIn('look at it again', stale['error'])
+        ok = self.call('POST', path + '/approve', {'version': v2['version']})
         self.assertEqual((ok['state'], ok['approving'], ok['test_pending'], 'waiting' in ok), ('paused', True, True, False))
         self.call('POST', path + '/approve', expected=422)                      # once
         self.assertIn('The runner tests it now, then it is enabled again.', self.thread_bodies(ask['id'])[-1][1])
@@ -307,7 +309,7 @@ class Routines(unittest.TestCase):
         n = self.call('GET', path)['test_asked']
         self.call('POST', path + '/report', {'test': {'for': n, 'version': 4, 'ok': True, 'work': True}}, auth=self.runner)
         self.assertEqual(self.call('GET', path)['state'], 'paused')
-        self.assertEqual(self.thread_bodies(ask['id'])[-1][1], 'Test of version 4 ok, found work. It stays paused until someone enables it on /routines.')
+        self.assertEqual(self.thread_bodies(ask['id'])[-1][1], 'Test of version 4 ok, found work. It stays paused until someone enables it on its workspace\'s Routines tab.')
 
     def test_a_change_that_leaves_the_check_alone_keeps_running_and_asks_nobody(self):
         self.make_admin()

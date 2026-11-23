@@ -87,7 +87,7 @@ class Status(Base):
         self.assertIn('routine nightly failed: check exited 2', texts)
         self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/machines#box-box', '/a/tarzan'})
         self.assertEqual(got['workspaces']['href'], '/workspaces/game')
-        self.assertTrue(got['routines']['href'].startswith('/routines#r='))
+        self.assertTrue(got['routines']['href'].startswith('/workspaces/game#routines/'))      # its workspace's Routines tab (#820)
         page = self.client.get('/admin').text
         self.assertIn('need a human', page)
         self.assertIn('href="/workspaces/game"', page)

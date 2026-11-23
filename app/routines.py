@@ -11,7 +11,7 @@ an admin bot, a bot of that workspace. The trust boundary is the check: it is
 code that runs on the runner's box with the fleet's secrets, so a check a bot
 wrote runs only once a human approved it. The board keeps the last approved
 definition beside the current one (`approved_definition`). A version whose check
-differs from it waits (`waiting`): the board lists it on /routines with the diff
+differs from it waits (`waiting`): the board lists it on the Routines tab of its workspace with the diff
 and an Approve button, counts it in the bell, and tells the admin workspace's
 owner in the routine's thread (#380). Approve stores the yes, asks the runner for
 a test, and the routine is enabled again when the test passes, if it was enabled
@@ -150,7 +150,7 @@ def ensure_issue_routine(slug: str) -> int | None:
     """A workspace that has a repository gets the routine that offers its issues to the bots and sweeps the stuck ones
     (#809): a `forgejo-issues` recipe for that repository, in the workspace's General channel, enabled from the start. The
     board writes the check from the recipe, so no bot wrote code that a person has not seen; a person pauses or deletes it
-    on /routines. Nothing is made when the workspace has no repository or the board has no forge address, or when a routine
+    on its Routines tab. Nothing is made when the workspace has no repository or the board has no forge address, or when a routine
     covers the repository already (paused ones count). Forgejo only: a GitHub repository is not given one. Returns the new
     routine's id, or None. It never raises: a failure here must not undo the repository."""
     try:
@@ -359,6 +359,11 @@ def _changed(old: dict | None, new: dict) -> str:
     return ", ".join(out) or "nothing"
 
 
+def page_url(workspace: str | None, rid: int | None = None) -> str:
+    """Where a routine is shown: the Routines tab of its workspace, with its Details open (#820). The routines page is gone."""
+    return f"/workspaces/{workspace or ADMIN_PROJECT}#routines" + (f"/{rid}" if rid else "")
+
+
 def workspace_of(channel: str) -> str | None:
     """The slug of the workspace a channel belongs to, which is the workspace of every routine that fires into it (#820), or None
     when the channel is no workspace's."""
@@ -371,7 +376,8 @@ def describe(row: dict, full: bool = True) -> dict:
     test = json.loads(row["last_test"]) if row["last_test"] else None
     ran = json.loads(row["last_run"]) if row["last_run"] else None
     owner = _owner()
-    out = {**d, "workspace": workspace_of(d.get("channel")), "notify": owner["handle"] if owner else None, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
+    home = workspace_of(d.get("channel"))
+    out = {**d, "workspace": home, "url": page_url(home, row["id"]), "notify": owner["handle"] if owner else None, "id": row["id"], "state": row["state"], "version": row["version"], "thread": row["thread_id"],
            "approved_by": row["approved_by"], "failure": row["failure"] if row["state"] == "failed" else None,
            "test_pending": row["test_asked"] > (test or {}).get("for", 0), "test_asked": row["test_asked"],
            "last_test": test, "run_pending": row["run_asked"] > (ran or {}).get("for", 0),
@@ -379,7 +385,7 @@ def describe(row: dict, full: bool = True) -> dict:
            "created_at": row["created_at"], "updated_at": row["updated_at"],
            "approving": row["approving"] > (test or {}).get("for", 0)}
     if _waiting(row):
-        # a version whose check no human has approved: shown on /routines with the diff and Approve (#380)
+        # a version whose check no human has approved: shown on its Routines tab with the diff and Approve (#380)
         ok = _approved(row)
         out["waiting"] = {"changed": _changed(ok, d), "diff": _diff(ok, d) if ok else "", "resume": bool(row["resume"]),
                           "by": (db.get_agent_by_id(row["updated_by"]) or {}).get("handle")}
@@ -528,9 +534,9 @@ def _ask(rid: int, agent: dict) -> None:
     who = _owner()
     at = "@" + who["handle"] + " " if who else ""
     _say(row, f"{at}version {row['version']} of routine `{r['name']}` ({r['waiting']['changed']}) waits for your yes. "
-              f"Approve it on /routines#approvals: the runner tests it" +
+              f"Approve it on the Routines tab of its workspace ({page_url(workspace_of(r.get('channel')), row['id'])}): the runner tests it" +
               (" and it is enabled again" if row["resume"] else ", then it can be enabled") + ".",
-         {"needs": who["handle"], "ask": f"approve version {row['version']} of routine {r['name']} on /routines#approvals"}
+         {"needs": who["handle"], "ask": f"approve version {row['version']} of routine {r['name']} on its workspace's Routines tab"}
          if who else {})
 
 
@@ -595,14 +601,16 @@ def _approval(row: dict, agent: dict, approved_by: int | None, action: str) -> i
     return approved_by
 
 
-def act(rid: int, action: str, agent: dict, approved_by: int | None = None) -> dict:
+def act(rid: int, action: str, agent: dict, approved_by: int | None = None, version: int | None = None) -> dict:
     """approve, enable, pause, test, run or delete. approve: a human manager's yes to a waiting
-    version, from /routines (#380): the runner tests it, and `report` enables it when the test
+    version, from the Routines tab (#380): the runner tests it, and `report` enables it when the test
     passes if it was enabled before the change. enable approves too, and runs it now. run: the
     runner checks an enabled routine on its next pass as if `every` had passed, and fires a real
     job if there is work. It needs no approval: it runs the version already enabled (#209)."""
     _require_switch(agent)
     row = _row(rid)
+    if version is not None and version != row["version"] and action in ("approve", "enable"):
+        raise ValueError(f"routine {rid} is at version {row['version']} now, not {version}: look at it again before you say yes")
     sets, args = [], []
     if action == "approve":
         if not is_operator(agent):
@@ -709,10 +717,10 @@ def report(rid: int, data: dict, agent: dict) -> dict:
                       (str(data["failed"])[:2000], rid, data.get("version", row["version"])))
     if approving:
         if not test.get("ok"):
-            what = f"Test of version {row['version']} failed: {test.get('error') or 'see /routines#r=' + str(rid)} " \
+            what = f"Test of version {row['version']} failed: {test.get('error') or 'see ' + page_url(workspace_of(_stored(row).get('channel')), rid)} " \
                    "It stays paused; a fix is a new version."
         else:
             what = f"Test of version {row['version']} ok, " + ("found work. " if test.get("work") else "no work right now. ") \
-                   + ("Enabled again." if back else "It stays paused until someone enables it on /routines.")
+                   + ("Enabled again." if back else "It stays paused until someone enables it on its workspace's Routines tab.")
         _say(row, what, {})
     return get(rid)
