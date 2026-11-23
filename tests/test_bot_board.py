@@ -177,6 +177,41 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("it asks for your handle on the board", r.stdout)
         self.assertIn("events stop reaching threads", r.stdout)
 
+    def forge_fakes(self, humans=("jac",)):
+        """The board answers its agents list and a sign-in; forgejo-native prints its environment; forge-setup records itself."""
+        agents = json.dumps({"agents": [{"handle": h, "kind": "human"} for h in humans] + [{"handle": "ada", "kind": "claude-code"}]})
+        curl = self.home / "fakebin/curl"
+        curl.write_text('#!/usr/bin/env bash\ncase "$*" in\n *" -d "*) cat >/dev/null; echo \'{"token": "tok-human"}\' ;;\n'
+                        f" */api/agents*) echo '{agents}' ;;\nesac\nexit 0\n")
+        curl.chmod(0o755)
+        ctl = self.src / "deploy/forgejo-native"
+        ctl.write_text('#!/usr/bin/env bash\necho "forgejo-native $1 BOARD=$BOARD" >> "$CALLS"\n[ "$1" != env ] || echo "export FORGEJO_BIN=/x/forgejo"\n')
+        setup = self.src / "deploy/forge-setup"
+        setup.write_text('#!/usr/bin/env bash\necho "forge-setup BOARD=$BOARD TOKEN=${BOARD_HUMAN_TOKEN:+given} BIN=${FORGEJO_BIN:-}" >> "$CALLS"\n')
+        setup.chmod(0o755)
+
+    def test_expose_points_the_forge_webhook_at_the_new_address_itself_when_the_board_has_one_human(self):
+        # #805: no command to paste: it signs in as the board's one person and runs forge-setup
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        self.forge_fakes()
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge-setup BOARD=http://100.64.0.9:8080 TOKEN=given BIN=/x/forgejo", calls)
+        self.assertIn("forge-setup pointed its site webhook at the new address (signed in as jac)", r.stdout)
+        self.assertNotIn("events stop reaching threads", r.stdout)
+        self.assertNotIn("tok-human", r.stdout + r.stderr, "the token is never printed")
+
+    def test_expose_leaves_forge_setup_to_a_person_when_the_board_has_more_than_one_human(self):
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        self.forge_fakes(humans=("jac", "sam"))
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse([c for c in calls if c.startswith("forge-setup")], calls)
+        self.assertIn("events stop reaching threads", r.stdout)
+        self.assertIn("it asks for your handle on the board", r.stdout)
+
     def test_expose_adds_the_allow_list_when_the_settings_have_none(self):
         self.expose_env()
         forgejo, ini = self.native_forgejo()

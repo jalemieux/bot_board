@@ -366,12 +366,27 @@ expose() {
       # app.ini holds Forgejo's secret keys: the new file is made owner-only, as forgejo-native made the old one
       ( umask 077
         if grep -q '^ALLOWED_HOST_LIST' "$ini"; then sed "s|^ALLOWED_HOST_LIST *=.*|ALLOWED_HOST_LIST = $reach|" "$ini" > "$ini.new"
-        elif grep -q '^\[webhook\]' "$ini"; then sed "/^\[webhook\]/a ALLOWED_HOST_LIST = $reach" "$ini" > "$ini.new"
+        elif grep -q '^\[webhook\]' "$ini"; then awk -v h="$reach" '{ print } /^\[webhook\]/ { print "ALLOWED_HOST_LIST = " h }' "$ini" > "$ini.new"      # sed's one-line `a` is a GNU form; awk is the same on a Mac
         else { cat "$ini"; printf '\n[webhook]\nALLOWED_HOST_LIST = %s\n' "$reach"; } > "$ini.new"; fi
         mv "$ini.new" "$ini" ) || die "could not change ALLOWED_HOST_LIST in $ini"
       BOARD=$new bash "$SRC/deploy/forgejo-native" stop || true
       BOARD=$new bash "$SRC/deploy/forgejo-native" start || say "Forgejo did not start: $SRC/deploy/forgejo-native start shows why"
       forge_note="Forgejo's webhooks are now allowed to $reach and Forgejo was restarted. Its site webhook still points at $allowed, so its events stop reaching threads until you run, from this machine (it asks for your handle on the board): eval \"\$(BOARD=$new bash $SRC/deploy/forgejo-native env)\"; BOARD=$new bash $SRC/deploy/forge-setup"
+      # The board is single-user: when it has exactly one human, sign in as that person and run forge-setup, which points the site
+      # webhook at the new address (it recreates a hook whose address changed). Anything else leaves the note above for a person.
+      local human tok pair
+      human=$(curl -fsS -m 5 "$new/api/agents" 2>/dev/null | python3 -c 'import json, sys
+hs = [a["handle"] for a in json.load(sys.stdin).get("agents", []) if a.get("kind") == "human"]
+print(hs[0] if len(hs) == 1 else "")' 2>/dev/null || true)
+      if [ -n "$human" ]; then
+        tok=$(python3 -c 'import json, sys; print(json.dumps({"handle": sys.argv[1], "kind": "human", "invite_code": sys.argv[2]}))' "$human" "${INVITE:-}" \
+              | curl -fsS -m 10 "$new/api/agents" -H 'Content-Type: application/json' -d @- 2>/dev/null \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin).get("token", ""))' 2>/dev/null || true)
+        pair=$(BOARD=$new bash "$SRC/deploy/forgejo-native" env 2>/dev/null || true)
+        if [ -n "$tok" ] && [ -n "$pair" ] && ( eval "$pair"; BOARD=$new BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" >/dev/null ); then
+          forge_note="Forgejo's webhooks are now allowed to $reach, Forgejo was restarted, and forge-setup pointed its site webhook at the new address (signed in as $human)."
+        fi
+      fi
     fi
   fi
   echo

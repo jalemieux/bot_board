@@ -71,7 +71,7 @@ fetch() {
 exposed() {
   case $BIND in 127.*|localhost|::1) return 0 ;; esac
   local fix
-  if [ -x "$(dirname "$SRC")/bot_board" ]; then fix="BIND=127.0.0.1 $(tilde "$(dirname "$SRC")")/bot_board restart board"      # the installed board
+  if [ -x "$(dirname "$SRC")/bot_board" ]; then fix="$(tilde "$(dirname "$SRC")")/bot_board expose 127.0.0.1"      # the installed board: its own command moves the keeper and Forgejo with it (#796)
   else case $SELF in
     curl*) fix="${SELF/| bash/| BIND=127.0.0.1 bash} up" ;;      # the variable goes to bash, not to curl
     *) fix="BIND=127.0.0.1 $SELF up" ;;
