@@ -123,6 +123,33 @@ class ForgejoNativeOnAMac(unittest.TestCase):
         r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("this Mac's Forgejo is 17.1.0, the pin is 17.0.2", r.stdout)
 
+    def test_a_forgejo_older_than_the_pin_is_refused_unless_allowed(self):
+        (self.bin / "forgejo").write_text(FAKE.replace("17.0.2", "16.9.0")); (self.bin / "forgejo").chmod(0o755)
+        r = self.run_cmd("start")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("older than the pin 17.0.2", r.stderr)
+        self.assertIn("brew upgrade forgejo", r.stderr)
+        self.env["FORGEJO_ALLOW_OLDER"] = "1"
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("this Mac's Forgejo is 16.9.0, the pin is 17.0.2", r.stdout)
+
+    def test_a_process_is_ours_only_if_ps_says_it_started_from_our_binary(self):
+        # a Mac has no /proc: `ps -o comm=` gives the path, and the stale-pid case must not match on a word of the command line
+        ps = self.bin / "ps"
+        # the fake Forgejo is a script, so its path is the second word of its command line; a real binary's comm is its path
+        ps.write_text('#!/bin/sh\npid=$2\nif [ "$(tr "\\0" "\\n" < /proc/$pid/cmdline | sed -n 2p)" = "' + str(self.bin) + '/forgejo" ]; '
+                      'then echo ' + str(self.bin) + '/forgejo; else echo /bin/sleep; fi\n')
+        ps.chmod(0o755)
+        self.env["FORGEJO_PS_ONLY"] = "1"
+        (self.bin / "forgejo").write_text(FAKE); (self.bin / "forgejo").chmod(0o755)
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("already running", self.run_cmd("start").stdout)
+        self.assertEqual(self.run_cmd("stop").returncode, 0)
+        other = subprocess.Popen(["sh", "-c", "sleep 30", str(self.bin) + "/forgejo"]); self.addCleanup(other.kill)     # its command line holds our path
+        Path(self.tmp.name, "fj/forgejo.pid").write_text(str(other.pid))
+        self.assertEqual(self.run_cmd("stop").returncode, 0)
+        self.assertIsNone(other.poll(), "stop must not kill a process that only mentions the path")
+
     def test_without_forgejo_or_homebrew_it_says_what_to_install(self):
         env = {**self.env, "PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
         r = subprocess.run([str(SCRIPT), "start"], env=env, capture_output=True, text=True, timeout=60)
