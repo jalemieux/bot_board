@@ -958,6 +958,41 @@ aside.thread .compose{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
 .compose .send,.compose .attach{min-height:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}}
 """
 
+# The workspace switcher's menu (#643, #644), shared by the board page and the workspace page (#660): its rows, and how
+# it opens and closes. A page supplies the data and what choosing a workspace does.
+WS_SWITCHER_JS = r"""
+function wsEsc(s) { return String(s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); }
+// items: [{slug, label, n}] (n: what waits on you there); links: [{href, text, cls}] shown after the workspaces
+function wsRows(items, current, links) {
+  return items.map(function (x) {
+    var here = x.slug === current, n = here ? 0 : x.n || 0;
+    return '<li class="' + (here ? 'here' : '') + '"><button type="button" data-ws="' + wsEsc(x.slug) + '"' + (here ? ' aria-current="true"' : '') + '>' + wsEsc(x.label || x.slug) +
+      (here ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
+  }).join('') + (links || []).map(function (l) {
+    return '<li' + (l.cls ? ' class="' + l.cls + '"' : '') + '><a href="' + wsEsc(l.href) + '">' + wsEsc(l.text) + '</a></li>';
+  }).join('');
+}
+var WSW = null;      // the switcher drawn last: the document listeners act on it, once, however often a page draws one
+function wsClose(focus) {
+  if (!WSW) return;
+  WSW.menu.hidden = true; WSW.btn.setAttribute('aria-expanded', 'false');
+  if (focus) WSW.btn.focus();
+}
+function wsSwitcher(btn, menu, onPick) {
+  WSW = {btn: btn, menu: menu};
+  btn.addEventListener('click', function (ev) {
+    ev.stopPropagation(); menu.hidden = !menu.hidden; btn.setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  menu.addEventListener('click', function (ev) {
+    var b = ev.target.closest('button[data-ws]'); if (b) onPick(b.dataset.ws);
+  });
+  if (!wsSwitcher.bound) {
+    wsSwitcher.bound = true;
+    document.addEventListener('click', function () { wsClose(false); });
+    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && WSW && !WSW.menu.hidden) wsClose(true); });
+  }
+}
+"""
 APP_JS = r"""
 (function(){
 'use strict';
@@ -1186,22 +1221,10 @@ function renderSwitcher(){
   document.querySelectorAll('.wsq').forEach(function(i){ i.value = SCOPE; });
   var others = WS_SLUGS.reduce(function(n, w){ return n + (w === SCOPE ? 0 : wsCounts[w] || 0); }, 0), tb = $('#wstotal');
   tb.hidden = !others; tb.textContent = others; tb.setAttribute('aria-label', others + ' waiting on you in other workspaces');
-  $('#wsmenu').innerHTML = WS_SLUGS.map(function(w){
-    var n = w === SCOPE ? 0 : wsCounts[w] || 0;
-    return '<li class="' + (w === SCOPE ? 'here' : '') + '"><button type="button" data-ws="' + esc(w) + '"' + (w === SCOPE ? ' aria-current="true"' : '') + '>' + esc(w) +
-      (w === SCOPE ? '<span class="here-note">you are here</span>' : n ? '<span class="n ask" aria-label="' + n + ' waiting on you">' + n + '</span>' : '') + '</button></li>';
-  }).join('') + '<li class="bw"><a href="/machines">Board-wide</a></li>';
+  $('#wsmenu').innerHTML = wsRows(WS_SLUGS.map(function(w){ return {slug: w, n: wsCounts[w]}; }), SCOPE, [{href: '/machines', text: 'Board-wide', cls: 'bw'}]);
 }
-$('#wsbtn').addEventListener('click', function(ev){
-  ev.stopPropagation(); var m = $('#wsmenu'); m.hidden = !m.hidden; this.setAttribute('aria-expanded', String(!m.hidden));
-});
-document.addEventListener('click', function(){ $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); });
-$('#wsmenu').addEventListener('click', function(ev){
-  var b = ev.target.closest('button[data-ws]'); if (!b) return;
-  if (b.dataset.ws !== SCOPE) { setScope(b.dataset.ws); S.cur = null; S.view = null; closeThread(); history.pushState({}, '', P() || '/'); route(); }
-});
-document.addEventListener('keydown', function(ev){
-  if (ev.key === 'Escape' && !$('#wsmenu').hidden) { $('#wsmenu').hidden = true; $('#wsbtn').setAttribute('aria-expanded', 'false'); $('#wsbtn').focus(); }
+wsSwitcher($('#wsbtn'), $('#wsmenu'), function(w){
+  if (w !== SCOPE) { setScope(w); S.cur = null; S.view = null; closeThread(); history.pushState({}, '', P() || '/'); route(); }
 });
 window.addEventListener('bb:status', function(ev){ wsCounts = ev.detail.counts || {}; renderSwitcher(); });
 
@@ -2508,7 +2531,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 </dialog>
 </div>
 <script>window.__INIT__={init};</script>
-<script>{APP_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
+<script>{WS_SWITCHER_JS}{APP_JS}{ATTACHMENT_JS}{IMAGE_JS}</script>
 <script>{COPY_JS}</script>"""
 
 
