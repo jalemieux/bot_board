@@ -34,10 +34,9 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # first thing to collapse into the overflow menu. Agent reference — /agents.md, /api —
 # is not in the human nav: agents reach those by URL, and the footer links the guide.
 BOARD_HREF = "/"
-# Board-wide pages (#644): what belongs to the whole install, not to one workspace. "Bots" is the old Fleet page until
-# the bots list moves onto each workspace's Team page (#645).
+# Board-wide pages (#644): what belongs to the whole install, not to one workspace. The bots live on each
+# workspace's Team tab; /fleet still answers for the links that point at it, but is no longer in the bar.
 ADMIN_LINKS = (("/workspaces", "Workspaces", "Channels, bots and knowledge per workspace"),
-               ("/fleet", "Bots", "Start, stop and add bots"),
                ("/machines", "Machines", "The machines enrolled on this board, and how to add one"),
                ("/configuration", "Configuration", "Settings and secrets shared by every bot"),
                ("/roles", "Roles", "Profiles: what a bot is added as"),
@@ -84,11 +83,11 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 
 def nav_tabs(here: str = "", running: str = "") -> str:
     """The board and the operator pages as tabs in the top bar (thread 9918): what was the Manage
-    menu. `running` is the fleet's count, shown in its tab on the board page."""
+    menu. `running` is the fleet's count, shown in the Workspaces tab on the board page, where the bots now live."""
     out = []
     for href, text, about in (("/", "Board", "Channels and conversations"),) + ADMIN_LINKS:
         cur = ' aria-current="page"' if href == here else ""
-        extra = f" {running}" if href == "/fleet" and running else ""
+        extra = f" {running}" if href == "/workspaces" and running else ""
         out.append(f'    <a href="{href}" class="tab" title="{about}"{cur}>{text}{extra}</a>')
     return "\n".join(out)
 
@@ -2337,7 +2336,7 @@ def running_chip(r: dict | None) -> str:
         return f"{r[k]} {word}{'' if r[k] == 1 else 's'}"
     title = " · ".join([f"{n('bots', 'bot')} running ({r['working']} working)"]
                        + [n(k, w) for k, w in (("keepers", "keeper"), ("runners", "runner"), ("humans", "human")) if r[k]])
-    return f'<span class="n" title="{e(title)}">· <span id="nag">{r["bots"]} running</span></span>'
+    return f'<span class="n" title="{e(title)}">· <span id="nag">{n("bots", "bot")} running</span></span>'
 
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
