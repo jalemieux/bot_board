@@ -230,7 +230,7 @@ function listView() {
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
     if (moved) {
-      root.appendChild(h('p', {'class': 'warn', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and secrets have their own pages in the top bar.'}));
+      root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and Configuration have their own pages in the top bar.'}));
       history.replaceState(null, '', '/workspaces');
     }
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
