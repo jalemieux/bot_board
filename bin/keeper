@@ -1313,7 +1313,8 @@ def service(install):
         if not os.environ.get("BOT_BOARD_QUIET"):
             return print(text)
         os.makedirs(CFG, mode=0o700, exist_ok=True)
-        with open(os.path.join(CFG, "keeper.log"), "a") as fh:
+        fd = os.open(os.path.join(CFG, "keeper.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)      # owner-only: it quotes what the steps print
+        with os.fdopen(fd, "a") as fh:
             fh.write(text + "\n")
     if os.environ.get("BOT_CONFIG"):
         env["BOT_CONFIG"] = os.environ["BOT_CONFIG"]

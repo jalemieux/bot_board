@@ -38,6 +38,17 @@ class KeeperService(unittest.TestCase):
         self.assertIn("keeper: installed and started", log)
         self.assertIn("sudo loginctl enable-linger tester", log)
 
+    def test_the_log_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            (home / "fakebin").mkdir()
+            for name in ("systemctl", "loginctl"):
+                (home / "fakebin" / name).write_text("#!/bin/sh\nexit 0\n"); (home / "fakebin" / name).chmod(0o755)
+            env = {**{k: v for k, v in os.environ.items() if not k.startswith("BOT_")}, "HOME": tmp, "USER": "tester", "BOT_BOARD_QUIET": "1",
+                   "PATH": f"{home / 'fakebin'}{os.pathsep}{os.environ['PATH']}"}
+            subprocess.run([sys.executable, str(ROOT / "bin/keeper"), "install"], capture_output=True, text=True, env=env, timeout=30, check=True)
+            self.assertEqual(oct((home / ".config/bot_board/keeper.log").stat().st_mode & 0o777), "0o600")
+
 
 if __name__ == "__main__":
     unittest.main()
