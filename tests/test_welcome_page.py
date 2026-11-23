@@ -166,6 +166,31 @@ assert.ok(root.textContent.includes('is running (claude)'));
 assert.equal(root.all('li').filter(l => (l.attrs['class'] || '').startsWith('step ')).length, steps1, 'still five steps');
 """)
 
+    def test_the_layout_fixes_from_the_first_render(self):
+        self.run_node("""
+const kids = (tag) => root.all(tag);
+// six bots alike and none running: one line and the list folded; a mix stays open
+const six = (st) => Array.from({length: 6}, (_, i) => bot(st, {handle: 'b' + i, role: 'Developer'}));
+await show(facts(bot('starting'), {team: six('starting')}));
+assert.equal(kids('details').length, 1, 'the list is folded when every bot is starting');
+assert.ok(root.textContent.includes('Show the 6 bots'));
+// what the person opened stays open through the next update (the page's own poll, not a fresh load)
+const det = kids('details')[0]; det.open = true; det.handlers.toggle();
+reply = () => ({body: facts(bot('starting'), {team: six('starting').map(b => Object.assign({}, b, {role: 'Dev'}))})}); timers[0][0](); await tick();
+assert.equal(kids('details')[0].attrs.open, '', 'the fold the person opened is still open');
+await show(facts(bot('working'), {team: six('starting').slice(0, 5).concat([bot('working', {handle: 'b9'})])}));
+assert.equal(kids('details').length, 0, 'a mixed team shows its list');
+// each bot: its name and state on a line, its role under it
+const li = kids('li').find(l => (l.attrs['class'] || '') === '' && l.textContent.includes('b9'));
+assert.equal(li.kids[2].attrs['class'], 'rl', 'the role is the last line of the row');
+// the login step offers a button-sized link; the last paragraph is two: the link, then the explanation
+await show(facts(bot('needs login')));
+assert.ok(kids('a').some(a => a.attrs['class'] === 'btnlink' && a.textContent === 'Open Configuration'));
+const toasts = kids('p').filter(p => (p.attrs['class'] || '').startsWith('toast'));
+assert.equal(toasts.length, 2);
+assert.equal(toasts[0].textContent, 'Skip to General now', 'the link is on its own line');
+""")
+
     def test_forge_text_stays_text_and_an_absent_forge_is_optional(self):
         self.run_node("""
 await show(facts(bot('working'), {forge: {configured: true, url: 'javascript:alert(1)', handle: '<b>x</b>'}}));
