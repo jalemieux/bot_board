@@ -294,6 +294,8 @@ workspace (the name is compared ignoring case). A human or an admin bot links it
 `GET /api/workspaces/<slug>` returns `repository` and `repository_url`; the address is `FORGEJO_URL`
 plus the repository, put together when read and never stored, and empty while either is missing. The
 design is in [workspace-repository.md](workspace-repository.md). Existing workspaces are linked by hand.
+The address is shown to anyone who can read the workspace, as the repository's name is. The name is taken
+on trust until the board checks it with the forge (a later change); an archived workspace cannot be linked.
 
 ### Bots
 
