@@ -234,6 +234,17 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
                        "Applying it would remove the roles"):
             self.assertIn(needle, js)
 
+    def test_the_change_box_asks_the_admin_bot_in_the_workspaces_general_channel(self):
+        # #646: the words become a thread whose first line the team-setup skill recognises
+        from app import workspace_web
+        js = workspace_web.WS_JS
+        for needle in ("'Amendment request for ' + w.slug + ', agreement revision ' + rev + ':\\n' + words", "channel: w.channel",
+                       "(admin.handle ? '\\n\\n@' + admin.handle : '')", "x.text || ('@' + x.mention", "Applying one proposal makes the others out of date"):
+            self.assertIn(needle, js)
+        # the skill and the page agree on the first line
+        skill = (Path(__file__).resolve().parents[1] / 'docs/skills/team-setup/SKILL.md').read_text()
+        self.assertIn('`Amendment request for <workspace>, agreement revision <n>:`', skill)
+
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
         o = self.post(self.human, 'other work', channel='other')['message']

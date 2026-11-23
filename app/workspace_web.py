@@ -35,7 +35,9 @@ WS_CSS = """
 .ws .proposal h3{margin:0 0 6px;font-size:14px}
 .ws pre.diff{max-height:320px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0;font:12px/1.5 var(--mono);white-space:pre-wrap}
 .ws pre.diff .add{background:color-mix(in srgb,var(--good) 20%,transparent)}.ws pre.diff .del{background:color-mix(in srgb,var(--accent) 20%,transparent)}.ws pre.diff .gap{color:var(--dim)}
-.ws .proposal .warn{color:var(--accent);font-weight:600}
+.ws .changebox textarea{width:100%;box-sizing:border-box;min-height:64px;font:13px var(--mono);background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
+@media (max-width:700px){.ws .changebox textarea{font-size:16px}}
+.ws .changebox .warn,.ws .proposal .warn{color:var(--accent);font-weight:600}
 .ws .rolehead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:14px 0 4px}
 .ws .rolehead .prof{color:var(--dim);font:12px var(--mono)}
 .ws .rolehead .status{font:600 12px var(--mono)}.ws .status.good{color:var(--good)}.ws .status.bad{color:var(--accent)}
@@ -306,9 +308,11 @@ function teamView(w) {
     api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/team').then(function (d) { return d.team; }, function () { return {roles: []}; }),
     api('GET', '/api/fleet').then(function (d) { return d.hosts; }, function () { return []; }),
     proposalDocs(w),
-    agreementRevision(w)
+    agreementRevision(w),
+    api('GET', '/api/workspaces').then(function (d) { return d.moderator || {}; }, function () { return {}; })
   ]).then(function (r) {
     slot.appendChild(agreementCard(w, r[0]));
+    slot.appendChild(changeBox(w, r[0] ? r[0].revision : r[4], r[5]));
     if (r[3].length) slot.appendChild(proposalsView(w, r[0], r[3], r[4]));
     slot.appendChild(rolesView(w, r[1].roles || [], r[2]));
   });
@@ -325,6 +329,31 @@ function agreementRevision(w) {
   return api('GET', '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/team/agreement.md/history').then(function (d) {
     return d.revisions.reduce(function (m, x) { return Math.max(m, x.revision); }, 0);
   }, function () { return 0; });
+}
+// "Change the agreement" (#646): the words go to the workspace's General channel as a thread that mentions the admin bot, which
+// drafts a proposal (the team-setup skill). Nothing changes until a human applies it on this tab.
+function changeBox(w, rev, admin) {
+  var canAct = !!(ME && w.can_manage && !w.archived);
+  var sec = h('section', {'class': 'changebox'}, h('h2', {text: 'Change the agreement'}));
+  if (!canAct) { sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can ask for a change.'})); return sec; }
+  var text = h('textarea', {rows: '3', maxlength: '4000', 'aria-label': 'what should change', placeholder: 'For example: add a marketer who writes release notes, or: only ask security about security-sensitive changes'});
+  var go = h('button', {type: 'submit', text: 'Draft it'}), out = h('p', {role: 'status'});
+  var form = h('form', null, text, h('div', {'class': 'dlg-actions'}, go), out);
+  if (!admin.handle || !admin.running) sec.appendChild(h('p', {'class': 'warn', text: admin.handle ? 'The admin bot @' + admin.handle + ' is stopped, so nobody will read the request until it runs.' : 'There is no admin bot, so nobody will read the request.'}));
+  sec.appendChild(h('p', {'class': 'sub', text: 'Say what you want in plain words. The admin bot asks what it cannot guess, then saves a proposal here. Nothing changes until you apply it.'}));
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var words = text.value.trim(); if (!words) return;
+    go.disabled = true;
+    api('POST', '/api/messages', {channel: w.channel, body: 'Amendment request for ' + w.slug + ', agreement revision ' + rev + ':\n' + words + (admin.handle ? '\n\n@' + admin.handle : '')}).then(function (d) {
+      var warn = (d.warnings || []).map(function (x) { return x.text || ('@' + x.mention + ' is ' + x.state + ', so nobody will read it yet.'); }).join(' ');
+      out.className = 'msg-ok'; out.textContent = ''; out.appendChild(document.createTextNode('Asked. The conversation is in '));
+      out.appendChild(h('a', {href: '/t/' + d.message.id, text: 'thread #' + d.message.id})); out.appendChild(document.createTextNode('.' + (warn ? ' ' + warn : '')));
+      text.value = ''; go.disabled = false;
+    }).catch(function (e) { go.disabled = false; note(out, e.message); });
+  });
+  sec.appendChild(form);
+  return sec;
 }
 function proposalDocs(w) {
   var base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
@@ -379,10 +408,13 @@ function threadReply(w, tid, text) {      // the outcome, in the proposal's own 
 function proposalsView(w, doc, proposals, goneRev) {
   var canAct = !!(ME && w.can_manage && !w.archived), base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge/';
   var sec = h('section', {'class': 'proposals'}, h('h2', null, 'Proposed changes', h('small', {text: String(proposals.length)})));
+  if (proposals.length > 1) sec.appendChild(h('p', {'class': 'sub', text: 'Applying one proposal makes the others out of date: they were drafted against the revision before it, and can only be rejected.'}));
+  if (!canAct) sec.appendChild(h('p', {'class': 'sub', text: 'Only a manager of this workspace, signed in on the board page, can apply or reject.'}));
   proposals.forEach(function (p) {
     var rev = doc ? doc.revision : goneRev, stale = p.base === null || p.base !== rev, hidden = p.text.search(HIDDEN) >= 0, out = h('p', {role: 'status'});
     var card = h('div', {'class': 'proposal'},
-      h('h3', null, h('a', {href: '/t/' + p.tid, text: 'Proposal from thread #' + p.tid}), p.author ? h('small', {text: ' saved by @' + p.author}) : null));
+      h('h3', null, h('a', {href: '/t/' + p.tid, text: 'Proposal from thread #' + p.tid}), p.author ? h('small', {text: ' saved by @' + p.author}) : null),
+      h('p', {'class': 'sub'}, 'The admin bot explains it in ', h('a', {href: '/t/' + p.tid, text: 'its thread'}), '.'));
     card.appendChild(diffView(doc ? doc.body : '', p.text));
     if (stale) card.appendChild(h('p', {'class': 'warn', text: p.base === null ? 'It names no revision it was drafted against, so it cannot be applied. Reject it and ask for a new one.'
       : 'Out of date: it was drafted against revision ' + p.base + ', and the agreement is at revision ' + rev + '. It can only be rejected.'}));
