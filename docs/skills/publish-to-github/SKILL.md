@@ -33,8 +33,11 @@ Also ask, once: the GitHub owner (their login or an organisation), the
 repository name, and public or private (suggest private). A public repository
 publishes the whole history, every commit and every branch Forgejo has, so say
 that before they choose it, and ask them to search the history for secrets
-first (for example with `git log -p | grep -i -E 'token|secret|password|key'`, or
-a scanner such as gitleaks). A leaked secret in an old commit stays public. Create nothing before the yes.
+first. List only the commit and the file, never the matching text, so a secret does
+not land in the thread (for example
+`git rev-list --all | xargs -n 50 git grep -l -i -E 'token|secret|password|key'`, or a
+scanner such as gitleaks with its output kept to the commit and the file).
+A leaked secret in an old commit stays public. Create nothing before the yes.
 
 ## Path A: the person sets the mirror
 
