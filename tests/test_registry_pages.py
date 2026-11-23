@@ -84,9 +84,9 @@ class RegistryPages(unittest.TestCase):
                             ("fleet-machines", "fleet-versions"), ("fleet-versions", "tab-roles"), ("tab-roles", "fleet-profiles"),
                             ("fleet-profiles", "tab-skills"), ("tab-skills", "fleet-skills"), ("fleet-skills", "tab-settings"), ("tab-settings", "secrets")):
             self.assertLess(page.index(f'id="{first}"'), page.index(f'id="{then}"'))
-        # skills: the seeded ones (github-lifecycle, forgejo-lifecycle, board-guide, board-review, board-care, voice-reply) and ours,
+        # skills: the seeded ones (github-lifecycle, forgejo-lifecycle, board-guide, board-review, board-care, voice-reply, publish-to-github) and ours,
         # with kind, revision and who uses it
-        self.assertIn("Skills · 9", page)
+        self.assertIn("Skills · 11", page)
         self.assertIn('href="/fleet/skills/github-lifecycle"', page)
         self.assertIn('href="/fleet/skills/release-notes"', page)
         self.assertIn("Notes &lt;for&gt; a tag.", page)
