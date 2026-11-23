@@ -276,6 +276,9 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
         self.assertNotIn('::after{content:"";position:absolute', css)
         self.assertIn('.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;', web.APP_CSS, 'the tab bar sits under the top bar, so a sheet covers it')
         self.assertIn('z-index:5', web.TOPNAV_CSS)
+        for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # the button's page name: the base rule that hides it comes before the phone rule that shows it
+            if '#navmore .short{display:inline}' in text:
+                self.assertLess(text.index('#navmore .short{display:none}'), text.index('#navmore .short{display:inline}'))
         for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # one function writes every sheet
             self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', text)
 
