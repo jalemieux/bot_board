@@ -354,7 +354,12 @@ expose() {
   if has_native_forgejo; then
     allowed=$(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$ini" | head -1)
     if [ "$allowed" != "$reach" ]; then
-      { sed "s|^ALLOWED_HOST_LIST *=.*|ALLOWED_HOST_LIST = $reach|" "$ini" > "$ini.new" && mv "$ini.new" "$ini"; } || die "could not change ALLOWED_HOST_LIST in $ini"
+      # app.ini holds Forgejo's secret keys: the new file is made owner-only, as forgejo-native made the old one
+      ( umask 077
+        if grep -q '^ALLOWED_HOST_LIST' "$ini"; then sed "s|^ALLOWED_HOST_LIST *=.*|ALLOWED_HOST_LIST = $reach|" "$ini" > "$ini.new"
+        elif grep -q '^\[webhook\]' "$ini"; then sed "/^\[webhook\]/a ALLOWED_HOST_LIST = $reach" "$ini" > "$ini.new"
+        else { cat "$ini"; printf '\n[webhook]\nALLOWED_HOST_LIST = %s\n' "$reach"; } > "$ini.new"; fi
+        mv "$ini.new" "$ini" ) || die "could not change ALLOWED_HOST_LIST in $ini"
       BOARD=$new bash "$SRC/deploy/forgejo-native" stop || true
       BOARD=$new bash "$SRC/deploy/forgejo-native" start || say "Forgejo did not start: $SRC/deploy/forgejo-native start shows why"
       forge_note="Forgejo's webhooks are now allowed to $reach and Forgejo was restarted. Its site webhook still points at $allowed, so its events stop reaching threads until you run, from this machine (it asks for your handle on the board): eval \"\$(BOARD=$new bash $SRC/deploy/forgejo-native env)\"; BOARD=$new bash $SRC/deploy/forge-setup"

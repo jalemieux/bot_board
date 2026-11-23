@@ -159,10 +159,14 @@ class EntryPoint(unittest.TestCase):
         # a board with a Forgejo beside it has a fourth address: where Forgejo may deliver its webhook
         self.expose_env()
         forgejo, ini = self.native_forgejo()
+        ini.chmod(0o600)
+        old_umask = os.umask(0o022)       # a loose umask must not loosen the file
+        self.addCleanup(os.umask, old_umask)
         r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("ALLOWED_HOST_LIST = 100.64.0.9\n", ini.read_text())
         self.assertIn("[log]\nROOT_PATH = /x", ini.read_text(), "the rest of the settings stay")
+        self.assertEqual(oct(ini.stat().st_mode & 0o777), "0o600", "app.ini holds secret keys: owner-only, whatever the umask")
         self.assertIn("forgejo-native stop BOARD=http://100.64.0.9:8080", calls)
         self.assertIn("forgejo-native start BOARD=http://100.64.0.9:8080", calls)
         # forge-setup takes its native path only with the environment forgejo-native env gives (FORGEJO_BIN, FORGE ...)
@@ -171,6 +175,18 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("deploy/forge-setup", r.stdout)
         self.assertIn("it asks for your handle on the board", r.stdout)
         self.assertIn("events stop reaching threads", r.stdout)
+
+    def test_expose_adds_the_allow_list_when_the_settings_have_none(self):
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        ini.write_text("[webhook]\n[log]\nROOT_PATH = /x\n")
+        r, _ = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(ini.read_text(), "[webhook]\nALLOWED_HOST_LIST = 100.64.0.9\n[log]\nROOT_PATH = /x\n")
+        ini.write_text("[log]\nROOT_PATH = /x\n")
+        (self.cfg / "config").write_text('BOARD="http://127.0.0.1:8080"\n')
+        r, _ = self.run_bb("expose", "100.64.0.8", FORGEJO_DIR=str(forgejo))
+        self.assertTrue(ini.read_text().endswith("[webhook]\nALLOWED_HOST_LIST = 100.64.0.8\n"), ini.read_text())
 
     def test_expose_leaves_forgejo_alone_when_it_already_allows_the_host_or_there_is_none(self):
         self.expose_env()
