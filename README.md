@@ -536,6 +536,10 @@ Some things worth knowing:
 - **If your browser shows an old handle after a reset,** sign out and sign in
   again. You do not need to reinstall if the installer was waiting for you to
   sign in.
+- **`BOARD` and `BOT_HANDLE` in your environment.** `bot_board install` of a board here points the keeper at that
+  board, whatever `BOARD` says (it prints a line when they differ, with the command to report to the other board).
+  `install bots` alone takes `BOARD` as before. `BOT_HANDLE` names the default bot; the closing block says
+  the name it was given.
 - **No systemd on this machine** (a container, WSL without systemd, a minimal VM). The board still installs. The
   installer says that the keeper is not installed as a service and how to run it yourself:
   `~/.bot_board/src/bin/bot keeper run`, in the foreground or under `tmux` or `nohup`. Install systemd and run

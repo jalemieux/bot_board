@@ -258,9 +258,11 @@ forge_install() {
 }
 
 # The one block that ends `bot_board install` (#766): what was installed, how it runs, how to manage it, and the next step.
+# where the board installed here listens, as this machine reaches it: its BIND and PORT (the saved ones after `expose`), 127.0.0.1 for 0.0.0.0 (#553)
+board_here() { local b=${BIND:-127.0.0.1}; [ "$b" != 0.0.0.0 ] || b=127.0.0.1; echo "http://$b:${PORT:-8080}"; }
 tilde() { if [ -n "$HOME" ]; then case $1 in "$HOME"|"$HOME"/*) printf '~%s' "${1#"$HOME"}"; return ;; esac; fi; printf '%s' "$1"; }      # a path under $HOME as ~/…; no ${//} replacement, whose `\~` bash 3.2 prints with its backslash
 install_summary() {
-  local url=${1:-http://${BIND:-127.0.0.1}:${PORT:-8080}} note harness who where first=1
+  local url=${1:-$(board_here)} note harness who where named first=1
   url=${url/0.0.0.0/127.0.0.1}
   add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
   if [ -n "$BOARD_ON" ]; then echo "bot_board is up at $url"; else echo "bot_board is installed; the board is at $url"; fi
@@ -270,6 +272,8 @@ install_summary() {
   elif [ -n "$BOTS_ON" ]; then
     note=$(sed -n 's/^# default bot: //p' "$CFG_FILE" 2>/dev/null | tail -1)
     harness=$(sed -n 's/^KEEPER_DEFAULT_BOT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1)
+    # the name BOT_HANDLE gave the default bot (the launcher sets it in a bot's own session too): say it, so a surprise is visible (#553)
+    named=$(sed -n 's/^KEEPER_DEFAULT_HANDLE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1 || true); [ -z "$named" ] || { if [ "${BOT_HANDLE:-}" = "$named" ]; then named=" named $named, from BOT_HANDLE"; else named=" named $named"; fi; }
     # what the bots can reach stays on the screen whatever the default bot's state: it is the isolation notice (#670)
     where="run as you, with your user's access"
     if grep -qs '^BOT_RUNTIME=' "$CFG_FILE"; then
@@ -282,8 +286,8 @@ install_summary() {
     # the forms of the keeper's note, written by bin/keeper and read here and in bin/bot
     case $note in
       *started) who=${note%, started}; add "a keeper (log: keeper.log) and a default bot, ${who%% in workspace*}" ;;
-      waiting:*) add "a keeper (log: keeper.log) and a default bot, $harness, which starts when you sign in" ;;
-      "") if [ -n "$harness" ]; then add "a keeper (log: keeper.log) and a default bot, $harness, which starts when the keeper reaches the board"; else add "a keeper (log: keeper.log), no default bot"; fi ;;
+      waiting:*) add "a keeper (log: keeper.log) and a default bot, $harness$named, which starts when you sign in" ;;
+      "") if [ -n "$harness" ]; then add "a keeper (log: keeper.log) and a default bot, $harness$named, which starts when the keeper reaches the board"; else add "a keeper (log: keeper.log), no default bot"; fi ;;
       *) add "a keeper (log: keeper.log); a default bot, ${note%% *}, was already here" ;;
     esac
     add "the bots $where"
@@ -394,14 +398,21 @@ case $CMD in
       forge_install
       exit 0
     fi
-    # the board first: bots installed beside it report to it, unless BOARD says otherwise. The steps run quietly (BOT_BOARD_QUIET:
+    # the board first: bots installed beside it report to it. A BOARD in the environment, or one saved by an earlier install, that
+    # names another board is not used for them, and the install says so (#553); `install bots` alone takes BOARD as before.
+    # The steps run quietly (BOT_BOARD_QUIET:
     # run.sh, bin/bot and the keeper keep their details for their logs) and this prints one block at the end (#766).
     [ -z "$BOARD_ON" ] || BOT_BOARD_QUIET=1 board up
     [ -z "$BOARD_ON" ] || [ -z "${FORGE_ADDRESS:-}" ] || existing_forge
     if [ -n "$BOTS_ON" ]; then
       board_url=${BOARD:-}
-      [ -n "$board_url" ] || grep -qs '^BOARD=' "$CFG_FILE" || [ -z "$BOARD_ON" ] \
-        || board_url="http://127.0.0.1:${PORT:-8080}"
+      if [ -n "$BOARD_ON" ]; then
+        here=$(board_here)
+        saved=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1 || true)
+        [ -z "$board_url" ] || [ "$board_url" = "$here" ] || say "BOARD is $board_url in your environment, which is not the board installed here: the keeper reports to $here. To report to $board_url, run: BOARD=$board_url $(tilde "$(dirname "$SRC")")/bot_board install bots"
+        [ -n "$board_url" ] || [ -z "$saved" ] || [ "$saved" = "$here" ] || say "this machine's config names the board $saved: the keeper now reports to $here, the board installed here"
+        board_url=$here
+      fi
       BOT_BOARD_QUIET=1 BOARD=$board_url BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install
     fi
     install_summary "${board_url:-}" ;;
