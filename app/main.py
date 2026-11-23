@@ -1025,6 +1025,11 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
     fleet.moved(name.lower(), body.handed, body.fetched)
     first = fleet.default_bot(name.lower(), agent["handle"], body.default_bot, body.operators,
                               [b.model_dump() for b in body.bots])
+    if first and first.get("created"):      # the install's first bot: the preset team starts beside it (#650)
+        try:
+            fleet.start_team(name.lower(), first["harness"], (body.operators or [agent["handle"]])[0])
+        except Exception as exc:       # the keeper still needs the default_bot answer; the team is a courtesy
+            print(f"bot_board: the preset team did not start on {name}: {exc}", flush=True)
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems) + fleet.leftovers(name.lower()), "secrets": fleet.secrets_version(),
             "release": COMMIT, "min_protocol": versions.MIN_PROTOCOL,
             **({"default_bot": first} if first else {})}

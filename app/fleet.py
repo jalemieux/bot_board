@@ -836,6 +836,27 @@ def default_bot(host: str, keeper: str, ask: dict | None, operators: list[str], 
     return {"handle": handle, "harness": harness, "created": True, "workspace": workspaces.ADMIN}
 
 
+def start_team(host: str, harness: str, by: str) -> list[str]:
+    """The roster's bots of the General workspace, started on `host` with `harness` (#650, part 2b): what the first
+    run set up, now that a box has reported. Only a workspace with a roster is a deliberate team; a role whose
+    profile does not exist is skipped, and `missing` already counts bots asked for, so a second call starts none.
+    Returns the new bots' handles."""
+    from . import workspaces
+    try:
+        ws = workspaces.find(workspaces.FIRST_RUN_WORKSPACE)
+    except KeyError:
+        return []
+    if ws["archived"] or not workspaces.roster(ws):
+        return []
+    made = []
+    for role in workspaces.team(ws)["roles"]:
+        for _ in range(role["missing"] if role["exists"] else 0):
+            handle = free_name()
+            if not want(handle, host, True, harness, by, workspace=ws["slug"], profile=role["profile"].lower()):
+                made.append(handle)
+    return made
+
+
 def free_name() -> str:
     """A first name for a new bot that no agent on the board, no request and no box
     has used; once those run out, a first name with a number, as bin/bot does."""

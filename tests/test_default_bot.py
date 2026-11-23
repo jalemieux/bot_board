@@ -216,11 +216,22 @@ class Board(unittest.TestCase):
         self.make_admin()
         got = self.report(ask={'harness': 'claude', 'handle': 'ada'})
         self.assertEqual(got['default_bot'], {'handle': 'ada', 'harness': 'claude', 'created': True, 'workspace': 'admin'})
-        [w] = got['want']
+        [w] = [x for x in got['want'] if x['workspace'] == 'admin']
         self.assertEqual((w['handle'], w['harness'], w['run'], w['workspace']), ('ada', 'claude', True, 'admin'))
         self.assertEqual(db.conn().execute("SELECT profile FROM fleet_bots WHERE handle='ada'").fetchone()[0], 'admin')
         again = self.report(bots=[{'handle': 'ada', 'harness': 'claude', 'status': 'waiting'}], ask={'harness': 'claude'})
         self.assertEqual(again['default_bot'], {'handle': 'ada', 'harness': '', 'created': False})
+
+    def test_the_install_also_starts_the_preset_team_once_in_general(self):
+        """#650 part 2b: the first run's roster (two developers, an architect, a security engineer, a designer) starts on the
+        box that reported, with the first bot's harness; a second report starts nothing more."""
+        self.make_admin()
+        got = self.report(ask={'harness': 'codex', 'handle': 'ada'})
+        team = [(w['profile'], w['harness']) for w in got['want'] if w['workspace'] == 'general']
+        self.assertEqual(sorted(p for p, _ in team), ['architect', 'developer', 'developer', 'security-engineer', 'ui-designer'])
+        self.assertEqual({h for _, h in team}, {'codex'})
+        again = self.report(bots=[{'handle': 'ada', 'harness': 'codex', 'status': 'waiting'}], ask={'harness': 'codex'})
+        self.assertEqual(len([w for w in again['want'] if w['workspace'] == 'general']), len(team))
 
     def test_with_no_admin_profile_the_first_bot_still_starts(self):
         self.make_admin()
