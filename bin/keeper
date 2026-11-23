@@ -1327,20 +1327,18 @@ def service(install):
         has_systemd = bool(shutil.which("systemctl")) and subprocess.run(
             ctl + ["show-environment"], capture_output=True, stdin=subprocess.DEVNULL).returncode == 0
         if not install:
-            def quietly(*args):        # a box with no systemd (a container) has nothing to disable; the unit file is still ours to remove (#554)
-                try:
-                    subprocess.run(ctl + list(args))
-                except FileNotFoundError:
-                    pass
-            quietly("disable", "--now", "bot-board-keeper")
+            if has_systemd:        # a box with no systemd user manager (a container) has nothing to disable; the unit file is still ours to remove (#554, #549)
+                subprocess.run(ctl + ["disable", "--now", "bot-board-keeper"])
             if os.path.exists(UNIT):
                 os.remove(UNIT)
-            quietly("daemon-reload")
+            if has_systemd:
+                subprocess.run(ctl + ["daemon-reload"])
             return print("keeper: service removed; bots that are running stay up")
         if not has_systemd:
-            print(f"keeper: this machine has no systemd user manager, so the keeper is not installed as a service. "
-                  f"Run it yourself: {BOT} keeper run (in the foreground, or under tmux or nohup), or install systemd "
-                  f"and run bot_board install bots again.", file=sys.stderr)
+            print(f"keeper: no systemd user manager is reachable here, so the keeper is not installed as a service (a container, WSL without "
+                  f"systemd, a minimal VM; or an ssh, su or sudo session with no user bus: log in normally, or run "
+                  f"sudo loginctl enable-linger {os.environ.get('USER', 'you')}). Run it yourself: {BOT} keeper run (in the foreground, "
+                  f"or under tmux or nohup), then run bot_board install bots again once systemd is there.", file=sys.stderr)
             sys.exit(NO_SERVICE)
         os.makedirs(os.path.dirname(UNIT), exist_ok=True)
         with open(UNIT, "w") as fh:

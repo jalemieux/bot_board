@@ -71,7 +71,8 @@ class KeeperService(unittest.TestCase):
                 (install, uninstall), home = self.no_systemd(systemctl)
                 self.assertEqual(install.returncode, 75, install.stderr)
                 self.assertNotIn("Traceback", install.stderr)
-                self.assertIn("no systemd user manager", install.stderr)
+                self.assertIn("no systemd user manager is reachable", install.stderr)
+                self.assertIn("enable-linger", install.stderr)
                 self.assertIn("keeper run", install.stderr)
                 self.assertIn("run bot_board install bots again", install.stderr)
 
@@ -81,7 +82,7 @@ class KeeperService(unittest.TestCase):
                    "PATH": os.pathsep.join(d for d in os.environ["PATH"].split(os.pathsep) if not (Path(d) / "systemctl").exists())}
             r = subprocess.run([sys.executable, str(ROOT / "bin/keeper"), "install"], capture_output=True, text=True, env=env, timeout=30)
         self.assertEqual(r.returncode, 75)
-        self.assertIn("no systemd user manager", r.stderr)
+        self.assertIn("no systemd user manager is reachable", r.stderr)
 
     def test_without_systemd_the_uninstall_removes_the_unit_file_and_does_not_crash(self):
         with tempfile.TemporaryDirectory() as tmp:

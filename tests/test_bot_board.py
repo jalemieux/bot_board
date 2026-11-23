@@ -166,6 +166,15 @@ class EntryPoint(unittest.TestCase):
         r, _ = self.run_bb("status", "bots", PATH=f"{self.home / 'nobin'}{os.pathsep}/usr/bin{os.pathsep}/bin")
         self.assertNotIn("command not found", r.stderr)
 
+    def test_start_restart_and_update_treat_a_keeper_install_that_exits_75_as_done(self):
+        # #549 (gina): the same exit 75 as `bin/bot install` (no systemd user manager), under `set -e` in start, restart and update
+        self.installed(board=False)
+        (self.src / "bin/bot").write_text('#!/usr/bin/env bash\necho "bot $*" >> "$CALLS"\ncase $1 in keeper) exit 75 ;; esac\n')
+        for command in ("start", "restart"):
+            r, calls = self.run_bb(command)
+            self.assertEqual(r.returncode, 0, (command, r.stderr))
+            self.assertIn("bot keeper install", calls)
+
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)
         r, calls = self.run_bb("restart")
