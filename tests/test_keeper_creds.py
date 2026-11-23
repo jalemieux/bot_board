@@ -374,7 +374,7 @@ class Page(unittest.TestCase):
         page = self.client.get('/fleet').text
         self.assertIn('claude missing on box', page)
         self.assertIn('not logged in. It is holding 2 bots.', page)
-        self.assertIn('<span class="">gh</span>, <span class="prob">claude missing</span>', page)
+        self.assertIn('<span class="chip">gh</span> <span class="chip prob">claude missing</span>', page)
 
 
     def test_a_rejected_fleet_token_says_how_to_replace_it(self):
@@ -390,7 +390,7 @@ class Page(unittest.TestCase):
     def test_the_fleet_claude_token_is_flagged_two_weeks_before_a_year(self):
         admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
-        self.assertNotIn("claude token", self.client.get('/fleet', headers=admin).text.split('Settings: shared secrets')[0])
+        self.assertNotIn("claude token", self.client.get('/fleet', headers=admin).text.split('Configuration: shared secrets')[0])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",

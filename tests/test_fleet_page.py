@@ -202,6 +202,22 @@ class FleetPage(unittest.TestCase):
                 self.assertIn(text, sections['fleet-machines'])
                 self.assertEqual(f'class="pill prob" title="why">{text}' in page, prob)
 
+    def test_the_secrets_script_has_the_follow_ups_of_694(self):
+        # the script itself runs in a browser (the Playwright tests skip without one): check what the page carries
+        page = web.fleet_page('board', [])
+        self.assertIn("'Selected: copy it'", page)
+        self.assertNotIn('Press Ctrl+C', page)
+        self.assertIn("ta.remove(); copy.focus();", page)
+        self.assertEqual(page.count("'class': 'primary', text: '"), 2, 'Save and Add are the primary buttons')
+        self.assertIn("button.primary{background:var(--accent)", page)
+        self.assertIn("name === 'FORGEJO_URL'", page)
+        self.assertIn("if (val.type !== want) { val.value = '';", page)
+        self.assertIn("type: isUrl(x.name) ? 'text' : 'password'", page)
+        self.assertIn('<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>', page)
+        self.assertNotIn('<summary>Shared secrets', page)
+        self.assertIn("sEl('td', {'data-label': 'New secret'}, name, hint)", page)
+        self.assertIn('<p id="secretok" class="sub" role="status" tabindex="-1">', page)
+
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),
