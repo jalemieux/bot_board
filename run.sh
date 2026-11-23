@@ -45,7 +45,7 @@ fi
 PIDFILE="$DIR/board.pid"; LOG="$DIR/board.log"
 
 die() { echo "run.sh: $*" >&2; exit 1; }
-tilde() { printf '%s' "${1/#$HOME/\~}"; }      # a path under $HOME as ~/…, for the output
+tilde() { if [ -n "$HOME" ]; then case $1 in "$HOME"|"$HOME"/*) printf '~%s' "${1#"$HOME"}"; return ;; esac; fi; printf '%s' "$1"; }      # a path under $HOME as ~/…; no ${//} replacement, whose `\~` bash 3.2 prints with its backslash
 
 # The managed checkout is cloned when missing, and otherwise left as it is: the keeper and
 # the bots run from it too, so moving it is `update`'s job, which restarts them all on it.

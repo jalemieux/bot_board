@@ -208,7 +208,7 @@ forge_install() {
 }
 
 # The one block that ends `bot_board install` (#766): what was installed, how it runs, how to manage it, and the next step.
-tilde() { printf '%s' "${1/#$HOME/\~}"; }
+tilde() { if [ -n "$HOME" ]; then case $1 in "$HOME"|"$HOME"/*) printf '~%s' "${1#"$HOME"}"; return ;; esac; fi; printf '%s' "$1"; }      # a path under $HOME as ~/…; no ${//} replacement, whose `\~` bash 3.2 prints with its backslash
 install_summary() {
   local url=${1:-http://${BIND:-127.0.0.1}:${PORT:-8080}} note harness who where first=1
   url=${url/0.0.0.0/127.0.0.1}
