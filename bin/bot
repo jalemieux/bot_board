@@ -269,7 +269,7 @@ load_fleet_env() {
     done < <(python3 - "$HOME/.config/bot_board/fleet.env" <<'PY' || true
 import re,shlex,sys
 for line in open(sys.argv[1],encoding="utf-8",errors="replace"):
-    m=re.match(r"\s*(?:export\s+)?([A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
+    m=re.match(r"\s*(?:export\s+)?(FORGEJO_URL|[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET))=(.*)$",line)
     if not m: continue
     try: v="".join(shlex.split(m.group(2),comments=True)[:1])
     except ValueError: continue
