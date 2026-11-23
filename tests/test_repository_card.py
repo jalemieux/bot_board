@@ -53,9 +53,13 @@ setTimeout(() => {
   setTimeout(() => {
     assert.ok(sec.textContent.includes('belongs to the workspace other.'), 'the route\\'s refusal is shown');
     assert.equal(link.disabled, false, 'and the button is usable again');
+    const linkOut = sec.all('p').find(p => p.textContent.includes('belongs to the workspace'));
+    assert.equal(linkOut.attrs.role, 'alert', 'a refusal is read at once');
+    assert.ok(sec.all('p').some(p => p.attrs['class'] === 'linkrow'), 'the field and the button share a row');
     // not a manager: nothing to press
     const quiet = repositoryCard({slug: 'game', can_manage: false, repository: ''});
     assert.equal(quiet.all('input')[0].attrs.disabled, '');
+    assert.ok(quiet.textContent.includes('Only a manager of this workspace'), 'a visible reason, not only a tooltip');
     // a linked workspace has no form
     assert.equal(repositoryCard({slug: 'game', repository: 'jac/x', repository_url: 'http://f/jac/x'}).all('input').length, 0);
 }, 20);
