@@ -47,6 +47,10 @@ DATA=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
 CFG_FILE=${BOT_CONFIG:-$HOME/.config/bot_board/config}
 BOT="$SRC/bin/bot"
 RUN="$SRC/run.sh"
+# the port and address the board was started with (run.sh keeps them, #551), unless this run names them
+[ -n "${PORT:-}" ] || PORT=$({ sed -n 's/^PORT=//p' "$DATA/board.addr" 2>/dev/null || true; } | tail -1)
+[ -n "${BIND:-}" ] || BIND=$({ sed -n 's/^BIND=//p' "$DATA/board.addr" 2>/dev/null || true; } | tail -1)
+case ${PORT:-} in *[!0-9]*) PORT= ;; esac
 
 die() { echo "bot_board: $*" >&2; exit 1; }
 say() { echo "bot_board: $*"; }
@@ -282,6 +286,7 @@ install_summary() {
   fi
   echo "  Runs:      in the background until you stop it or restart this machine"
   echo "  Manage:    $(tilde "$(dirname "$SRC")")/bot_board status|stop|restart|update|uninstall"
+  case ${BIND:-127.0.0.1} in 127.*|localhost|::1) ;; *) echo "  Bound to $BIND: anyone who can reach this machine on port ${PORT:-8080} can use the board. To keep it on this machine, run: BIND=127.0.0.1 $(tilde "$(dirname "$SRC")")/bot_board restart board" ;; esac
   echo
   echo "Next:   open $url and sign in with any handle"
 }
