@@ -85,14 +85,15 @@ def _board_events(ws, since: datetime) -> tuple[list[dict], int, list[str]]:
         return [], 0, []
     mark = ",".join("?" * len(boards))
     events, bots = [], set()
+    n = 0
     for r in c.execute(f"SELECT m.id, m.thread_id, m.created_at, m.body, a.handle, a.kind FROM messages m JOIN agents a ON a.id=m.agent_id"
                        f" WHERE m.board_id IN ({mark}) AND m.created_at>=?", (*boards, s)):
+        n += r["kind"] != "cron"          # the board's own lines (a Forgejo event, a nudge) are not anyone's message
         if r["kind"] not in db.UNSCOPED_KINDS:
             bots.add(r["handle"])
         if r["thread_id"] == r["id"]:
             events.append({"at": r["created_at"], "kind": "thread", "text": f"Thread #{r['id']} started: {(r['body'] or '').splitlines()[0][:100] if r['body'] else ''}",
                            "url": f"/t/{r['id']}", "by": r["handle"]})
-    n = c.execute(f"SELECT COUNT(*) n FROM messages WHERE board_id IN ({mark}) AND created_at>=?", (*boards, s)).fetchone()["n"]
     for r in c.execute(f"SELECT t.thread_id, t.completed_at, a.handle FROM thread_completions t JOIN messages m ON m.id=t.thread_id"
                        f" JOIN agents a ON a.id=t.completed_by WHERE m.board_id IN ({mark}) AND t.completed_at>=?", (*boards, s)):
         events.append({"at": r["completed_at"], "kind": "thread", "text": f"Thread #{r['thread_id']} completed", "url": f"/t/{r['thread_id']}", "by": r["handle"]})
@@ -100,27 +101,31 @@ def _board_events(ws, since: datetime) -> tuple[list[dict], int, list[str]]:
 
 
 TTL, FAIL_TTL = 60, 15          # seconds the forge's answer, and its failure, are kept
-_cache: dict = {}
-_lock = threading.Lock()
+_cache: dict = {}               # repository -> (expires, since fetched, data or error)
+_locks: dict = {}
+_guard = threading.Lock()
 
 
-def _forge_data(repo: str, hours: int, since: datetime) -> dict:
-    """The forge's part, kept for a minute per repository and window, and a failure for fifteen seconds, so a page that
-    reloads or a caller that loops asks the forge once, not once each. The lock is held across the call: the callers
-    queue behind the first, and the call has its own deadline."""
-    key = (repo.lower(), hours)
-    with _lock:
+def _forge_data(repo: str, since: datetime) -> dict:
+    """The forge's part, kept for a minute per repository and a failure for fifteen seconds, so a page that reloads or a
+    caller that loops asks the forge once, not once each. It is keyed on the repository alone: an answer fetched for a
+    window covers every shorter one, so a caller cannot make more fetches by varying `hours`. One lock per repository,
+    held across the call, which has its own deadline: a slow repository delays only its own callers."""
+    key = repo.lower()
+    with _guard:
+        lock = _locks.setdefault(key, threading.Lock())
+    with lock:
         hit = _cache.get(key)
-        if hit and hit[0] > time.monotonic():
-            if isinstance(hit[1], Exception):
-                raise hit[1]
-            return hit[1]
+        if hit and hit[0] > time.monotonic() and (isinstance(hit[2], Exception) or hit[1] <= since):
+            if isinstance(hit[2], Exception):
+                raise hit[2]
+            return hit[2]
         try:
             data = forge.recent_activity(repo, _iso(since))
         except forge.ForgeError as exc:
-            _cache[key] = (time.monotonic() + FAIL_TTL, exc)
+            _cache[key] = (time.monotonic() + FAIL_TTL, since, exc)
             raise
-        _cache[key] = (time.monotonic() + TTL, data)
+        _cache[key] = (time.monotonic() + TTL, since, data)
         return data
 
 
@@ -134,7 +139,7 @@ def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
     state, reason, capped = "none", "", False
     if repo:
         try:
-            data = _forge_data(repo, hours, since)
+            data = _forge_data(repo, since)
             events += _forge_events(data, since, repo)
             state, capped = "ok", bool(data.get("capped"))
         except forge.ForgeError as exc:

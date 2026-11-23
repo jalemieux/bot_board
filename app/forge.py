@@ -154,6 +154,17 @@ def _list(full_name: str, tail: str, deadline: float) -> list:
     return data
 
 
+def _after(stamp, since: str) -> bool:
+    """`stamp` (the forge's ISO time, any offset) is at or after `since`, compared as times, not as text."""
+    from datetime import datetime, timezone
+    try:
+        a = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (a if a.tzinfo else a.replace(tzinfo=timezone.utc)) >= (b if b.tzinfo else b.replace(tzinfo=timezone.utc))
+
+
 DEADLINE = 8        # seconds, for all of recent_activity: one slow forge cannot hold a worker thread for minutes
 
 
@@ -168,7 +179,7 @@ def recent_activity(full_name: str, since: str, timeout: float | None = None) ->
     commits = _list(full_name, "/commits?" + q + "&stat=false&files=false&verification=false", timeout)
     reviews = {}
     for p in pulls[:20]:        # the twenty most recently updated: a busy repository is a sample, not the whole day
-        if isinstance(p, dict) and str(p.get("updated_at") or "") >= since[:19] and isinstance(p.get("number"), int):
+        if isinstance(p, dict) and _after(p.get("updated_at"), since) and isinstance(p.get("number"), int):
             reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
     return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews,
             "capped": max(len(pulls), len(issues), len(commits)) >= 50 or len(pulls) > 20}
