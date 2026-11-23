@@ -59,6 +59,7 @@ WS_CSS = """
 .ws .roles h2 button+button{margin-left:8px}
 .ws table.bots tr.drawer td{padding:10px 12px;background:var(--bg);flex:1 1 100%}
 .ws .d-facts{display:flex;flex-wrap:wrap;gap:4px 16px;font:12px var(--mono);color:var(--dim)}.ws .d-facts b{color:var(--ink);font-weight:600}
+.ws .d-host{margin-top:12px}.ws .d-host h4{margin:0 0 6px;font:600 12px var(--mono);color:var(--dim)}.ws .d-apps{margin:4px 0 0;padding-left:18px;font-size:13px}
 .ws .d-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.ws .d-threads{margin:4px 0 0;padding-left:18px;font-size:13px}
 .ws table.bots tr[hidden]{display:none}
 .ws .drawer p.clamp{max-height:5.5em;overflow:auto;margin:4px 0}
@@ -537,8 +538,8 @@ function hostBlock(b, ctx) {
   var d = h('div', {'class': 'd-host'}, h('h4', {text: 'Runs on the host'}));
   d.appendChild(h('div', {'class': 'd-facts'}, h('span', null, 'runs ', h('b', {text: runs})),
     h('span', null, 'set by ', h('b', {text: b.host_by || '?'}), b.host_at ? ' ' + ago(b.host_at) : ''),
-    listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'}))
-           : h('span', {'class': 'warn'}, 'waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac')));
+    listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
+  if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac.'), d.firstChild.nextSibling);
   d.appendChild(h('p', {'class': 'sub clamp'}, h('b', {text: 'Why it needs the host: '}), b.host_reason || ''));
   if ((b.host_apps || []).length) d.appendChild(h('ul', {'class': 'd-apps'}, b.host_apps.map(function (n) {
     var v = found[lc(n)];
@@ -552,7 +553,7 @@ function hostBlock(b, ctx) {
   act('edit why and apps…', function () {
     var why = h('input', {type: 'text', maxlength: '200', 'aria-label': 'why it needs the host'}), apps = h('input', {type: 'text', 'aria-label': 'apps'});
     why.value = b.host_reason || ''; apps.value = (b.host_apps || []).join(', ');
-    dialog('Host bot @' + b.handle, [h('label', null, 'Why does it need the host? One line.', why), h('label', null, 'The apps it uses, separated by commas', apps)],
+    dialog('Host details of @' + b.handle, [h('label', null, 'Why does it need the host? One line.', why), h('label', null, 'The apps it uses, separated by commas', apps)],
       [{text: 'Save', run: function (el, close, fail) {
         el.disabled = true;
         api('PUT', url, {reason: why.value.trim(), apps: apps.value.split(',').map(function (x) { return x.trim(); }).filter(Boolean)})
