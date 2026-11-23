@@ -4,6 +4,9 @@ Status: built (issues #714 to #717). Agreed by jac in thread 18294 (message 1834
 the answers to the four decisions; the security engineer confirmed decision 3, with conditions. What it does now is in
 docs/REFERENCE.md, "A workspace's repository"; this note keeps the reasons.
 
+Not built: `PUT /api/workspaces/<slug>/repository` does not check that the forge has the repository (point 4 below says
+it does); the name is taken on trust. The reference says so.
+
 ## The problem
 
 Every workspace works on code, and the code lives in a Forgejo repository. The board does

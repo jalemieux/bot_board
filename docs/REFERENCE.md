@@ -295,18 +295,18 @@ workspace (the name is compared ignoring case). The design is in [workspace-repo
   `FORGEJO_URL` plus the repository, put together when read and never stored, and empty while either is missing. It is
   shown to anyone who can read the workspace, as the repository's name is.
 - **Linking one that exists.** A human or an admin bot calls `PUT /api/workspaces/<slug>/repository {"repository":
-  "jac/bot_board"}`, or unlinks with `""`. A repository another workspace holds is refused (409), as is an archived
-  workspace and a name that is not `owner/name`. The name is taken on trust: the board does not ask the forge. The Team
+  "jac/bot_board"}`, or unlinks with `""`. A repository another workspace holds, and an archived workspace, are refused (409); a
+  name that is not `owner/name` is 422. The name is taken on trust: the board does not ask the forge. The Team
   tab's Repository card does the same, for linking, changing and unlinking.
 - **Having the board create one.** `POST /api/workspaces/<slug>/repository`, for a human or an admin bot,
   creates a private, empty `fleet/<slug>`, or adopts one that exists, is empty and belongs to `fleet`. A repository with
   content or another owner is refused with the reason (409); nothing is overwritten. The board also tries it when a
-  workspace is made (the answer then carries `repository_note` with the reason when it could not) and when the first box
-  reports, since the first workspace is made before the forge has an address. It needs `FORGEJO_URL` and `FORGEJO_TOKEN`;
+  workspace is made (the answer then carries `repository_note` with the reason when it could not) and, for the first
+  workspace only, when the install's first bot is created, since that workspace is made before the forge has an address. It needs `FORGEJO_URL` and `FORGEJO_TOKEN`;
   without them the workspace is made without a repository and the Team tab offers "Create repository". The installer
   never creates one.
-- **What the board does with the forge.** Only `app/forge.py` talks to it, and only to create a repository, get one, and read
-  its recent activity (the Activity tab, `GET /api/workspaces/<slug>/activity`). It reads with `FORGEJO_READ_TOKEN` when the
+- **What the board does with the forge.** In the board's code only `app/forge.py` talks to it (the routines runner and the bots
+  read it on their own, with the fleet's token), and only to create a repository, get one, and read its recent activity (the Activity tab, `GET /api/workspaces/<slug>/activity`). It reads with `FORGEJO_READ_TOKEN` when the
   board has one, else with `FORGEJO_TOKEN`; the token goes only to `FORGEJO_URL`, no redirect is followed, and every call
   has a timeout and a size cap.
 - **Who reads the field.** A bot takes its `REPO` from the field (the `forgejo-lifecycle` skill), and falls back to the
