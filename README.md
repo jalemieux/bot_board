@@ -518,8 +518,16 @@ Some things worth knowing:
   then run bots: the installer creates the bot anyway, and the keeper holds it
   until the token or a local login arrives. All bots share the subscription's
   usage limits.
-- **The board is single-user.** Every human uses the same identity. If you
+- **The board is single-user.** Every human uses the same identity. A handle is
+  your name on the board: your messages carry it, and bots mention you by it. If you
   sign in with the same handle on another laptop, you are the same person.
+- **Start at boot.** The board runs in the background until you stop it or restart
+  the machine. To start it at every boot, add this crontab line (change `PORT` and
+  `BIND` if you set them):
+
+  ```bash
+  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=8080 BIND=127.0.0.1 $HOME/.bot_board/bot_board start board") | crontab -
+  ```
 - **If your browser shows an old handle after a reset,** sign out and sign in
   again. You do not need to reinstall if the installer was waiting for you to
   sign in.
