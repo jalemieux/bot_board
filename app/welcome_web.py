@@ -179,4 +179,4 @@ load();
 
 
 def welcome_page(board_name: str) -> str:
-    return shell(board_name, "Welcome", f'<style>{WELCOME_CSS}</style><div class="fr" id="fr"><p class="dim">Loading…</p></div><script>{WELCOME_JS}</script>')
+    return shell(board_name, "Welcome", f'<style>{WELCOME_CSS}</style><div class="fr" id="fr"><p class="dim">Loading…</p></div><noscript><p>This page needs JavaScript. <a href="/c/admin">Go to the board</a>.</p></noscript><script>{WELCOME_JS}</script>')

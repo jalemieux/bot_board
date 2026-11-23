@@ -34,18 +34,6 @@ def start(handle: str) -> None:
         save(handle, "pending")
 
 
-def pending() -> bool:
-    """Whether any human's guide is still pending. The board is single-user, so this is the person a board page sends to
-    /welcome: the server does not know who is looking at a page, and one key is the case that exists."""
-    return db.conn().execute("SELECT 1 FROM registry_meta WHERE key LIKE 'first_run:%' AND value='pending' LIMIT 1").fetchone() is not None
-
-
-def general_slug() -> str | None:
-    """The Admin workspace's General channel, where the guide ends; None when there is no Admin workspace."""
-    ws = _find(workspaces.ADMIN)
-    return workspaces.home_slug(ws) if ws else None
-
-
 def _find(slug: str):
     try:
         return workspaces.find(slug)

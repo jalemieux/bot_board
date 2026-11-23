@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, guide, main, welcome_web
+from app import db, guide, main, web, welcome_web
 
 NODE_DOM = """
 class N { constructor(t){this.tag=t;this.attrs={};this.kids=[];this.handlers={};this._t='';}
@@ -47,20 +47,15 @@ class WelcomeRoutes(unittest.TestCase):
     def get(self, path):
         return self.client.get(path, follow_redirects=False)
 
-    def test_a_pending_guide_sends_the_front_pages_to_welcome(self):
+    def test_the_server_never_redirects_and_the_board_page_carries_the_redirect_script(self):
+        # an open board's pages carry no cookie, so the server cannot know who is looking: the board page's script decides
         self.assertEqual(guide.state('sam'), 'pending', 'a fresh board starts it at the first sign-in')
         for path in ('/', '/c/admin'):
             r = self.get(path)
-            self.assertEqual((r.status_code, r.headers['location']), (302, '/welcome'), path)
-        self.assertEqual(self.get('/workspaces').status_code, 200, 'other pages are not touched')
-        self.assertEqual(self.get('/c/nowhere').status_code, 404)
-
-    def test_skipped_done_or_no_key_shows_the_board_as_before(self):
-        for state in ('skipped', 'done'):
-            self.client.put('/api/first-run', headers=self.auth, json={'state': state})
-            self.assertEqual((self.get('/').status_code, self.get('/c/admin').status_code), (200, 200), state)
-        c = db.conn(); c.execute("DELETE FROM registry_meta WHERE key LIKE 'first_run:%'"); c.commit()       # a board from before the guide
-        self.assertEqual(self.get('/').status_code, 200)
+            self.assertEqual(r.status_code, 200, path)
+            self.assertIn("fetch('/api/first-run'", r.text)
+            self.assertIn("location.replace('/welcome')", r.text)
+        self.assertNotIn("/api/first-run", self.get('/workspaces').text, 'the other pages do not check')
 
     def test_welcome_opens_in_any_state_and_the_footer_links_it(self):
         self.client.put('/api/first-run', headers=self.auth, json={'state': 'done'})
@@ -68,6 +63,39 @@ class WelcomeRoutes(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn('id="fr"', r.text)
         self.assertIn('<a href="/welcome">Setup guide</a>', self.get('/workspaces').text)
+
+
+class RedirectScript(unittest.TestCase):
+    def run_redirect(self, me, reply, session=None):
+        if not shutil.which('node'):
+            self.skipTest('node is needed')
+        script = """
+global.localStorage = {getItem: () => %s};
+const store = %s; global.sessionStorage = {getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; }};
+global.location = {replaced: null, replace(u) { this.replaced = u; }}; const calls = [];
+global.fetch = (u, o) => { calls.push([u, o.headers.Authorization]); return %s; };
+%s
+setTimeout(() => { console.log(JSON.stringify({replaced: location.replaced, calls: calls, store: store})); }, 20);
+""" % (json.dumps(json.dumps(me)) if me is not None else 'null', json.dumps(session or {}), reply, web.FIRST_RUN_REDIRECT_JS)
+        r = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_a_signed_in_person_with_a_pending_guide_goes_to_welcome_once(self):
+        ok = lambda state: "Promise.resolve({ok: true, json: () => Promise.resolve({state: %s})})" % json.dumps(state)
+        got = self.run_redirect({'handle': 'sam', 'token': 't'}, ok('pending'))
+        self.assertEqual((got['replaced'], got['calls']), ('/welcome', [['/api/first-run', 'Bearer t']]))
+        self.assertEqual(got['store'], {'bb.guide': '1'})
+        # once per tab session: a skip that could not be saved does not bounce the person back
+        self.assertIsNone(self.run_redirect({'handle': 'sam', 'token': 't'}, ok('pending'), {'bb.guide': '1'})['replaced'])
+        for state in ('skipped', 'done', None):          # no key on an old board answers null
+            self.assertIsNone(self.run_redirect({'handle': 'sam', 'token': 't'}, ok(state))['replaced'], state)
+
+    def test_nothing_that_fails_locks_anyone_out(self):
+        self.assertIsNone(self.run_redirect(None, "Promise.resolve({ok: true})")['replaced'], 'not signed in: no request at all')
+        self.assertEqual(self.run_redirect(None, "Promise.resolve({ok: true})")['calls'], [])
+        for reply in ("Promise.resolve({ok: false})", "Promise.reject(new Error('down'))"):
+            self.assertIsNone(self.run_redirect({'handle': 'sam', 'token': 't'}, reply)['replaced'], reply)
 
 
 class WelcomeScript(unittest.TestCase):

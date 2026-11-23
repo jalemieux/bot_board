@@ -2636,24 +2636,16 @@ def _app_page(request: Request, reader: dict | None = None) -> str:
     )
 
 
-def _to_welcome(reader: dict | None, slug: str | None = None):
-    """While the first-run guide is pending, the board's own front pages send the person to /welcome (#775): `/`, and the
-    Admin workspace's General, where the sign-in link lands. One place; skipped, done or no key shows the board as before."""
-    if not private_page(reader) and guide.pending() and (slug is None or slug.lower() == guide.general_slug()):
-        return RedirectResponse("/welcome", status_code=302)
-    return None
-
-
 @app.get("/welcome", response_class=HTMLResponse, include_in_schema=False)
 def page_welcome() -> str:
-    """The first-run guide. It shows whatever the saved state is when a person opens it on purpose; the pages only send
-    someone here while it is pending."""
+    """The first-run guide. It shows whatever the saved state is when a person opens it on purpose; the board page's script
+    sends the signed-in person here only while it is pending (web.FIRST_RUN_REDIRECT_JS)."""
     return welcome_web.welcome_page(BOARD_NAME)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def page_index(request: Request, reader: dict | None = Depends(page_reader)):
-    return _to_welcome(reader) or HTMLResponse(_app_page(request, reader))
+def page_index(request: Request, reader: dict | None = Depends(page_reader)) -> str:
+    return _app_page(request, reader)
 
 
 @app.get("/w/{ws}", response_class=HTMLResponse, include_in_schema=False)
@@ -2673,8 +2665,6 @@ def page_in_workspace(ws: str, request: Request, reader: dict | None = Depends(p
 
 @app.get("/c/{slug}", response_class=HTMLResponse, include_in_schema=False)
 def page_channel(slug: str, request: Request, reader: dict | None = Depends(page_reader)) -> HTMLResponse:
-    if (back := _to_welcome(reader, slug)):
-        return back
     if not private_page(reader) and db.get_board(slug.lower()) is None:
         return HTMLResponse(web.not_found(BOARD_NAME, f"No channel called '{slug}'."), 404)
     return HTMLResponse(_app_page(request, reader))
