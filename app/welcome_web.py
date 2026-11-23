@@ -28,7 +28,7 @@ WELCOME_CSS = """
 .fr .team .nm{font:600 13px var(--mono);overflow-wrap:anywhere}.fr .team .rl{grid-column:1 / -1;color:var(--dim);font-size:12px}
 .fr details summary{cursor:pointer;color:var(--accent);min-height:44px;display:flex;align-items:center}
 .fr a.btnlink{display:inline-flex;align-items:center;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:0 12px;color:var(--ink);text-decoration:none;font-weight:600}
-.fr textarea{width:100%;min-height:72px;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font:16px/1.4 var(--sans);resize:vertical;min-height:132px}
+.fr textarea{width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font:16px/1.4 var(--sans);resize:vertical;min-height:132px}
 @media (max-width:700px){.fr textarea{min-height:200px}}
 .fr .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
 .fr button{font:inherit;cursor:pointer;min-height:44px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:0 12px}
@@ -76,7 +76,7 @@ function kind(b) {
   if (b.state === 'needs login') return 'login';
   return 'failed';
 }
-var F = null, work = null, textBox = null, sendBtn = null, sendNote = null, sendErr = null, timer = null, lastKey = '', frame = null, ol = null, progBox = null, dyn = [];
+var teamOpen = false, F = null, work = null, textBox = null, sendBtn = null, sendNote = null, sendErr = null, timer = null, lastKey = '', frame = null, ol = null, progBox = null, dyn = [];
 var FIRST = 'Hello. Please explain how this team is put together: which bots are on it, what each one is for, and what the team agreement says about how you work together. Then suggest one small first task for us.';
 function tag(text, cls) { return h('span', {'class': 'tag' + (cls ? ' ' + cls : ''), text: text}); }
 function botTag(k) { return k === 'running' ? tag('running', 'on') : k === 'starting' ? tag('starting', 'w') : k === 'login' ? tag('needs a login', 'w') : tag('did not start', 'w'); }
@@ -134,7 +134,12 @@ function steps(s) {
 function teamList(team) {
   var list = h('ul', {'class': 'team'}, team.map(function (b) { return h('li', null, h('span', {'class': 'nm', text: b.handle}), botTag(kind(b)), h('span', {'class': 'rl', text: b.role || b.harness})); }));
   var alike = team.length > 3 && team.every(function (b) { return kind(b) === kind(team[0]); }) && kind(team[0]) !== 'running';
-  return alike ? h('details', null, h('summary', {text: 'Show the ' + team.length + ' bots'}), list) : list;
+  if (!alike) return list;
+  // the fold is rebuilt with each update, so what the person opened is remembered
+  var det = h('details', null, h('summary', {text: 'Show the ' + team.length + ' bots'}), list);
+  if (teamOpen) det.setAttribute('open', '');
+  det.addEventListener('toggle', function () { teamOpen = !!det.open; });
+  return det;
 }
 function workStep(s) {
   if (work) return work;

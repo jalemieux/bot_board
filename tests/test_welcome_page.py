@@ -174,6 +174,10 @@ const six = (st) => Array.from({length: 6}, (_, i) => bot(st, {handle: 'b' + i, 
 await show(facts(bot('starting'), {team: six('starting')}));
 assert.equal(kids('details').length, 1, 'the list is folded when every bot is starting');
 assert.ok(root.textContent.includes('Show the 6 bots'));
+// what the person opened stays open through the next update (the page's own poll, not a fresh load)
+const det = kids('details')[0]; det.open = true; det.handlers.toggle();
+reply = () => ({body: facts(bot('starting'), {team: six('starting').map(b => Object.assign({}, b, {role: 'Dev'}))})}); timers[0][0](); await tick();
+assert.equal(kids('details')[0].attrs.open, '', 'the fold the person opened is still open');
 await show(facts(bot('working'), {team: six('starting').slice(0, 5).concat([bot('working', {handle: 'b9'})])}));
 assert.equal(kids('details').length, 0, 'a mixed team shows its list');
 // each bot: its name and state on a line, its role under it
