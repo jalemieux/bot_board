@@ -29,6 +29,11 @@
 # cannot write. Forgejo refuses to deliver to a loopback or private address unless its own settings allow
 # it, so a native Forgejo needs `[webhook] ALLOWED_HOST_LIST = loopback` (or `private`) in its app.ini; the
 # script says so at the end (the compose Forgejo has it set).
+#
+# A Forgejo that already exists (FORGE_EXISTING=1): the script makes no account and no webhook there. FORGE is its
+# address as the board and the bots reach it, FORGEJO_TOKEN the fleet account's write token on it, and
+# FORGEJO_READ_TOKEN a read-only one (optional). They are set on the board as fleet secrets (each only when the board
+# has none), and FORGEJO_URL from FORGE. The webhook to the board is made by hand (docs/forgejo-setup.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -37,6 +42,7 @@ FORGE=${FORGE:-http://127.0.0.1:3000}
 COMPOSE=${COMPOSE:-docker compose --profile forge}
 PWFILE=$HOME/.bot_board/forgejo-admin-password
 SCOPES=write:repository,write:issue,write:user,read:organization
+READ_SCOPES=read:repository,read:issue          # what the board reads with: the Activity tab, never a write
 
 say() { echo "forge-setup: $*"; }
 die() { echo "forge-setup: $*" >&2; exit 1; }
@@ -45,7 +51,8 @@ forgejo() {
   else $COMPOSE exec -T -u 1000 forgejo forgejo "$@"; fi
 }
 board() {   # board METHOD PATH [JSON]: the answer's body; fails loudly on an error
-  curl -fsS -X "$1" "$BOARD$2" -H "Authorization: Bearer $BOARD_TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"}
+  # the body goes in on stdin: a token in it must not be in curl's argument list, where `ps` shows it
+  printf '%s' "${3:-}" | curl -fsS -X "$1" "$BOARD$2" -H "Authorization: Bearer $BOARD_TOKEN" -H 'Content-Type: application/json' ${3:+-d @-}
 }
 
 command -v jq >/dev/null || die "needs jq"
@@ -59,6 +66,24 @@ fi
 ME=$(board GET /api/me | jq -r '.agent.handle // .handle') || die "the board at $BOARD refused that token"
 board GET /api/fleet/secrets >/dev/null 2>&1 || die "@$ME may not manage the fleet's secrets: use a human's token"
 
+has_secret() { board GET /api/fleet/secrets | jq -e --arg n "$1" '.secrets[] | select(.name == $n)' >/dev/null; }
+set_secret() { board PUT "/api/fleet/secrets/$1" "$(V=$2 jq -n '{value: env.V}')" >/dev/null; }   # the value in jq's environment, not its argument list
+
+# a Forgejo this script did not make: the address and the tokens the person supplies, nothing made there
+existing_forge() {
+  [ -n "${FORGEJO_TOKEN:-}" ] || die "FORGE_EXISTING needs FORGEJO_TOKEN: the fleet account's write token on $FORGE"
+  login=$(printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | curl -fsS -K - "$FORGE/api/v1/user" | jq -er .login) \
+    || die "Forgejo at $FORGE refused FORGEJO_TOKEN"
+  say "Forgejo at $FORGE knows that token as $login"
+  if has_secret FORGEJO_TOKEN; then say "the board has FORGEJO_TOKEN already"; else
+    set_secret FORGEJO_TOKEN "$FORGEJO_TOKEN"; say "the token set on the board as FORGEJO_TOKEN"; fi
+  if [ -z "${FORGEJO_READ_TOKEN:-}" ]; then say "no FORGEJO_READ_TOKEN given: the Activity tab reads with FORGEJO_TOKEN until one is set under Secrets"
+  elif has_secret FORGEJO_READ_TOKEN; then say "the board has FORGEJO_READ_TOKEN already"
+  else set_secret FORGEJO_READ_TOKEN "$FORGEJO_READ_TOKEN"; say "the read-only token set on the board as FORGEJO_READ_TOKEN"; fi
+  say "the webhook to the board is yours to make on that Forgejo: docs/forgejo-setup.md"
+}
+
+make_forge() {
 [ -z "${FORGEJO_BIN:-}" ] || [ "$(id -u)" != 0 ] || die "a native Forgejo runs as its own user: run forge-setup as that user, not root"
 say "waiting for Forgejo at $FORGE"
 for _ in $(seq 60); do curl -fsS "$FORGE/api/v1/version" >/dev/null 2>&1 && break; sleep 2; done
@@ -90,8 +115,17 @@ if [ -z "$fresh" ] && board GET /api/fleet/secrets | jq -e '.secrets[] | select(
 else
   token=$(forgejo admin user generate-access-token --username fleet --token-name "fleet-bots-$(date +%s)" \
             --scopes "$SCOPES" --raw | tail -1)
-  board PUT /api/fleet/secrets/FORGEJO_TOKEN "$(jq -n --arg v "$token" '{value: $v}')" >/dev/null
+  set_secret FORGEJO_TOKEN "$token"
   say "fleet's token set on the board as FORGEJO_TOKEN"
+fi
+# the read-only token the board reads with (docs/workspace-repository.md, decision 3): made once, never over one the board has
+if [ -z "$fresh" ] && board GET /api/fleet/secrets | jq -e '.secrets[] | select(.name == "FORGEJO_READ_TOKEN")' >/dev/null; then
+  say "the board has FORGEJO_READ_TOKEN already"
+else
+  token=$(forgejo admin user generate-access-token --username fleet --token-name "fleet-read-$(date +%s)" \
+            --scopes "$READ_SCOPES" --raw | tail -1)
+  set_secret FORGEJO_READ_TOKEN "$token"
+  say "a read-only token set on the board as FORGEJO_READ_TOKEN"
 fi
 
 # 3. the webhook, judged from both sides: done only when Forgejo still has the hook this script
@@ -119,20 +153,22 @@ else
     | jq -r .id > "$IDFILE"
   say "site webhook made: every repository's events reach the board"
 fi
+}
 
-host=$( [ -n "${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
+if [ -n "${FORGE_EXISTING:-}" ]; then existing_forge; host="$FORGE/"; else make_forge; fi
+host=$( [ -n "${FORGE_EXISTING:-}${FORGEJO_BIN:-}" ] && echo "$FORGE/" || $COMPOSE exec -T forgejo printenv FORGEJO__server__ROOT_URL 2>/dev/null || echo "$FORGE/")
 # 4. the forge's address for the board and every bot (FORGEJO_URL, #632): set once, never over a value a human set
 if board GET /api/fleet/secrets | jq -e '.secrets[] | select(.name == "FORGEJO_URL")' >/dev/null; then
   say "the board has FORGEJO_URL already"
 else
-  board PUT /api/fleet/secrets/FORGEJO_URL "$(jq -n --arg v "${host%/}" '{value: $v}')" >/dev/null
+  set_secret FORGEJO_URL "${host%/}"
   say "the forge's address set on the board as FORGEJO_URL (${host%/})"
   case ${host%/} in
     *://localhost*|*://127.*|*://\[::1\]*) say "that is a loopback address: bots on other machines cannot reach it. Set the right one under Secrets (FORGEJO_URL) on /fleet; this script does not replace a value that is set." ;;
   esac
 fi
 
-say "done. Forgejo is at ${host%/}; sign in there as $ME."
+if [ -n "${FORGE_EXISTING:-}" ]; then say "done. Forgejo is at ${host%/}."; else say "done. Forgejo is at ${host%/}; sign in there as $ME."; fi
 [ -z "${FORGEJO_BIN:-}" ] || say "check Forgejo's app.ini has [webhook] ALLOWED_HOST_LIST = loopback (or private, for a board on another address): without it Forgejo refuses every delivery to the board"
 say "Next: write that address into your workspace's knowledge base, so the bots find it,"
 say "and bring a repository over (docs/forgejo-setup.md, step 5): add fleet as a write collaborator."

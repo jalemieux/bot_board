@@ -192,6 +192,44 @@ class ForgeInstall(unittest.TestCase):
                            env={**self.env, "FORGEJO_DIR": str(precious)}, capture_output=True, text=True, timeout=60)
         self.assertTrue((precious / "keep").exists(), r.stdout + r.stderr)
 
+    def test_an_existing_forge_is_wired_by_the_install_with_its_address_and_token(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forge-setup", "#!/bin/sh\necho \"forge-setup BOARD=$BOARD FORGE=$FORGE EXISTING=$FORGE_EXISTING TOKEN=$BOARD_HUMAN_TOKEN\" >> \"$FAKE_LOG\"\n")
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "install", "board"],
+                           env={**self.env, "FORGE_ADDRESS": "http://forge.example:3000", "FORGEJO_TOKEN": "tok-fleet"},
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = self.calls()
+        self.assertIn("forge-setup BOARD=http://127.0.0.1:8080 FORGE=http://forge.example:3000 EXISTING=1 TOKEN=tok-human", calls)
+        self.assertLess(calls.index("run.sh up"), [i for i, c in enumerate(calls) if c.startswith("forge-setup")][0], "the board is up first")
+
+    def test_the_tokens_reach_forge_setup_only_and_not_the_board_that_starts_first(self):
+        script(self.src / "run.sh", "#!/bin/sh\necho \"run.sh up TOKEN=${FORGEJO_TOKEN:-none} READ=${FORGEJO_READ_TOKEN:-none}\" >> \"$FAKE_LOG\"\n")
+        script(self.src / "deploy" / "forge-setup", "#!/bin/sh\necho \"forge-setup TOKEN=$FORGEJO_TOKEN READ=$FORGEJO_READ_TOKEN\" >> \"$FAKE_LOG\"\n")
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "install", "board"],
+                           env={**self.env, "FORGE_ADDRESS": "http://forge.example:3000", "FORGEJO_TOKEN": "tok-w", "FORGEJO_READ_TOKEN": "tok-r"},
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = "\n".join(self.calls())
+        self.assertIn("run.sh up TOKEN=none READ=none", calls)
+        self.assertIn("forge-setup TOKEN=tok-w READ=tok-r", calls)
+
+    def test_an_address_with_a_password_in_it_is_refused(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "install", "board"],
+                           env={**self.env, "FORGE_ADDRESS": "http://fleet:secret@forge.example:3000", "FORGEJO_TOKEN": "tok-w"},
+                           capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("user name or password", r.stderr)
+
+    def test_an_existing_forge_without_its_token_stops_the_install(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "install", "board"],
+                           env={**{k: v for k, v in self.env.items() if k != "FORGEJO_TOKEN"}, "FORGE_ADDRESS": "http://forge.example:3000"},
+                           capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("needs FORGEJO_TOKEN", r.stderr)
+
     def test_no_docker_on_the_path_is_enough_to_go_native(self):
         script(self.src / "run.sh", FAKE_RUN)
         script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)
