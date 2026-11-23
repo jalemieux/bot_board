@@ -60,8 +60,8 @@ WS_CSS = """
 .ws table.bots,.ws table.bots tbody{display:block}
 .ws table.bots tr{display:flex;flex-wrap:wrap;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line)}
 .ws table.bots td{border:0;padding:0}
-.ws table.bots td:nth-child(2){flex:1 1 40%;order:1}.ws table.bots td:nth-child(3),.ws table.bots td:nth-child(4),.ws table.bots td:nth-child(5){order:2;font-size:12px;color:var(--dim);align-self:center}
-.ws table.bots td:nth-child(6){order:3;margin-left:auto}
+.ws table.bots td:nth-child(2){flex:1 1 40%;order:1}.ws table.bots td:nth-child(n+3):nth-child(-n+6){order:2;font-size:12px;color:var(--dim);align-self:center}
+.ws table.bots td:nth-child(7){order:3;margin-left:auto}
 .ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
 .dlg select{min-height:44px;font-size:16px}
@@ -628,6 +628,7 @@ function rolesView(w, roles, hosts) {
   });
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
+  sec.appendChild(h('p', {'class': 'sub'}, 'Channels, voice, a new session and machine logins are on the ', h('a', {href: '/fleet', text: 'fleet page'}), '.'));
   if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
   return sec;
 }

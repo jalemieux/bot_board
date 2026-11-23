@@ -2331,7 +2331,7 @@ def running_chip(r: dict | None) -> str:
         return f"{r[k]} {word}{'' if r[k] == 1 else 's'}"
     title = " · ".join([f"{n('bots', 'bot')} running ({r['working']} working)"]
                        + [n(k, w) for k, w in (("keepers", "keeper"), ("runners", "runner"), ("humans", "human")) if r[k]])
-    return f'<span class="n" title="{e(title)}">· <span id="nag">{r["bots"]} running</span></span>'
+    return f'<span class="n" title="{e(title)}">· <span id="nag">{n("bots", "bot")} running</span></span>'
 
 
 def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,

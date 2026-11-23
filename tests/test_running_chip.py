@@ -68,7 +68,7 @@ class RunningChip(unittest.TestCase):
         self.seen(['jac', 'keeper-box', 'routines'], db.now())
         page = self.client.get('/').text
         self.assertIn('<a href="/workspaces" class="tab"', page)  # the count counts bots, and the bots live in workspaces (thread 17902)
-        self.assertIn('<span id="nag">2 running</span>', page)
+        self.assertIn('<span id="nag">2 bots running</span>', page)
         self.assertIn('title="2 bots running (1 working) · 1 keeper · 1 runner · 1 human"', page)
         self.assertNotIn(' active</a>', page)
         # the presence refresh leaves it alone: "active agents" is another number (#456, review)
