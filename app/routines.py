@@ -331,12 +331,32 @@ def describe(row: dict, full: bool = True) -> dict:
         ok = _approved(row)
         out["waiting"] = {"changed": _changed(ok, d), "diff": _diff(ok, d) if ok else "", "resume": bool(row["resume"]),
                           "by": (db.get_agent_by_id(row["updated_by"]) or {}).get("handle")}
+    out["repository_differs"] = _repository_differs(d)
     up = _upgrade(d)
     if up and row["state"] != "deleted":
         out["upgrade"] = {"from": d["recipe_version"], "to": up["recipe_version"], "diff": _diff(d, up)}
     if full:
         out.update(jobs=_jobs(out), items=_items(out) if isinstance(d.get("recipe"), dict) else [])
     return out
+
+
+def _workspace_repository(rc: dict) -> str:
+    """The repository of the workspace a recipe names (`workspace`, or `project` as older ones wrote it), or "" (#716)."""
+    name = rc.get("workspace") or rc.get("project")
+    try:
+        return workspaces.repository(workspaces.find(name.lower())) if isinstance(name, str) else ""
+    except KeyError:
+        return ""     # no such workspace: the checks that follow say so
+
+
+def _repository_differs(d: dict) -> str:
+    """The workspace's repository when a recipe's `repo` is another one, else "" (#716). The recipe keeps what a human
+    approved, so the page only says so, and a person decides."""
+    rc = d.get("recipe")
+    if not isinstance(rc, dict) or rc.get("type") != "forgejo-issues" or not rc.get("repo"):
+        return ""
+    have = _workspace_repository(rc)
+    return have if have and have.lower() != str(rc["repo"]).lower() else ""
 
 
 def _upgrade(d: dict) -> dict | None:
@@ -384,7 +404,11 @@ def _definition(data: dict, old: dict | None = None) -> dict:
         # The board writes the check and the prompt from the recipe; the runner checks they still match.
         if not isinstance(r["recipe"], dict):
             raise ValueError("`recipe` must be an object")
-        rc = cli.recipe_of(r["recipe"])
+        rc_in = r["recipe"]
+        if rc_in.get("type") == "forgejo-issues" and not rc_in.get("repo"):
+            # a new Forgejo recipe without a repository takes its workspace's (#716); a stored one keeps what a human approved
+            rc_in = {**rc_in, "repo": _workspace_repository(rc_in) or None}
+        rc = cli.recipe_of(rc_in)
         problem = cli.recipe_problem(rc)
         if problem:
             raise ValueError(problem)
