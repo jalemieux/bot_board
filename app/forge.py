@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -136,3 +137,49 @@ def ensure_repository(slug: str, agent: dict, timeout: float | None = None) -> d
         except (ForgeError, workspaces.Conflict) as exc:
             return {"repository": "", "reason": str(exc)}
     return {"repository": full, "reason": ""}
+
+
+def _repo_path(full_name: str, tail: str) -> str:
+    owner, _, name = full_name.partition("/")
+    return "/api/v1/repos/%s/%s%s" % (urllib.parse.quote(valid_name(owner), safe=""), urllib.parse.quote(valid_name(name), safe=""), tail)
+
+
+def _list(full_name: str, tail: str, deadline: float) -> list:
+    left = deadline - time.monotonic()
+    if left <= 0.2:
+        raise ForgeError("the forge was too slow to answer for the Activity tab")
+    status, data = _call("GET", _repo_path(full_name, tail), read=True, timeout=min(left, TIMEOUT))
+    if status != 200 or not isinstance(data, list):
+        raise ForgeError(f"the forge answered {status} for {full_name}{tail.split('?')[0]}")
+    return data
+
+
+def _after(stamp, since: str) -> bool:
+    """`stamp` (the forge's ISO time, any offset) is at or after `since`, compared as times, not as text."""
+    from datetime import datetime, timezone
+    try:
+        a = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (a if a.tzinfo else a.replace(tzinfo=timezone.utc)) >= (b if b.tzinfo else b.replace(tzinfo=timezone.utc))
+
+
+DEADLINE = 8        # seconds, for all of recent_activity: one slow forge cannot hold a worker thread for minutes
+
+
+def recent_activity(full_name: str, since: str, timeout: float | None = None) -> dict:
+    """What the forge holds for a repository changed since `since` (an ISO time, UTC), for the Activity tab (#738): pull
+    requests (recently updated), issues, commits, and the reviews of the pull requests that moved. Read only, with the read
+    token when there is one, and three or four fixed paths: no path comes from a caller, and the query is quoted."""
+    timeout = time.monotonic() + (timeout or DEADLINE)         # `timeout` is the whole call's budget here
+    q = urllib.parse.urlencode({"since": since, "limit": 50})
+    pulls = _list(full_name, "/pulls?" + urllib.parse.urlencode({"state": "all", "sort": "recentupdate", "limit": 50}), timeout)
+    issues = _list(full_name, "/issues?" + urllib.parse.urlencode({"type": "issues", "state": "all", "since": since, "limit": 50}), timeout)
+    commits = _list(full_name, "/commits?" + q + "&stat=false&files=false&verification=false", timeout)
+    reviews = {}
+    for p in pulls[:20]:        # the twenty most recently updated: a busy repository is a sample, not the whole day
+        if isinstance(p, dict) and _after(p.get("updated_at"), since) and isinstance(p.get("number"), int):
+            reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
+    return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews,
+            "capped": max(len(pulls), len(issues), len(commits)) >= 50 or len(pulls) > 20}
