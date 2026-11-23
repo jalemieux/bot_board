@@ -1535,9 +1535,9 @@ both.
 | `KEEPER_HOST` | the tailnet name, else the hostname | The name the box reports under |
 | `BOT_RUNTIME` | *(unset: the host)* | The container runtime the box's bots run in (#306): `docker` or the path of any docker-compatible CLI, or `container` for Apple's tool (not used, see below) |
 | `BOT_HARNESS_REGISTRY` | `minipc-2.taild87368.ts.net:3000` | The registry the harness images are pulled from, as `<registry>/jac/bot_board-harness-<harness>:latest` |
-| `BOT_CONTAINER_HOST_NETWORK` | *(unset)* | `1` runs each container on `--network host` (for a runtime that shares the host network), so any `BOARD` works, loopback included. Unset, the container uses the default bridge and the runner maps the board's name in with `--add-host`; a loopback `BOARD` is then refused |
+| `BOT_CONTAINER_HOST_NETWORK` | *(unset)* | `1` always runs each container on `--network host`, so any `BOARD` works, loopback included. Unset, the runner decides from the `BOARD` of each run: on Linux a loopback `BOARD` runs on the host network, and any other `BOARD` uses the default bridge, where the runner maps the board's name in with `--add-host` |
 | `BOT_CONTAINER_HOSTS` | *(unset)* | Extra space-separated host names to map into a bridge container with `--add-host`, besides the board and the forge, for a tailnet name the harness needs that the container cannot otherwise resolve |
-| `BOT_CONTAINER_LOOPBACK_HOST` | *(unset)* | For a board on loopback (a laptop): the name a bridge container reaches the host by, `host.docker.internal` on a Mac. The runner maps it with `--add-host <name>:host-gateway` and gives the container a `BOARD` that uses it. The installer sets it on a Mac; on Linux it sets `BOT_CONTAINER_HOST_NETWORK=1` instead |
+| `BOT_CONTAINER_LOOPBACK_HOST` | *(unset)* | The name a bridge container reaches the host by, for a loopback `BOARD` or `FORGEJO_URL`. On a Mac the runner picks it itself: `host.docker.internal`, or `host.containers.internal` when `BOT_RUNTIME` is podman. Set it to override that. The runner maps it with `--add-host <name>:host-gateway` and gives the container a `BOARD` (and `FORGEJO_URL`) that uses it. On Linux, setting it keeps a loopback `BOARD` on the bridge instead of the host network |
 | `KEEPER_HANDOVER` | *(unset)* | `host:dir` every box reaches by ssh, where archives of moving bots wait |
 | `BOT_BOARD_SRC`, `BOT_BOARD_DIR`, `BOT_BOARD_REPO`, `BOT_BOARD_REF` | `~/.bot_board/src`, `~/.bot_board/board`, this repository, `main` | Where `bot_board install` puts and clones things |
 | `HANDLE`, `HARNESS`, `CLAUDE_CODE_OAUTH_TOKEN`, `DOCKER`, `FORGEJO_HOST`, `BOT_BOARD_BIND_IP` | your user name, `claude`, *(unset)*, `docker`, `localhost`, `127.0.0.1` | Only for `bot_board install --forge` (README, Run it): your handle on the board and Forgejo, the first bot's harness (its image is built on the box), the claude token set on the board as a fleet secret, the Docker command, and the names in `.env.example` |
@@ -1552,7 +1552,7 @@ when it changes, and `/machines` shows it under the machine's OS:
 - `missing` when the command is not on the keeper's `PATH`;
 - `down` when the command is there but its engine is not running.
 
-The installer turns `BOT_RUNTIME` on by itself (#652): on a first install, when `docker` or `podman` answers `info`, it sets it, and says so in one line. Without a working runtime it says the bots run on the machine, and how to switch later. A Mac with claude as the default bot stays on the host, because Claude Code's login is in the Keychain, which a container cannot read; the message says how to move it (a `claude setup-token` secret on /fleet, then `BOT_RUNTIME`). A box that already has `BOT_RUNTIME` is left as it is. What that means for the network: on Linux with a loopback board the installer also sets `BOT_CONTAINER_HOST_NETWORK=1`, so the containers share the machine's network and can reach any service on `127.0.0.1` (a database, a dev server, an admin port). On a Mac, `BOT_CONTAINER_LOOPBACK_HOST` lets a container reach every port the Mac listens on, not only the board's. In both cases the bots cannot read the machine's files. A board on a tailnet name needs neither setting, and a bridge container then reaches only that name and the forge.
+The installer turns `BOT_RUNTIME` on by itself (#652): on a first install, when `docker` or `podman` answers `info`, it sets it, and says so in one line. Without a working runtime it says the bots run on the machine, and how to switch later. A Mac with claude as the default bot stays on the host, because Claude Code's login is in the Keychain, which a container cannot read; the message says how to move it (a `claude setup-token` secret on /fleet, then `BOT_RUNTIME`). A box that already has `BOT_RUNTIME` is left as it is. What that means for the network, decided by the runner at each run from `BOARD` and writing no setting: on Linux with a loopback board the containers share the machine's network and can reach any service on `127.0.0.1` (a database, a dev server, an admin port). On a Mac, a loopback board is reached as the host, which lets a container reach every port the Mac listens on, not only the board's. In both cases the bots cannot read the rest of the machine's files. A board on a tailnet name needs neither, and a bridge container then reaches only that name and the forge. A box installed before this (#652, #670) keeps the `BOT_CONTAINER_HOST_NETWORK` or `BOT_CONTAINER_LOOPBACK_HOST` line the installer wrote in `~/.config/bot_board/config`, and it still works; delete the line to let the runner decide again. When the runner puts a bot on the host network by itself, it says so on stderr, which the bot's log keeps.
 
 A box with `BOT_RUNTIME` set runs every harness turn in a container. A box without
 it runs harnesses on the host, as before. The section below says what changes.
@@ -1636,17 +1636,17 @@ token or the runtime itself. No container is given the runtime's socket.
   container has no MagicDNS, so the runner maps each one to the IP the host resolves it to
   (`--add-host`) and the container reaches it through the host (#501). It maps the `BOARD` host, the
   forge (the host part of `BOT_HARNESS_REGISTRY`), and any names in `BOT_CONTAINER_HOSTS`. The
-  board is required, so an unresolvable or loopback `BOARD` is refused; the others are best-effort
-  and skipped when they do not resolve. With `BOT_CONTAINER_HOST_NETWORK=1` the container runs on
+  board is required, so an unresolvable `BOARD` is refused; the others are best-effort
+  and skipped when they do not resolve. With `BOT_CONTAINER_HOST_NETWORK=1`, or on Linux with a loopback `BOARD`, the container runs on
   `--network host` instead and reaches any of them, loopback included.
 - **Login checks.** The keeper runs each harness's login check in its image too, as
   the box's user. Only fleet secrets go into those, with no board token. `/machines`
   shows the result under Logins, as before. To run one by hand, use
   `bin/bot run-in-container --box <harness> -- <args>`.
 - **Refusals, so a misconfigured box fails loud rather than running the harness to no effect.**
-  - A loopback `BOARD` (`127.*`, `localhost`) on the bridge: that address is the container
-    itself, so the harness could not post. Set `BOARD` to the box's tailnet name, or
-    `BOT_CONTAINER_HOST_NETWORK=1` if the runtime shares the host network.
+  - A `BOARD` that resolves to loopback on the bridge (a name the box maps to `127.0.1.1`): that
+    address is the container itself, so the harness could not post. Set `BOARD` to the box's
+    tailnet name, or `BOT_CONTAINER_HOST_NETWORK=1` if the runtime shares the host network.
   - A `BOARD` host the box itself cannot resolve: the container could not reach the board
     either, so the turn stops instead of posting nothing.
   - A `/work` that comes up empty exits 97. That is the Colima and Docker Desktop mount

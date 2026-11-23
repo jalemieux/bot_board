@@ -505,15 +505,52 @@ class ContainerRun(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("needs --dir", r.stderr)
 
-    def test_loopback_board_is_refused_on_bridge(self):
+    def run_loopback(self, uname, runtime=None, **env):
+        """A run against a loopback board on a box whose `uname` says `uname` (#673): returns the process and the run call."""
         checkout = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, checkout, ignore_errors=True)
         (Path(checkout) / ".keep").write_text("a non-empty checkout")
-        # a loopback board the bridge container cannot reach is refused, naming the setting
-        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"],
-                         self.sub_env({"BOARD": "http://127.0.0.1:8080"}))
-        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("cannot reach", r.stderr)
+        self.log.write_text("")
+        e = self.sub_env({"BOARD": "http://127.0.0.1:8080", **env})
+        un = Path(e["HOME"]) / "bin" / "uname"
+        un.write_text("#!/bin/sh\necho %s\n" % uname)
+        un.chmod(0o755)
+        if runtime:     # the runtime is named by its file name, as `docker` or `podman` is in a real config
+            link = Path(e["HOME"]) / "bin" / runtime
+            link.symlink_to(e["BOT_RUNTIME"])
+            e["BOT_RUNTIME"] = str(link)
+        r = self.run_sub(["claude", "--handle", "tbot", "--dir", checkout, "--", "--version"], e)
+        return r, next((c for c in self.calls() if c and c[0] == "run"), None)
+
+    def test_a_loopback_board_needs_no_setting_on_linux_it_runs_on_the_host_network(self):      # #673
+        r, run = self.run_loopback("Linux")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(run[run.index("--network") + 1], "host", run)
+        self.assertFalse(any(a == "--add-host" for a in run), run)
+        self.assertIn("runs on the host network", r.stderr)      # chosen by the runner, so it says so
+        r, run = self.run_loopback("Linux", BOT_CONTAINER_HOST_NETWORK="1")
+        self.assertNotIn("runs on the host network", r.stderr)    # set by hand: no message
+
+    def test_a_loopback_board_needs_no_setting_on_a_mac_it_is_reached_as_the_host(self):      # #673
+        r, run = self.run_loopback("Darwin")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(run[run.index("--add-host") + 1], "host.docker.internal:host-gateway", run)
+        self.assertIn("BOARD=http://host.docker.internal:8080", run)
+        self.assertNotIn("--network", run)
+        r, run = self.run_loopback("Darwin", runtime="podman")
+        self.assertEqual(run[run.index("--add-host") + 1], "host.containers.internal:host-gateway", run)
+        r, run = self.run_loopback("Darwin", BOT_CONTAINER_LOOPBACK_HOST="gateway.test")      # the override wins
+        self.assertIn("BOARD=http://gateway.test:8080", run)
+
+    def test_a_loopback_forge_url_is_rewritten_on_a_mac_without_a_setting(self):      # #673
+        r, run = self.run_loopback("Darwin", BOARD="http://100.64.0.9:8080", FORGEJO_URL="http://localhost:3000")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("FORGEJO_URL=http://host.docker.internal:3000", run)
+
+    def test_a_board_that_moved_off_loopback_does_not_keep_the_host_network_on_linux(self):      # #673
+        r, run = self.run_loopback("Linux", BOARD="http://100.64.0.9:8080")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("--network", run)
 
     def test_loopback_board_maps_to_the_loopback_host_name(self):
         checkout = tempfile.mkdtemp()
