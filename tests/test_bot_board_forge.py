@@ -120,6 +120,30 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("FORGEJO_HOST=box.example", env)
         self.assertNotIn("127.0.0.1", env, "the old bind address is replaced, not kept beside the new one")
 
+    def test_a_mac_uses_docker_only_when_asked_and_then_without_host_networking(self):      # #815
+        script(self.bin / "uname", "#!/bin/sh\necho Darwin\n")
+        r = self.run_install(FORGE_DOCKER="1", CLAUDE_CODE_OAUTH_TOKEN="sk-test")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        calls = "\n".join(self.calls())
+        self.assertIn("docker compose --profile forge up -d --build", calls, "a Mac that asks for Docker gets the Docker install")
+        self.assertIn("docker build --build-arg HARNESS=claude", calls)
+        config = self.cfg.read_text()
+        self.assertIn('BOT_RUNTIME="docker"', config)
+        self.assertNotIn("BOT_CONTAINER_HOST_NETWORK", config, "a Mac has no host network: the runner reaches the board as the host (#673)")
+        self.assertIn('BOT_HARNESS_REGISTRY="localhost"', config)
+
+    def test_forge_docker_needs_docker_and_does_not_mix_with_native(self):
+        script(self.bin / "uname", "#!/bin/sh\necho Darwin\n")
+        (self.bin / "docker").unlink()
+        r = self.run_install(FORGE_DOCKER="1", PATH=str(self.bin) + os.pathsep + "/usr/bin" + os.pathsep + "/bin")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("FORGE_DOCKER=1 needs Docker", r.stderr)
+        script(self.bin / "docker", FAKE_DOCKER)
+        r = self.run_install(FORGE_DOCKER="1", FORGE_NATIVE="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ask for opposite things", r.stderr)
+        self.assertEqual(self.started(), [])
+
     def native(self, **env):
         script(self.src / "run.sh", FAKE_RUN)
         script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)

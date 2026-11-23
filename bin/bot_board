@@ -138,17 +138,24 @@ open_signed_in() {
 }
 
 # install --forge: the board and Forgejo in Docker, the Forgejo wired to the board, and the keeper with a
-# first bot that runs in a container (BOT_RUNTIME=docker). Linux only for now: a container reaches the board
-# on 127.0.0.1 through host networking. Every step is safe to run again.
+# first bot that runs in a container (BOT_RUNTIME=docker). On Linux a container reaches the board on 127.0.0.1
+# through host networking; on a Mac, which has none, it reaches it as the host (#673), and the Docker path is
+# asked for with FORGE_DOCKER=1 (#815). Every step is safe to run again.
 # Without Docker, or with FORGE_NATIVE=1, the same line runs the board (run.sh) and a pinned Forgejo
 # (deploy/forgejo-native) on this machine, wires them, and installs the keeper with bots that run
-# as you, not in containers (#651). A Mac always takes this path: its containers cannot reach the board on
-# 127.0.0.1, and Forgejo comes from Homebrew (deploy/forgejo-native).
+# as you, not in containers (#651). A Mac takes this path unless FORGE_DOCKER=1 asks for Docker; its Forgejo
+# comes from Homebrew (deploy/forgejo-native).
 # a native Forgejo (deploy/forgejo-native) lives with the board: it starts and stops with it, and --purge removes its data
 FORGEJO_HOME=${FORGEJO_DIR:-$HOME/.bot_board/forgejo}
 has_native_forgejo() { [ -f "$FORGEJO_HOME/work/custom/conf/app.ini" ]; }
 native_forgejo() { BOARD=http://127.0.0.1:${PORT:-8080} bash "$SRC/deploy/forgejo-native" "$1"; }
-forge_native() { local d=${DOCKER:-docker}; [ "$(uname -s)" = Darwin ] || [ "${FORGE_NATIVE:-}" = 1 ] || ! command -v "${d%% *}" >/dev/null 2>&1; }   # DOCKER may be "sudo docker"
+# A Mac installs natively unless FORGE_DOCKER=1 asks for Docker (#815); Linux uses Docker when it is there, unless FORGE_NATIVE=1.
+forge_native() {
+  local d=${DOCKER:-docker}
+  [ "${FORGE_NATIVE:-}" != 1 ] || return 0
+  [ "$(uname -s)" != Darwin ] || [ "${FORGE_DOCKER:-}" = 1 ] || return 0
+  ! command -v "${d%% *}" >/dev/null 2>&1      # DOCKER may be "sudo docker"
+}
 # The block that ends `install --forge` (#769): the plain install's block with Forgejo in it: where it is, how to reach it and sign in
 # (the path of the password file, never the password), and how to manage it. The bots' reach stays on the screen (#670).
 forge_summary() {
@@ -192,6 +199,8 @@ quietly() {
 forge_install() {
   local d=${DOCKER:-docker} api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} harness=${HARNESS:-claude}
   local tok i _pair native=
+  [ "${FORGE_DOCKER:-}" != 1 ] || [ "${FORGE_NATIVE:-}" != 1 ] || die "FORGE_DOCKER=1 and FORGE_NATIVE=1 ask for opposite things: set one"
+  [ "${FORGE_DOCKER:-}" != 1 ] || command -v "${d%% *}" >/dev/null 2>&1 || die "FORGE_DOCKER=1 needs Docker ($d is not installed)"
   ! forge_native || native=1
   if [ -n "$native" ]; then
     d=; for c in jq openssl curl python3; do command -v $c >/dev/null || die "install --forge needs $c$([ "$(uname -s)" != Darwin ] || echo " (brew install $c)")"; done
@@ -203,7 +212,6 @@ forge_install() {
   Or remove everything first with: bot_board uninstall all --purge"
     note "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
   fi
-  [ -n "$native" ] || [ "$(uname -s)" = Linux ] || die "install --forge runs the bots' containers on host networking, which only Linux has: on a Mac, install the board with Docker by hand (README, \"The Docker install, with Forgejo\")"
   [ -n "$native" ] || for c in $d jq openssl curl python3; do command -v "${c%% *}" >/dev/null || die "install --forge needs $c"; done
   [ -n "$native" ] || $d compose version >/dev/null 2>&1 || die "install --forge needs Docker with the Compose plugin ($d compose version)"
   case $harness in claude|codex|opencode|copilot) ;; *) die "HARNESS: claude, codex, opencode or copilot" ;; esac
@@ -253,7 +261,8 @@ forge_install() {
   # 4. the keeper, with the box setting that puts every bot in a container
   mkdir -p "$(dirname "$CFG_FILE")"; chmod 700 "$(dirname "$CFG_FILE")"; touch "$CFG_FILE"
   _pair=KEEPER_DEFAULT_BOT:$harness
-  [ -n "$native" ] || _pair="BOT_RUNTIME:docker BOT_CONTAINER_HOST_NETWORK:1 BOT_HARNESS_REGISTRY:localhost $_pair"
+  # a Linux container reaches the board on the host network; a Mac's reaches it as the host, which the runner does by itself (#673)
+  [ -n "$native" ] || _pair="BOT_RUNTIME:docker $([ "$(uname -s)" = Darwin ] || echo BOT_CONTAINER_HOST_NETWORK:1) BOT_HARNESS_REGISTRY:localhost $_pair"
   for _pair in $_pair; do
     { grep -v "^${_pair%%:*}=" "$CFG_FILE" || true; printf '%s="%s"\n' "${_pair%%:*}" "${_pair#*:}"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
   done
