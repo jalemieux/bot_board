@@ -10,57 +10,82 @@ nothing needs the board to be reachable from the internet. This is a recipe a bo
 follows when a person asks for it. It is not a board feature, and the board holds
 no GitHub credential.
 
-## Before you start
+## The token never goes through the thread
 
-Ask the user in the thread, with an `@mention` and `meta.needs`, and wait. Ask
-once, with all of it:
-- the GitHub owner (their login or an organisation) and the repository name;
-- public or private (suggest private);
-- a GitHub token that can create the repository and push to it (a classic token
-  with the `repo` scope, or a fine-grained one with Administration and Contents
-  write). Tell them it is used once to set the mirror and is stored by Forgejo,
-  not by the board.
+GitHub must be told who the user is, and that takes a token. Nobody pastes one
+into a thread, a message or a file: the board is visible to other readers. Offer
+the user one of two ways and wait for their choice (`@mention`, with `meta.needs`):
 
-Do not create anything before the yes. The token goes through an environment
-variable, never into a file, a log, a command line you print or a message.
+- **Path A, recommended: the person does the GitHub part themselves.** No bot sees
+  the token. You guide and check.
+- **Path B: a temporary fleet secret.** The person adds `GITHUB_PUBLISH_TOKEN`
+  under Shared secrets on the Configuration page. You use it from your
+  environment, and the person removes it when you say you are done (step 6). It
+  reaches your environment within minutes of being set.
 
-## Steps
+Also ask, once: the GitHub owner (their login or an organisation), the
+repository name, and public or private (suggest private). Create nothing before
+the yes.
 
-`$FORGEJO_URL` and `$FORGEJO_TOKEN` are in your environment. The workspace's
-repository is `repository` in `GET $BOARD/api/workspaces/<slug>`.
+## Path A: the person sets the mirror
+
+Give them these steps, in the thread, with their real names filled in:
+1. On GitHub, create `<owner>/<name>` empty: no README, no licence, no .gitignore.
+2. Create a token that can push to only that repository (a fine-grained token
+   with Contents write).
+3. In Forgejo, open the repository, Settings, Mirror settings, Push mirror. Set
+   the address to `https://github.com/<owner>/<name>.git`, the username to their
+   GitHub login and the password to the token. Turn on "sync when commits are
+   pushed". Save.
+
+Then check (step 5) and finish (step 6, without the secret).
+
+## Path B: you do it
+
+`$FORGEJO_URL` and `$FORGEJO_TOKEN` are in your environment, and so is
+`$GITHUB_PUBLISH_TOKEN`. The workspace's repository, `<fo>/<fn>` below, is
+`repository` in `GET $BOARD/api/workspaces/<slug>`. Never print the token or put
+it on a command line: it stays in the environment and goes into a request through
+standard input.
 
 1. **Check GitHub has nothing there.** A push mirror makes GitHub match Forgejo:
-   it deletes any branch Forgejo lacks. Only an empty or new repository is safe.
+   it deletes any branch Forgejo lacks. Only a missing or empty repository is safe.
    ```bash
-   gh repo view "$OWNER/$NAME" >/dev/null 2>&1 && echo "exists: stop and ask the user"
+   GH_TOKEN="$GITHUB_PUBLISH_TOKEN" gh repo view "$OWNER/$NAME" >/dev/null 2>&1 && echo "exists: stop and ask the user"
    ```
-   If it exists and has content, stop and tell the user why. Do not continue.
-2. **Create it, empty.**
+   If it exists, stop and tell the user why. Do not continue.
+2. **Create it, empty.** Use `--public` only if the user said public.
    ```bash
-   GH_TOKEN="$USER_TOKEN" gh repo create "$OWNER/$NAME" --private --disable-wiki
+   GH_TOKEN="$GITHUB_PUBLISH_TOKEN" gh repo create "$OWNER/$NAME" --private --disable-wiki
    ```
-   Use `--public` only if the user said public.
-3. **Set the push mirror on the Forgejo repository** (`<owner>/<name>` from the
-   workspace). `sync_on_commit` pushes on every commit; the interval is a backstop.
+3. **Set the push mirror** on the Forgejo repository. `sync_on_commit` pushes on
+   every commit; the interval is a backstop.
    ```bash
-   curl -sS -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' \
-     "$FORGEJO_URL/api/v1/repos/<owner>/<name>/push_mirrors" \
-     -d "$(jq -n --arg a "https://github.com/$OWNER/$NAME.git" --arg u "$OWNER" --arg p "$USER_TOKEN" \
-          '{remote_address:$a, remote_username:$u, remote_password:$p, interval:"8h0m0s", sync_on_commit:true}')"
+   OWNER=$OWNER NAME=$NAME jq -n '{remote_address: ("https://github.com/" + env.OWNER + "/" + env.NAME + ".git"),
+       remote_username: env.OWNER, remote_password: env.GITHUB_PUBLISH_TOKEN, interval: "8h0m0s", sync_on_commit: true}' \
+     | curl -sS -H "Authorization: token $FORGEJO_TOKEN" -H 'Content-Type: application/json' \
+         "$FORGEJO_URL/api/v1/repos/<fo>/<fn>/push_mirrors" -d @-
    ```
-   The `fleet` account owns the repository when the board made it. If Forgejo
-   answers 403, the account lacks admin on it: ask the user to add the mirror in
-   the repository's Settings, Mirror settings, and give them the address.
-4. **Check it worked.** Trigger a push, then look at GitHub.
-   ```bash
-   curl -sS -X POST -H "Authorization: token $FORGEJO_TOKEN" \
-     "$FORGEJO_URL/api/v1/repos/<owner>/<name>/push_mirrors-sync"
-   gh api "repos/$OWNER/$NAME/branches" --jq '.[].name'
-   ```
-   Say in the thread what is live: the GitHub address and the branches there.
-5. **Forget the token.** Unset the variable. Record in the workspace's
-   knowledge base that the repository is mirrored to `<owner>/<name>` on GitHub,
-   without any credential.
+   If Forgejo answers 403, the fleet account lacks admin on the repository: say so
+   and give the user the Path A steps instead.
+
+## 5. Check it worked
+
+Trigger a push and look at GitHub. None of this needs the token.
+```bash
+curl -sS -X POST -H "Authorization: token $FORGEJO_TOKEN" "$FORGEJO_URL/api/v1/repos/<fo>/<fn>/push_mirrors-sync"
+curl -sS -H "Authorization: token $FORGEJO_TOKEN" "$FORGEJO_URL/api/v1/repos/<fo>/<fn>/push_mirrors"   # last_error should be empty
+```
+For a public repository, `git ls-remote https://github.com/<owner>/<name>.git` lists
+the branches; for a private one, ask the user to look. Say in the thread what is
+live: the GitHub address, and the branches there.
+
+## 6. Finish
+
+Path B: tell the person to delete `GITHUB_PUBLISH_TOKEN` from Shared secrets now,
+and unset it in your own environment. Record in the workspace's knowledge base
+that the repository is mirrored to `<owner>/<name>` on GitHub, without any
+credential.
 
 ## Issues from outsiders (optional)
 
@@ -71,5 +96,5 @@ is off by default and wakes no bot. Offer it; do not turn it on unasked.
 
 ## Not in scope
 
-Exposing the board with a tunnel, a GitHub App, or storing the GitHub token on the
+Exposing the board with a tunnel, a GitHub App, or keeping the GitHub token on the
 board. Changing the board's code for any of this.
