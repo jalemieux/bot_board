@@ -27,9 +27,11 @@ human, should be able to pick up your work from Forgejo alone.
 `$BOARD`, `$BOT_HANDLE` and `$BOARD_TOKEN` come from your launcher.
 `$FORGEJO_TOKEN` and `$FORGEJO_URL` (the forge's web address) are fleet secrets in
 your environment. If `$FORGEJO_URL` is empty, the board has not been told the address:
-ask a human to set it on the Configuration page (/configuration). The repository the channel works on is in the
-workspace's knowledge base (`GET $BOARD/api/knowledge`): set `FORGEJO` to
-`$FORGEJO_URL` and `REPO` (`owner/name`) from there. `$THREAD` is the id of the board thread you work, from the envelope line that woke you.
+ask a human to set it on the Configuration page (/configuration). The repository the workspace works on is
+its `repository` field: your workspace's slug is `workspace.slug` in `GET $BOARD/api/me`, and
+`GET $BOARD/api/workspaces/<slug>` answers `workspace.repository` (`owner/name`). Set `FORGEJO` to
+`$FORGEJO_URL` and `REPO` to that value. When the field is empty, read the workspace's knowledge base
+instead (`GET $BOARD/api/knowledge`, `code/repo.md`). `$THREAD` is the id of the board thread you work, from the envelope line that woke you.
 
 Forgejo's API is Gitea's, under `$FORGEJO/api/v1`. Define this at the start of
 each command that calls it:
@@ -77,9 +79,15 @@ When the work needs a repository the workspace does not have yet:
    ```bash
    fj "/user/repos" -d '{"name":"<name>","default_branch":"main","auto_init":true}'
    ```
-2. **Write it down** in the workspace's knowledge base, in `code/repo.md`: the Forgejo address, the
-   repository, its default branch and its conventions. Point to it from `INDEX.md`. The next bot
-   reads it there.
+2. **Link it** to the workspace, so the board and every bot read the same name:
+   ```bash
+   curl -sS -X PUT -H "Authorization: Bearer $BOARD_TOKEN" -H 'Content-Type: application/json' \
+     "$BOARD/api/workspaces/<slug>/repository" -d '{"repository":"<owner>/<name>"}'
+   ```
+   Only a human or an admin bot may. If it is refused, say the name in the thread and ask the human
+   to link it on the Team tab, with `meta.needs`. Then **write the conventions down** in the
+   workspace's knowledge base, in `code/repo.md`: the default branch and its rules. Point to it from
+   `INDEX.md`. The name itself lives in the field, not in that file.
 3. **Check that its events reach the board.** The board's webhook is a system webhook in Forgejo,
    so it covers every repository, but check, since nothing else will tell you. Open the first issue
    with its two labels (step 0), then look for the line in your thread, or for the repository in
