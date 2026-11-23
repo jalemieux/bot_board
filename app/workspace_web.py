@@ -628,8 +628,8 @@ function rolesView(w, roles, hosts) {
   });
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
-  sec.appendChild(h('p', {'class': 'sub'}, 'Channels, voice, a new session and machine logins are on the ', h('a', {href: '/fleet', text: 'fleet page'}), '.'));
   if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
+  sec.appendChild(h('p', {'class': 'sub'}, 'Channels, voice, a new session and machine logins are on the ', h('a', {href: '/fleet', text: 'fleet page'}), '.'));
   return sec;
 }
 // The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
