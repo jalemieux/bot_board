@@ -262,7 +262,7 @@ ol.steps{padding-left:22px}ol.steps li{margin:0 0 10px}
 .box table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
 .box td{padding:5px 10px 5px 0;border-top:1px solid var(--line);vertical-align:top}
 .box td.st{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
-body.out .box td.do,body.out .box button.drain,body.out form.newbot,body.out form.secret{display:none}
+body.out .box td.do,body.out .box button.drain,body.out form.newbot,body.out table.secrets .secret-acts,body.out .secret-new{display:none}
 .box td.st.run{color:var(--good)}.box summary{color:var(--dim)}
 .box details{margin-top:8px;font-size:13px}.box summary{cursor:pointer}
 .box td.do{text-align:right;width:1%;white-space:nowrap}.box .by{color:var(--dim)}.box .prob{color:var(--accent);white-space:normal}
@@ -3388,35 +3388,125 @@ document.addEventListener('click', function (ev) {
     if (r.ok) location.reload(); else alert(d.error || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 });
-// The fleet's secrets: names only, from the admin API.
+// The fleet's secrets: names only, from the admin API (thread 17980). The list is a table; Replace turns a row's value
+// into a password field in place, the last row adds a secret, and Remove asks in a dialog that says what it does.
 function secretCall(method, name, body) {
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return Promise.reject(); }
   return fetch('/api/fleet/secrets' + (name ? '/' + encodeURIComponent(name) : ''), {method: method,
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: body ? JSON.stringify(body) : undefined})
   .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
 }
+var SECRET_NAME = /^[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)$/;     // the server checks it too; this only helps while typing
+function sEl(tag, attrs) {
+  var n = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
+  for (var i = 2; i < arguments.length; i++) if (arguments[i] != null) n.appendChild(typeof arguments[i] === 'string' ? document.createTextNode(arguments[i]) : arguments[i]);
+  return n;
+}
+function secretWhen(iso) {
+  var d = new Date(iso), days = Math.floor((Date.now() - d.getTime()) / 86400000);
+  var rel = isNaN(days) ? iso : days < 1 ? 'today' : days === 1 ? '1 day ago' : days + ' days ago';
+  var abs = isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+  return sEl('td', {'data-label': 'When', title: iso}, rel + (abs ? ' \\u00b7 ' + abs : ''));
+}
+function secretNote(text) { var m = document.getElementById('secretmsg'); m.textContent = text || ''; }
+function secretDialog(title, nodes, okText, run) {
+  var opener = document.activeElement, ov = sEl('div', {'class': 'secret-dlg'});
+  var box = sEl('div', {role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'secret-dlg-t'}, sEl('h3', {id: 'secret-dlg-t', text: title}));
+  nodes.forEach(function (n) { box.appendChild(n); });
+  var err = sEl('p', {'class': 'secret-err', role: 'alert'}), cancel = sEl('button', {type: 'button', text: 'Cancel'});
+  var ok = sEl('button', {type: 'button', 'class': 'danger', text: okText});
+  box.appendChild(err); box.appendChild(sEl('div', {'class': 'secret-acts'}, cancel, ok)); ov.appendChild(box); document.body.appendChild(ov);
+  var close = function () { document.removeEventListener('keydown', onKey); ov.remove(); if (opener && opener.focus) opener.focus(); };
+  var onKey = function (ev) {
+    if (ev.key === 'Escape') { close(); return; }
+    if (ev.key !== 'Tab') return;
+    var first = cancel, last = ok;
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  };
+  document.addEventListener('keydown', onKey);
+  cancel.addEventListener('click', close);
+  ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+  ok.addEventListener('click', function () { ok.disabled = true; err.textContent = ''; run().then(close, function (e) { ok.disabled = false; err.textContent = e && e.message || 'failed'; }); });
+  cancel.focus();       // a destructive dialog starts on Cancel, so Enter does not remove
+}
+function removeSecret(x) {
+  secretDialog('Remove ' + x.name + '?', [
+    sEl('p', {text: 'Every bot on every machine loses it from its next run. Anything that needs it will fail until you set it again.'}),
+    sEl('p', {'class': 'sub', text: 'You cannot read the old value back, so keep a copy first if you may need it.'})],
+    'Remove ' + x.name, function () { return secretCall('DELETE', x.name).then(listSecrets); });
+}
+function saveSecret(name, value, done) {
+  secretNote('');
+  secretCall('PUT', name, {value: value}).then(function () { done(); listSecrets(); }, function (e) { if (e) secretNote(e.message); });
+}
+function replaceRow(x, cell, actions) {
+  var inp = sEl('input', {type: 'password', autocomplete: 'off', 'aria-label': 'New value for ' + x.name, placeholder: 'new value'});
+  var save = sEl('button', {type: 'button', text: 'Save', disabled: ''}), cancel = sEl('button', {type: 'button', text: 'Cancel'});
+  cell.classList.add('secret-edit'); cell.textContent = ''; cell.appendChild(inp);
+  actions.textContent = ''; actions.appendChild(save); actions.appendChild(cancel);
+  var undo = function () { listSecrets(); };
+  inp.addEventListener('input', function () { save.disabled = !inp.value; });
+  inp.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') undo(); if (ev.key === 'Enter' && inp.value) save.click(); });
+  save.addEventListener('click', function () { save.disabled = true; saveSecret(x.name, inp.value, function () {}); });
+  cancel.addEventListener('click', undo);
+  inp.focus();
+}
+function claudeCard(list) {
+  var x = list.filter(function (s) { return s.name === 'CLAUDE_CODE_OAUTH_TOKEN'; })[0], box = document.getElementById('claudecard');
+  box.textContent = '';
+  var cmd = sEl('code', {text: 'claude setup-token'}), copy = sEl('button', {type: 'button', text: 'Copy'});
+  copy.addEventListener('click', function () {
+    var done = function () { copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy'; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText('claude setup-token').then(done, function () {}); else done();
+  });
+  var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
+  var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
+  box.appendChild(sEl('section', {'class': 'claude-card'},
+    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x ? 'good' : 'none'), text: x ? 'set' : 'not set'})),
+    sEl('p', {'class': 'sub', text: x
+      ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
+      : 'Without it, a machine with no Claude login cannot run claude bots. Every bot shares the subscription\\u2019s usage limits.'}),
+    sEl('ol', null,
+      sEl('li', null, 'On a machine with a browser, run ', cmd, ' ', copy, ' and copy the token it prints.'),
+      sEl('li', null, x ? 'Use Replace on its row below.' : 'Add it below as CLAUDE_CODE_OAUTH_TOKEN.'))));
+}
 function listSecrets() {
   var box = document.getElementById('secretlist');
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
-    box.textContent = d.secrets.length ? '' : 'None set.';
+    claudeCard(d.secrets);
+    box.textContent = '';
+    var body = sEl('tbody');
     d.secrets.forEach(function (x) {
-      var row = document.createElement('div');
-      row.textContent = x.name + ' \\u2026' + x.ends + ' \\u00b7 set by @' + x.set_by + ' ' + x.set_at + ' ';
-      var del = document.createElement('button'); del.type = 'button'; del.textContent = 'remove';
-      del.onclick = function () { if (confirm('Remove ' + x.name + ' from every box?'))
-        secretCall('DELETE', x.name).then(listSecrets, function (e) { alert(e.message); }); };
-      row.appendChild(del); box.appendChild(row);
+      var cell = sEl('td', {'data-label': 'Value', 'class': 'mono', text: '\\u2026' + x.ends}), acts = sEl('td', {'class': 'secret-acts'});
+      var rep = sEl('button', {type: 'button', text: 'Replace', 'aria-label': 'Replace ' + x.name});
+      var rm = sEl('button', {type: 'button', 'class': 'danger', text: 'Remove', 'aria-label': 'Remove ' + x.name});
+      rep.addEventListener('click', function () { replaceRow(x, cell, acts); });
+      rm.addEventListener('click', function () { removeSecret(x); });
+      acts.appendChild(rep); acts.appendChild(rm);
+      body.appendChild(sEl('tr', null, sEl('td', {'class': 'mono secret-name', text: x.name}), cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
     });
+    var name = sEl('input', {autocomplete: 'off', 'aria-label': 'Name of a new secret', placeholder: 'NEW_SECRET_NAME', 'aria-describedby': 'secrethint'});
+    var val = sEl('input', {type: 'password', autocomplete: 'off', 'aria-label': 'Value of the new secret', placeholder: 'value'});
+    var add = sEl('button', {type: 'button', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET.'});
+    var check = function () {
+      var bad = name.value && !SECRET_NAME.test(name.value);
+      hint.className = 'sub' + (bad ? ' secret-err' : '');
+      hint.textContent = bad ? 'Not accepted: use capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET.' : 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET.';
+      add.disabled = !(SECRET_NAME.test(name.value) && val.value);
+    };
+    name.addEventListener('input', check); val.addEventListener('input', check);
+    [name, val].forEach(function (i) { i.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !add.disabled) add.click(); }); });
+    add.addEventListener('click', function () { add.disabled = true; saveSecret(name.value.trim(), val.value, function () {}); });
+    body.appendChild(sEl('tr', {'class': 'secret-new'}, sEl('td', {'data-label': 'New secret'}, name), sEl('td', {colspan: '3'}, val), sEl('td', {'class': 'secret-acts'}, add)));
+    var head = sEl('tr', null, sEl('th', {text: 'Name'}), sEl('th', {text: 'Value'}), sEl('th', {text: 'Set by'}), sEl('th', {text: 'When'}), sEl('th', {'class': 'sr-only', text: 'Actions'}));
+    box.appendChild(sEl('table', {'class': 'secrets'}, sEl('thead', null, head), body));
+    box.appendChild(hint);
   }, function (e) { box.textContent = e.message; });
 }
 listSecrets();
-document.addEventListener('submit', function (ev) {
-  var f = ev.target.closest('form.secret'); if (!f) return;
-  ev.preventDefault();
-  secretCall('PUT', f.elements.name.value.trim(), {value: f.elements.value.value})
-  .then(function () { f.reset(); listSecrets(); }, function (e) { if (e) alert(e.message); });
-});
 // Each table sorts by a column from its heading (#282), by the cell's data-sort: numbers as
 // numbers, the rest as text. The sort is kept per table in this browser, so a refresh keeps it;
 // until a heading is clicked the table stays in the order the board gave it.
@@ -3573,6 +3663,7 @@ try {
 setInterval(function () {
   var a = document.activeElement;
   if (!(a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA'))
+      && !document.querySelector('.secret-dlg, .secret-edit')     // a remove dialog or a value being replaced
       && !document.querySelector('.d-voice form')     // an open editor, even with both fields emptied to clear them
       && !Array.from(document.querySelectorAll('.fleet-page textarea, .fleet-page input')).some(function (input) { return input.value; })) {
     try {
@@ -3706,6 +3797,31 @@ FLEET_CSS = """
 .fleet-page .fleet-settings{border-top:1px solid var(--line);padding:8px 0;margin-top:8px}
 .fleet-page .fleet-settings h3{margin:14px 0 6px}
 .fleet-page .fleet-settings pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.fleet-page .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fleet-page #secrets{max-width:920px}
+.fleet-page .claude-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px 16px;margin:0 0 16px}
+.fleet-page .claude-card h3{margin:0 0 2px;font-size:15px}.fleet-page .claude-card ol{margin:8px 0 0;padding-left:20px}.fleet-page .claude-card li{margin:4px 0}
+.fleet-page .claude-card li button{margin-left:4px;min-height:28px}
+.fleet-page .status{display:inline-block;border-radius:12px;padding:1px 10px;font:600 12px var(--mono)}
+.fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}
+.fleet-page table.secrets{width:100%;border-collapse:collapse;margin:0 0 8px;border:1px solid var(--line);border-radius:10px}
+.fleet-page table.secrets th{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--dim);text-align:left;padding:8px 12px}
+.fleet-page table.secrets td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:middle}
+.fleet-page table.secrets td.secret-acts{text-align:right;white-space:nowrap}.fleet-page table.secrets td.secret-acts button{margin-left:6px;min-height:30px}
+.fleet-page table.secrets input{width:100%;min-height:34px;font:13px var(--mono)}
+.fleet-page .secret-err{color:var(--accent)}.fleet-page p.secret-err:empty{display:none}
+.secret-dlg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:12px}
+.secret-dlg>div{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px 20px;width:min(480px,100%)}
+.secret-dlg h3{margin:0 0 8px;font-size:16px}.secret-dlg p{margin:6px 0;font-size:13.5px}.secret-dlg .sub{color:var(--dim)}
+.secret-dlg .secret-acts{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}.secret-dlg .secret-acts button{min-height:44px}
+.secret-dlg .secret-err{color:var(--accent)}
+@media (max-width:760px){
+.fleet-page table.secrets thead{display:none}.fleet-page table.secrets,.fleet-page table.secrets tbody,.fleet-page table.secrets tr,.fleet-page table.secrets td{display:block}
+.fleet-page table.secrets tr{padding:10px 12px;border-top:1px solid var(--line)}.fleet-page table.secrets td{border:0;padding:2px 0}
+.fleet-page table.secrets td[data-label]::before{content:attr(data-label) ': ';color:var(--dim)}.fleet-page table.secrets td.secret-name{font-weight:600}
+.fleet-page table.secrets td.secret-acts{text-align:left;padding-top:6px}.fleet-page table.secrets td.secret-acts button{margin:0 8px 0 0;min-height:44px}
+.fleet-page table.secrets input{min-height:44px;font-size:16px}
+}
 .fleet-page .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .addbot-cta,body.out .fleet-page .voice-edit{display:none}
 .fleet-page .d-voice{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
@@ -3766,7 +3882,6 @@ body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .add
  .fleet-page .newbot-foot{flex-wrap:wrap}
  .fleet-page .fleet-alert{flex-direction:column}
  .fleet-page .abtns{justify-content:flex-start}
- .fleet-page form.secret input{max-width:100%}
 }
 """
 
@@ -3941,7 +4056,6 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                       + "".join(machines) + '</tbody></table>') if machines else
                      '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>')
     # which workspace each bot serves is on its row; the form below puts a new one in a workspace
-    pooled = ""
     # The obvious way to add a bot: one form, where the box, harness and the workspace
     # it belongs to are all chosen in one place.
     # stopped bots the Add a bot form suggests reviving instead (#168): never retired ones,
@@ -4033,16 +4147,12 @@ If this board requires an invite code, configure it on the machine before instal
 <h3>3. Your machine appears here</h3>
 <p class="sub">Once the keeper reports in, add a bot on it.</p>
 </details>
-<details class="fleet-settings" id="secrets" open><summary>Shared secrets and project pools</summary>{pooled}
-<p class="sub">Shared secrets given to every bot on every box: each keeper writes them to <code>~/.config/bot_board/fleet.env</code>
-on its box, and bots read that before each run, so a replaced token is used from the next run on. Values are never
-shown again. To log Claude Code in on every machine at once, run <code>claude setup-token</code> on a machine with a
-browser and set what it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code>; it lasts a year, and every bot shares the
-subscription's usage limits.</p>
+<details class="fleet-settings" id="secrets" open><summary>Shared secrets</summary>
+<p class="sub">Secrets shared by every bot on every machine. Each machine writes them to a file and bots read it before every run, so a replaced value is used from the next run. Values are never shown again.</p>
+<p class="sub">The file is <code>~/.config/bot_board/fleet.env</code> on each machine.</p>
+<div id="claudecard"></div>
 <div id="secretlist" class="sub"></div>
-<form class="secret">set <input name="name" placeholder="GH_TOKEN" aria-label="name" pattern="[A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)"
- autocomplete="off" required> to <input name="value" type="password" placeholder="value" aria-label="value"
- autocomplete="off" required> <button type="submit">save</button></form></details>
+<p id="secretmsg" class="secret-err" role="alert"></p></details>
 </div></div>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 
