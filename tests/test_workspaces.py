@@ -328,14 +328,16 @@ console.log(JSON.stringify(out));
             self.skipTest('node is needed')
         js = workspace_web.WS_JS
         code = js[js.index('function botUp('):js.index('function botRows(')]
+        states = {st: fleet.bot_state({'status': st}) for st in ['waiting for work', 'running game', 'running game, stopping', 'waiting', 'stopped', 'moved', '']}
         script = code + """
 const assert = require('node:assert/strict');
-for (const s of %s) assert.equal(botUp({status: s}), true, s);
-for (const s of ['stopped', 'moved', '', undefined]) assert.equal(botUp({status: s}), false, String(s));
-""" % json.dumps(['waiting for work', 'running game', 'running game, stopping', 'waiting'])
+const states = %s;
+for (const s of Object.keys(states)) assert.equal(botUp({state: states[s]}), states[s].up, s);
+assert.equal(botUp({}), false);
+""" % json.dumps(states)
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(fleet.UP, ('waiting', 'running'), 'the page copies this list: change both together')
+        self.assertEqual([st for st, v in states.items() if v['up']], ['waiting for work', 'running game', 'running game, stopping', 'waiting'])
         self.assertIn("'/fleet#bot-' + encodeURIComponent(b.handle), text: 'details'", js)
 
     def test_a_bot_sees_only_its_workspace(self):

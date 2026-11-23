@@ -704,7 +704,8 @@ def _channels(w: dict) -> list[str]:
 
 def bot_state(b: dict, reporting: bool = True) -> dict:
     """What a bot is doing, in the one vocabulary /fleet, /projects and /status share (#100):
-    {state, words, reason, can_work}. can_work: it would take a message now, or once its
+    {state, words, reason, can_work, up}. up: its launcher is alive (`UP`), whatever else is wrong; pages read it
+    instead of keeping a copy of that list (#730). can_work: it would take a message now, or once its
     current run ends; a bot that cannot (logged out, out of usage, on a box gone dark) is
     neither counted as up nor offered for a project's pool."""
     st, health, problem = b.get("status") or "", b.get("health") or "", b.get("problem") or ""
@@ -712,7 +713,7 @@ def bot_state(b: dict, reporting: bool = True) -> dict:
     doing = st[len("running "):].split(",")[0] if st.startswith("running ") else ""
 
     def out(state, words, reason="", can_work=False):
-        return {"state": state, "words": words, "reason": reason, "can_work": can_work}
+        return {"state": state, "words": words, "reason": reason, "can_work": can_work, "up": up}
     if not reporting:
         return out("unknown", f"{st or 'stopped'} when last heard", "its box is not reporting")
     if b.get("deleted"):

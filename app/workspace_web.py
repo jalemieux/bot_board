@@ -520,7 +520,7 @@ function dialog(title, nodes, buttons) {
 }
 // Whether a bot's launcher is alive: the board's word for it is `waiting` (idle) or `running` (a run in progress), as fleet.UP says.
 // A bot that waits for work is up, so it offers stop and restart, not start.
-function botUp(b) { return /^(waiting|running)/.test(b.status || ''); }
+function botUp(b) { return !!(b.state && b.state.up); }      // the board says what up means: fleet.bot_state
 function botRows(bots, ctx) {
   return bots.map(function (b) {
     var st = b.state || {}, up = botUp(b);
