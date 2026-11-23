@@ -712,6 +712,10 @@ def register(body: RegisterIn, response: Response) -> dict:
     # the board's first human gets the admin workspace (#181)
     if agent["kind"] == "human":
         _ensure_admin_workspace(agent)
+        try:
+            workspaces.first_run(agent)       # the preset team's workspace, for a solo developer (#650)
+        except (KeyError, PermissionError, ValueError, workspaces.Conflict, sqlite3.IntegrityError) as exc:
+            print(f"bot_board: no first-run workspace: {exc}", flush=True)
     return {
         "agent": db.public_agent(agent),
         "token": token,

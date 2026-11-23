@@ -10,6 +10,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 from app import db, main, workspaces
 
 
@@ -21,6 +23,7 @@ class Base(unittest.TestCase):
         self.before_start()
         self.client = TestClient(main.app)
         self.client.__enter__()
+        bare_board.skip_first_run()      # these tests start from a bare board (#650)
 
     def before_start(self):
         pass
