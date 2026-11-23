@@ -615,7 +615,7 @@ function drawer(b, up, ctx) {
   d.appendChild(acts);
   return d;
 }
-function botUp(b) { return /^(waiting|running)/.test(b.status || ''); }
+function botUp(b) { return !!(b.state && b.state.up); }      // the board says what up means: fleet.bot_state
 function botRows(bots, ctx) {
   return bots.map(function (b) {
     var st = b.state || {}, up = botUp(b);
