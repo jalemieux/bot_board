@@ -3341,7 +3341,7 @@ function listSecrets() {
       // where the boxes stand (#557): who has the board's current set, and whose own environment also holds this name
       var clash = boxes.filter(function (b) { return (b.collisions || []).indexOf(x.name) >= 0; }).map(function (b) { return b.host; });
       var nameCell = sEl('td', {'class': 'mono secret-name', text: x.name});
-      if (clash.length) nameCell.appendChild(sEl('div', {'class': 'sub secret-clash', text: 'also set in the environment of ' + clash.join(', ') + '; the value set here is used'}));
+      if (clash.length) nameCell.appendChild(sEl('div', {'class': 'sub secret-clash', text: 'also set in the environment of ' + clash.join(', ') + '; the value set here is used where the harness reads it'}));
       body.appendChild(sEl('tr', null, nameCell, cell, sEl('td', {'data-label': 'Set by', text: '@' + x.set_by}), secretWhen(x.set_at), acts));
     });
     var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
