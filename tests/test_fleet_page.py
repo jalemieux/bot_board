@@ -211,6 +211,7 @@ class FleetPage(unittest.TestCase):
         self.assertEqual(page.count("'class': 'primary', text: '"), 2, 'Save and Add are the primary buttons')
         self.assertIn("button.primary{background:var(--accent)", page)
         self.assertIn("name === 'FORGEJO_URL'", page)
+        self.assertIn("if (val.type !== want) { val.value = '';", page)
         self.assertIn("type: isUrl(x.name) ? 'text' : 'password'", page)
         self.assertIn('<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>', page)
         self.assertNotIn('<summary>Shared secrets', page)

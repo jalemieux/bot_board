@@ -3511,7 +3511,8 @@ function listSecrets() {
       var bad = name.value && !SECRET_NAME.test(name.value);
       hint.className = 'sub' + (bad ? ' secret-err' : '');
       hint.textContent = bad ? 'Not accepted: use capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.' : 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.';
-      val.type = isUrl(name.value.trim()) ? 'text' : 'password';
+      var want = isUrl(name.value.trim()) ? 'text' : 'password';
+      if (val.type !== want) { val.value = ''; val.type = want; val.setAttribute('autocomplete', want === 'text' ? 'off' : 'new-password'); }     // a typed secret never turns visible
       add.disabled = !(SECRET_NAME.test(name.value) && val.value);
     };
     name.addEventListener('input', check); val.addEventListener('input', check);
