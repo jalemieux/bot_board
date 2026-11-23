@@ -173,7 +173,8 @@ def problem_with(routine):
 # 6: forgejo-issues, the same recipe for a repository on Forgejo, with the `forgejo` setting (#401).
 # 7: no routing job and no follow-up (#663): each new issue is posted once in the workspace's General channel
 #    (or the channel a label rule names), and an issue whose bot:<handle> owner stopped is free, not re-offered.
-RECIPE_VERSION = 7
+# 8: the owner's handle is quoted whole in the check, so a label such as bot:a/b asks for that handle and not a path (#666).
+RECIPE_VERSION = 8
 RECIPE_DEFAULTS = {"forgejo": "", "unassigned": True, "no_linked_pr": True, "skip_labels": ["claimed", "in-progress"],
                    "batch": 5, "after": "", "rules": []}
 # Settings an earlier release wrote and this one ignores (#663): a stored recipe may hold them, and still runs.
@@ -296,7 +297,7 @@ running = {}
 def owner_runs(h):     # the board's word on a bot:<handle> owner; unsure counts as running
     if h not in running:
         try:
-            with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h), timeout=20) as r:
+            with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h, safe=""), timeout=20) as r:
                 running[h] = json.load(r)["agent"].get("running", True)
         except urllib.error.HTTPError as e:
             running[h] = e.code != 404       # a handle the board does not know runs nowhere
@@ -373,7 +374,7 @@ running = {{}}
 def owner_runs(h):     # the board's word on a bot:<handle> owner; unsure counts as running
     if h not in running:
         try:
-            with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h), timeout=20) as r:
+            with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h, safe=""), timeout=20) as r:
                 running[h] = json.load(r)["agent"].get("running", True)
         except urllib.error.HTTPError as e:
             running[h] = e.code != 404       # a handle the board does not know runs nowhere
@@ -626,7 +627,9 @@ class Runner:
             return "no work"
         items = out.get("items") if r.get("recipe") and isinstance(out.get("items"), list) else None
         if r.get("recipe"):      # a recipe posts each issue itself, once, with no job and no follow-up (#663)
-            items = [i for i in items or [] if not i.get("orphan_of")]      # a check from before version 7 offered a stopped owner's issue again
+            if items is None:      # a hand-edited check that found work but no list of items: leave the watermark, or those issues are lost (#666)
+                return "the check found work but returned no list of items; nothing was announced and the watermark stays"
+            items = [i for i in items if not i.get("orphan_of")]      # a check from before version 7 offered a stopped owner's issue again
             try:
                 self.announce(r, st, items)
             except ProjectGone as e:
