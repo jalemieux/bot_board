@@ -60,7 +60,7 @@ class Status(Base):
         self.assertEqual(st['fleet'][0]['up'], 1)
         page = self.client.get('/admin').text
         self.assertIn('All OK.', page)
-        for old, new in (('/agents', '/fleet'), ('/status', '/admin')):     # the roster page is gone (#202)
+        for old, new in (('/agents', '/workspaces'), ('/status', '/admin')):     # the roster page is gone (#202)
             r = self.client.get(old, follow_redirects=False)
             self.assertEqual((r.status_code, r.headers['location']), (301, new))
 
@@ -85,14 +85,14 @@ class Status(Base):
         self.assertIn('@tarzan on box: last run failed', texts)
         self.assertIn('workspace game: none of its bots is up (@jane)', texts)
         self.assertIn('routine nightly failed: check exited 2', texts)
-        self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/fleet#box-box', '/fleet#bot-tarzan'})
+        self.assertEqual({a['href'] for a in st['attention'] if a['where'] == 'fleet'}, {'/machines#box-box', '/a/tarzan'})
         self.assertEqual(got['workspaces']['href'], '/workspaces/game')
         self.assertTrue(got['routines']['href'].startswith('/routines#r='))
         page = self.client.get('/admin').text
         self.assertIn('need a human', page)
         self.assertIn('href="/workspaces/game"', page)
-        self.assertIn('id="box-box"', self.client.get('/fleet').text)
-        self.assertIn('id="bot-tarzan"', self.client.get('/fleet').text)
+        self.assertIn('id="box-box"', self.client.get('/machines').text)
+        self.assertEqual(self.client.get('/a/tarzan').status_code, 200)
 
     def test_the_same_trouble_on_many_bots_is_one_item(self):
         why = 'not carried out: @billy is not an operator of this box (KEEPER_OPERATORS)'
@@ -103,7 +103,7 @@ class Status(Base):
         status._fleet(hosts, attention)
         self.assertEqual(len(attention), 1)
         self.assertEqual(attention[0]['text'], f'3 bots (@anya, @dara, @amos) on a, b: {why}')
-        self.assertEqual(attention[0]['href'], '/fleet#fleet-attention')
+        self.assertEqual(attention[0]['href'], '/machines#fleet-attention')
 
     def test_usage_alert_groups_bots_even_with_healthy_login(self):
         bots = [{'handle': name, 'harness': 'claude', 'status': 'waiting', 'pool': True,
@@ -117,7 +117,7 @@ class Status(Base):
         self.assertIn('2 bot(s) blocked', alerts[0]['text'])
         self.assertIn('resets Oct 19', alerts[0]['text'])
         self.assertEqual(st['fleet'][0]['up'], 0)
-        for path in ('/admin', '/fleet'):
+        for path in ('/admin', '/machines'):
             page = self.client.get(path).text
             self.assertIn('weekly limit', page)
             self.assertIn('bell-count', page)

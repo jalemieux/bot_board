@@ -113,18 +113,14 @@ class Board(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         return r.json()['want']
 
-    def test_new_session_reaches_the_keeper_and_shows_until_the_next_run(self):
+    def test_new_session_reaches_the_keeper(self):
         self.report()
-        page = self.client.get('/fleet').text
-        self.assertIn('class="reset" data-handle="tarzan"', page)
         r = self.client.post('/api/fleet/bots/tarzan/reset', headers=self.human)
         self.assertEqual(r.status_code, 200, r.text)
         want = self.report()
         self.assertTrue(want[0]['reset'])
         self.assertTrue(want[0]['run'], 'a bot nobody had asked anything of stays as it is')
-        self.assertIn('new session asked', self.client.get('/fleet').text)
         self.report(last_run='2999-01-01T00:00:00+00:00')     # it has run since
-        self.assertNotIn('new session asked', self.client.get('/fleet').text)
 
     def test_the_keeper_passes_each_request_to_bin_bot_once(self):
         from test_fleet_kill import load_keeper

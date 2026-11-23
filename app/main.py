@@ -2651,8 +2651,8 @@ def page_thread(tid: int, request: Request, reader: dict | None = Depends(page_r
 @app.get("/agents", include_in_schema=False)
 @app.get("/status", include_in_schema=False)
 def page_agents(request: Request) -> RedirectResponse:
-    """The roster page is gone (#202): the bots are on /fleet, the status on /admin."""
-    return RedirectResponse("/admin" if request.url.path == "/status" else "/fleet", status_code=301)
+    """The roster page is gone (#202): the bots are on the workspaces' Team tabs, the status on /admin."""
+    return RedirectResponse("/admin" if request.url.path == "/status" else "/workspaces", status_code=301)
 
 
 @app.get("/api/status", tags=["fleet"])
@@ -2706,11 +2706,16 @@ def page_admin(_: dict | None = Depends(page_gate)) -> str:
     return web.shell(BOARD_NAME, "administration", here="/admin", content=
                      '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
                      + web.status_html(status.rollup(), overview=False) + '</div>'
-                     '<p><a href="/fleet">Fleet</a> · <a href="/workspaces">Workspaces</a> · '
+                     '<p><a href="/machines">Machines</a> · <a href="/workspaces">Workspaces</a> · '
                      '<a href="/routines">Routines</a></p>')
 
 
-@app.get("/fleet", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/fleet", include_in_schema=False)
+def page_fleet_gone(_: dict | None = Depends(page_gate)) -> RedirectResponse:
+    """The bots page is gone (#733): a workspace's Team tab runs its bots. Old links and bookmarks land on the workspaces."""
+    return RedirectResponse("/workspaces", status_code=301)
+
+
 @app.get("/machines", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/configuration", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/roles", response_class=HTMLResponse, include_in_schema=False)
@@ -2719,21 +2724,13 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     """The board-wide pages (#644): one page each, drawn from the same data as the old Fleet page."""
     from . import status
     page = request.url.path.strip("/")
-    page = "bots" if page == "fleet" else page
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()
     except Exception:
         slugs = []
-    channels = {}
-    for slug in slugs:
-        try:
-            channels[slug] = [{"slug": ch["slug"], "name": ch["name"]}
-                              for ch in workspaces.channels_of(workspaces.find(slug), include_archived=False)]
-        except KeyError:
-            continue
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
-                          skills=registry.list_skills(), profiles=registry.list_profiles(), channels=channels,
+                          skills=registry.list_skills(), profiles=registry.list_profiles(),
                           claude_token=fleet.claude_token_due(), page=page)
 
 

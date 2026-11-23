@@ -477,7 +477,7 @@ SKILL_PAGE_JS = r"""
     var b = ev.target.closest('button.del-skill'); if (!b || !need()) return;
     if (!confirm('Delete the skill ' + S.name + '? Its history is kept.')) return;
     call('DELETE', '/api/skills/' + encodeURIComponent(S.name), {base_revision: S.revision, reason: 'deleted on the fleet page'})
-      .then(function () { location.href = '/fleet#fleet-skills'; }, function (e) { alert(e.message); });
+      .then(function () { location.href = '/skills'; }, function (e) { alert(e.message); });
   });
 })();
 """
@@ -513,7 +513,7 @@ def profile_page(board_name: str, profile: dict, bots: list, history: list, skil
                      f'<td data-label="workspace">{ws}</td>'
                      f'<td data-label="status"><span class="pip {tone}"></span>{e(st.get("words") or b.get("status") or "")}</td>'
                      f'<td data-label="last run" class="dim">{e(ago(last)) if last else "never"}'
-                     f'<div class="by">on <a href="/fleet#box-{e(b["host"])}">{e(b["host"])}</a></div></td>'
+                     f'<div class="by">on <a href="/machines#box-{e(b["host"])}">{e(b["host"])}</a></div></td>'
                      f'<td class="acts"><button type="button" class="reset" data-handle="{e(b["handle"])}" '
                      'title="set its harness session aside; it reads the profile and its skills again">new session</button></td></tr>')
     bots_html = (f'<table class="bots"><thead><tr><th>Bot</th><th>Workspace</th><th>Status</th><th>Last run</th>'
@@ -643,7 +643,7 @@ PROFILE_PAGE_JS = r"""
     var b = ev.target.closest('button.del-profile'); if (!b || !need()) return;
     if (!confirm('Delete the profile ' + b.dataset.name + '? The name is never reused.')) return;
     call('DELETE', '/api/profiles/' + encodeURIComponent(b.dataset.name))
-      .then(function () { location.href = '/fleet#fleet-profiles'; }, function (e) { alert(e.message); });
+      .then(function () { location.href = '/roles'; }, function (e) { alert(e.message); });
   });
 })();
 """

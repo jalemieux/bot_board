@@ -129,12 +129,12 @@ def _fleet(hosts: list, attention: list) -> list:
     due = fleet.claude_token_due()
     if due:
         attention.append(_item(f"The fleet's claude token {_token_when(due)}: replace {fleet.CLAUDE_TOKEN}"
-                               " with a new one from claude setup-token", "/fleet#secrets", "fleet"))
+                               " with a new one from claude setup-token", "/configuration#secrets", "fleet"))
     troubles = {}      # why -> [(box, handle)]: the same trouble on many bots is one item
     for h in hosts:
         if not h["reporting"]:
             attention.append(_item(f"{h['name']} is not reporting: last heard {ago(h['reported_at'])}",
-                                   f"/fleet#box-{h['name']}", "fleet"))
+                                   f"/machines#box-{h['name']}", "fleet"))
         # a login missing here is one item, not one more per bot it holds
         out_of = {c["name"] for c in h.get("credentials") or [] if c["kind"] == "login" and c["state"] != "ok"}
         for c in h.get("credentials") or []:
@@ -142,7 +142,7 @@ def _fleet(hosts: list, attention: list) -> list:
                 held = f", {c['held']} bot{'' if c['held'] == 1 else 's'} held" if c.get("held") else ""
                 attention.append(_item(f"{c['name']} {c['state']} on {h['name']}{held}"
                                        + (f": {c['detail']}" if c.get("detail") else ""),
-                                       f"/fleet#box-{h['name']}", "fleet"))
+                                       f"/machines#box-{h['name']}", "fleet"))
         bots = []
         limited = {}
         for b in h["bots"]:
@@ -163,17 +163,17 @@ def _fleet(hosts: list, attention: list) -> list:
             names = ", ".join("@" + b["handle"] for b in blocked)
             attention.append(_item(f"{harness} usage limit reached on {h['name']}: "
                                    f"{len(blocked)} bot(s) blocked ({names}). {blocked[0]['health']}",
-                                   f"/fleet#box-{h['name']}", "fleet"))
+                                   f"/machines#box-{h['name']}", "fleet"))
         out.append({"name": h["name"], "reporting": h["reporting"], "reported_at": h["reported_at"],
                     "load": h.get("load"), "cores": h.get("cores"), "credentials": h.get("credentials") or [],
                     "bots": bots, "up": sum(b["up"] for b in bots)})
     for why, bots in troubles.items():
         boxes = ", ".join(dict.fromkeys(box for box, _ in bots))
         if len(bots) == 1:
-            attention.append(_item(f"@{bots[0][1]} on {boxes}: {why}", f"/fleet#bot-{bots[0][1]}", "fleet"))
+            attention.append(_item(f"@{bots[0][1]} on {boxes}: {why}", f"/a/{bots[0][1]}", "fleet"))
         else:
             attention.append(_item(f"{len(bots)} bots ({', '.join('@' + h for _, h in bots)}) on {boxes}: {why}",
-                                   "/fleet#fleet-attention", "fleet"))
+                                   "/machines#fleet-attention", "fleet"))
     return out
 
 
@@ -192,7 +192,7 @@ def _workspaces(hosts: list, attention: list) -> list:
         working = [b for b in bots if b.lower() in up]
         if not bots:
             if w["slug"] == workspaces.ADMIN:
-                attention.append(_item(f"workspace {w['slug']} has no bot: add one on /fleet, so seed and routine "
+                attention.append(_item(f"workspace {w['slug']} has no bot: add one on its Team tab, so seed and routine "
                                        "requests are answered", f"/workspaces/{w['slug']}", "workspaces"))
             else:
                 attention.append(_item(f"workspace {w['slug']} has no bot", f"/workspaces/{w['slug']}", "workspaces"))

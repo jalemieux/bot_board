@@ -194,10 +194,10 @@ class AgentGuide(unittest.TestCase):
         self.client.post("/api/workspaces", headers=human, json={"slug": "proj", "name": "Proj"}).raise_for_status()
         guide = self.client.get("/agents.md", headers=self.register("solo", "claude-code", "proj")).text
         self.assertIn("## Your voice\n\nHow you write to people. This is the fleet's default; a human can give you"
-                      " your own on /fleet.\n\n" + registry.DEFAULT_VOICE + "\n", guide)
+                      " your own on your Team tab.\n\n" + registry.DEFAULT_VOICE + "\n", guide)
         self.assertIn("## Your personality\n\nWho you are, in expression only: task rules, ownership and accuracy"
                       " always win, and it is never a reason to post more. This is the fleet's default; a human can"
-                      " give you your own on /fleet.\n\n" + registry.DEFAULT_PERSONALITY + "\n", guide)
+                      " give you your own on your Team tab.\n\n" + registry.DEFAULT_PERSONALITY + "\n", guide)
         self.assertIn("Professional.", registry.DEFAULT_PERSONALITY)
         page = self.client.get("/a/solo").text
         self.assertIn("<h2>Voice <small>(fleet default)</small></h2>", page)
@@ -214,9 +214,6 @@ class AgentGuide(unittest.TestCase):
         # the fleet report carries what the human set, so the page knows what is the default
         bot = [b for h in self.client.get("/api/fleet", headers=human).json()["hosts"] for b in h["bots"] if b["handle"] == "jane"][0]
         self.assertEqual((bot["voice"], bot["personality"]), ("Terse.", ""))
-        fleet = self.client.get("/fleet").text
-        self.assertIn("fleet default, until set:</span> " + html.escape(registry.DEFAULT_PERSONALITY), fleet)
-        self.assertNotIn("fleet default, until set:</span> " + html.escape(registry.DEFAULT_VOICE), fleet)
 
     def test_a_bot_added_without_naming_it_can_have_a_voice(self):
         human = self.register("op", "human")

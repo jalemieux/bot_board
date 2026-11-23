@@ -92,9 +92,6 @@ class WhoMayClaim(Base):
         r = self.client.put("/api/fleet/bots/edie/channels", headers=self.human, json={"channels": []})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.claim(general).status_code, 200)
-        page = self.client.get("/fleet").text
-        self.assertIn('id="channels-data"', page)
-        self.assertIn('id="newbot-channels"', page)
 
     def test_channels_must_belong_to_the_workspace(self):
         self.report("edie", "waiting")

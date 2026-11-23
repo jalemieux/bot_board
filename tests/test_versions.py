@@ -104,7 +104,7 @@ class Board(unittest.TestCase):
         self.assertEqual(r.json()['min_protocol'], versions.MIN_PROTOCOL)
         texts = [a['text'] for a in status.rollup()['attention']]
         self.assertTrue(any('predates self-update' in t for t in texts), texts)
-        self.assertIn('id="fleet-versions"', self.client.get('/fleet').text)
+        self.assertIn('id="fleet-versions"', self.client.get('/machines').text)
 
 
 if __name__ == "__main__":

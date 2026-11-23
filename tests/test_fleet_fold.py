@@ -1,4 +1,4 @@
-"""/fleet: each section folds from its heading and stays folded in this browser; Needs you opens
+"""/machines: each section folds from its heading and stays folded in this browser; Needs you opens
 again when something new is in it (#281). Needs Playwright and Chromium; skipped without them.
 Run with python -m unittest discover -s tests."""
 import os
@@ -45,7 +45,7 @@ class FleetFold(unittest.TestCase):
                                     content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.goto("http://board.test/fleet")
+        self.page.goto("http://board.test/machines")
 
     def report(self, box):
         r = self.client.post("/api/agents", json={"handle": f"keeper-{box}", "kind": "keeper"})

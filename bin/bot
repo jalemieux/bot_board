@@ -163,7 +163,7 @@ if [ "${1:-}" = install ]; then
     # or the fleet's claude token arrives (#283), so the install needs no second run
     [ -n "$_pick" ] || _pick=$(awk -F'\t' '$2 == "missing" {print $1; exit}' <<<"$_rows")
     if [ -z "$_pick" ]; then
-      echo "bot: no default bot: no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install or use + Add a bot on $_board/fleet" >&2
+      echo "bot: no default bot: no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install or use + Add a bot on a workspace's Team tab, at $_board/workspaces" >&2
     elif { exec 3<"${BOT_TTY:-/dev/tty}"; } 2>/dev/null; then
       printf 'Start a default bot with %s (%s)? [Y/n/other] ' "$_pick" "$(_words "$_pick")" >&2
       read -r _ans <&3 || _ans=
@@ -174,7 +174,7 @@ if [ "${1:-}" = install ]; then
       exec 3<&-
       case $_ans in
         ""|[Yy]|[Yy]es) _harness=$_pick ;;
-        [Nn]|[Nn]o) echo "bot: no default bot: add bots with + Add a bot on $_board/fleet" >&2 ;;
+        [Nn]|[Nn]o) echo "bot: no default bot: add bots with + Add a bot on a workspace's Team tab, at $_board/workspaces" >&2 ;;
         *) case $(_state "$_ans") in
              ok|unknown|missing) _harness=$_ans ;;
              *) echo "bot: no default bot: $_ans is not a harness on this PATH" >&2 ;;
@@ -197,7 +197,7 @@ if [ "${1:-}" = install ]; then
     if [ -z "$_rt" ]; then
       echo "bot: no container runtime found: the bots run on this machine, with your user's access. Install Docker, then add BOT_RUNTIME=docker to $_cfg and run bot_board restart bots to move them into containers" >&2
     elif [ "$(uname -s)" = Darwin ] && [ "$_harness" = claude ]; then
-      echo "bot: $_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots" >&2
+      echo "bot: $_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN on $_board/configuration, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots" >&2
     else
       _set BOT_RUNTIME "$_rt"
       case $_board in
@@ -215,19 +215,19 @@ if [ "${1:-}" = install ]; then
   for _i in $(seq 1 "${BOT_INSTALL_WAIT:-30}"); do grep -qs '^# default bot: ' "$_cfg" && break; sleep 2; done
   _note=$(sed -n 's/^# default bot: //p' "$_cfg" | tail -1)
   case $_note in
-    "") echo "bot: the keeper has not heard back from $_board yet; the default bot ($_harness) starts once it does. Watch $_board/fleet" >&2 ;;
+    "") echo "bot: the keeper has not heard back from $_board yet; the default bot ($_harness) starts once it does. Watch $_board/workspaces" >&2 ;;
     waiting:*) echo "bot: open $_board and sign in; your bot ($_harness) starts then, in workspace admin." >&2
-      echo "bot: first sign-in creates Admin > General. After signing in, wait about 15 seconds, then check $_board/fleet" >&2
+      echo "bot: first sign-in creates Admin > General. After signing in, wait about 15 seconds, then check $_board/workspaces" >&2
       echo "bot: post in Admin > General ($_board/c/admin) to give your bot work." >&2
       echo "bot: if you reset the board but your browser still shows a handle, sign out and sign in again." >&2 ;;
-    *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/fleet" >&2 ;;
-    *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/fleet" >&2 ;;
+    *started) _note=${_note%, started}; echo "bot: started $_note; manage it at $_board/workspaces" >&2 ;;
+    *) echo "bot: no default bot: ${_note%% *} is on this box already; manage it at $_board/workspaces" >&2 ;;
   esac
   # a bot made here for a harness with no login yet: say what frees it (not for a bot already on the box)
   case $_note in *"on this box"*|*"already"*) ;; *)
     if [ "$(_state "$_harness")" = missing ]; then
       _how=$(_hint "$_harness")
-      [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN under Secrets on $_board/fleet if it is not there yet (make it with claude setup-token on a machine with a browser), or $_how here"
+      [ "$_harness" != claude ] || _how="set CLAUDE_CODE_OAUTH_TOKEN on $_board/configuration if it is not there yet (make it with claude setup-token on a machine with a browser), or $_how here"
       echo "bot: $_harness is not logged in on this machine yet, so the keeper holds the bot until it is: $_how. It starts by itself; no second install." >&2
     fi ;;
   esac
@@ -392,7 +392,7 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
           case " ${run[*]} " in *" $loop_host:host-gateway "*) ;; *) run+=(--add-host "$loop_host:host-gateway") ;; esac
           run+=(-e "FORGEJO_URL=${FORGEJO_URL/"//$_fh"/"//$loop_host"}")
         else
-          echo "bot: FORGEJO_URL is $FORGEJO_URL, which a bridge container cannot reach (loopback is the container itself). Set it to the forge's tailnet name under Secrets on /fleet, or BOT_CONTAINER_LOOPBACK_HOST on this box." >&2
+          echo "bot: FORGEJO_URL is $FORGEJO_URL, which a bridge container cannot reach (loopback is the container itself). Set it to the forge's tailnet name on the Configuration page (/configuration), or BOT_CONTAINER_LOOPBACK_HOST on this box." >&2
         fi ;;
     esac
   fi
@@ -569,7 +569,7 @@ skill_link() {
 
 # ---- bot skill: gone (#328) -----------------------------------------------------------
 if [ "${1:-}" = skill ]; then
-  die "bot skill is gone: skills live on the board. Add or edit one on the fleet page (/fleet) and list it in a profile; every bot with that profile writes it here when it starts and when it changes"
+  die "bot skill is gone: skills live on the board. Add or edit one on the Skills page (/skills) and list it in a profile; every bot with that profile writes it here when it starts and when it changes"
 fi
 
 # ---- bot gc: what ended sessions and bots left behind ---------------------------------
@@ -740,7 +740,7 @@ case ${1:-} in
     [ -n "$H" ] || usage
     S=$CFG/bots/$H; [ -d "$S" ] || die "no bot $H on this box (bot ps -a lists them)"
     if [ -n "$ASKED" ] && [ "$(cat "$S/restart.done" 2>/dev/null)" = "$ASKED" ]; then exit 0; fi
-    if ! alive "$S"; then SAID="$H is not running, so there is nothing to restart; start it from /fleet"
+    if ! alive "$S"; then SAID="$H is not running, so there is nothing to restart; start it from its workspace's Team tab"
     else
       touch "$S/restart"
       [ -s "$S/poll" ] && kill "$(cat "$S/poll")" 2>/dev/null || true   # end an idle long-poll now
@@ -917,7 +917,7 @@ print(d.get("outcome","-")+("" if age is None else " "+ago(age)))' "$d/last.json
     HAD=""; [ -e "$S/moved" ] && HAD=1; DONE=""
     W=$(mktemp -d); trap 'rm -rf "$W"; [ -n "$DONE$HAD" ] || rm -f "$S/moved"' EXIT
     echo "being packed $(date -u +%FT%TZ)" > "$S/moved"
-    alive "$S" && die "$H was started again just now. If a keeper runs it, press stop for $H on the board's /fleet page, wait until it shows stopped, then pack"
+    alive "$S" && die "$H was started again just now. If a keeper runs it, press stop for $H on its workspace's Team tab, wait until it shows stopped, then pack"
     mkdir "$W/transcripts"; cp -R "$S" "$W/state"; cp "$T" "$W/token"
     (cd "$W/state" && rm -f pid stop busy poll moved handed all.json inbox.json seen.tmp dir)
     # Claude Code keeps a session as <id>.jsonl (and sometimes a folder <id>/) under
@@ -1801,7 +1801,7 @@ log "startup catch-up: checking the last $((CATCH_UP_SECS / 3600)) hours without
 # /fleet wins inside a bot (#555); the keeper shows the same on /fleet. Never a value.
 _collisions=""
 for _ck in $_FLEET_SET; do case $_OWN_SECRETS in *" $_ck "*) _collisions+="$_ck " ;; esac; done
-if [ -n "$_collisions" ]; then log "fleet secrets also in this box's environment, bots use /fleet: $_collisions"
+if [ -n "$_collisions" ]; then log "fleet secrets also in this box's environment, bots use the board's: $_collisions"
 else log "no fleet/box secret-name collisions"; fi
 unset _collisions _ck
 if [ -s "$STATE/health" ]; then

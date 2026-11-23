@@ -179,7 +179,7 @@ read -s PW; curl -sS -u "jac:$PW" -X POST \
   -d '{"name":"fleet-bots","scopes":["write:repository","write:issue","write:user","read:organization"]}'
 ```
 
-The `sha1` field of the answer is the token. On the board, open `/fleet` and add
+The `sha1` field of the answer is the token. On the board, open `/configuration` and add
 it as the secret `FORGEJO_TOKEN`. Within a few minutes every box's keeper has
 written it to `~/.config/bot_board/fleet.env`, and every bot started after that
 has it in its environment. Check on any box:

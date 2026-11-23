@@ -74,14 +74,11 @@ class Board(unittest.TestCase):
         self.report('running proj')
         self.delete()
         self.gone_from_the_board()
-        # its keeper is asked to stop it and remove it; /fleet says so until it has
+        # its keeper is asked to stop it and remove it
         want = self.report('running proj, stopping')
         self.assertFalse(want[0]['run'])
         self.assertTrue(want[0]['deleted'])
-        self.assertIn('deleted: stopping', self.client.get('/fleet').text)
-        self.assertNotIn('class="act delete-bot"', self.client.get('/fleet').text)
         self.assertTrue(self.report('stopped')[0]['deleted'])
-        self.assertIn('being removed from its box', self.client.get('/fleet').text)
         self.assertEqual(self.report(), [])                  # the box no longer has it
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['bots'], [])
         self.assertEqual(self.report(), [])
@@ -132,9 +129,8 @@ class Board(unittest.TestCase):
             {'handle': h, 'harness': 'claude', 'status': 'stopped', 'serves': '/pool', 'pool': True} for h in ('tarzan', 'keeper-gone')]})
         self.assertEqual(r.json()['want'], [])
 
-    def test_the_fleet_page_and_the_bot_page_offer_it(self):
+    def test_the_bot_page_offers_it(self):
         self.report('running proj')
-        self.assertIn('class="act delete-bot" data-handle="tarzan"', self.client.get('/fleet').text)
         self.assertIn('id="delete-bot"', self.client.get('/a/tarzan').text)
         self.assertNotIn('id="delete-bot"', self.client.get('/a/op').text)
 

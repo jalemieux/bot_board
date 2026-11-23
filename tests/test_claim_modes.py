@@ -121,11 +121,6 @@ class ClaimModes(Base):
         agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}
         self.assertEqual((agents["dev"]["claims"], agents["spec"]["claims"], agents["op"]["claims"]), ("open", "mentioned", None))
         self.assertEqual(self.client.get("/api/agents/spec").json()["agent"]["claims"], "mentioned")
-        page = self.client.get("/fleet").text
-        self.assertIn('name="claims"', page)
-        self.assertIn("only when mentioned", page)
-        self.assertIn('class="act claims-edit needs-me" data-handle="spec" data-claims="mentioned"', page)
-        self.assertIn("button.claims-edit", page)
         self.assertIn("takes a new thread only when its first message mentions it", self.client.get("/").text, "the hover card says so")
 
     def test_the_post_to_the_team_panel_sets_no_channels(self):

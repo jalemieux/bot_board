@@ -579,8 +579,6 @@ class FleetWorkspace(Base):
         bot = self.register(handle, 'claude-code', 'falco')
         self.assertEqual(self.call('GET', '/api/me', auth=bot)['workspace']['slug'], 'falco')
         self.report(bots=[{'handle': handle, 'harness': 'claude', 'status': 'waiting', 'pool': True}])
-        page = self.client.get('/fleet').text
-        self.assertIn('href="/workspaces/falco"', page)
         self.assertEqual(self.call('GET', '/api/workspaces/falco', auth=self.human)['workspace']['bots'], [handle])
 
     def test_a_bot_that_registered_without_a_workspace_joins_it_when_its_box_reports(self):

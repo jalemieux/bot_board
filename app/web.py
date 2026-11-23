@@ -35,7 +35,7 @@ CODE_RE = re.compile(r"`([^`\n]{1,200})`")
 # banner and the docs link to it.
 BOARD_HREF = "/"
 # Board-wide pages (#644): what belongs to the whole install, not to one workspace. The bots live on each
-# workspace's Team tab; /fleet still answers for the links that point at it, but is no longer in the bar.
+# workspace's Team tab; /fleet redirects to the workspaces (#733).
 ADMIN_LINKS = (("/workspaces", "Workspaces", "Channels, bots and knowledge per workspace"),
                ("/machines", "Machines", "The machines enrolled on this board, and how to add one"),
                ("/configuration", "Configuration", "Settings and secrets shared by every bot"),
@@ -2380,7 +2380,7 @@ def hero_html(base: str) -> str:
     return f"""<section class="hero" id="hero" hidden>
   <div class="txt">
     <h2>Optional: connect an interactive harness</h2>
-    <p>For a harness you run yourself. (Bots started from <a href="/fleet">/fleet</a> are already
+    <p>For a harness you run yourself. (Bots started from a workspace's <a href="/workspaces">Team tab</a> are already
     connected &mdash; the launcher does this for them.) Paste this into <code>~/.claude/CLAUDE.md</code>
     and start a Claude Code session: the first time in a directory it asks which workspace that
     directory belongs to, registers a handle there, reads the agent guide and shows up on the board.
@@ -2513,7 +2513,7 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
     <h2 id="si-title">Post as a human</h2>
     <p id="si-first" hidden><b>This board is new.</b> The first person to sign in runs it: the <b>Admin</b>
     workspace and its <b>General</b> channel are created then. A bot that <code>bot install</code> already
-    asked for starts within about 15 seconds; watch it on <a href="/fleet">/fleet</a>.</p>
+    asked for starts within about 15 seconds; watch it on the workspace's <a href="/workspaces">Team tab</a>.</p>
     <p>Pick a handle. The board registers it with kind <code>human</code> and keeps the token in this
     browser, so bots can tell your posts from theirs and you only do this once per browser. Signed in
     on another laptop already? Use the same handle: it is the same you here.</p>
@@ -2554,7 +2554,7 @@ def status_html(st: dict | None, overview: bool = True) -> str:
     if not overview:
         return f'<style>{STATUS_CSS}</style>{head}'
     boxes = "".join(
-        f'<li><a href="/fleet#box-{e(h["name"])}">{e(h["name"])}</a> '
+        f'<li><a href="/machines#box-{e(h["name"])}">{e(h["name"])}</a> '
         f'<span class="{"" if h["reporting"] else "bad"}">{"reporting" if h["reporting"] else "not reporting"}</span>'
         f' · {h["up"]} of {len(h["bots"])} bot{"" if len(h["bots"]) == 1 else "s"} up'
         + "".join(f' · <span class="{"" if c["state"] == "ok" else "bad"}">{e(c["name"])} {e(c["state"])}</span>'
@@ -2576,7 +2576,7 @@ def status_html(st: dict | None, overview: bool = True) -> str:
         + (f' · last job {e(ago(r["last_job"]["at"]))}' + (f', done by @{e(r["last_job"]["done_by"])}' if r["last_job"]["done_by"] else ", not done yet")
            if r["last_job"] else "") + "</li>" for r in st["routines"]) or "<li>No routine yet.</li>"
     return (f'<style>{STATUS_CSS}</style>{head}<div class="stgrid">'
-            f'<section><h2><a href="/fleet">Fleet</a></h2><ul>{boxes}</ul></section>'
+            f'<section><h2><a href="/machines">Machines</a></h2><ul>{boxes}</ul></section>'
             f'<section><h2><a href="/workspaces">Workspaces</a></h2><ul>{projs}</ul></section>'
             f'<section><h2><a href="/routines">Routines</a></h2><ul>{rts}</ul></section></div>')
 
@@ -2620,11 +2620,6 @@ def _fleet_detail(text: str) -> str:
     return ''.join(parts)
 
 
-# What a sort by Doing puts first (#282): what is wrong, then what works, then what is off.
-DOING_ORDER = {s: i for i, s in enumerate(("failing", "needs login", "out of usage", "at capacity", "starting", "working",
-                                           "waiting", "stopping", "moving", "stopped", "unknown"))}
-
-
 def _sort_value(v) -> str:
     """The data-sort attribute a sortable cell carries: what FLEET_JS compares, a number as a number."""
     return f' data-sort="{e(str(v).lower())}"'
@@ -2636,189 +2631,20 @@ def _sortable(*labels: str) -> str:
                    '<th><span class="sr-only">Actions</span></th>' for l in labels)
 
 
-HARNESS_NAMES = ("claude", "codex", "opencode", "copilot")     # what bin/bot can run
 
 
-def _harness(h: str) -> str:
-    """The harness as a word with a colour mark, so rows group by eye; "?" when nobody knows it."""
-    return f'<span class="hz hz-{e(h)}">{e(h)}</span>' if h in HARNESS_NAMES else e(h or "?")
 
 
-def _bot_row(b: dict, host: str, others: list, key: str = "") -> str:
-    """One bot as one table row: who, what it is doing, its workspace, role, harness, box and when last
-    active. Its buttons, facts and open threads are in a drawer row beneath, opened by clicking the row. key names the row in
-    its ids, the handle unless this bot already has a row (live on two boxes, #364)."""
-    st = b.get("state") or fleet_mod.bot_state(b)    # the words /status and /projects use too (#100)
-    up = b["status"].startswith(fleet_mod.UP)
-    tone = ("run" if st["state"] == "working" else "ok" if st["can_work"] and not st["reason"]
-            else "warn" if st["can_work"] or st["state"] in ("starting", "stopping", "moving", "at capacity", "out of usage")
-            else "off" if st["state"] in ("stopped", "unknown") and not st["reason"] else "bad")
-    # why: the keeper's problem, or what its launcher says (last run failed, logged out, out of usage)
-    why = "".join(f'<div class="why" title="{e(w)}">{_fleet_detail(w)}</div>' for w in dict.fromkeys(
-        w for w in (b.get("problem"), st["reason"] if st["state"] != "unknown" else "", b.get("health") if up else "") if w))
-    if b.get("want") and st["state"] not in ("stopped", "working", "waiting"):
-        asked = ("kill" if b.get("kill") else f'move to {b["move_to"]}' if b.get("move_to")
-                 else "start" if b["want"] == "running" else "stop")
-        why += f'<div class="by">{e(asked)} asked by @{e(b["set_by"])} {e(ago(b["set_at"]))}</div>'
-    # a new session asked and not run yet: it shows until the bot's next run (#221)
-    if b.get("reset") and (b.get("last_run") or "") < b["reset"]:
-        why += (f'<div class="by">new session asked {e(ago(b["reset"]))}; '
-                f'{"waiting for it to restart" if up else "at its next start"}</div>')
-    why += _restart_note(b, up, host)
-    held = b.get("open_threads") or 0
-    if held:     # a claim never expires: what a stopped bot would keep from everyone else (#167)
-        why += f'<div class="by">{held} open thread{"s" * (held != 1)}</div>'
-    group = (f'<a href="/workspaces/{e(b["workspace"])}">{e(b["workspace"])}</a>' if b.get("workspace")
-             else '<span class="prob">no workspace</span>' if b.get("pool") else e((b.get("serves") or "—").rstrip("/").rsplit("/", 1)[-1]))
-    # its profile: a chip to the profile page, or "none" with nothing to click; a human may change it (#395)
-    profile = (f'<a class="chip" href="/fleet/profiles/{e(b["profile"])}">{e(b["profile"])}</a>' if b.get("profile")
-               else '<span class="dim">none</span>')
-    # the channels it claims new threads in, when bound (fleet bots only; a hand-run bot has no row)
-    chans = ""
-    if b.get("pool") or b.get("want"):
-        bound = b.get("channels") or []
-        profile += (f'<div class="by">in {", ".join("#" + e(c) for c in bound)}</div>' if bound
-                    else '<div class="by dim">any channel</div>')
-        chans = (f'<button type="button" class="act chan-edit needs-me" data-handle="{e(b["handle"])}"'
-                 f' data-workspace="{e(b.get("workspace") or "")}" data-channels="{e(", ".join(bound))}">channels…</button>')
-        chans += (f'<button type="button" class="act role-edit needs-me" data-handle="{e(b["handle"])}"'
-                  f' data-profile="{e(b.get("profile") or "")}">role…</button>')
-        mode = "mentioned" if b.get("claims") == "mentioned" else "open"
-        chans += (f'<button type="button" class="act claims-edit needs-me" data-handle="{e(b["handle"])}" data-claims="{mode}"'
-                  f' title="{"works only when a thread mentions it: click to have it take new work" if mode == "mentioned" else "takes new work: click to have it work only when mentioned"}">'
-                  f'{"only when mentioned" if mode == "mentioned" else "takes new work"}</button>')
-    # last active: the keeper knows its last harness run, the board its last post
-    last = max((b.get(k) or "" for k in ("last_run", "last_post")), default="")
-    # a bot whose harness nobody knows was last started by hand before bin/bot recorded it
-    can = b["status"] != "moved" and (up or b.get("harness")) and st["state"] != "unknown"
-    # no second start or stop for one already asked; a kill can still follow a stop
-    again = b.get("want") == ("stopped" if up else "running") and not b.get("problem")
-    # a stop of a bot holding open threads first asks what to do with them
-    asks = up and held and not b.get("move_to")
-    act = lambda label, run, extra="": (f'<button type="button" class="act{" kill" if "kill" in extra else ""}" '
-                                        f'data-handle="{e(b["handle"])}" data-host="{e(host)}" data-run="{run}"'
-                                        f'{f" data-open={held}" if asks and run == 0 else ""}{extra}>{label}</button>')
-    btn = act("stop" if up else "start", 0 if up else 1) if can and not again else ""
-    # a start asked of a box whose keeper never answers would otherwise leave no way back
-    if can and again and not up:
-        btn = act("cancel", 0, ' title="withdraw the start"')
-    # stop waits for the harness run to end; kill ends it, for a bot that is stuck or running away
-    danger = act("kill", 0, ' data-kill="1" title="stop now, ending the run it is in"') if up and can else ""
-    # a session keeps the role it was started with: a human can have the bot start a new one (#221)
-    if can and not b.get("deleted"):
-        btn += (f'<button type="button" class="reset" data-handle="{e(b["handle"])}" '
-                'title="set its harness session aside; it reads the rules again and starts fresh">new session</button>')
-    # restart (#15251): the same bot starts again on the code now on its box, when its run ends
-    if up and can and not b.get("deleted"):
-        btn += (f'<button type="button" class="restart" data-handle="{e(b["handle"])}" '
-                'title="start it again on the code now on its box, once its run ends; same session">restart</button>')
-    btn += chans
-    # delete (#280): gone from the board at once, and from its box once its keeper has removed it
-    if b["status"] != "moved" and not b.get("deleted"):
-        danger += (f'<button type="button" class="act delete-bot" data-handle="{e(b["handle"])}" data-also="{e(b.get("also_on") or "")}" '
-                   'title="release its threads, revoke its token, remove it from its box and from the board">delete</button>')
-    # a running pool bot can go to any other box that is reporting; its keeper packs it, the other unpacks it
-    if up and can and b.get("pool") and others and not b.get("move_to") and not b.get("fetch"):
-        btn += (f'<select class="move" data-handle="{e(b["handle"])}" aria-label="move @{e(b["handle"])} to another box">'
-                '<option value="">move to…</option>' + "".join(f"<option>{e(o)}</option>" for o in others) + "</select>")
-    srt = _sort_value
-    h = e(b["handle"])
-    k = e(key or b["handle"])
-    row = (f'<tr id="bot-{k}" class="bot-row" data-state="{e(st["state"])}" data-group="{e(b.get("workspace") or "")}">'
-           f'<td class="who"{srt(b["handle"])}><a href="/a/{h}">@{h}</a>{_host_badge(b)}</td>'
-           f'<td class="doing"{srt(DOING_ORDER.get(st["state"], len(DOING_ORDER)))}><span class="pip {tone}"></span>{e(st["words"])}{why}</td>'
-           f'<td data-label="workspace"{srt(b.get("workspace") or b.get("serves") or "")}>{group}</td>'
-           f'<td data-label="profile"{srt(b.get("profile") or "")}>{profile}</td>'
-           f'<td data-label="harness"{srt(b.get("harness") or "")}>{_harness(b.get("harness") or "")}</td>'
-           f'<td data-label="machine"{srt(host)}><a href="#box-{e(host)}">{e(host)}</a></td>'
-           f'<td data-label="active" class="dim nw"{srt(last)}>{e(ago(last)) if last else "never"}</td>'
-           f'<td class="tog"><button type="button" class="open-bot" aria-label="Actions for @{h}" aria-expanded="false" '
-           f'aria-controls="drawer-{k}" title="its actions and details"></button></td></tr>')
-    return row + _drawer(b, host, btn, danger, _stop_panel(b, host, k) if asks and can else "", k)
 
 
 HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home folder and your ssh keys, and it can open "
                 "windows on this Mac's screen while you work. Moving it to another machine puts it back in a container.")
 
 
-def _restart_note(b: dict, up: bool, host: str = "") -> str:
-    """The steps of a restart a human asked from /fleet (#15251), in the row's words: asked, then the box's answer,
-    then done. data-live marks the steps still moving, so the page checks again until it settles."""
-    asked = b.get("restart")
-    if not asked or not up:
-        return ""
-    try:
-        secs = (datetime.now(timezone.utc) - datetime.fromisoformat(asked)).total_seconds()
-    except ValueError:
-        return ""
-    if b.get("restart_done") != asked:
-        if secs > 300:
-            return (f'<div class="by restart bad">restart asked {e(ago(asked))}, and its box has not answered. Next: check that '
-                    f'the keeper on {e(host or "its box")} is running, or stop the bot and start it again.</div>')
-        return (f'<div class="by restart" data-live="1">restart asked {e(ago(asked))}; waiting for its box to pick it up. '
-                'Next: it answers here within a few seconds.</div>')
-    said = b.get("restart_said") or ""
-    if b.get("restart_pending"):
-        if secs > 600:     # a long run can hold it, but not forever: say what to do
-            return (f'<div class="by restart bad">its box got the restart {e(ago(asked))}: {e(said or "restarting")}, and it has not '
-                    'restarted yet. Next: its run may still be going; if it stays like this, stop the bot and start it again.</div>')
-        return (f'<div class="by restart" data-live="1">its box got the restart: {e(said or "restarting")}. '
-                'Next: it starts again on its own, with the same session, and this line goes.</div>')
-    if not re.search(r" (is restarting|will restart when)", said):     # the launcher said it is not running: nothing was restarted
-        return (f'<div class="by restart bad">its box could not restart it: {e(said or "no answer")}. '
-                'Next: start it again from here if it should run.</div>') if secs < 600 else ""
-    if secs < 600:
-        return f'<div class="by restart ok">restarted {e(ago(asked))}: the same bot, on the code now on its box.</div>'
-    return ""
 
 
-def _host_badge(b: dict) -> str:
-    """The mark of a host bot (#595), in one colour wherever its name appears on /fleet: it runs outside a container,
-    as the user of its Mac. Keyed off the board's flag (host_flag, on_host), never off runmode, which every bot has."""
-    if not b.get("host_flag"):
-        if b.get("runmode") == "host":      # moved back, but still running on the host until it restarts: it still has the access
-            return (' <span class="hostbadge" title="moved back to a container; it still runs on the host, with its access, '
-                    'until it restarts">host · leaving at its next restart</span>')
-        return ""
-    by = e(b.get("host_by") or "the operator")
-    if b.get("on_host") and b.get("runmode") == "host":
-        words, title = f"host · as {by}", "runs outside a container, as the user of its Mac"
-    elif b.get("on_host") and (b.get("handle") or "").lower() not in [x.lower() for x in (b.get("_box") or {}).get("allowed") or []]:
-        words, title = "host · waiting for the Mac", "its name is not yet in host-bots-allowed on the Mac, so it does not start"
-    elif b.get("on_host"):
-        words, title = "host · at its next start", "will run outside a container from its next start; it is still in a container now"
-    else:
-        words, title = "host bot · in a container", "flagged as a host bot, but runs in a container: its Mac's switch is off, or it moved"
-    return f' <span class="hostbadge{"" if b.get("on_host") else " off"}" title="{e(title)}">{words}</span>'
 
 
-def _host_block(b: dict) -> str:
-    """A host bot's opened row (#595): how it runs, who set it and when, why, whether the Mac listed it, its apps
-    (with a warning for one the Mac does not have), and the two things a human does: edit the reason, move it back."""
-    if not b.get("host_flag"):
-        return ""
-    box = b.get("_box") or {}
-    h = e(b["handle"])
-    found = {a.get("name", "").lower(): a.get("version", "") for a in box.get("apps") or [] if isinstance(a, dict)}
-    apps = []
-    for name in b.get("host_apps") or []:
-        have = found.get(name.lower())
-        apps.append(f'<li>{e(name)} <b>{e(have)}</b></li>' if have is not None
-                    else f'<li class="prob">{e(name)} <b>not found in /Applications on this Mac</b></li>')
-    listed = (b.get("handle") or "").lower() in [x.lower() for x in box.get("allowed") or []]
-    allowed = ('<span>listed in the Mac\'s host-bots-allowed file <b>yes</b></span>' if listed else
-               f'<span class="prob">waiting for you: add the line <b>{h}</b> to ~/.config/bot_board/host-bots-allowed on the Mac</span>')
-    runs = ("on its Mac, outside a container" if b.get("on_host") and b.get("runmode") == "host"
-            else "in a container now, and on its Mac from its next start" if b.get("on_host")
-            else "in a container (its Mac's host switch is off, or it moved)")
-    return (f'<div class="d-host" data-handle="{h}" data-reason="{e(b.get("host_reason") or "")}" data-apps="{e(", ".join(b.get("host_apps") or []))}">'
-            f'<h4>Runs on the host <button type="button" class="act host-edit needs-me">Edit why and apps</button>'
-            f'<button type="button" class="act host-back needs-me">Move back to a container</button></h4>'
-            f'<div class="d-facts"><span>runs <b>{e(runs)}</b></span>'
-            f'<span>set by <b>{e(b.get("host_by") or "?")}</b>{" " + e(ago(b["host_at"])) if b.get("host_at") else ""}</span>{allowed}</div>'
-            f'<div class="quote"><b>Why it needs the host</b><span>{e(b.get("host_reason") or "")}</span></div>'
-            + (f'<ul class="d-apps">{"".join(apps)}</ul>' if apps else '')
-            + '<p class="dim">Moving it back takes effect at its next start and keeps its conversation where its harness allows.</p></div>')
 
 
 def _host_banner(hosts: list) -> str:
@@ -2827,7 +2653,7 @@ def _host_banner(hosts: list) -> str:
              if (b.get("host_flag") or b.get("runmode") == "host") and not b.get("deleted")]
     if not items:
         return ""
-    lis = "".join(f'<li><a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a> on {e(box)} · '
+    lis = "".join(f'<li><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a> on {e(box)} · '
                   f'{e(b.get("host_reason") or "moved back; leaves the host at its next restart")}</li>' for b, box in items)
     n = len(items)
     return (f'<section class="hostbanner" role="status" aria-label="host bots"><b>{n} bot{"s" if n != 1 else ""} '
@@ -2852,7 +2678,7 @@ def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
         return ""
     on, name = bool(h["host_bots"]), e(h["name"])
     mine = [b for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
-    bots = ", ".join(f'<a href="#bot-{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
+    bots = ", ".join(f'<a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
     found = [a for a in h.get("apps") or [] if isinstance(a, dict)]
     napps = len(found)
     apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in found) or "none found"
@@ -2884,74 +2710,16 @@ def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
             f'<details class="by apps"><summary>{napps} apps found</summary>{apps}</details>{form}</div>')
 
 
-def _drawer(b: dict, host: str, acts: str, danger: str, question: str, k: str) -> str:
-    """The row beneath a bot's: its everyday buttons on the left, kill and delete set apart on the right,
-    then what its keeper and the board know about it, and the threads it holds."""
-    buttons = (f'<div class="acts d-acts">{acts}'
-               + (f'<span class="gap"></span><div class="d-danger">{danger}</div>' if danger else "") + '</div>') if acts or danger else ""
-    facts = [(k, v) for k, v in (
-        ("session", f'started {ago(b["session_started"])}' if b.get("session_started") else ""),
-        ("launcher", b.get("launcher") or ""),
-        ("last run", ago(b["last_run"]) if b.get("last_run") else ""),
-        ("last post", ago(b["last_post"]) if b.get("last_post") else ""),
-    ) if v]
-    facts_html = ('<div class="d-facts">' + "".join(f'<span>{e(k)} <b>{e(v)}</b></span>' for k, v in facts) + '</div>') if facts else ""
-    facts_html += _voice_block(b) + _host_block(b)
-    held, listed = b.get("open_threads") or 0, b.get("open_thread_list") or []
-    items = "".join(f'<li><a href="/t/{t["thread_id"]}">#{e(t["channel"])} · {e(t["title"] or "(untitled)")}</a>'
-                    f' <span class="dim">{e(ago(t["last_at"]))}</span></li>' for t in listed[:3])
-    more = held - min(len(listed), 3)
-    items += f'<li class="dim">and {more} more</li>' if more > 0 else ""
-    threads = f'<ul class="d-threads">{items}</ul>' if items else ""
-    return (f'<tr class="bot-drawer" id="drawer-{k}" hidden><td colspan="8">{buttons}{facts_html}{threads}{question}</td></tr>')
 
 
-def _voice_block(b: dict) -> str:
-    """A fleet bot's voice and personality in its drawer, with an Edit that turns them into fields
-    (#348, jac's pick). Only a bot with a fleet row has them, so a hand-run bot shows nothing.
-    An empty one shows the fleet default the bot reads instead (#381)."""
-    if not b.get("want") or b["status"] == "moved" or b.get("deleted"):
-        return ""
-    h, voice, personality = e(b["handle"]), b.get("voice") or "", b.get("personality") or ""
-    defaults = {"voice": registry.DEFAULT_VOICE, "personality": registry.DEFAULT_PERSONALITY}
-    shown = lambda text, which: e(text) if text else f'<span class="dim">fleet default, until set:</span> {e(defaults[which])}'
-    return (f'<div class="d-voice" data-handle="{h}" data-voice="{e(voice)}" data-personality="{e(personality)}">'
-            '<h4>Voice and personality <button type="button" class="act voice-edit">Edit</button></h4><div class="d-voice-two">'
-            f'<div class="quote"><b>Voice</b><span>{shown(voice, "voice")}</span></div>'
-            f'<div class="quote"><b>Personality</b><span>{shown(personality, "personality")}</span></div></div>'
-            f'<p class="dim">Reaches @{h} at its next wake. A long session may keep some of its old tone; '
-            'a <b>new session</b> starts clean.</p></div>')
 
 
-def _stop_panel(b: dict, host: str, k: str) -> str:
-    """Opened by stop or kill on a bot that holds open threads: hand them off once it has
-    stopped (the default, #217), keep them, or retire it (#167). Lives in the bot's drawer."""
-    h, n = e(b["handle"]), b["open_threads"]
-    opt = lambda v, label, note, on="": (f'<label><input type="radio" name="threads-{k}" value="{v}"{on}> <b>{label}</b>'
-                                         f' <span class="dim">{note}</span></label>')
-    return (f'<div class="stop-panel" id="stop-{k}" hidden>'
-            f'<p>@{h} holds {n} open thread{"s" * (n != 1)}. What should happen to {"them" if n != 1 else "it"} when it stops?</p>'
-            '<div class="opts">'
-            # hand off by default: a stopped bot that keeps its threads holds them from everyone (#217)
-            + opt("handoff", "Hand them off", "released once it has stopped; the next watching bot claims each", " checked")
-            + opt("keep", "Keep them", "for a planned restart or a move; nobody else can pick them up meanwhile")
-            + opt("retire", "Retire", "hand them off, and drop it from the stopped list")
-            + f'</div><button type="button" class="act stop-go" data-handle="{h}" data-host="{e(host)}" data-run="0">'
-              'Stop</button> <button type="button" class="stop-cancel">cancel</button></div>')
 
 
-def _bot_table(entries: list, others_of) -> str:
-    head = f'<thead><tr>{_sortable("Bot", "Doing", "Workspace", "Role", "Harness", "Machine", "Active", None)}</tr></thead>'
-    seen, rows = set(), ""
-    for h, b in entries:
-        name = b["handle"].lower()
-        rows += _bot_row(b, h["name"], others_of(h), f'{b["handle"]}~{h["name"]}' if name in seen else b["handle"])
-        seen.add(name)
-    return f'<table class="bots">{head}<tbody>{rows}</tbody></table>'
 
 
 def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
-    names = (" ".join(f'<a class="chip" href="#bot-{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
+    names = (" ".join(f'<a class="chip" href="/a/{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
                       for h, b in bots))
     return (f'<div class="fleet-alert"><div class="atext"><h3>{title}</h3><p>{text}</p>'
             + (f'<div class="chips">{names}</div>' if names else "") + '</div>'
@@ -3671,7 +3439,7 @@ function revealInLists(t) {
 function showTarget() {
   var name = decodeURIComponent(location.hash.slice(1)), t = name && document.getElementById(name);
   var shown = document.querySelector('.fleet-page').dataset.panes.split(' ');      // the panes this page shows (#644)
-  var home = {'tab-bots': '/fleet', 'tab-machines': '/machines', 'tab-settings': '/machines', 'tab-roles': '/roles', 'tab-skills': '/skills'};
+  var home = {'tab-machines': '/machines', 'tab-settings': '/machines', 'tab-roles': '/roles', 'tab-skills': '/skills'};
   var there = t && t.closest('.tab-pane');
   if (there && shown.indexOf(there.id) < 0) {      // an older link, /fleet#tab-roles or #secrets, to what is now another page
     location.replace((t.closest('#secrets') ? '/configuration' : home[there.id]) + location.hash); return;
@@ -3963,68 +3731,26 @@ def _fleet_section(id_: str, title: str, body: str, is_open: bool = True) -> str
 
 
 # The pages the old Fleet page became (#644): title, the nav tab to mark, the panes each shows.
-FLEET_PAGES = {"bots": ("Bots", "/fleet", ("tab-bots",)),
-               "machines": ("Machines", "/machines", ("tab-machines", "tab-settings")),
+FLEET_PAGES = {"machines": ("Machines", "/machines", ("tab-machines", "tab-settings")),
                "configuration": ("Configuration", "/configuration", ("tab-settings",)),
                "roles": ("Roles", "/roles", ("tab-roles",)),
                "skills": ("Skills", "/skills", ("tab-skills",))}
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(), channels=None,
-               claude_token=None, page="bots") -> str:
+def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
+               claude_token=None, page="machines") -> str:
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
              for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
-    order = {"working": 0, "waiting": 1, "failing": 2, "starting": 3, "stopping": 4, "moving": 5}
-    active, stopped = [], []
-    for h in hosts:
-        for b in h["bots"]:
-            st = b["state"]["state"]
-            # a box gone dark shows what it last ran, and nothing it had stopped
-            live = st != "stopped" and (h["reporting"] or b["status"].startswith(fleet_mod.UP))
-            if not live and b.get("retired"):
-                continue     # retired with its threads handed off (#167)
-            (active if live else stopped if h["reporting"] else []).append((h, b))
-    # A box can go on reporting a stopped copy of a bot that has moved on. A page has one row
-    # per bot: two with one id share a drawer that neither can open (#362). Keep the live one,
-    # or else the one a human asked for.
-    seen, kept = {b["handle"].lower() for _, b in active}, []
-    for h, b in sorted(stopped, key=lambda x: not x[1].get("want")):
-        if b["handle"].lower() not in seen:
-            seen.add(b["handle"].lower()); kept.append((h, b))
-    stopped = kept
-    active.sort(key=lambda x: (order.get(x[1]["state"]["state"], 6), x[1]["handle"].lower()))
-    stopped.sort(key=lambda x: x[1]["handle"].lower())
-    # delete takes the bot off every box that reports it (#368), so its confirm names the others (#366)
-    for h, b in active + stopped:
-        others = [o["name"] for o, x in active if x["handle"].lower() == b["handle"].lower() and o is not h]
-        if others:
-            b["also_on"] = (f'It is also listed on {", ".join(others)}, and this deletes it there too; '
-                            "a box not reporting does that when it returns.")
     # bots with no profile, gathered on the Profiles table's last row so they are not forgotten
-    orphans = sorted({b["handle"] for _, b in active + stopped if not b.get("profile")}, key=str.lower)
-    working = sum(b["state"]["state"] == "working" for _, b in active)
-    waiting = sum(b["state"]["can_work"] for _, b in active) - working
+    orphans = sorted({b["handle"] for h in hosts for b in h["bots"] if not b.get("profile") and not b.get("retired")}, key=str.lower)
     alerts = _alerts(hosts, claude_token)
     versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
     attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
-    bots_html = (_bot_table(active, others_of) if active else
-                 '<p class="sub">No bot is running. Start one with <b>+ Add a bot</b>, or from Stopped.</p>')
-    stopped_html = (f'<div class="stopped" id="fleet-stopped">{_bot_table(stopped, others_of)}</div>') if stopped else ""
-    groups = sorted({b.get("workspace") for _, b in active + stopped if b.get("workspace")}, key=str.lower)
-    chip = lambda key, label, n=None: (f'<button type="button" class="bot-filter" data-filter="{key}">{label}'
-                                       + (f' <b>{n}</b>' if n is not None else "") + '</button>')
-    state_of = lambda st: sum(b["state"]["state"] == st for _, b in active)
-    filters = ('<div class="bot-filters" role="group" aria-label="which bots">' + chip("running", "All running", len(active))
-               + chip("working", "Working", state_of("working")) + chip("waiting", "Waiting", state_of("waiting"))
-               + (chip("stopped", "Stopped", len(stopped)) if stopped else "")
-               + '<select id="bot-group" aria-label="workspace"><option value="">Any workspace</option>'
-               + "".join(f'<option>{e(g)}</option>' for g in groups) + '</select></div>')
-
     machines = []
     for h in hosts:
         name, bots = h["name"], h["bots"]
@@ -4100,75 +3826,19 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
                      '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>')
-    # which workspace each bot serves is on its row; the form below puts a new one in a workspace
-    # The obvious way to add a bot: one form, where the box, harness and the workspace
-    # it belongs to are all chosen in one place.
-    # stopped bots the Add a bot form suggests reviving instead (#168): never retired ones,
-    # and those holding open threads first, since their work waits for them
-    revive = sorted(({"handle": b["handle"], "host": h["name"], "harness": b.get("harness") or "",
-                      "workspace": b.get("workspace") or "", "pool": bool(b.get("pool")), "open": b.get("open_threads") or 0,
-                      "stopped": ago(max(b.get("last_run") or "", b.get("set_at") or "")) if (b.get("last_run") or b.get("set_at")) else ""}
-                     for h, b in stopped if not b.get("move_to") and not b.get("fetch") and b["status"] != "moved"),
-                    key=lambda x: (-x["open"], x["handle"].lower()))
-    revive_json = json.dumps(revive).replace("<", "\\u003c")     # safe inside <script>
-    if reporting:
-        host_opts = "".join(f'<option value="{e(n)}">{e(n)}</option>' for n in reporting)
-        harness_opts = "".join(f'<label><input type="radio" name="harness" value="{x}"{" checked" if not i else ""}><span>{x}</span></label>'
-                               for i, x in enumerate(HARNESS_NAMES))
-        ws_opts = ("".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces)
-                   or '<option value="" disabled selected>create a workspace first (workspaces page)</option>')
-        profile_opts = ('<option value="">none</option>'
-                        + "".join(f'<option value="{e(p["name"])}"{"" if p.get("takes_new_work", True) else " data-mentioned=1"}>'
-                                  f'{e(p["name"])}{"" if p.get("takes_new_work", True) else " · when mentioned"} · {e(p["role"][:60])}</option>'
-                                  for p in profiles))
-        channels_json = json.dumps(channels or {}).replace("<", "\\u003c")
-        add_bot = ('<button type="button" class="addbot-btn addbot-cta" aria-controls="addbot" aria-expanded="false">'
-                   '+ Add a bot</button>')
-        add_bot_card = f"""<div id="addbot" class="addbot-card addbot-cta" hidden>
-<form class="newbot-top" aria-label="Add a bot">
-<div class="newbot-grid">
-<label class="fld"><span><b>Machine</b></span><select name="host" aria-label="machine">{host_opts}</select></label>
-<fieldset class="fld"><legend><b>Harness</b></legend><div class="seg" role="radiogroup" aria-label="harness">{harness_opts}</div></fieldset>
-<label class="fld"><span><b>Workspace</b></span><select name="workspace" aria-label="workspace the bot belongs to" required>{ws_opts}</select></label>
-<label class="fld span2"><span><b>Role</b> <small>its profile; changed later from its row</small></span><select name="profile" aria-label="the profile the bot is added with">{profile_opts}</select></label>
-<label class="fld"><span><b>Takes new work</b> <small>set from its role</small></span><select name="claims" aria-label="whether the bot takes new work"><option value="open">yes: new threads that mention nobody</option><option value="mentioned">no: only threads that mention it</option></select></label>
-<label class="fld"><span><b>Name</b> <small>optional</small></span><input name="handle" placeholder="board picks one" aria-label="name, or leave empty for the board to pick one" pattern="@?[A-Za-z0-9][A-Za-z0-9._\\-]{{1,31}}" autocomplete="off"></label>
-<fieldset class="fld span3"><legend><b>Channels</b> <small>where it claims new threads; empty means any.</small></legend><div class="chan-chips" id="newbot-channels" aria-label="channels of the workspace the bot claims new threads in"></div></fieldset>
-<label class="fld span3"><span><b>Voice</b> <small>optional; how it writes to people. Empty, it gets the fleet default shown here</small></span><textarea name="voice" rows="2" maxlength="2000" aria-label="voice" placeholder="{e(registry.DEFAULT_VOICE)}"></textarea></label>
-<label class="fld span3"><span><b>Personality</b> <small>optional; who it is, expression only, the rules still win. Empty, it gets the fleet default shown here</small></span><textarea name="personality" rows="2" maxlength="2000" aria-label="personality" placeholder="{e(registry.DEFAULT_PERSONALITY)}"></textarea></label>
-</div>
-<div class="revive" id="revive" hidden></div>
-<div class="newbot-foot"><button type="submit" class="addbot-go">Start a new bot</button>
-<span class="addbot-note">The keeper on the machine starts it within a few seconds. It sees only its workspace. Its role, voice and personality can be changed later from its row.</span>
-<button type="button" class="addbot-cancel">cancel</button></div>
-</form>
-<script type="application/json" id="revive-data">{revive_json}</script>
-<script type="application/json" id="channels-data">{channels_json}</script>
-</div>"""
-    else:
-        add_bot = '<p class="addbot-empty">To add a bot, a machine must be reporting: <a href="#fleet-add-machine">add one</a>.</p>'
-        add_bot_card = ""
     title, here, panes = FLEET_PAGES[page]
     away = f' · <span class="warn-text">{len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""
-    counts = {"bots": f'{len(active)} active' + (f' · {len(stopped)} stopped' if stopped else "") + f' · {len(hosts)} machines' + away,
-              "machines": f'{len(hosts)} machines' + away, "roles": f'{len(profiles)} roles', "skills": f'{len(skills)} skills',
+    counts = {"machines": f'{len(hosts)} machines' + away, "roles": f'{len(profiles)} roles', "skills": f'{len(skills)} skills',
               "configuration": "Shared by every bot on every machine."}[page]
-    if page != "bots":
-        add_bot = add_bot_card = ""
     return shell(board_name, title.lower(), here=here, content=f"""
 <style>{FLEET_CSS}{registry_web.REG_CSS}</style>
 <div class="fleet-page" data-page="{page}" data-panes="{' '.join(panes)}">
-<div class="fleet-head"><h1>{title}</h1>{add_bot}</div>
+<div class="fleet-head"><h1>{title}</h1></div>
 <p class="sub fleet-count">{counts}</p>
-{add_bot_card}
 <datalist id="profiles-data">{"".join(f'<option value="{e(p["name"])}"></option>' for p in profiles)}</datalist>
 {_host_banner(hosts)}
 {attention}
 <noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
-<div class="tab-pane" id="tab-bots">{filters}
-<section class="fleet-section" id="fleet-bots">{bots_html}</section>{stopped_html}
-<p class="sub bots-note">Click a bot's row for its actions and details. Stop finishes the run a bot is in; kill cuts it short. The keeper on each
-machine carries out requests within a few seconds. <span id="who"></span> The same data is at <a href="/api/fleet">/api/fleet</a>.</p></div>
 <div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
 <section class="fleet-section" id="fleet-machines">{machines_html}</section>
 {versions_html}</div>
@@ -4221,7 +3891,7 @@ def agent_page(board_name, agent, recent, profile=None, voice=("", "", False, Fa
 <script>document.getElementById('delete-bot').addEventListener('click', function () {{
   var me = null; try {{ me = JSON.parse(localStorage.getItem('bb.me')); }} catch (err) {{}}
   if (!me) {{ alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }}
-  deleteBot({json.dumps(agent['handle'])}, me.token, function () {{ location.href = '/fleet'; }});
+  deleteBot({json.dumps(agent['handle'])}, me.token, function () {{ location.href = '/workspaces'; }});
 }});</script>"""
     return shell(board_name, f"@{agent['handle']}", f"""
 <h1>@{e(agent['handle'])}</h1>
@@ -4406,7 +4076,7 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
     return shell(board_name, "connect your harness", here="/onboard", content=f"""
 <h1>Connect your interactive harness</h1>
 <p class="sub">For a harness <b>you run yourself</b> &mdash; your own <code>claude</code>, <code>codex</code>
-or <code>copilot</code> session. Bots you start from <a href="/fleet">/fleet</a> already talk to the
+or <code>copilot</code> session. Bots you start from a workspace's <a href="/workspaces">Team tab</a> already talk to the
 board; the launcher registers them and wires them up, so they need none of this.</p>
 <p class="sub">Two minutes. You paste one paragraph into the file your harness reads at
 startup. From then on every session it runs finds its handle for the directory it started in
@@ -4417,7 +4087,7 @@ This page is the whole integration.</p>
 <section class="harness">
   <h3>Add a machine that runs bots</h3>
   <p class="where"><b>Where:</b> a terminal on the new machine, with git and a logged-in harness. One
-  line installs the keeper and points it at this board; the fleet page then shows the machine and
+  line installs the keeper and points it at this board; the Machines page then shows the machine and
   lets you add bots to it.</p>
   <div class="snippet"><pre>{e(MACHINE_COMMAND.format(base=base))}</pre></div>
   <p class="where">{machine_note}</p>

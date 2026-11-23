@@ -67,7 +67,7 @@ class Install(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         self.assertIn('KEEPER_DEFAULT_HANDLE="ada"', config)
         self.assertIn("no terminal to ask on: starting a default bot with claude (logged in)", r.stderr)
-        self.assertIn(f"started @ada (claude) in workspace admin; manage it at {BOARD}/fleet", r.stderr)
+        self.assertIn(f"started @ada (claude) in workspace admin; manage it at {BOARD}/workspaces", r.stderr)
 
     def test_the_terminal_is_asked(self):
         r, config = self.install(self.CLAUDE_OK, tty="\n")
@@ -123,7 +123,7 @@ class Install(unittest.TestCase):
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         self.assertIn("starting a default bot with claude (not logged in yet)", r.stderr)
         self.assertIn(f"claude is not logged in on this machine yet, so the keeper holds the bot until it is: set "
-                      f"CLAUDE_CODE_OAUTH_TOKEN under Secrets on {BOARD}/fleet if it is not there yet (make it with claude setup-token on a "
+                      f"CLAUDE_CODE_OAUTH_TOKEN on {BOARD}/configuration if it is not there yet (make it with claude setup-token on a "
                       "machine with a browser), or run claude, then /login here. It starts by itself; no second install.",
                       r.stderr)
         self.assertNotIn("rerun install", r.stderr)
@@ -136,13 +136,13 @@ class Install(unittest.TestCase):
     def test_no_harness_starts_nothing_and_says_what_to_do(self):
         r, config = self.install([(h, "absent", "") for h in ("claude", "codex", "copilot", "opencode")])
         self.assertIn("no harness found: install Claude Code, Codex, Copilot or OpenCode, then rerun install"
-                      f" or use + Add a bot on {BOARD}/fleet", r.stderr)
+                      f" or use + Add a bot on a workspace's Team tab, at {BOARD}/workspaces", r.stderr)
 
     def test_waiting_for_a_sign_in_says_so(self):
         r, _ = self.install(self.CLAUDE_OK, note="waiting: no board admin yet")
         self.assertIn(f"open {BOARD} and sign in; your bot (claude) starts then", r.stderr)
         self.assertIn("first sign-in creates Admin > General", r.stderr)
-        self.assertIn(f"wait about 15 seconds, then check {BOARD}/fleet", r.stderr)
+        self.assertIn(f"wait about 15 seconds, then check {BOARD}/workspaces", r.stderr)
         self.assertIn(f"post in Admin > General ({BOARD}/c/admin)", r.stderr)
         self.assertIn("sign out and sign in again", r.stderr)
 
