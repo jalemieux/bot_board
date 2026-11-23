@@ -15,7 +15,7 @@
 #   restart    both: start again on the code in the checkout; a busy bot finishes first
 #   status     is each one running
 #   expose <address>  make the board on this machine reachable at that address (a Tailscale address is best; 0.0.0.0 needs
-#              --all-interfaces), and point this machine's keeper at it, so other machines can be added to it (#796)
+#              --all-interfaces, a public IPv4 address needs --public), and point this machine's keeper at it, so other machines can be added to it (#796)
 #   update     pull the checkout (checked; rolled back if it fails), then restart the
 #              board, the keeper and, once idle, each bot on it: the one checkout alone
 #              does not move a running process
@@ -69,10 +69,10 @@ keeper_up() {
 }
 
 CMD=${1:-}; shift || true
-WHAT=""; PURGE=""; FORGE=""; EXPOSE_ADDR=""; ALL_IFACES=""
+WHAT=""; PURGE=""; FORGE=""; EXPOSE_ADDR=""; ALL_IFACES=""; PUBLIC_OK=""
 if [ "$CMD" = expose ]; then       # expose <address> [--all-interfaces]: an address, not a component
   for a in "$@"; do
-    case $a in --all-interfaces) ALL_IFACES=1 ;; -*) usage ;; *) [ -z "$EXPOSE_ADDR" ] || usage; EXPOSE_ADDR=$a ;; esac
+    case $a in --all-interfaces) ALL_IFACES=1 ;; --public) PUBLIC_OK=1 ;; -*) usage ;; *) [ -z "$EXPOSE_ADDR" ] || usage; EXPOSE_ADDR=$a ;; esac
   done
   set --
 fi
@@ -319,6 +319,14 @@ expose() {
   if [ "$addr" = 0.0.0.0 ] && [ -z "$ALL_IFACES" ]; then
     die "0.0.0.0 listens on every network this machine is on. Give the address of one (a Tailscale address is best), or add --all-interfaces if you mean it"
   fi
+  # an IPv4 address outside loopback, private (10/8, 172.16/12, 192.168/16), link-local and Tailscale (100.64/10) is the open internet,
+  # where the board's only lock is the network: it needs its own flag. A name cannot be told, and is taken as given.
+  if [ "$addr" != 0.0.0.0 ] && [ -z "$PUBLIC_OK" ] && printf '%s' "$addr" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+    case $addr in
+      127.*|10.*|192.168.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) ;;
+      *) die "$addr is a public address: anyone on the internet could reach the board. Use a private or Tailscale address, or add --public if you mean it, and set BOT_BOARD_INVITE_CODE first" ;;
+    esac
+  fi
   reach=$addr; [ "$addr" != 0.0.0.0 ] || reach=127.0.0.1      # this machine reaches an all-interfaces board on loopback
   new="http://$reach:$port"
   cfg=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1 || true)
@@ -329,6 +337,9 @@ expose() {
     say "the board is already on $addr:$port: nothing changed"
   else
     BIND=$addr board up
+    # a typo must not leave the board on an address it cannot use: if it does not answer there, say so and how to go back
+    for _ in $(seq 1 "${BOT_BOARD_EXPOSE_WAIT:-10}"); do curl -fsS -m 2 "$new/healthz" >/dev/null 2>&1 && break; sleep 1; done
+    curl -fsS -m 2 "$new/healthz" >/dev/null 2>&1 || die "the board did not answer at $new. Its log: $(tilde "$DATA")/board.log. To put it back on this machine: bot_board expose 127.0.0.1"
     if [ -n "$mine" ] && [ "$cfg" != "$new" ]; then
       mkdir -p "$(dirname "$CFG_FILE")"
       { grep -v '^BOARD=' "$CFG_FILE" || true; printf 'BOARD="%s"\n' "$new"; } > "$CFG_FILE.new" && mv "$CFG_FILE.new" "$CFG_FILE"
@@ -341,7 +352,7 @@ expose() {
   echo "  Open:         $new"
   [ -z "$mine" ] || echo "  This machine: its keeper reports to $new"
   echo "  Add a machine: open $new/machines, and run the command it shows on that machine"
-  case $addr in 127.*|localhost) echo "  Reachable:    from this machine only" ;; *) echo "  Warning:      anyone who can reach $addr on port $port can use the board" ;; esac
+  case $addr in 127.*|localhost) echo "  Reachable:    from this machine only" ;; *) echo "  Warning:      anyone who can reach $addr on port $port can use the board; to require a code to sign in, set BOT_BOARD_INVITE_CODE" ;; esac
 }
 
 case $CMD in

@@ -77,6 +77,12 @@ class EntryPoint(unittest.TestCase):
         self.installed()
         (self.cfg / "config").write_text(f'BOARD="{board}"\nKEEPER_HOST="m1"\n')
         (self.src / "run.sh").write_text('#!/usr/bin/env bash\necho "run.sh $* BIND=${BIND:-}" >> "$CALLS"\n')
+        self.fake_curl(0)
+
+    def fake_curl(self, code):
+        """The board's health check: 0 answers, anything else does not."""
+        curl = self.home / "fakebin/curl"
+        curl.write_text(f"#!/usr/bin/env bash\nexit {code}\n"); curl.chmod(0o755)
 
     def test_expose_moves_the_board_and_this_machines_keeper_together(self):
         # #796: the board's address, the keeper's BOARD and the printed block change together, in one command
@@ -92,6 +98,7 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("its keeper reports to http://100.64.0.9:8080", r.stdout)
         self.assertIn("http://100.64.0.9:8080/machines", r.stdout)
         self.assertIn("anyone who can reach 100.64.0.9 on port 8080 can use the board", r.stdout)
+        self.assertIn("BOT_BOARD_INVITE_CODE", r.stdout)
 
     def test_expose_a_second_time_changes_nothing(self):
         self.expose_env("http://100.64.0.9:8080")
@@ -111,6 +118,31 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(calls[0], "run.sh up BIND=0.0.0.0")
         self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())   # this machine reaches it on loopback
+
+    def test_expose_needs_a_flag_for_a_public_address_and_not_for_a_private_one(self):
+        self.expose_env()
+        for ok in ("10.1.2.3", "192.168.1.5", "172.20.0.4", "100.64.0.9", "100.127.255.1", "169.254.1.1", "my-box.tailnet.ts.net"):
+            r, _ = self.run_bb("expose", ok)
+            self.assertEqual(r.returncode, 0, (ok, r.stderr))
+        (self.cfg / "config").write_text('BOARD="http://127.0.0.1:8080"\n')
+        for bad in ("8.8.8.8", "100.128.0.1", "172.32.0.1", "11.0.0.1"):
+            r, calls = self.run_bb("expose", bad)
+            self.assertNotEqual(r.returncode, 0, bad)
+            self.assertIn("public address", r.stderr)
+            self.assertEqual(calls, [], bad)
+        r, calls = self.run_bb("expose", "8.8.8.8", "--public")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls[0], "run.sh up BIND=8.8.8.8")
+
+    def test_expose_says_so_and_leaves_the_keeper_when_the_board_does_not_answer(self):
+        self.expose_env()
+        self.fake_curl(22)
+        r, calls = self.run_bb("expose", "100.64.0.9", BOT_BOARD_EXPOSE_WAIT="1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("did not answer at http://100.64.0.9:8080", r.stderr)
+        self.assertIn("bot_board expose 127.0.0.1", r.stderr)
+        self.assertEqual(calls, ["run.sh up BIND=100.64.0.9"], "the keeper is not moved to an address that does not answer")
+        self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())
 
     def test_expose_leaves_a_keeper_that_reports_to_another_board_alone(self):
         self.expose_env("http://other-box:8080")
