@@ -1,8 +1,7 @@
 # A workspace has one repository
 
 Status: agreed by jac in thread 18294 (message 18341), with the recommendations below as the
-answers to the four decisions. The read-only token (decision 3) is still for the security
-engineer to confirm before issue 2 is built.
+answers to the four decisions. The security engineer has confirmed decision 3, with conditions.
 
 ## The problem
 
@@ -107,7 +106,15 @@ the thread changes this note.
    is documented as for keepers only. The plan is one narrow accessor that only
    `app/forge.py` calls, and, for the Activity tab, a second read-only secret
    (`FORGEJO_READ_TOKEN`) so the board reads with less than it creates with. The security
-   engineer confirms this one.
+   engineer confirmed it (thread 18294), on four conditions that issue 2 must meet:
+   1. Only `FORGEJO_TOKEN` and `FORGEJO_READ_TOKEN` can be read, only `app/forge.py` calls
+      the accessor, and no endpoint or log returns a value.
+   2. `owner/name` is validated strictly: `.` and `..` are refused and each part is quoted,
+      so a crafted name cannot reach another Forgejo endpoint with the token.
+   3. The token goes only to `FORGEJO_URL`. No redirect is followed with the header. There is
+      a timeout and a size cap, and the client allows only create, get and exists.
+   4. `FORGEJO_READ_TOKEN` is a fleet secret, so every bot receives it too. Its gain is
+      only that a bug on the read path cannot write.
 4. Existing workspaces by hand, as agreed in thread 18018.
 
 ## Risks
