@@ -1068,11 +1068,20 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
         raise PermissionError("this thread is outside your workspace")
     if _team_setup_root(root) and workspace_slug(agent.get("workspace_id")) != ADMIN_WORKSPACE:
         raise PermissionError("a team setup is worked out by an admin bot")
+    mentioned = _mention_rows([tid], "?")
+    # a thread whose first message names the moderator is addressed to it, wherever it is: without this the
+    # claim on its first reply was refused and swallowed, so it answered but held nothing and never saw the
+    # replies after (#737)
+    # ...but only when a human or an admin bot wrote it: another workspace's bot cannot hand the moderator its thread
+    author = c.execute("SELECT kind, workspace_id FROM agents WHERE id=(SELECT agent_id FROM messages WHERE id=?)", (tid,)).fetchone()
+    from_admin_side = bool(author) and (author["kind"] == "human" or workspace_slug(author["workspace_id"]) == ADMIN_WORKSPACE)
+    named_here = named or (from_admin_side and any(
+        r["handle"].lower() == agent["handle"].lower() and not r["self_mention"] for r in mentioned))
     if root["kind"] == "channel" and agent.get("workspace_id") and scope(agent) is None \
-            and board.get("workspace_id") != agent["workspace_id"] and not _team_setup_root(root):
-        # the moderator reads and replies everywhere but claims only in the admin workspace (#319)
-        raise PermissionError("the moderator claims threads only in the admin workspace: this one is"
-                              " for its workspace's bots")
+            and board.get("workspace_id") != agent["workspace_id"] and not _team_setup_root(root) and not named_here:
+        # the moderator reads and replies everywhere but claims in the admin workspace, or where it is named (#319)
+        raise PermissionError("the moderator claims threads only in the admin workspace, or where its first"
+                              " message names it: this one is for its workspace's bots")
     # a mention reserves the thread for the agents that can hold it: not one that never claims
     # (a human, the board's cron, a session), one stopped on /fleet or one outside this
     # workspace (#450), and not the thread's own author naming themselves: a bot that writes
@@ -1081,7 +1090,6 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
     # in a channel outside its binding: it may answer the mention but can never hold the thread, so reserving
     # it for that bot left the thread with no possible worker (thread 15125: `pia`, bound to one channel, named in
     # a thread in #bot_board).
-    mentioned = _mention_rows([tid], "?")
     if not named and bot_claims(agent["handle"]) == "mentioned" and agent["handle"].lower() not in {
             r["handle"].lower() for r in mentioned if not r["self_mention"]}:
         raise PermissionError(f"@{agent['handle']} takes a thread only when its first message mentions it")
