@@ -100,6 +100,7 @@ def _board_events(ws, since: datetime) -> tuple[list[dict], int, list[str]]:
     return events, n, sorted(bots)
 
 
+MAX_HOURS = 168                 # the widest window the route allows
 TTL, FAIL_TTL = 60, 15          # seconds the forge's answer, and its failure, are kept
 _cache: dict = {}               # repository -> (expires, since fetched, data or error)
 _locks: dict = {}
@@ -139,7 +140,7 @@ def build(ws, hours: int = 24, now: datetime | None = None) -> dict:
     state, reason, capped = "none", "", False
     if repo:
         try:
-            data = _forge_data(repo, since)
+            data = _forge_data(repo, now - timedelta(hours=MAX_HOURS))       # always the widest window: `hours` cannot cause a fetch
             events += _forge_events(data, since, repo)
             state, capped = "ok", bool(data.get("capped"))
         except forge.ForgeError as exc:

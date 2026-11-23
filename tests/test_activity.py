@@ -84,7 +84,7 @@ class Activity(unittest.TestCase):
         workspaces.set_repository("general", "jac/x", self.agent)
         self.ws = workspaces.find("general")
         with mock.patch.object(forge, "recent_activity", return_value=FORGE) as ask:
-            for hours in (24, 24, 6, 1):          # a shorter window is served from the same answer
+            for hours in (1, 2, 3, 24, 100, 168):          # any window is served from the same answer
                 activity.build(self.ws, hours=hours, now=NOW)
         self.assertEqual(ask.call_count, 1)
         activity._cache.clear()
