@@ -967,7 +967,8 @@ def _check_agreement_text(path: str, body: str) -> str:
         found = hidden_char(body)
         if found:
             raise ValueError(f'The text contains an invisible character (U+{ord(found[0]):04X} at position {found[1]}), '
-                             'which could hide an instruction from the people who read it. Remove it and write again.')
+                             'which could hide an instruction from the people who read it. Remove it and write again. '
+                             f'The board checks against Unicode {unicodedata.unidata_version}; a character newer than that is refused too.')
     return body
 
 
