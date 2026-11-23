@@ -96,11 +96,22 @@ class EntryPoint(unittest.TestCase):
         self.installed()
         r, calls = self.run_bb("update", UPDATE_NEW="1")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(calls, ["bot update", "run.sh up", "bot keeper install"])
+        self.assertEqual(calls, ["bot update", "run.sh update", "bot keeper install"])
         r, calls = self.run_bb("update")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(calls, ["bot update"], "nothing new: nothing restarted")
         self.assertIn("nothing new", r.stdout)
+
+    def test_update_calls_run_sh_update_with_the_flag_that_stops_the_hand_back(self):
+        self.installed()
+        flag = self.home / "flag"
+        run = self.src / "run.sh"
+        run.write_text('#!/usr/bin/env bash\necho "run.sh $*" >> "$CALLS"\necho "${BOT_BOARD_UPDATING:-unset}" > "' + str(flag) + '"\n')
+        run.chmod(0o755)
+        r, calls = self.run_bb("update", UPDATE_NEW="1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("run.sh update", calls)
+        self.assertEqual(flag.read_text().strip(), "1")
 
     def test_uninstall_keeps_the_data_unless_purged(self):
         self.installed()

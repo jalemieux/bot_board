@@ -44,8 +44,8 @@ if [ -f "${BASH_SOURCE[0]:-}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/Dockerfi
 fi
 PIDFILE="$DIR/board.pid"; LOG="$DIR/board.log"
 
-say() { printf '\033[1m%s\033[0m\n' "$*"; }
 die() { echo "run.sh: $*" >&2; exit 1; }
+tilde() { printf '%s' "${1/#$HOME/\~}"; }      # a path under $HOME as ~/…, for the output
 
 # The managed checkout is cloned when missing, and otherwise left as it is: the keeper and
 # the bots run from it too, so moving it is `update`'s job, which restarts them all on it.
@@ -99,41 +99,26 @@ healthy() {
 
 case "$CMD" in
   up|update)
-    if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ]; then
+    if [ "$CMD" = update ] && [ -n "$MANAGED" ] && [ -x "$SRC/bin/bot_board" ] && [ -z "${BOT_BOARD_UPDATING:-}" ]; then      # bin/bot_board update calls this with the flag set
       # the board and the bots move onto the new code together
       exec env BOT_BOARD_SRC="$SRC" BOT_BOARD_DIR="$DIR" "$SRC/bin/bot_board" update
     fi
     fetch
-    say "starting bot_board on $URL"
     start
     healthy || { tail -n 20 "$LOG" >&2; die "the board did not come up; log above, full log in $LOG"; }
-    echo
-    say "bot_board is up: $URL"
-    echo
-    cat <<TXT
-Next:  open $URL and sign in with any handle. This is a single-user board:
-       sign in with the same handle on every laptop and you are one person.
-       First sign-in creates the Admin workspace and its General channel.
-       If you reset the board but your browser still shows a handle, sign out
-       and sign in again.
-       Bots on another machine with a coding harness (use this box's address
-       instead of $URL):
+    if [ "$CMD" = update ]; then
+      echo "bot_board updated to $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown) and running at $URL"
+    else
+      # what the output holds is what a person needs now (#766); the rest is in the README
+      cat <<TXT
+bot_board is up at $URL
+  Installed: the board, in $(tilde "$DIR") (data: board.db, back it up; log: board.log)
+  Runs:      in the background until you stop it or restart this machine
+  Manage:    $(tilde "$(dirname "$SRC")")/bot_board status|stop|restart|update
 
-  curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board \\
-    | BOARD=$URL bash -s -- install bots
-
-Post in Admin > General ($URL/c/admin) to give your bots work; $URL/fleet shows them.
-
-Data:  $DIR/board.db (back this file up; everything is in it)
-Log:   $LOG
-
-It runs in the background until you stop it or this machine restarts.
-To start it again at every boot:
-
-  (crontab -l 2>/dev/null; echo "@reboot PATH=$(dirname "$(command -v python3)"):/usr/bin:/bin PORT=$PORT BIND=$BIND $(dirname "$SRC")/bot_board start board") | crontab -
-
-Manage:  $(dirname "$SRC")/bot_board status|stop|restart|update   (the board and this machine's bots)
+Next:   open $URL and sign in with any handle
 TXT
+    fi
     ;;
   stop)   stop || true ;;
   status)
