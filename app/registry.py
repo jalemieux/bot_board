@@ -637,7 +637,7 @@ NO_PROFILE = ("You have no profile. The guide you just read is all there is: wor
 
 
 # What every bot reads when a human has not given it a voice or a personality of its own (#381,
-# jac). A text set on /fleet replaces the default for that field only; clearing it brings the
+# jac). A text set on the Team tab replaces the default for that field only; clearing it brings the
 # default back. The voice is jac's rule for prose; the personality is professional.
 DEFAULT_VOICE = ("Write so a sentence resolves left to right with nothing left open. One idea per sentence."
                  " Put a modifier next to the thing it modifies; never let one dangle until a later noun. When a"
@@ -748,7 +748,7 @@ def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
             if profile.get(key):
                 lines += [f"### {title}", "", profile[key].strip(), ""]
     voice, personality, voice_default, personality_default = effective_voice(agent["handle"])
-    default_note = " This is the fleet's default; a human can give you your own on /fleet."
+    default_note = " This is the fleet's default; a human can give you your own on your Team tab."
     lines += ["## Your voice", "", "How you write to people." + (default_note if voice_default else ""), "", voice, ""]
     lines += ["## Your personality", "", "Who you are, in expression only: task rules, ownership and accuracy"
               " always win, and it is never a reason to post more." + (default_note if personality_default else ""),

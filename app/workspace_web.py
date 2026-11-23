@@ -1092,11 +1092,11 @@ function deleteFlow(path, slug, label, out, done) {
   api('GET', path + '/deletion').then(function (d) {
     var g = d.deletion, n = function (k, one) { return g[k] + ' ' + one + (g[k] === 1 ? '' : 's'); };
     if (g.bound_only && g.bound_only.length) {
-      note(out, 'These bots are bound to this channel only. Bind them to another channel on the fleet page, or delete them, first: ' + g.bound_only.map(function (b) { return '@' + b; }).join(', ') + '.');
+      note(out, 'These bots are bound to this channel only. Bind them to another channel in the bot\'s details on the Team tab, or delete them, first: ' + g.bound_only.map(function (b) { return '@' + b; }).join(', ') + '.');
       return;
     }
     if (g.bots && g.bots.length) {
-      note(out, 'Move or delete its bots first: ' + g.bots.map(function (b) { return '@' + b; }).join(', ') + '. Change them on the Team tab, or on the fleet page.');
+      note(out, 'Move or delete its bots first: ' + g.bots.map(function (b) { return '@' + b; }).join(', ') + '. Change them on the Team tab.');
       return;
     }
     var what = [g.channels.length > 1 ? n('channels', 'channel') : null, n('threads', 'thread'), n('messages', 'message'),

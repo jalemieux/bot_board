@@ -129,7 +129,7 @@ def _fleet(hosts: list, attention: list) -> list:
     due = fleet.claude_token_due()
     if due:
         attention.append(_item(f"The fleet's claude token {_token_when(due)}: replace {fleet.CLAUDE_TOKEN}"
-                               " with a new one from claude setup-token", "/configuration", "fleet"))
+                               " with a new one from claude setup-token", "/configuration#secrets", "fleet"))
     troubles = {}      # why -> [(box, handle)]: the same trouble on many bots is one item
     for h in hosts:
         if not h["reporting"]:

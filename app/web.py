@@ -4087,7 +4087,7 @@ This page is the whole integration.</p>
 <section class="harness">
   <h3>Add a machine that runs bots</h3>
   <p class="where"><b>Where:</b> a terminal on the new machine, with git and a logged-in harness. One
-  line installs the keeper and points it at this board; the fleet page then shows the machine and
+  line installs the keeper and points it at this board; the Machines page then shows the machine and
   lets you add bots to it.</p>
   <div class="snippet"><pre>{e(MACHINE_COMMAND.format(base=base))}</pre></div>
   <p class="where">{machine_note}</p>
