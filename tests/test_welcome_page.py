@@ -108,6 +108,7 @@ global.localStorage = {getItem: () => JSON.stringify({handle: 'sam', token: 't'}
 global.navigator = {}; global.window = {isSecureContext: false}; global.location = {href: ''}; global.alert = () => {};
 global.calls = []; global.reply = null; global.timers = [];
 global.setTimeout = (f, ms) => { timers.push([f, ms]); return timers.length; }; global.clearTimeout = () => {};
+N.prototype.removeChild = function (c) { this.kids.splice(this.kids.indexOf(c), 1); return c; };
 global.root = new N('div'); global.document.getElementById = () => root;
 global.fetch = (url, opts) => { calls.push([opts.method, url, opts.body && JSON.parse(opts.body)]); const r = reply(url, opts.method); return Promise.resolve({ok: r.ok !== false, json: () => Promise.resolve(r.body)}); };
 global.facts = (bot, extra) => ({state: 'pending', steps: Object.assign({board: {address: 'http://127.0.0.1:8080', handle: 'sam'},
@@ -131,15 +132,38 @@ assert.equal(timers.length, 1, 'it polls while the bot starts');
 await show(facts(bot('needs login', {reason: 'logged out of claude'})));
 assert.ok(root.textContent.includes('claude setup-token') && root.textContent.includes('CLAUDE_CODE_OAUTH_TOKEN'));
 await show(facts(bot('working'), {team: [bot('working', {handle: 'dev-1', role: 'Developer'}), bot('starting', {handle: 'arch-1', role: 'Architect'})]}));
-assert.ok(root.textContent.includes('The team is starting: 1 of 2 are running.'));
+assert.ok(root.textContent.includes('Your team in the general workspace is starting: 1 of 2 are running.'));
 assert.equal(timers.length, 1, 'still polling: a team bot is starting');
 await show(facts(bot('waiting'), {team: [bot('waiting', {handle: 'dev-1', role: 'Developer'})]}));
-assert.ok(root.textContent.includes('Your team of 1 is running'));
+assert.ok(root.textContent.includes('Your team of 1 is running in the general workspace'));
 assert.equal(timers.length, 0, 'it stops polling once everything runs');
+await show(facts(bot('needs login'), {team: [bot('needs login', {handle: 'dev-1', role: 'Developer'})]}));
+assert.ok(root.textContent.includes('The team shares the same claude login'), 'the team waits on the same login');
+assert.ok(root.textContent.includes('dev-1'), 'and each bot of it is listed');
+await show(facts(bot('starting'), {team: [bot('working', {handle: 'dev-1', role: 'Developer'})]}));
+assert.ok(root.textContent.includes('1 of 1') || root.textContent.includes('Your team of 1 is running'), 'no order is claimed: a team bot shows its own state while the admin bot starts');
 await show(facts(bot('failing', {reason: 'cannot run its harness', log: '~/.config/bot_board/bots/admin-1/keeper.out'})));
 assert.ok(root.textContent.includes('did not start') && root.textContent.includes('keeper.out'));
 await show(facts(null));
 assert.ok(root.textContent.includes('The admin bot is being set up'), 'no bot yet reads as starting, not as none');
+""")
+
+    def test_an_update_never_cuts_off_the_message_being_written(self):
+        self.run_node("""
+await show(facts(bot('starting'), {team: [bot('starting', {handle: 'dev-1'})]}));
+const box = root.all('textarea')[0]; box.value = 'my own words';
+const steps1 = root.all('li').filter(l => (l.attrs['class'] || '').startsWith('step ')).length;
+// the same facts again: nothing is rebuilt
+const before = root.all('li').slice();
+reply = () => ({body: facts(bot('starting'), {team: [bot('starting', {handle: 'dev-1'})]})}); timers[0][0](); await tick();
+const after = root.all('li'); assert.equal(after.length, before.length);
+after.forEach((l, i) => assert.ok(l === before[i], 'unchanged facts leave every step alone (the same nodes)'));
+// changed facts: the steps are replaced, the box is the same node with the same words
+reply = () => ({body: facts(bot('working'), {team: [bot('working', {handle: 'dev-1'})]})}); timers[0][0](); await tick();
+assert.equal(root.all('textarea')[0], box, 'the same message box');
+assert.equal(box.value, 'my own words');
+assert.ok(root.textContent.includes('is running (claude)'));
+assert.equal(root.all('li').filter(l => (l.attrs['class'] || '').startsWith('step ')).length, steps1, 'still five steps');
 """)
 
     def test_forge_text_stays_text_and_an_absent_forge_is_optional(self):
