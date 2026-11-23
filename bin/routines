@@ -356,6 +356,14 @@ def completed(tid):     # the board's word on a thread: complete, or not (or not
         return (m.get("message") or m).get("completed_through") is not None
     except Exception:
         return False
+def person(h):     # a label can say anything: a needs:<handle> counts only for a handle the board knows as a human
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", h):
+        return False
+    try:
+        with urllib.request.urlopen(os.environ["BOARD"] + "/api/agents/" + urllib.parse.quote(h, safe=""), timeout=20) as r:
+            return json.load(r)["agent"].get("kind") == "human"
+    except Exception:
+        return False
 CLOSING = re.compile(r"\b(?:close[sd]?|fix(?:e[sd]?)?|resolve[sd]?)\s+#(\d+)\b", re.I)
 merged = {int(n) for p in closed if p.get("merged") or p.get("merged_at") for n in CLOSING.findall(p.get("body") or "")}
 reposts, nudges, finished = [], [], []
@@ -380,6 +388,7 @@ for i in sorted(issues, key=lambda i: i["number"]):
         continue
     if n in sent and quiet and days_since(posted.get(str(n))) >= cfg["repost_days"]:
         who = next((l[6:] for l in labels if l.startswith("needs:") and len(l) > 6), "")     # waiting on a person's decision
+        who = who if who and person(who) else ""
         reposts.append({**item, "kind": "repost", **({"needs": who} if who else {})})
 reposts, nudges, finished = reposts[:cfg["batch"]], nudges[:cfg["batch"]], finished[:20]
 items = batch + reposts + nudges + finished
@@ -799,7 +808,7 @@ class Runner:
             routed = (f"Routed to {group}: {why}.\n" if channel != home and why else
                       f"Routed to {group}.\n" if channel != home else "")
             meta = {"routine": r["id"], "name": r["name"], "routine_item": {"repo": rc["repo"], "number": i["number"]}}
-            if kind == "repost" and i.get("needs"):
+            if kind == "repost" and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", str(i.get("needs") or "")):
                 # it waits on a person's decision (a needs:<handle> label): it goes to their inbox, once a week at most
                 body = (f"Waiting on @{i['needs']}: #{i['number']} {i['title']}\n{i['url']}\n\n"
                         f"It is open, nobody has it, and it carries `needs:{i['needs']}`. Reply here with the decision, or take the label off.")

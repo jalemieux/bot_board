@@ -125,7 +125,7 @@ class Definitions(unittest.TestCase):
     FORGEJO_WRITER = {6: "26d230031cda07a732e6ce9ddc6b58a9eb79e2ffffb6d8cf47e3e1377a9619b7",
                       7: "64dbc569b8ae89d55355ae8664ab67deefe12f39297e479f6c70020a2c2e48b6",
                       8: "e739ed0d3b936258da64bbe2e0bf3dbc1be129ac0b64b97a77328c16e1ee72a6",
-                      9: "95eb7c1b59f2cc4fa9ed7ab29cabd583cb9edae700b2dbdcfecf14f841ecc6cb"}
+                      9: "a60299e9e4750b09838d9d7f9f4c8eb1cf499173022570d2c6dbc22276d182f9"}
 
     def test_the_recipe_writer_does_not_change_without_a_new_recipe_version(self):
         cli = load_cli()
@@ -495,22 +495,25 @@ class Recipes(unittest.TestCase):
         self.forgejo_files(
             issues=[fissue(71), fissue(72), fresh(73), fissue(74, ["needs:jac"]),
                     fissue(75, ["bot:ada", f"thread:{done}"]), fissue(76, ["bot:ada", f"thread:{open_}"]),
-                    {**fissue(77, ["bot:ada", f"thread:{done}"]), "updated_at": now}, fissue(78), fissue(79), fissue(81, ["claimed"])],
+                    {**fissue(77, ["bot:ada", f"thread:{done}"]), "updated_at": now}, fissue(78), fissue(79), fissue(81, ["claimed"]),
+                    fissue(82, ["needs:jac @all"]), fissue(83, ["needs:nobody-here"]), fissue(84, ["needs:ada"])],
             pulls=[{"number": 90, "state": "open", "body": "Closes #79."}],
             closed=[{"number": 91, "state": "closed", "merged": True, "body": "Closes #78.\n\nBoard thread: x"},
                     {"number": 92, "state": "closed", "merged": False, "body": "Closes #71."}])
-        sent = [71, 72, 73, 74, 75, 76, 77, 78, 79, 81]
+        sent = [71, 72, 73, 74, 75, 76, 77, 78, 79, 81, 82, 83, 84]
         got = self.sweep_check({"sent": sent, "posted": {"72": recent}})
         kinds = {(i["number"], i["kind"]) for i in got["items"] if "kind" in i}
-        self.assertEqual(kinds, {(71, "repost"), (74, "repost"), (75, "nudge"), (78, "finished")},
+        self.assertEqual(kinds, {(71, "repost"), (74, "repost"), (75, "nudge"), (78, "finished"), (82, "repost"), (83, "repost"), (84, "repost")},
                          "free and quiet reposts (a closed unmerged PR does not finish it); 72 was posted 2 days ago, 73 and 77 are not quiet, "
                          "76's thread is not complete, 79 has an open PR, 81 is claimed; 78 is finished, so it is not offered as free")
         by = {i["number"]: i for i in got["items"] if "kind" in i}
         self.assertEqual(by[74].get("needs"), "jac")
         self.assertNotIn("needs", by[71])
+        for n in (82, 83, 84):     # not a handle, a handle the board does not know, a bot: all are plain free issues
+            self.assertNotIn("needs", by[n], n)
         self.assertEqual((by[75]["owner"], by[75]["thread"]), ("ada", done))
         mark = got["watermark"]
-        self.assertEqual((sorted(mark["posted"]), sorted(mark["nudged"]), sorted(mark["listed"])), (["71", "72", "74"], ["75"], ["78"]))
+        self.assertEqual((sorted(mark["posted"]), sorted(mark["nudged"]), sorted(mark["listed"])), (["71", "72", "74", "82", "83", "84"], ["75"], ["78"]))
         # the next pass with that watermark does none of it again
         again = self.sweep_check(mark)
         self.assertEqual([i for i in again["items"] if "kind" in i], [])
