@@ -786,6 +786,11 @@ class Runner:
 
     project = workspace
 
+    @staticmethod
+    def flat(text):
+        """Text from the forge (an issue's title) goes into board messages as words: an `@handle` in it must not mention anyone."""
+        return re.sub(r"@([A-Za-z0-9][A-Za-z0-9._-]{1,31})", r"\1", str(text))
+
     def announce(self, r, st, items, routes=None):
         rc = r["recipe"]
         home, groups = self.workspace(rc["workspace"])
@@ -810,13 +815,13 @@ class Runner:
             meta = {"routine": r["id"], "name": r["name"], "routine_item": {"repo": rc["repo"], "number": i["number"]}}
             if kind == "repost" and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", str(i.get("needs") or "")):
                 # it waits on a person's decision (a needs:<handle> label): it goes to their inbox, once a week at most
-                body = (f"Waiting on @{i['needs']}: #{i['number']} {i['title']}\n{i['url']}\n\n"
+                body = (f"Waiting on @{i['needs']}: #{i['number']} {self.flat(i['title'])}\n{i['url']}\n\n"
                         f"It is open, nobody has it, and it carries `needs:{i['needs']}`. Reply here with the decision, or take the label off.")
                 meta["needs"] = i["needs"]
-                meta["ask"] = f"#{i['number']} {i['title']}: your decision"[:200]
+                meta["ask"] = f"#{i['number']} {self.flat(i['title'])}: your decision"[:200]
             else:
                 head = "Still open and nobody has it" if kind == "repost" else "New issue to take"
-                body = (f"{head}: #{i['number']} {i['title']}\n{i['url']}\n\n" + routed
+                body = (f"{head}: #{i['number']} {self.flat(i['title'])}\n{i['url']}\n\n" + routed
                         + (forge_take(rc, i["number"]) if on_forgejo(rc) else
                            f"The thread worker labels the issue as its own: `gh issue edit {i['number']} -R {rc['repo']} "
                            f"--add-label bot:<your handle>` (`gh label create` it first if the repo has none)."))
@@ -824,7 +829,7 @@ class Runner:
             items_st[str(i["number"])] = {"msg": m["id"], "channel": channel, "sent_at": time.time()}
             self.log(r, f"{'announced again' if kind == 'repost' else 'announced'} #{i['number']} in #{channel} as message {m['id']}")
         if finished:
-            lines = "\n".join(f"- #{i['number']} {i['title']} {i['url']}" for i in finished)
+            lines = "\n".join(f"- #{i['number']} {self.flat(i['title'])} {i['url']}" for i in finished)
             m = self.board.post(home, "Finished but still open: each has a merged pull request that closes it and no open one. "
                                 "Someone with the rights closes them, or says here why one stays open.\n\n" + lines,
                                 meta={"routine": r["id"], "name": r["name"], "sweep": "finished"})
@@ -832,11 +837,13 @@ class Runner:
 
     def nudge(self, r, i):
         """A running bot holds an open issue whose thread is complete and which no pull request names: ask it, in that thread."""
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,31}", str(i.get("owner") or "")):     # the label's value is the forge's, not ours
+            return self.log(r, f"no nudge for #{i['number']}: {i.get('owner')!r} is not a handle")
         try:
             root = call("GET", f"/api/threads/{i['thread']}", token=self.board.token)["messages"][0]
         except (ConnectionError, KeyError, IndexError) as e:
             return self.log(r, f"no nudge for #{i['number']}: thread {i['thread']} not readable ({e})")
-        body = (f"@{i['owner']} #{i['number']} {i['title']} ({i['url']}) is still open with your `bot:{i['owner']}` label, "
+        body = (f"@{i['owner']} #{i['number']} {self.flat(i['title'])} ({i['url']}) is still open with your `bot:{i['owner']}` label, "
                 "this thread is complete, and no pull request names it. Open one that says `Closes #" + str(i["number"]) + "`, "
                 "or take your label off so the issue is free, or say here what is in the way.")
         m = self.board.post(root["channel"], body, reply_to=i["thread"],

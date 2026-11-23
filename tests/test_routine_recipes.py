@@ -525,7 +525,8 @@ class Recipes(unittest.TestCase):
         self.assertEqual(self.api("GET", f"/api/routines/{thread}")["recipe"]["stale_days"], 3)
         self.api("POST", f"/api/routines/{thread}/enable", {}, self.human)
         done = self.thread(True)
-        self.forgejo_files(issues=[fissue(71), fissue(74, ["needs:jac"]), fissue(75, ["bot:ada", f"thread:{done}"]), fissue(78)],
+        self.forgejo_files(issues=[{**fissue(71), "title": "ping @everyone about 71"}, {**fissue(74, ["needs:jac"]), "title": "decide @everyone 74"},
+                                   {**fissue(75, ["bot:ada", f"thread:{done}"]), "title": "mention @everyone 75"}, {**fissue(78), "title": "done @everyone 78"}],
                            closed=[{"number": 91, "state": "closed", "merged": True, "body": "Fixes #78"}])
         # the routine has announced these before: a watermark that says so, and nothing posted since
         self.once()                                                    # first pass announces the new ones: 71, 74, 78 (75 is ada's)
@@ -538,7 +539,7 @@ class Recipes(unittest.TestCase):
         self.assertIn("`bot:<your handle>`", again[0]["body"], "a free issue is posted like a new one")
         needs = [m for m in mine if m["body"].startswith("Waiting on @jac: #74")]
         self.assertEqual(len(needs), 1)
-        self.assertEqual((needs[0]["meta"]["needs"], needs[0]["meta"]["ask"]), ("jac", "#74 issue 74: your decision"))
+        self.assertEqual((needs[0]["meta"]["needs"], needs[0]["meta"]["ask"]), ("jac", "#74 decide everyone 74: your decision"))
         listing = [m for m in mine if m["meta"].get("sweep") == "finished"]
         self.assertEqual(len(listing), 1)
         self.assertIn("#78", listing[0]["body"])
@@ -546,8 +547,12 @@ class Recipes(unittest.TestCase):
         nudge = [m for m in self.api("GET", f"/api/threads/{done}", token=self.human)["messages"] if m["meta"].get("sweep") == "nudge"]
         self.assertEqual(len(nudge), 1)
         self.assertEqual(nudge[0]["reply_to"], done)
+        self.assertIn("mention everyone 75", nudge[0]["body"])
         self.assertIn("@ada #75", nudge[0]["body"])
         self.assertIn("take your label off", nudge[0]["body"])
+        # a title from the forge cannot mention anyone, in any of the posts
+        self.assertIn("ping everyone", [m for m in mine if "ping everyone" in m["body"]][0]["body"])
+        self.assertTrue(all("@everyone" not in m["body"] for m in mine + nudge))
         # and none of it again on the next pass
         before = len(self.channel("game"))
         self.state(thread, lambda st: st.update(checked_at=0)); self.once()
