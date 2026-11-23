@@ -144,6 +144,55 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(calls, ["run.sh up BIND=100.64.0.9"], "the keeper is not moved to an address that does not answer")
         self.assertIn('BOARD="http://127.0.0.1:8080"', (self.cfg / "config").read_text())
 
+    def native_forgejo(self, allowed="127.0.0.1"):
+        """A Forgejo beside the board: its settings allow webhooks to one host, and its control script records its calls."""
+        forgejo = self.home / "forgejo"
+        ini = forgejo / "work/custom/conf/app.ini"
+        ini.parent.mkdir(parents=True)
+        ini.write_text(f"[webhook]\nALLOWED_HOST_LIST = {allowed}\n[log]\nROOT_PATH = /x\n")
+        ctl = self.src / "deploy/forgejo-native"
+        ctl.parent.mkdir(parents=True, exist_ok=True)
+        ctl.write_text('#!/usr/bin/env bash\necho "forgejo-native $1 BOARD=$BOARD" >> "$CALLS"\n'); ctl.chmod(0o755)
+        return forgejo, ini
+
+    def test_expose_lets_a_native_forgejo_deliver_to_the_new_address_and_says_what_is_left(self):
+        # a board with a Forgejo beside it has a fourth address: where Forgejo may deliver its webhook
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 100.64.0.9\n", ini.read_text())
+        self.assertIn("[log]\nROOT_PATH = /x", ini.read_text(), "the rest of the settings stay")
+        self.assertIn("forgejo-native stop BOARD=http://100.64.0.9:8080", calls)
+        self.assertIn("forgejo-native start BOARD=http://100.64.0.9:8080", calls)
+        self.assertIn("events stop reaching threads until you run: BOARD=http://100.64.0.9:8080 bash", r.stdout)
+        self.assertIn("deploy/forge-setup", r.stdout)
+
+    def test_expose_leaves_forgejo_alone_when_it_already_allows_the_host_or_there_is_none(self):
+        self.expose_env()
+        forgejo, ini = self.native_forgejo(allowed="100.64.0.9")
+        r, calls = self.run_bb("expose", "100.64.0.9", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse([c for c in calls if c.startswith("forgejo-native")], calls)
+        self.assertNotIn("site webhook", r.stdout)
+
+    def test_expose_to_every_interface_leaves_forgejo_on_loopback(self):
+        # Forgejo still reaches an all-interfaces board on 127.0.0.1, so its settings are right as they are
+        self.expose_env()
+        forgejo, ini = self.native_forgejo()
+        r, calls = self.run_bb("expose", "0.0.0.0", "--all-interfaces", FORGEJO_DIR=str(forgejo))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 127.0.0.1\n", ini.read_text())
+        self.assertFalse([c for c in calls if c.startswith("forgejo-native")], calls)
+
+    def test_expose_back_to_loopback_puts_forgejo_back_too(self):
+        self.expose_env("http://100.64.0.9:8080")
+        forgejo, ini = self.native_forgejo(allowed="100.64.0.9")
+        r, calls = self.run_bb("expose", "127.0.0.1", FORGEJO_DIR=str(forgejo), BIND="100.64.0.9")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("ALLOWED_HOST_LIST = 127.0.0.1\n", ini.read_text())
+        self.assertIn("still points at 100.64.0.9", r.stdout)
+
     def test_expose_leaves_a_keeper_that_reports_to_another_board_alone(self):
         self.expose_env("http://other-box:8080")
         r, calls = self.run_bb("expose", "100.64.0.9")

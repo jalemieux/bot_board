@@ -347,11 +347,25 @@ expose() {
       for h in $(running_bots); do "$BOT" restart "$h"; done
     fi
   fi
+  # A Forgejo beside this board delivers its webhook to the board's address, and only that host is allowed in its settings
+  # (ALLOWED_HOST_LIST, deploy/forgejo-native): when the board moves, allow the new host and restart Forgejo, then say that its
+  # site webhook still has the old address until forge-setup runs again with the new one.
+  local ini="$FORGEJO_HOME/work/custom/conf/app.ini" allowed forge_note=""
+  if has_native_forgejo; then
+    allowed=$(sed -n 's/^ALLOWED_HOST_LIST *= *//p' "$ini" | head -1)
+    if [ "$allowed" != "$reach" ]; then
+      { sed "s|^ALLOWED_HOST_LIST *=.*|ALLOWED_HOST_LIST = $reach|" "$ini" > "$ini.new" && mv "$ini.new" "$ini"; } || die "could not change ALLOWED_HOST_LIST in $ini"
+      BOARD=$new bash "$SRC/deploy/forgejo-native" stop || true
+      BOARD=$new bash "$SRC/deploy/forgejo-native" start || say "Forgejo did not start: $SRC/deploy/forgejo-native start shows why"
+      forge_note="Forgejo's webhooks are now allowed to $reach and Forgejo was restarted. Its site webhook still points at $allowed, so its events stop reaching threads until you run: BOARD=$new bash $SRC/deploy/forge-setup"
+    fi
+  fi
   echo
   echo "The board is on $addr, port $port."
   echo "  Open:         $new"
   [ -z "$mine" ] || echo "  This machine: its keeper reports to $new"
   echo "  Add a machine: open $new/machines, and run the command it shows on that machine"
+  [ -z "$forge_note" ] || echo "  Forgejo:      $forge_note"
   case $addr in 127.*|localhost) echo "  Reachable:    from this machine only" ;; *) echo "  Warning:      anyone who can reach $addr on port $port can use the board; to require a code to sign in, set BOT_BOARD_INVITE_CODE" ;; esac
 }
 
