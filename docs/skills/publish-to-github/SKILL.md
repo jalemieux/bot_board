@@ -23,9 +23,9 @@ the user one of two ways and wait for their choice (`@mention`, with `meta.needs
   under Shared secrets on the Configuration page. A fleet secret reaches **every
   bot on every box**, within minutes, until the person removes it; say so, because
   that is what they agree to by choosing B. Creating the repository also needs a
-  token that can create repositories: a classic `repo` token, which reaches **all**
-  their private repositories, since a fine-grained token cannot create one for a
-  personal account. Say that too. (Path A has no such cost: they create the
+  token that can create repositories, and that has broad reach: a classic `repo`
+  token reaches **all** their private repositories, and a fine-grained token with
+  Administration write needs access to all repositories to create one. Say that too. (Path A has no such cost: they create the
   repository themselves and the token reaches only that one.) You use it from your environment, and the
   person removes it when you say you are done (the last step).
 
