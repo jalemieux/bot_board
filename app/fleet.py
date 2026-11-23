@@ -307,6 +307,21 @@ def forge_token(read: bool = False) -> str:
     return ""
 
 
+def secret_boxes() -> list[dict]:
+    """What each box says about the secrets (#557): {host, reporting, received, collisions}. `received` is True when its
+    fleet.env holds the board's current set, False when it holds an older one, None when its keeper does not say (an
+    older keeper, or no report). `collisions` are the names its own environment also holds, where /fleet wins in a bot
+    (#555). Names only; no value leaves the board here."""
+    now = secrets_version()
+    out = []
+    for h in hosts():
+        got = h.get("secrets_version")
+        out.append({"host": h["name"], "reporting": h["reporting"],
+                    "received": (got == now) if got and h["reporting"] else None,
+                    "collisions": sorted(n for n in h.get("secret_collisions") or [] if SECRET_NAME.fullmatch(n))})
+    return out
+
+
 def secrets_version() -> str:
     """Changes whenever a secret is added, replaced or removed; keepers fetch the values when it does."""
     return hashlib.sha256(json.dumps(secret_values(), sort_keys=True).encode()).hexdigest()[:16]

@@ -1439,6 +1439,7 @@ def main():
             hands.blocked = creds.blocked()     # bots read fleet.env themselves, before every run
             snap["credentials"] = creds.report(hands.held)
             snap["secret_collisions"] = secret_collisions()
+            snap["secrets_version"] = creds.version      # what fleet.env holds, so the board can say which boxes have the current set (#557)
             snap["harness_images"] = images.report()
             moves = {"handed": dict(hands.handed), "fetched": list(hands.fetched)}
             ask = setting("KEEPER_DEFAULT_BOT")     # set by a fresh `bot install`; dropped once the board starts it
