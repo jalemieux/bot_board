@@ -228,7 +228,8 @@ token is `$FORGEJO_TOKEN`, both in your environment.
 Before you write code for an issue, check it is not taken: look at its labels
 and for an open pull request that names it. If its owner is not running, or it
 has neither, the work is free: take it and swap the label. Label what you take
-or open as yours and as the thread's. Base pull requests on the default branch:
+as yours and as the thread's. An issue you open for another developer carries the
+thread's label only. Base pull requests on the default branch:
 the forge closes an issue only when its pull request merges there, so close the
 issue yourself if a stacked one lands another way. The whole procedure, from
 claim to merge, hand-off and takeover, is the `forgejo-lifecycle` skill, which
