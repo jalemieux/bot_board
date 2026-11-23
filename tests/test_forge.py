@@ -143,6 +143,40 @@ class ForgeClient(unittest.TestCase):
         forge.make_repository("y")
         self.assertTrue(all(s[2] == "token write" for s in self.f.seen[-2:]))
 
+    def test_an_environment_proxy_never_sees_the_token(self):
+        import importlib
+        import os
+        import urllib.request
+        self.addCleanup(importlib.reload, forge)       # the opener is built when the module loads: build it again with a proxy set
+        with mock.patch.dict(os.environ, {"HTTP_PROXY": "http://proxy.invalid:3128", "http_proxy": "http://proxy.invalid:3128",
+                                          "HTTPS_PROXY": "http://proxy.invalid:3128", "https_proxy": "http://proxy.invalid:3128"}):
+            importlib.reload(forge)
+            self.assertEqual([h for h in forge._opener.handlers if isinstance(h, urllib.request.ProxyHandler)], [],
+                             "the opener has no proxy handler, whatever the environment says")
+            plain = urllib.request.build_opener(forge._NoRedirect)
+            self.assertTrue([h for h in plain.handlers if isinstance(h, urllib.request.ProxyHandler)], "the default opener would use it")
+
+    def test_two_callers_at_once_create_it_once(self):
+        from app import workspaces
+        ws = {"slug": "g", "archived": 0, "repository": None}
+        made = []
+
+        def slow_make(slug, timeout=None):
+            time.sleep(0.2)
+            made.append(slug)
+            return "fleet/" + slug
+
+        def link(slug, full, agent):
+            ws["repository"] = full
+        with mock.patch.object(workspaces, "find", lambda s: ws), mock.patch.object(workspaces, "can_manage", lambda w, a: True), \
+                mock.patch.object(workspaces, "set_repository", link), mock.patch.object(forge, "make_repository", slow_make):
+            out = []
+            ts = [threading.Thread(target=lambda: out.append(forge.ensure_repository("g", {}))) for _ in range(3)]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+        self.assertEqual(made, ["g"], "the forge is asked once")
+        self.assertEqual([o["repository"] for o in out], ["fleet/g"] * 3)
+
     def test_only_the_forge_client_asks_for_the_token_value(self):
         callers = []
         for path in (ROOT / "app").glob("*.py"):

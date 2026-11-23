@@ -1762,7 +1762,7 @@ async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_
     data = body.model_dump()
     out = {'workspace': await _ws_write(workspaces.create, data, agent)}
     try:       # best effort (#715): a workspace without a repository is still a workspace, and says why
-        made = await asyncio.to_thread(forge.ensure_repository, out['workspace']['slug'], agent)
+        made = await asyncio.to_thread(forge.ensure_repository, out['workspace']['slug'], agent, 2.5)   # two calls, five seconds at most
         out['workspace'] = workspaces.describe(workspaces.find(out['workspace']['slug']), agent)
         if made['reason']:
             out['repository_note'] = made['reason']
