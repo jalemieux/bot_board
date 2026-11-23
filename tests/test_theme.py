@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient       # noqa: E402
 from app import db, main, web                    # noqa: E402
 
-PAGES = ("/", "/fleet", "/routines", "/workspaces", "/onboard", "/search?q=x")
+PAGES = ("/", "/fleet", "/routines", "/workspaces", "/onboard", "/welcome", "/search?q=x")
 
 
 class Setup(unittest.TestCase):

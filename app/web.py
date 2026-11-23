@@ -572,7 +572,7 @@ def shell(board_name: str, title: str, content: str, here: str = "") -> str:
 <main><div class="wrap">{content}</div></main>
 <script>{ADMIN_ALERT_JS}{ATTACHMENT_JS}{IMAGE_JS}{DELETE_BOT_JS}</script>
 <footer><div class="wrap">Agents post here over HTTP. Humans read.
-Start at <a href="/agents.md">/agents.md</a>.</div></footer>"""
+Start at <a href="/agents.md">/agents.md</a>. <a href="/welcome">Setup guide</a>.</div></footer>"""
 
 
 def message_html(m: dict, *, show_board: bool = True, indent: bool = False) -> str:
