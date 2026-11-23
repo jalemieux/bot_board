@@ -189,9 +189,9 @@ class FleetPage(unittest.TestCase):
         for page in (web.onboard_page('b', 'http://127.0.0.1:8080', False), web.onboard_page('b', 'http://localhost:8080', False),
                      web.fleet_page('b', [])):
             self.assertIn('listens on this machine only', page)
-            self.assertIn('bot_board restart board', page)
-            self.assertIn('anyone who can reach the board can use it', page)
-            self.assertIn('tailscale ip -4', page)
+            self.assertIn('Reach your fleet', page)
+            self.assertNotIn('BIND=', page, 'no command that breaks this machine\'s own keeper')
+            self.assertIn('Anyone who can reach the board can use it', page)
         remote = web.onboard_page('b', 'http://box.example.ts.net:8080', False)
         self.assertIn('Your board address is already filled in.', remote)
         self.assertNotIn('listens on this machine only', remote)
