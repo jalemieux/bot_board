@@ -10,12 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_UVICORN = """#!/usr/bin/env python3
-import http.server, sys
+import http.server, json, os, sys
 port = int(sys.argv[sys.argv.index("--port") + 1])
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers()
-        self.wfile.write(b'{"ok":true,"version":"dev","commit":"abcdef0123456789abcdef","agents":0}')
+        self.wfile.write(json.dumps({"ok": True, "version": "dev", "commit": os.environ.get("FAKE_COMMIT", "abcdef0123456789abcdef"), "agents": 0}, ensure_ascii=False).encode())
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 """
@@ -57,6 +57,21 @@ class RunShPort(unittest.TestCase):
         self.assertEqual((self.dir / "board.addr").read_text(), f"PORT={b}\nBIND=127.0.0.1\n")
         self.assertIn(f":{b},", self.run_sh("status").stdout)
         self.assertEqual(self.run_sh("status", PORT=str(a)).returncode, 1, "a PORT in the environment is the one asked about")
+
+    def test_a_board_bound_beyond_this_machine_says_so_and_the_commit_text_is_cleaned(self):
+        r = self.run_sh("up", PORT=str(self.port), BIND="0.0.0.0")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Bound to 0.0.0.0: anyone who can reach this machine", r.stdout)
+        self.assertIn("BIND=127.0.0.1", r.stdout)
+        r = self.run_sh("status")            # the stored BIND: still said, though the address shows 127.0.0.1
+        self.assertIn(f"running on http://127.0.0.1:{self.port}", r.stdout)
+        self.assertIn("Bound to 0.0.0.0", r.stdout)
+        self.run_sh("stop")
+        self.run_sh("up", PORT=str(self.port), BIND="127.0.0.1", FAKE_COMMIT="ab;rm -rf \x1b[31mcd")      # the stored BIND stays until a run names another
+        out = self.run_sh("status").stdout
+        self.assertNotIn("Bound to", out, "loopback says nothing")
+        self.assertIn("commit abrm-rf", out)       # the ; and the space are gone
+        self.assertNotIn("\x1b", out, "only letters, digits, dot, dash and underscore of the commit are printed")
 
     def test_a_board_that_was_never_started_is_asked_about_on_the_default_port(self):
         r = self.run_sh("status")

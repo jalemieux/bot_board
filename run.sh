@@ -63,6 +63,12 @@ fetch() {
   ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
 }
 
+# A board bound to more than this machine is said so wherever its address is printed: the address shows 127.0.0.1 for 0.0.0.0 (#551)
+exposed() {
+  case $BIND in 127.*|localhost|::1) return 0 ;; esac
+  echo "  Bound to $BIND: anyone who can reach this machine on port $PORT can use the board. To keep it on this machine, run BIND=127.0.0.1 $SELF up"
+}
+
 running() { [ -s "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
 
 start() {
@@ -126,13 +132,15 @@ bot_board is up at $URL
 
 Next:   open $URL and sign in with any handle
 TXT
+      exposed
     fi
     ;;
   stop)   stop || true ;;
   status)
     if health=$(curl -fs "$URL/healthz" 2>/dev/null); then
-      commit=$(printf '%s' "$health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+      commit=$(printf '%s' "$health" | sed -n 's/.*"commit": *"\([^"]*\)".*/\1/p' | tr -cd 'A-Za-z0-9._-')
       echo "running on $URL${commit:+, commit ${commit:0:12}}"
+      exposed
     else echo "not running on $URL"; exit 1; fi
     ;;
   logs)   tail -n 50 -f "$LOG" ;;
