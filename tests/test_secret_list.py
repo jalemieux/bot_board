@@ -33,7 +33,7 @@ class SecretList(unittest.TestCase):
     def test_an_address_with_credentials_a_query_or_a_fragment_is_refused_when_saved(self):
         # #762: the list shows the address in full, and the board's token goes to it
         for bad in ("http://user:pw@forge.example", "https://forge.example/?token=x", "http://forge.example/#x",
-                    "ftp://forge.example", "forge.example", "http://"):
+                    "ftp://forge.example", "forge.example", "http://", "http://[::1"):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     fleet.set_secret("FORGEJO_URL", bad, "jac")

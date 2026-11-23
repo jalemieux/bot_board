@@ -278,8 +278,8 @@ def secret_values() -> dict[str, str]:
 def forge_address_problem(url: str) -> str:
     """Why this is not an address the board will use for the forge, or "": http or https, a host, and no user, password,
     query or fragment (the token goes to this address, and the list shows it in full). One rule for the save and the use."""
-    u = urllib.parse.urlsplit(url)
     try:
+        u = urllib.parse.urlsplit(url)
         bad = u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.query or u.fragment
     except ValueError:
         bad = True
