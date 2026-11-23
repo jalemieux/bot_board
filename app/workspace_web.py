@@ -22,6 +22,7 @@ WS_CSS = """
 .ws #wsmenu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;font:12.5px var(--mono);color:var(--ink);background:none;border:0;border-radius:6px;padding:8px 10px;cursor:pointer}
 .ws #wsmenu button:hover,.ws #wsmenu a:hover{background:var(--sel)}
 .ws #wsmenu a{display:block;font:12.5px var(--mono);color:var(--dim);border-radius:6px;padding:8px 10px;text-decoration:none}
+.ws #wsmenu li.bw{display:none;border-top:1px solid var(--line);margin-top:4px;padding-top:4px}
 .ws #wsmenu .here-note,.ws #wsmenu .n{margin-left:auto;color:var(--dim);font-size:11px}
 .ws #wsmenu .n.ask{color:#fff;background:var(--accent);border-radius:9px;padding:0 6px}
 .ws .tabs{display:flex;gap:4px 18px}
@@ -65,7 +66,16 @@ WS_CSS = """
 .ws .acts a{display:inline-flex;align-items:center;min-height:44px;min-width:44px;justify-content:center}
 .ws .acts button,.dlg-actions button,.ws .roles h2 button,.ws .rolehead button{min-height:44px;min-width:44px;font-size:16px}
 .dlg select{min-height:44px;font-size:16px}
-.ws .wsw>button{min-height:44px;font-size:16px}.ws #wsmenu button{min-height:44px}.ws .tabs a{padding:12px 2px}}
+.ws .wsw>button{min-height:44px;font-size:16px}.ws .tabs a{padding:12px 2px}
+.ws #wsmenu:not([hidden]){position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border-radius:14px 14px 0 0;
+padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:60;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
+.ws #wsmenu:not([hidden])::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-1}
+.ws #wsmenu button,.ws #wsmenu a{min-height:48px;font-size:16px}.ws #wsmenu a{display:flex;align-items:center}.ws #wsmenu li.bw{display:block}
+.ws pre.diff{max-height:50vh}
+.ws .kb-side{max-width:none;flex-basis:100%}.ws .kb-reader{flex-basis:100%}
+.ws .kb.reading .kb-side{display:none}.ws .kb:not(.reading) .kb-reader{display:none}.ws .kb-back{display:inline-flex;align-items:center;min-height:44px}}
+.ws .kb-back{display:none;background:none;color:var(--accent);padding:0 4px;font:600 13px var(--mono)}
+.ws .kb:not(.reading) .kb-back{display:none}
 .ws .sub{color:var(--dim);font-size:13px}
 .ws section{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin:0 0 14px}
 .ws section h2{margin:0 0 8px;font-size:15px;text-transform:none;letter-spacing:0;display:flex;gap:10px;align-items:baseline}
@@ -257,6 +267,7 @@ function workspaceBar(current, tab) {
         x.name || x.slug, x.slug === current ? h('span', {'class': 'here-note', text: 'you are here'}) : n ? h('span', {'class': 'n ask', text: String(n), 'aria-label': n + ' waiting on you'}) : null)));
     });
     menu.appendChild(h('li', null, h('a', {href: '/workspaces?all', text: 'All workspaces'})));
+    menu.appendChild(h('li', {'class': 'bw'}, h('a', {href: '/machines', text: 'Board-wide'})));
     total.textContent = others; total.hidden = !others;
   };
   var list = [];
@@ -754,7 +765,10 @@ function knowledgeSection(w) {
   var search = h('input', {type: 'search', placeholder: 'search the documents…', 'aria-label': 'Search the documents'});
   var tree = h('nav', {'class': 'kb-tree', 'aria-label': 'Documents'});
   var reader = h('article', {'class': 'kb-reader'}, h('p', {'class': 'sub', text: 'Pick a document.'}));
-  sec.appendChild(h('div', {'class': 'kb'}, h('div', {'class': 'kb-side'}, search, tree), reader));
+  var back = h('button', {type: 'button', 'class': 'kb-back', text: '‹ Knowledge'});
+  var kbBox = h('div', {'class': 'kb'}, h('div', {'class': 'kb-side'}, search, tree), back, reader);
+  back.addEventListener('click', function () { kbBox.classList.remove('reading'); });      // on a phone the tree and the reader are two screens
+  sec.appendChild(kbBox);
   var docs = [], current = null;
   var enc = function (p) { return p.split('/').map(encodeURIComponent).join('/'); };
   function drawTree(list, q) {
@@ -784,7 +798,7 @@ function knowledgeSection(w) {
     });
   }
   function show(path, rev) {
-    current = path;
+    current = path; kbBox.classList.add('reading');
     Array.prototype.forEach.call(tree.querySelectorAll('.kb-item'), function (b) { b.classList.toggle('on', b.dataset.path === path); });
     history.replaceState(null, '', '#doc=' + path + (rev ? '@' + rev : ''));
     reader.replaceChildren(h('p', {'class': 'sub', text: 'Loading ' + path + '…'}));
