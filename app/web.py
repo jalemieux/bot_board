@@ -984,8 +984,13 @@ var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head')
 // rewrite. threadStick, set by the reader's own scrolls, says whether they are at the bottom; an
 // image load, or any change to the list, re-pins to the bottom only while it is.
 var threadStick = true;
-plist.addEventListener('scroll', function(){ threadStick = plist.scrollHeight - plist.scrollTop - plist.clientHeight < 40; });
-function pinThread(){ if (threadStick) plist.scrollTop = plist.scrollHeight; }
+// threadHold: the panel was opened at one message (focusInThread). It keeps that message until the reader
+// scrolls or clicks in the panel; a scroll event the page caused itself, a late image or a refresh must not
+// count as the reader being at the bottom and pull the view down to the last message (jac, thread 17880).
+var threadHold = false;
+['wheel', 'touchstart', 'pointerdown', 'keydown'].forEach(function(ev){ plist.addEventListener(ev, function(){ threadHold = false; }, {passive: true}); });
+plist.addEventListener('scroll', function(){ if (!threadHold) threadStick = plist.scrollHeight - plist.scrollTop - plist.clientHeight < 40; });
+function pinThread(){ if (threadStick && !threadHold) plist.scrollTop = plist.scrollHeight; }
 plist.addEventListener('load', pinThread, true);
 new MutationObserver(pinThread).observe(plist, {childList: true, subtree: true});
 // ?solo: this window shows one thread and nothing else (opened by the ↗ button).
@@ -1786,7 +1791,7 @@ stream.addEventListener('click', function(ev){
 // message: the panel scrolls to it and it flashes once. Without one, the panel opens at the newest reply.
 function focusInThread(msgId){
   var t = document.getElementById('t' + msgId); if (!t) return false;
-  threadStick = false;     // the reader came for this message: a new reply must not scroll it away
+  threadStick = false; threadHold = true;     // the reader came for this message: a new reply must not scroll it away
   t.scrollIntoView({block: 'center'});
   t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash');
   setTimeout(function(){ t.classList.remove('flash'); }, 2600);
@@ -1824,7 +1829,7 @@ async function openThread(id, push, focusMsg){
     document.querySelectorAll('.msg.focus').forEach(function(x){ x.classList.remove('focus'); });
     document.querySelectorAll('.replies.open').forEach(function(x){ x.classList.remove('open'); });
     var rootEl = $('#m' + d.thread_id); if (rootEl) { rootEl.classList.add('focus'); var rb = $('.replies', rootEl); if (rb) rb.classList.add('open'); }
-    plist.scrollTop = plist.scrollHeight;
+    plist.scrollTop = plist.scrollHeight; threadHold = false;
     if (focusMsg) focusInThread(focusMsg);
   } catch (e) { alert('Could not load thread #' + id + ': ' + e.message); }
 }
@@ -1835,7 +1840,7 @@ function renderThreadList(){
   plist.innerHTML = messageHtml(ms[0], true) +
     '<div class="count" id="tcount">' + replies.length + (replies.length === 1 ? ' reply' : ' replies') + '</div>' +
     foldRuns(replies, boardPref(), me).map(function(seg){ return seg.fold ? foldHtml(seg.fold, false) : messageHtml(seg.msg, true); }).join('');
-  plist.scrollTop = plist.scrollHeight; threadStick = true;
+  plist.scrollTop = plist.scrollHeight; threadStick = true; threadHold = false;
 }
 // A reply arriving in the open thread: a card, or the next message of an open or new @board strip.
 function appendToThread(m){
@@ -2282,7 +2287,7 @@ function route(){
   if (m) return openChannel(decodeURIComponent(m[1]), false);
   if (path === '/unread') return openUnread(false);
   if (path === '/mentions') return openMentions(false);
-  if (t) return openThread(+t[1], false);
+  if (t) { var hm = location.hash.match(/^#m(\d+)$/); return openThread(+t[1], false, hm ? +hm[1] : 0); }   // /t/<id>#m<msg> opens at that message
   if (matchMedia('(max-width:700px)').matches) { S.mlist = true; S.view = null; return renderRail(); }   // a phone starts on the Channels screen
   var first = S.channels.filter(function(b){ return S.unread[b.slug]; })[0] || S.channels[0];
   if (first) openChannel(first.slug, false);
