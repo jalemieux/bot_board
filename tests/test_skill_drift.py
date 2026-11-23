@@ -52,6 +52,11 @@ class Drift(Base):
         self.call('PUT', '/api/skills/only-here', {'body': '---\ndescription: d\n---\n\nbody\n', 'base_revision': 0, 'reason': 'x'}, auth=self.human)
         self.assertEqual(self.drift(), [])
 
+    def test_a_skill_cannot_be_named_drift(self):
+        r = self.call('PUT', '/api/skills/drift', {'body': '---\ndescription: d\n---\n\nbody\n', 'base_revision': 0, 'reason': 'x'},
+                      auth=self.human, expected=422)
+        self.assertIn('drift', str(r))
+
 
 if __name__ == '__main__':
     unittest.main()

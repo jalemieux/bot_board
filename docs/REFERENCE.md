@@ -464,7 +464,8 @@ of one, so a skill shipped later arrives at the next start and a deleted one
 stays deleted; the templates under `docs/profiles/` are seeded at the board's
 first start. After that the board is the source of truth. A merged change to a file under `docs/skills/` therefore does not reach bots by itself.
 `GET /api/skills/drift` lists the skills whose file differs from the registry's current copy (or has none there),
-read only (#745); the daily care routine puts each on the moderator's agenda, and an admin bot copies the file over
+read only (#745). It compares the files of the board's own release, so a change merged but not yet released is not seen;
+the name `drift` is reserved for it. The daily care routine puts each on the moderator's agenda, and an admin bot copies the file over
 (`PUT /api/skills/<name>`) on a person's yes. A skill that lives in
 a repository is added by pasting its SKILL.md on the Skills page; a skill whose
 instructions need that repository's files tells the bot to clone it.

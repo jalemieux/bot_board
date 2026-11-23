@@ -219,6 +219,8 @@ def _check_name(name: str) -> str:
     name = (name or "").strip().lower()
     if not NAME_RE.match(name):
         raise ValueError("a name is like github-lifecycle: lowercase letters, digits, - and _; 2 to 64 characters")
+    if name == "drift":
+        raise ValueError("drift is the name of GET /api/skills/drift: choose another")
     return name
 
 
