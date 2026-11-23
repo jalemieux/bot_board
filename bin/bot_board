@@ -62,13 +62,15 @@ PLIST=$HOME/Library/LaunchAgents/com.bot-board.keeper.plist
 # the bots have the keeper's service (stop stops it, uninstall removes it)
 has_board() { [ -d "$DATA/venv" ]; }
 has_bots() { [ -e "$UNIT" ] || [ -e "$PLIST" ]; }
+# `keeper install` exits 75 when this machine has no systemd user manager: it said what to do, and that is not a failure of start, restart or update (#549)
+keeper_install() { local rc=0; "$BOT" keeper install || rc=$?; [ "$rc" = 75 ] || return $rc; }
 running_bots() { "$BOT" ps --tsv 2>/dev/null | cut -f1; }
 keeper_stop() {
-  if [ -e "$UNIT" ]; then systemctl --user stop bot-board-keeper
+  if [ -e "$UNIT" ]; then systemctl --user stop bot-board-keeper 2>/dev/null || true      # no systemd here (#549): nothing to stop
   elif [ -e "$PLIST" ]; then launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true; fi
 }
 keeper_up() {
-  if [ -e "$UNIT" ]; then systemctl --user is-active -q bot-board-keeper
+  if [ -e "$UNIT" ]; then systemctl --user is-active -q bot-board-keeper 2>/dev/null
   else launchctl print "gui/$(id -u)/com.bot-board.keeper" >/dev/null 2>&1; fi
 }
 
@@ -263,7 +265,9 @@ install_summary() {
   add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
   if [ -n "$BOARD_ON" ]; then echo "bot_board is up at $url"; else echo "bot_board is installed; the board is at $url"; fi
   [ -z "$BOARD_ON" ] || add "the board, in $(tilde "$DATA") (data: board.db, back it up; log: board.log)"
-  if [ -n "$BOTS_ON" ]; then
+  if [ -n "$BOTS_ON" ] && ! has_bots; then      # no keeper service: a box with no systemd user manager (#549)
+    add "no keeper service: this machine has no systemd user manager. Run it yourself: $(tilde "$BOT") keeper run"
+  elif [ -n "$BOTS_ON" ]; then
     note=$(sed -n 's/^# default bot: //p' "$CFG_FILE" 2>/dev/null | tail -1)
     harness=$(sed -n 's/^KEEPER_DEFAULT_BOT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1)
     # what the bots can reach stays on the screen whatever the default bot's state: it is the isolation notice (#670)
@@ -405,7 +409,7 @@ case $CMD in
     [ -z "$BOARD_ON" ] || board up        # up stops a running board first
     [ -z "$BOARD_ON" ] || ! has_native_forgejo || native_forgejo start || say "Forgejo did not start: $SRC/deploy/forgejo-native start shows why"
     if [ -n "$BOTS_ON" ]; then
-      "$BOT" keeper install
+      keeper_install
       if [ "$CMD" = restart ]; then for h in $(running_bots); do "$BOT" restart "$h"; done; fi
     fi ;;
   stop)
@@ -435,7 +439,7 @@ case $CMD in
     if [ "$before" = "$after" ]; then say "nothing new: still on ${after:0:12}"; exit 0; fi
     # run.sh update prints the one line (the commit and the address) when the board restarts on the new code (#766)
     if [ -n "$BOARD_ON" ]; then BOT_BOARD_UPDATING=1 board update; else say "updated ${before:0:12} -> ${after:0:12}; restarting on it"; fi
-    [ -z "$BOTS_ON" ] || "$BOT" keeper install ;;
+    [ -z "$BOTS_ON" ] || keeper_install ;;
   uninstall)
     # --purge deletes the keeper's token: tell the board first, while it is still up even
     # when it runs here, so the name is free and the bots are retired (#279)

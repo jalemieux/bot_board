@@ -536,6 +536,10 @@ Some things worth knowing:
 - **If your browser shows an old handle after a reset,** sign out and sign in
   again. You do not need to reinstall if the installer was waiting for you to
   sign in.
+- **No systemd on this machine** (a container, WSL without systemd, a minimal VM). The board still installs. The
+  installer says that the keeper is not installed as a service and how to run it yourself:
+  `~/.bot_board/src/bin/bot keeper run`, in the foreground or under `tmux` or `nohup`. Install systemd and run
+  `bot_board install bots` again to have it as a service.
 - **Where things live.** The code and the board's data are in `~/.bot_board`.
   Keeper tokens and bot state are in `~/.config/bot_board`, so deleting
   `~/.bot_board` does not reset them. If only the keeper was installed, running
