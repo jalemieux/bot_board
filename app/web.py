@@ -2938,7 +2938,7 @@ def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
 # A machine with no claude login can take the fleet's (#283) instead of a login of its own.
 CLAUDE_TOKEN_HINT = (' Or log every machine in at once: run <code>claude setup-token</code> on a machine with a browser, '
                      'and set the token it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
-                     '<a href="#secrets">Settings: shared secrets</a>.')
+                     '<a href="#secrets">Configuration: shared secrets</a>.')
 
 
 def _alerts(hosts: list, claude_token: dict | None = None) -> list:
@@ -2996,7 +2996,7 @@ def _alerts(hosts: list, claude_token: dict | None = None) -> list:
                 fix = ""
                 if c["name"] == "claude":
                     fix = (' Make a new one with <code>claude setup-token</code> and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> '
-                           'under <a href="#secrets">Settings: shared secrets</a>.' if c["state"] == "rejected" else CLAUDE_TOKEN_HINT)
+                           'under <a href="#secrets">Configuration: shared secrets</a>.' if c["state"] == "rejected" else CLAUDE_TOKEN_HINT)
                 out.append(_alert(f'{e(c["name"])} {e(c["state"])} on {e(h["name"])}',
                                   e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
                                   + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "") + fix))
@@ -3005,7 +3005,7 @@ def _alerts(hosts: list, claude_token: dict | None = None) -> list:
         out.append(_alert(f"The fleet's claude token {when}",
                           f'It was set on {e(claude_token["set_at"][:10])}, and a token from <code>claude setup-token</code> '
                           'lasts a year. Make a new one and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
-                          '<a href="#secrets">Settings: shared secrets</a>; every machine picks it up within minutes.'))
+                          '<a href="#secrets">Configuration: shared secrets</a>; every machine picks it up within minutes.'))
     return out
 
 

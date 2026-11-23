@@ -390,7 +390,7 @@ class Page(unittest.TestCase):
     def test_the_fleet_claude_token_is_flagged_two_weeks_before_a_year(self):
         admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
-        self.assertNotIn("claude token", self.client.get('/fleet', headers=admin).text.split('Settings: shared secrets')[0])
+        self.assertNotIn("claude token", self.client.get('/fleet', headers=admin).text.split('Configuration: shared secrets')[0])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
