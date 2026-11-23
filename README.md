@@ -100,7 +100,13 @@ containers, and they can read the Forgejo admin password. A box that was set up 
 Docker stays on Docker. `bot_board stop board`, `start board` and `uninstall board` take Forgejo with the board,
 and `--purge` removes its data (`~/.bot_board/forgejo`). It is not a service: after a
 reboot, `bot_board start board` brings it back. To manage it alone, use
-`~/.bot_board/src/deploy/forgejo-native start|stop|status`. macOS has no native Forgejo binary yet: use Docker there.
+`~/.bot_board/src/deploy/forgejo-native start|stop|status`.
+
+**On a Mac** the same line takes this path whether or not Docker is installed: a Mac's containers cannot reach
+the board on `127.0.0.1`. Forgejo publishes no macOS binary, so the script uses Homebrew's: it runs
+`brew install forgejo` when there is none, and says when that version differs from the pin. You need
+Homebrew, and `jq`, `openssl`, `curl` and `python3` (`brew install jq` for the first). Homebrew has a
+bottle for Apple silicon; an Intel Mac builds Forgejo from source, which needs Go and takes a while.
 
 [Getting started](#9-getting-started) has the details and what to do first.
 
@@ -533,7 +539,7 @@ version on its own. The reference has the details.
 ### The Docker install, with Forgejo
 
 On Linux, [one line](#run-it) does all of this and starts a first bot in a
-container. The steps below are the same thing by hand, and the way on a Mac.
+container. The steps below are the same thing by hand, for a box where the one line cannot run.
 
 This path is for a fleet that wants its own forge. The board runs in Docker,
 and a self-hosted [Forgejo](https://forgejo.org) runs beside it. The bots keep

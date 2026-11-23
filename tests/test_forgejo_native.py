@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "deploy" / "forgejo-native"
 FAKE = """#!/usr/bin/env python3
 import http.server, re, sys
+if "--version" in sys.argv:
+    print("forgejo version 17.0.2"); sys.exit(0)
 ini = open(sys.argv[sys.argv.index("--work-path") + 1] + "/custom/conf/app.ini").read()
 port = int(re.search(r"^HTTP_PORT *= *(\\d+)", ini, re.M).group(1))
 class H(http.server.BaseHTTPRequestHandler):
@@ -86,6 +88,46 @@ class ForgejoNative(unittest.TestCase):
         self.assertIn("pinned checksum", r.stderr)
         self.assertFalse(Path(self.tmp.name, "fj/forgejo-17.0.2").exists())
 
+
+
+@unittest.skipUnless(os.getuid() != 0, "the script is not for root")
+class ForgejoNativeOnAMac(unittest.TestCase):
+    """macOS (#651): the binary is Homebrew's, found on the PATH, and a process is found by `ps`. Faked on any machine:
+    `uname` says Darwin, and the Forgejo on the PATH is the fake server."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        t = Path(self.tmp.name)
+        self.bin = t / "bin"; self.bin.mkdir()
+        (self.bin / "uname").write_text('#!/bin/sh\nif [ "$1" = -m ]; then echo arm64; else echo Darwin; fi\n')
+        (self.bin / "uname").chmod(0o755)
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); self.port = s.getsockname()[1]; s.close()
+        self.env = {**os.environ, "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FORGEJO_DIR": str(t / "fj"),
+                    "FORGEJO_PORT": str(self.port), "BOARD": "http://10.1.2.3:8080"}
+        self.addCleanup(lambda: self.run_cmd("stop"))
+
+    def run_cmd(self, *a):
+        return subprocess.run([str(SCRIPT), *a], env=self.env, capture_output=True, text=True, timeout=60)
+
+    def test_it_runs_the_forgejo_on_the_path_without_downloading_and_stops_it(self):
+        (self.bin / "forgejo").write_text(FAKE); (self.bin / "forgejo").chmod(0o755)
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("downloading", r.stdout)
+        self.assertNotIn("the pin is", r.stdout, "17.0.2 is the pin")
+        self.assertIn(f"FORGEJO_BIN={self.bin}/forgejo ", self.run_cmd("env").stdout)
+        self.assertIn("already running", self.run_cmd("start").stdout)
+        self.assertEqual(self.run_cmd("stop").returncode, 0)
+        self.assertEqual(self.run_cmd("status").returncode, 1)
+
+    def test_a_different_version_is_said_not_refused(self):
+        (self.bin / "forgejo").write_text(FAKE.replace("17.0.2", "17.1.0")); (self.bin / "forgejo").chmod(0o755)
+        r = self.run_cmd("start"); self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("this Mac's Forgejo is 17.1.0, the pin is 17.0.2", r.stdout)
+
+    def test_without_forgejo_or_homebrew_it_says_what_to_install(self):
+        env = {**self.env, "PATH": f"{self.bin}{os.pathsep}/usr/bin{os.pathsep}/bin"}
+        r = subprocess.run([str(SCRIPT), "start"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("install Homebrew", r.stderr)
 
 if __name__ == "__main__":
     unittest.main()
