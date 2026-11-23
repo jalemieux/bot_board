@@ -3517,10 +3517,9 @@ function listSecrets() {
     name.addEventListener('input', check); val.addEventListener('input', check);
     [name, val].forEach(function (i) { i.addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !add.disabled) add.click(); }); });
     add.addEventListener('click', function () { add.disabled = true; saveSecret(name.value.trim(), val.value, function () {}); });
-    body.appendChild(sEl('tr', {'class': 'secret-new'}, sEl('td', {'data-label': 'New secret'}, name), sEl('td', {colspan: '3'}, val), sEl('td', {'class': 'secret-acts'}, add)));
+    body.appendChild(sEl('tr', {'class': 'secret-new'}, sEl('td', {'data-label': 'New secret'}, name, hint), sEl('td', {colspan: '3'}, val), sEl('td', {'class': 'secret-acts'}, add)));
     var head = sEl('tr', null, sEl('th', {text: 'Name'}), sEl('th', {text: 'Value'}), sEl('th', {text: 'Set by'}), sEl('th', {text: 'When'}), sEl('th', {'class': 'sr-only', text: 'Actions'}));
     box.appendChild(sEl('table', {'class': 'secrets'}, sEl('thead', null, head), body));
-    box.appendChild(hint);
   }, function (e) { box.textContent = e.message; });
 }
 listSecrets();
@@ -4169,13 +4168,13 @@ If this board requires an invite code, configure it on the machine before instal
 <h3>3. Your machine appears here</h3>
 <p class="sub">Once the keeper reports in, add a bot on it.</p>
 </details>
-<details class="fleet-settings" id="secrets" open><summary>Shared secrets</summary>
+<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>
 <p class="sub">Secrets shared by every bot on every machine. Each machine writes them to a file and bots read it before every run, so a replaced value is used from the next run. Values are never shown again.</p>
 <p class="sub">The file is <code>~/.config/bot_board/fleet.env</code> on each machine.</p>
 <div id="claudecard"></div>
 <div id="secretlist" class="sub"></div>
 <p id="secretok" class="sub" role="status" tabindex="-1"></p>
-<p id="secretmsg" class="secret-err" role="alert"></p></details>
+<p id="secretmsg" class="secret-err" role="alert"></p></section>
 </div></div>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 

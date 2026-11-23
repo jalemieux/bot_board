@@ -212,6 +212,9 @@ class FleetPage(unittest.TestCase):
         self.assertIn("button.primary{background:var(--accent)", page)
         self.assertIn("name === 'FORGEJO_URL'", page)
         self.assertIn("type: isUrl(x.name) ? 'text' : 'password'", page)
+        self.assertIn('<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>', page)
+        self.assertNotIn('<summary>Shared secrets', page)
+        self.assertIn("sEl('td', {'data-label': 'New secret'}, name, hint)", page)
         self.assertIn('<p id="secretok" class="sub" role="status" tabindex="-1">', page)
 
     def test_credentials_and_empty_machine_states(self):
