@@ -317,8 +317,11 @@ container_run() {
   board_host=$(printf '%s' "${BOARD:-}" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
   if [ "$(uname -s)" = Darwin ]; then
     [ -n "$loop_host" ] || loop_host=$([ "${BOT_RUNTIME##*/}" = podman ] && echo host.containers.internal || echo host.docker.internal)
-  elif [ -z "$loop_host" ]; then
-    case $board_host in 127.*|localhost|"[::1]"|::1) host_net=1 ;; esac
+  elif [ -z "$loop_host" ] && [ -z "$host_net" ]; then
+    case $board_host in 127.*|localhost|"[::1]"|::1)
+      host_net=1
+      [ "$mode" != bot ] || echo "bot: BOARD is $BOARD, on this machine's loopback: the container runs on the host network, so it can reach any service on 127.0.0.1. Set BOARD to the box's tailnet name to keep it on a bridge." >&2 ;;
+    esac
   fi
   if [ "$mode" = bot ]; then
     if [ -n "$host_net" ]; then

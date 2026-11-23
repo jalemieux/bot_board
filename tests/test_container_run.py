@@ -527,6 +527,9 @@ class ContainerRun(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(run[run.index("--network") + 1], "host", run)
         self.assertFalse(any(a == "--add-host" for a in run), run)
+        self.assertIn("runs on the host network", r.stderr)      # chosen by the runner, so it says so
+        r, run = self.run_loopback("Linux", BOT_CONTAINER_HOST_NETWORK="1")
+        self.assertNotIn("runs on the host network", r.stderr)    # set by hand: no message
 
     def test_a_loopback_board_needs_no_setting_on_a_mac_it_is_reached_as_the_host(self):      # #673
         r, run = self.run_loopback("Darwin")
