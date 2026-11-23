@@ -59,13 +59,15 @@ class WorkspaceIndex(unittest.TestCase):
         ws = self.make()
         ada = self.bot(ws)
         text = registry.identity_text(ada, "http://board.example:8080")
-        self.assertIn("It has no repository linked yet", text)
+        self.assertIn("It has no Forgejo repository linked on the board", text)
+        self.assertIn("`INDEX.md` or `code/repo.md`", text, "a repository the field cannot hold, on GitHub, is named there")
+        self.assertNotIn("does not know which", text)
         self.assertIn("PUT http://board.example:8080/api/workspaces/proj/repository", text)
         workspaces.set_repository("proj", "fleet/proj", self.jac)
         text = registry.identity_text(ada, "http://board.example:8080")
         self.assertIn("Its repository is `fleet/proj`", text)
         self.assertIn("`repository` field of `GET http://board.example:8080/api/workspaces/proj`", text)
-        self.assertNotIn("no repository linked", text)
+        self.assertNotIn("repository linked on the board", text)
 
     def test_the_guide_gives_the_address_when_the_forge_has_one(self):
         ws = self.make()

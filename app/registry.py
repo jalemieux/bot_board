@@ -747,8 +747,9 @@ def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
             lines += ([f"Its repository is `{repo}`" + (f", at {url}" if url else "") + f". It is the `repository` field of {where}; "
                        "what a bot needs to work in it (build, tests, conventions) goes in `code/repo.md` in the shared memory.", ""]
                       if repo else
-                      ["It has no repository linked yet, so the board does not know which one this team works in. A human or an admin bot "
-                       f"links it on the Team tab or with `PUT {api}/workspaces/{ws['slug']}/repository`.", ""])
+                      ["It has no Forgejo repository linked on the board. A team whose code is elsewhere, on GitHub for one, names its repository in "
+                       f"`INDEX.md` or `code/repo.md` in the shared memory: read them before you ask. To link a Forgejo repository, a human or an admin bot "
+                       f"uses the Team tab or `PUT {api}/workspaces/{ws['slug']}/repository`.", ""])
         lines += _agreement_lines(ws, api)
     lines += _new_work_lines(agent["handle"])
     profile = profile_of(agent["handle"])
