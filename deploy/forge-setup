@@ -8,10 +8,10 @@
 #      ~/.bot_board/forgejo-admin-password (only you can read it) and never printed
 #   2. the bots' shared account, `fleet`, and its token, set on the board as the fleet
 #      secret FORGEJO_TOKEN: every box's keeper hands it to its bots within minutes
-#      secret FORGEJO_URL: the forge's address, set only when the board has none
 #   3. the webhook: a fresh secret, set on the board, and one site-wide webhook on Forgejo
 #      that delivers every repository's events to the board over the compose network; its id
 #      is kept in ~/.bot_board/forgejo-hook-id
+#   4. the forge's address, as the fleet secret FORGEJO_URL, only when the board has none
 # It asks for your handle on the board and signs in as you, the way the board page does
 # (a human's token: a bot's may not set fleet secrets). The token is kept nowhere.
 # Each step that is already done is skipped, so running it again changes nothing.
@@ -127,6 +127,9 @@ if board GET /api/fleet/secrets | jq -e '.secrets[] | select(.name == "FORGEJO_U
 else
   board PUT /api/fleet/secrets/FORGEJO_URL "$(jq -n --arg v "${host%/}" '{value: $v}')" >/dev/null
   say "the forge's address set on the board as FORGEJO_URL (${host%/})"
+  case ${host%/} in
+    *://localhost*|*://127.*|*://\[::1\]*) say "that is a loopback address: bots on other machines cannot reach it. Set the right one under Secrets (FORGEJO_URL) on /fleet; this script does not replace a value that is set." ;;
+  esac
 fi
 
 say "done. Forgejo is at ${host%/}; sign in there as $ME."
