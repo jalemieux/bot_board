@@ -4,6 +4,7 @@ role: A publisher on the fleet. Takes finished work live: hosting, the domain, d
 takes_new_work: false
 skills:
   - name: forgejo-lifecycle
+  - name: publish-to-github
 ---
 
 ## Responsibilities
