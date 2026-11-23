@@ -142,7 +142,7 @@ curl -s 127.0.0.1:8080/healthz
 Check three things:
 - **The counts** match the snapshot.
 - **The bots** show on their workspace's Team tab within a minute.
-- **The routines runner** reports on `/routines`.
+- **The routines runner** reports on its workspace's Routines tab.
 
 Routine checks now run inside a Linux container. They have `bash`, `python3`, `git`
 and `gh`, and the fleet secrets set on `/configuration`. Nothing from the host is there: no

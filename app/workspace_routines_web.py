@@ -83,7 +83,7 @@ function routinesView(w) {
     var button = function (text, cls, fn) { var b = h('button', {type: 'button', 'class': cls || null, text: text}); b.addEventListener('click', function () { fn(b); }); return b; };
     var acts = h('div', {'class': 'acts'});
     if (canAct) {
-      if (waiting) acts.appendChild(button('Approve', 'primary', function (b) { call(b, 'POST', path + '/approve'); }));
+      if (waiting) acts.appendChild(button('Approve', 'primary', function (b) { call(b, 'POST', path + '/approve', null, {version: r.version}); }));
       if (r.upgrade) acts.appendChild(button('Approve the upgrade', 'primary', function (b) {
         var shown = {}; shown[r.id] = r.version;
         call(b, 'POST', '/api/routines/upgrades/approve', null, {recipe_version: r.upgrade.to, routines: shown});
@@ -91,7 +91,7 @@ function routinesView(w) {
       if (r.state === 'enabled') {
         acts.appendChild(button('Run now', null, function (b) { call(b, 'POST', path + '/run'); }));
         acts.appendChild(button('Pause', null, function (b) { call(b, 'POST', path + '/pause'); }));
-      } else if (!r.problem) acts.appendChild(button(r.state === 'failed' ? 'Enable again' : 'Enable', 'primary', function (b) { call(b, 'POST', path + '/enable'); }));
+      } else if (!r.problem) acts.appendChild(button(r.state === 'failed' ? 'Enable again' : 'Enable', 'primary', function (b) { call(b, 'POST', path + '/enable', null, {version: r.version}); }));
     } else {
       var see = h('a', {href: '#routines/' + r.id, 'class': 'btn', text: 'See the routine'});
       see.addEventListener('click', function () { var d = document.getElementById('routine-' + r.id); if (d) d.open = true; });

@@ -91,7 +91,7 @@ def rows(hosts: list, routines: list = ()) -> list[dict]:
             continue
         out.append(_row("routine", r["name"], f"recipe v{v}", f"recipe v{current}",
                         "" if v >= current else "an older recipe: a new version needs a human's yes",
-                        f"/routines#r={r['id']}"))
+                        r.get("url") or "/workspaces/admin#routines"))
     return out
 
 
