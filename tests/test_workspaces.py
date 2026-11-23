@@ -1,5 +1,6 @@
 """Workspaces: the isolation boundary, its channels, its bots, its knowledge base, and the
 admin workspace that seeds the others. Run with python -m unittest discover -s tests."""
+import json
 import os
 import sqlite3
 import tempfile
@@ -268,6 +269,55 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
         self.assertIn('z-index:5', web.TOPNAV_CSS)
         for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # one function writes every sheet
             self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', text)
+
+    def test_the_page_and_the_server_refuse_the_same_characters(self):
+        # #707: the rule is a class, not a list, and the two copies must agree on every code point
+        import shutil, subprocess, unicodedata
+        from app import workspace_web, workspaces
+        if not shutil.which('node'):
+            self.skipTest('node is needed')
+        js = workspace_web.WS_JS
+        code = js[js.index('var HIDDEN'):js.index('function showHidden(')]
+        script = code + """
+let out = [];
+for (let cp = 0; cp <= 0x10FFFF; cp++) {
+  if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+  HIDDEN.lastIndex = 0;
+  if (HIDDEN.test(String.fromCodePoint(cp))) out.push(cp);
+}
+console.log(JSON.stringify(out));
+"""
+        r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        page = set(json.loads(r.stdout))
+        server = {cp for cp in range(0x110000) if not 0xD800 <= cp <= 0xDFFF and workspaces.hidden_char(chr(cp)) and chr(cp) not in '\n\t'}
+        # the two Unicode databases may differ by a release for a code point Python does not know yet: those are unassigned here
+        skew = {cp for cp in page ^ server if unicodedata.category(chr(cp)) == 'Cn'}
+        self.assertEqual(sorted((page ^ server) - skew), [], 'the page and the server refuse different characters')
+        for cp in (0x1B, 0x7F, 0x80, 0xAD, 0x200B, 0x202E, 0xFEFF, 0xFFF9, 0x180B, 0x1D173, 0x13430, 0x17B4, 0x034F, 0x3164, 0x2800, 0xFE0F, 0xE0041):
+            self.assertIn(cp, server, hex(cp))
+        for cp in (0x20, 0x41, 0xE9, 0x2014, 0x4E2D, 0x1F600):      # text, an accent, a dash, a CJK character, an emoji
+            self.assertNotIn(cp, server, hex(cp))
+        self.assertIsNone(workspaces.hidden_char('line one\n\tline two'))
+
+    def test_a_windows_line_ending_is_stored_as_a_newline_and_a_lone_carriage_return_is_refused(self):
+        # #707: a carriage return is a control character; only the first half of CRLF is allowed, and it is not stored
+        path = '/api/workspaces/game/knowledge/team/agreement.md'
+        rev = self.call('GET', path, auth=self.human)['document']['revision']
+        got = self.call('PUT', path, {'body': '# Team agreement\r\n\r\n## Merge\r\n\r\nA human merges.\r\n', 'base_revision': rev,
+                                      'reason': 't', 'sources': []}, auth=self.human)
+        self.assertEqual(got['document']['body'], '# Team agreement\n\n## Merge\n\nA human merges.\n')
+        self.call('PUT', path, {'body': '# Team agreement\rA lone return', 'base_revision': got['document']['revision'], 'reason': 't',
+                                'sources': []}, auth=self.human, expected=422)
+
+    def test_every_team_document_the_board_ships_passes_the_rule(self):
+        # #707: `seed` and `apply` write docs/team/ through kb_put, so a character the rule refuses there would break them
+        from app import workspaces
+        root = Path(__file__).resolve().parents[1] / 'docs' / 'team'
+        files = sorted(root.rglob('*.md'))
+        self.assertTrue(files)
+        for f in files:
+            self.assertIsNone(workspaces.hidden_char(f.read_text(encoding='utf-8').replace('\r\n', '\n')), str(f))
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']

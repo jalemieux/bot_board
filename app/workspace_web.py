@@ -315,8 +315,9 @@ function teamView(w) {
 // with `<!-- base: <revision> -->` on its first line. The page, not the bot, computes the difference; only a human's Apply writes
 // the agreement, with the text this page showed.
 function parseProposal(body) {      // the one place the base revision is read; a missing or malformed one is no base
-  var m = /^<!--\s*base:\s*(\d+)\s*-->[ \t]*\n?/.exec(body);
-  return m ? {base: parseInt(m[1], 10), text: body.slice(m[0].length)} : {base: null, text: body};
+  var m = /^<!--\s*base:\s*(\d+)\s*-->[ \t]*\r?\n?/.exec(body);
+  var crlf = function (t) { return t.replace(/\r\n/g, '\n'); };      // the server stores a Windows line ending as a newline
+  return m ? {base: parseInt(m[1], 10), text: crlf(body.slice(m[0].length))} : {base: null, text: crlf(body)};
 }
 // The revision a first agreement is written over: 0 for a workspace that never had one, else the last revision of one that was deleted.
 function agreementRevision(w) {
@@ -361,11 +362,12 @@ function proposalDocs(w) {
     })).then(function (list) { return list.sort(function (a, b) { return b.tid - a.tid; }); });      // newest first
   }, function () { return []; });
 }
-// Characters a reader cannot see, that could hide an instruction in a line that looks clean: zero-width and bidi controls,
-// the soft hyphen, the byte-order mark, the Unicode tag characters, variation selectors, the Hangul fillers and the blank
-// braille pattern (the server refuses the same set, workspaces.py HIDDEN_CHARS). The agreement reaches every bot, so a proposal with one
-// is shown with the character spelled out and cannot be applied.
-var HIDDEN = /[\u00AD\u034F\u061C\u115F\u1160\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFE00-\uFE0F\uFEFF\uFFA0]|[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+// Characters a reader cannot see, that could hide an instruction in a line that looks clean. A list never finishes, so the rule is the
+// class (#707): every character of Unicode category Cc or Cf except a newline and a tab, plus the few in neither that show nothing
+// (the combining grapheme joiner, the Hangul fillers, the blank braille pattern, the variation selectors, the tag characters). The
+// server refuses the same set (workspaces.py, hidden_char). The agreement reaches every bot, so a proposal with one is shown with the
+// character spelled out and cannot be applied.
+var HIDDEN = /(?![\n\t])[\p{Cc}\p{Cf}]|[\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180D\u180F\u2800\u3164\uFE00-\uFE0F\uFFA0]|[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 function showHidden(line) { return line.replace(HIDDEN, function (c) { return '<U+' + c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + '>'; }); }
 function lineDiff(a, b) {
   var x = a.split('\n'), y = b.split('\n');
