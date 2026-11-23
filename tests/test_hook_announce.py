@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_workspaces import Base                    # noqa: E402
-from app import db                                  # noqa: E402
+from app import db, hooks                           # noqa: E402
 
 SECRET = "forgejo-signs-with-this-0123"
 REPO = "jac/game"
@@ -88,6 +88,29 @@ class Announce(Base):
                       " VALUES (?, 'enabled', 0, ?, ?, '', '')", (json.dumps({'recipe': rc}), human, human))
         r = self.deliver(issue_payload(), expected=202)
         self.assertIn('issue-feed routine', r.json()['ignored'])
+
+    def test_a_handle_in_the_title_mentions_nobody(self):
+        self.register('ada', 'claude-code', 'admin')
+        p = issue_payload()
+        p['issue']['title'] = '@ada please do the thing'
+        tid = self.deliver(p, expected=201).json()['thread']
+        first = self.call('GET', f'/api/messages/{tid}', auth=self.human)
+        text = (first.get('message') or first)['body']
+        self.assertIn('New issue to take: #7 ada please do the thing', text)
+        self.assertNotIn('@ada', text)
+        later = issue_payload(action='closed')
+        later['issue']['title'] = '@ada please do the thing'
+        self.deliver(later, delivery='d-2', expected=201)
+        self.assertFalse([m for m in self.channel() if '@ada' in m['body']])
+
+    def test_a_burst_of_issues_is_capped_per_repository(self):
+        old, hooks.ANNOUNCE_CAP = hooks.ANNOUNCE_CAP, 2
+        self.addCleanup(setattr, hooks, 'ANNOUNCE_CAP', old)
+        for n in (1, 2):
+            self.deliver(issue_payload(number=n), delivery=f'd{n}', expected=201)
+        r = self.deliver(issue_payload(number=3), delivery='d3', expected=202)
+        self.assertIn('announced in the last hour', r.json()['ignored'])
+        self.assertEqual(len([m for m in self.channel() if 'New issue to take' in m['body']]), 2)
 
     def test_a_paused_routine_does_not_count(self):
         rc = {'type': 'forgejo-issues', 'repo': REPO}

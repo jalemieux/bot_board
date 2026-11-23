@@ -21,7 +21,9 @@ import hmac
 import json
 import re
 
-from . import db, progress, workspaces
+from datetime import datetime, timedelta, timezone
+
+from . import db, progress, routines, workspaces
 
 NAMES = ("forgejo",)
 EXCERPT = 200       # characters of a review or comment quoted under the line
@@ -50,6 +52,7 @@ CREATE TABLE IF NOT EXISTS forge_issue_threads (
     repo TEXT NOT NULL COLLATE NOCASE,
     number INTEGER NOT NULL,
     thread_id INTEGER NOT NULL,
+    at TEXT NOT NULL,
     PRIMARY KEY (repo, number)
 );
 """
@@ -146,6 +149,11 @@ def verify(name: str, raw: bytes, headers) -> None:
 
 # ------------------------------------------------------------- the event
 
+def _flat(text: str) -> str:
+    """A title or quote with its @handles flattened, so what Forgejo's users write mentions nobody here."""
+    return db.MENTION_RE.sub(r"\1", text)
+
+
 def _first_line(text: str | None) -> str:
     """The first non-empty line, with @handles flattened so the quote mentions nobody here."""
     for line in (text or "").splitlines():
@@ -171,7 +179,7 @@ def describe(event: str, event_type: str, payload: dict) -> tuple[str, str] | No
     obj = pr or issue or {}
     number = payload.get("number") or obj.get("number")
     ref = f"{'PR' if is_pull else 'issue'} #{number}" if number else ("the PR" if is_pull else "the issue")
-    title = (obj.get("title") or "").strip()
+    title = _flat((obj.get("title") or "").strip())
     ref_t = f"{ref} ({title})" if title else ref
     who = _who(payload)
     kind = event_type or event
@@ -246,21 +254,12 @@ def _known_thread(payload: dict) -> int | None:
     return row["thread_id"] if row else None
 
 
-def _routine_announces(repo: str) -> bool:
-    """A running forgejo-issues routine for this repository already announces its issues (it also routes them
-    by label and by a bot's reading), so the webhook leaves them to it. A paused or deleted one does not count."""
-    try:
-        rows = db.conn().execute("SELECT definition FROM routines WHERE state IN ('enabled','failed')").fetchall()
-    except Exception:       # no routines table on this board
-        return False
-    for r in rows:
-        try:
-            rc = (json.loads(r["definition"]) or {}).get("recipe") or {}
-        except ValueError:
-            continue
-        if rc.get("type") == "forgejo-issues" and str(rc.get("repo") or "").lower() == repo.lower():
-            return True
-    return False
+ANNOUNCE_CAP = 20        # new issues announced per repository per hour: a bulk import must not queue a hundred threads
+
+
+def _announced_lately(repo: str) -> int:
+    since = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S")
+    return db.conn().execute("SELECT COUNT(*) n FROM forge_issue_threads WHERE repo=? AND at>=?", (repo, since)).fetchone()["n"]
 
 
 def _announce(name: str, payload: dict) -> tuple[int, str] | tuple[None, str]:
@@ -276,10 +275,12 @@ def _announce(name: str, payload: dict) -> tuple[int, str] | tuple[None, str]:
         return None, f"no thread:<id> label on the issue, and no workspace has linked {repo}"
     if ws["archived"]:
         return None, f"the workspace {ws['slug']} is archived"
-    if _routine_announces(repo):
+    if routines.announces(repo):
         return None, f"the issue-feed routine for {repo} announces its issues"
+    if _announced_lately(repo) >= ANNOUNCE_CAP:
+        return None, f"{ANNOUNCE_CAP} issues of {repo} were announced in the last hour: the rest wait for the issue feed or a person"
     issue = payload.get("issue") or {}
-    title = str(issue.get("title") or "")[:200]
+    title = _flat(" ".join(str(issue.get("title") or "").split()))[:200]
     url = issue.get("html_url") or ""
     body = (f"New issue to take: #{number} {title}\n{url}\n\n"
             f"The thread worker labels the issue as its own on Forgejo: `bot:<your handle>` and `thread:<this "
@@ -293,7 +294,8 @@ def _announce(name: str, payload: dict) -> tuple[int, str] | tuple[None, str]:
         return None, str(exc)
     tid = msg.get("thread_id") or msg["id"]
     with db._write_lock, db.conn() as c:
-        c.execute("INSERT OR IGNORE INTO forge_issue_threads (repo, number, thread_id) VALUES (?,?,?)", (repo, number, tid))
+        c.execute("INSERT OR IGNORE INTO forge_issue_threads (repo, number, thread_id, at) VALUES (?,?,?,?)",
+                  (repo, number, tid, db.now()))
     return tid, ""
 
 

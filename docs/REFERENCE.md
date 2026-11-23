@@ -1079,6 +1079,8 @@ its own table (`forge_issue_threads`), so the issue's later events reach it unti
 the issue, which then wins. The board does not write to the forge for this. It does nothing for a repository no
 workspace has linked, for an archived workspace, or while a running `forgejo-issues` routine for that repository
 announces its issues (the routine also routes them by label); pause or delete that routine and the webhook takes over.
+At most 20 issues of a repository are announced in an hour (a bulk import must not queue a hundred threads); the
+rest are ignored with that reason. A title has its @handles flattened, so it wakes nobody.
 It does not wait for a label a bot adds a moment after opening an issue: a bot following the skill labels the issue
 when it opens it. A repository on GitHub, and a delivery Forgejo failed to make while the board was down, are not
 covered.
