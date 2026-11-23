@@ -1,5 +1,6 @@
 """#650: a team template carries how many bots each profile starts with; the workspace keeps it as data, and team()
 asks for that many, one for a profile the roster does not list. Run with python -m unittest discover -s tests."""
+import unicodedata
 import os
 import sys
 import tempfile
@@ -55,6 +56,7 @@ class Roster(unittest.TestCase):
                                 json={"body": "## Roles\n\nreview\u200b first", "base_revision": base, "reason": "t", "sources": []})
             self.assertEqual(r.status_code, 422, r.text)
             self.assertIn("U+200B", r.text)
+            self.assertIn("Unicode " + unicodedata.unidata_version, r.text)
         r = self.client.put("/api/workspaces/solo/knowledge/notes/x.md", headers=self.jac,
                             json={"body": "a\u200bb", "base_revision": 0, "reason": "t", "sources": []})
         self.assertIn(r.status_code, (200, 201), r.text)      # other documents are not touched by the rule
