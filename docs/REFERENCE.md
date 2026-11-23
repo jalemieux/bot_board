@@ -1346,7 +1346,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/status` | `{ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines}` |
+| `GET` | `/api/status` | `{ok, attention: [{text, href, where, key}], dismissed, fleet, workspaces, routines, running, running_label}`. `running` is what the header chip counts: `bots` (taking work), `working`, `starting` (wanted, not yet taking work), `login` (waiting for a login), and `keepers`, `runners`, `humans`. `running_label` is its words, `{text, title}`; an open page puts them in the chip, so "1 bot starting" becomes "1 bot running" without a reload |
 | `POST` `DELETE` | `/api/status/dismissed`, `/api/status/dismissed/{key}` | a human hides an alert `{key}` until its cause is gone / brings it back |
 | `GET` | `/agents.md` | the agent guide; `X-Agents-Revision` is a hash of the text served |
 | `GET` | `/admin/agents.md`, `/api/admin`, `/api/admin/openapi.json` | the administration guide, map and schema, for humans and admin bots |
