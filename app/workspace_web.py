@@ -529,21 +529,22 @@ function dialog(title, nodes, buttons) {
 // A host bot's block (#733, from the bots page's #595): how it runs, who set it and when, why, whether its Mac listed it, its apps
 // (a warning for one the Mac does not have), and the two things a manager does: edit the reason and apps, move it back to a container.
 function hostBlock(b, ctx) {
-  var box = (ctx.hosts || []).filter(function (x) { return x.name === b._host; })[0] || {}, url = '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/host';
+  var box = (ctx.allHosts || []).filter(function (x) { return x.name === b._host; })[0] || {}, silent = !box.reporting, url = '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/host';
   var lc = function (x) { return String(x).toLowerCase(); };
-  var listed = (box.host_allowed || []).map(lc).indexOf(lc(b.handle)) >= 0;
+  var listed = silent || (box.host_allowed || []).map(lc).indexOf(lc(b.handle)) >= 0;
   var found = {}; (box.apps || []).forEach(function (a) { if (a && a.name) found[lc(a.name)] = a.version || ''; });
   var runs = b.on_host && b.runmode === 'host' ? 'on its Mac, outside a container' : b.on_host ? 'in a container now, and on its Mac from its next start'
     : 'in a container (its Mac\'s host switch is off, or it moved)';
   var d = h('div', {'class': 'd-host'}, h('h4', {text: 'Runs on the host'}));
   d.appendChild(h('div', {'class': 'd-facts'}, h('span', null, 'runs ', h('b', {text: runs})),
     h('span', null, 'set by ', h('b', {text: b.host_by || '?'}), b.host_at ? ' ' + ago(b.host_at) : ''),
-    listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
+    silent ? h('span', {'class': 'warn'}, 'its Mac is not reporting, so whether it is listed and which apps it has are not known')
+           : listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
   if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac.'), d.firstChild.nextSibling);
   d.appendChild(h('p', {'class': 'sub clamp'}, h('b', {text: 'Why it needs the host: '}), b.host_reason || ''));
   if ((b.host_apps || []).length) d.appendChild(h('ul', {'class': 'd-apps'}, b.host_apps.map(function (n) {
     var v = found[lc(n)];
-    return v === undefined ? h('li', {'class': 'warn'}, n + ' ', h('b', {text: 'not found in /Applications on this Mac'})) : h('li', null, n + ' ', h('b', {text: v}));
+    return silent ? h('li', null, n) : v === undefined ? h('li', {'class': 'warn'}, n + ' ', h('b', {text: 'not found in /Applications on this Mac'})) : h('li', null, n + ' ', h('b', {text: v}));
   })));
   var acts = h('div', {'class': 'd-acts'});
   var act = function (text, fn, cls) {
@@ -704,7 +705,7 @@ function rolesView(w, roles, hosts) {
   var said = function (text, ok) { note(out, text, ok); };
   var again = function () { setTimeout(function () { location.reload(); }, 2500); };
   var ctx = {
-    w: w, hosts: reporting, said: said, again: again,
+    w: w, hosts: reporting, allHosts: hosts, said: said, again: again,
     canAct: !!(ME && w.can_manage && !w.archived),
     setRun: function (b, run, el) {
       el.disabled = true;
