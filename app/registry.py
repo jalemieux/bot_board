@@ -849,6 +849,31 @@ def templates() -> list[dict]:
     return out
 
 
+def drift() -> list[dict]:
+    """The skills whose copy under docs/skills differs from the registry's current revision (#745). A merged change
+    to a skill file does not reach bots by itself, since the registry keeps its own copy and seeds a skill once;
+    this says which differ, and changes nothing. A skill the registry has deleted stays out (deleting sticks);
+    a skill only the registry has is not a difference. Each entry: name, state ("differs" or "missing"), and the
+    registry's revision (0 when missing)."""
+    out = []
+    if not os.path.isdir(SKILLS_DIR):
+        return out
+    for name in sorted(os.listdir(SKILLS_DIR)):
+        path = os.path.join(SKILLS_DIR, name, "SKILL.md")
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding="utf-8") as fh:
+            front, body = parse_front(fh.read())
+        row = db.conn().execute(_CURRENT + " AND s.name=?", (name,)).fetchone()
+        if row is None:
+            out.append({"name": name, "state": "missing", "revision": 0})
+        elif not row["deleted"]:
+            stored = _skill(row)
+            if stored["body"].strip() != body.strip() or stored["description"] != str(front.get("description") or "").strip()[:500]:
+                out.append({"name": name, "state": "differs", "revision": row["revision"]})
+    return out
+
+
 def seed() -> None:
     """Every docs/skills/<name>/SKILL.md the board has no revision of becomes an authored skill
     at revision 1, at every start: a skill shipped after a board's first start arrives at its
