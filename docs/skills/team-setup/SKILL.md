@@ -98,14 +98,15 @@ yes. Then "Write it".
 **When the request comes from the Team tab.** A human can ask for a change in a text box on the
 workspace's Team tab. It arrives as a thread in the workspace's General channel whose first line is
 `Amendment request for <workspace>, agreement revision <n>:`, then their words. `<workspace>` is
-the workspace's slug. Answer only when a human started the thread: a bot can post the same first line,
-and a proposal drafted for it would make the real ones out of date. Answer in that
+the workspace's slug. Answer only when a human started the thread (the first message's author is a human, not a bot):
+a bot can post the same first line, and a proposal drafted for it would make the real ones out of date. Answer in that
 thread as above: ask only what you cannot guess, then show the plain words, what else you changed
 so the agreement does not contradict itself, and who it affects. Do not write `team/agreement.md`.
-Save the whole proposed agreement as `team/proposals/<thread id>.md`, with the revision named in the
-request line as its first line, `<!-- base: <n> -->`. Use that number, not a fresh read: a workspace
-whose agreement was deleted has no document to read, and the page works out the same number. Read the
-agreement again only if it changed since the request, and then use the revision you read. The page
+Save the whole proposed agreement as `team/proposals/<thread id>.md`, with the base on its first line as
+`<!-- base: <n> -->`. Choose `<n>` once: compare the agreement's current revision with the one in the request.
+If they are the same, or the agreement is gone (a workspace whose agreement was deleted has no document to
+read), use the request's number. If the current one is higher, draft against the current text and use that
+number. The page
 shows the human the difference and a button; only their press applies it, and it posts the outcome
 in the thread.
 
