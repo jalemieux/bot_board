@@ -248,7 +248,7 @@ function detail(r) {
     h('h1', null, r.name || ('#' + r.id), badge(r.state || '?', r.state)),
     r.about ? h('p', {'class': 'sub', text: r.about}) : null);
   if (r.problem) add(root, h('p', {'class': 'prob', text: 'Invalid, so it never runs: ' + r.problem}));
-  if (r.repository_differs) add(root, h('p', {'class': 'note', text: 'This recipe reads ' + r.recipe.repo + ', but its workspace ' + r.recipe.workspace +
+  if (r.repository_differs) add(root, h('p', {'class': 'note', text: 'This recipe reads ' + r.recipe.repo + ', but its workspace ' + (r.recipe.workspace || r.recipe.project) +
     ' is linked to ' + r.repository_differs + '. The recipe keeps what you approved; change its repo if the workspace is right.'}));
   if (r.upgrade) add(root, h('p', {'class': 'note'}, 'An upgrade to recipe version ' + r.upgrade.to + ' waits for your yes: ',
     h('a', {href: '#approvals', text: 'see it with the others'}), '.'));

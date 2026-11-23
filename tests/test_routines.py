@@ -186,7 +186,7 @@ class Routines(unittest.TestCase):
 
     def test_a_recipe_without_a_repo_takes_its_workspaces_and_a_different_one_is_flagged(self):
         # #716: the workspace's repository is the default; a stored recipe keeps what a human approved and the page says so
-        recipe = {'type': 'github-issues', 'workspace': 'admin'}
+        recipe = {'type': 'forgejo-issues', 'workspace': 'admin', 'forgejo': 'http://forge.example.ts.net:3000'}
         self.add(recipe=recipe, check=None, prompt=None, expected=422)       # no repository anywhere: still an error
         self.call('PUT', '/api/workspaces/admin/repository', {'repository': 'fleet/admin'})
         made = self.add(recipe=recipe, check=None, prompt=None)
@@ -197,6 +197,11 @@ class Routines(unittest.TestCase):
         self.assertEqual(self.call('GET', f"/api/routines/{other['id']}")['repository_differs'], 'fleet/admin')
         self.call('PUT', '/api/workspaces/admin/repository', {'repository': ''})
         self.assertEqual(self.call('GET', f"/api/routines/{other['id']}")['repository_differs'], '', 'nothing to differ from')
+        # a GitHub recipe never takes a Forgejo repository, and is never flagged against one
+        self.call('PUT', '/api/workspaces/admin/repository', {'repository': 'fleet/admin'})
+        self.add(name='gh', recipe={'type': 'github-issues', 'workspace': 'admin'}, check=None, prompt=None, expected=422)
+        gh = self.add(name='gh2', recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'admin'}, check=None, prompt=None)
+        self.assertEqual(self.call('GET', f"/api/routines/{gh['id']}")['repository_differs'], '')
 
     def test_a_recipe_stored_before_workspaces_is_read_in_the_current_shape(self):
         r = self.add(recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'admin'}, check=None, prompt=None)

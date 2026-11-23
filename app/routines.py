@@ -340,16 +340,22 @@ def describe(row: dict, full: bool = True) -> dict:
     return out
 
 
+def _workspace_repository(rc: dict) -> str:
+    """The repository of the workspace a recipe names (`workspace`, or `project` as older ones wrote it), or "" (#716)."""
+    name = rc.get("workspace") or rc.get("project")
+    try:
+        return workspaces.repository(workspaces.find(name.lower())) if isinstance(name, str) else ""
+    except KeyError:
+        return ""     # no such workspace: the checks that follow say so
+
+
 def _repository_differs(d: dict) -> str:
     """The workspace's repository when a recipe's `repo` is another one, else "" (#716). The recipe keeps what a human
     approved, so the page only says so, and a person decides."""
     rc = d.get("recipe")
-    if not isinstance(rc, dict) or not rc.get("repo"):
+    if not isinstance(rc, dict) or rc.get("type") != "forgejo-issues" or not rc.get("repo"):
         return ""
-    try:
-        have = workspaces.repository(workspaces.find(str(rc.get("workspace") or rc.get("project") or "").lower()))
-    except KeyError:
-        return ""
+    have = _workspace_repository(rc)
     return have if have and have.lower() != str(rc["repo"]).lower() else ""
 
 
@@ -399,12 +405,9 @@ def _definition(data: dict, old: dict | None = None) -> dict:
         if not isinstance(r["recipe"], dict):
             raise ValueError("`recipe` must be an object")
         rc_in = r["recipe"]
-        if not rc_in.get("repo") and isinstance(rc_in.get("workspace") or rc_in.get("project"), str):
-            # a new recipe without a repository takes its workspace's (#716); a stored one keeps what a human approved
-            try:
-                rc_in = {**rc_in, "repo": workspaces.repository(workspaces.find((rc_in.get("workspace") or rc_in["project"]).lower())) or None}
-            except KeyError:
-                pass        # no such workspace: the checks below say so
+        if rc_in.get("type") == "forgejo-issues" and not rc_in.get("repo"):
+            # a new Forgejo recipe without a repository takes its workspace's (#716); a stored one keeps what a human approved
+            rc_in = {**rc_in, "repo": _workspace_repository(rc_in) or None}
         rc = cli.recipe_of(rc_in)
         problem = cli.recipe_problem(rc)
         if problem:
