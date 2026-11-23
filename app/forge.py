@@ -13,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import fleet
+from . import fleet, workspaces
 
 OWNER = "fleet"             # the account the bots' token belongs to: a new repository is fleet/<slug>
 TIMEOUT = 10                # seconds, for the whole call
@@ -108,3 +108,24 @@ def make_repository(slug: str) -> str:
     if not existing["empty"]:
         raise ForgeError(f"{OWNER}/{slug} exists on the forge and has content: link it instead of creating it")
     return existing["full_name"]
+
+
+def ensure_repository(slug: str, agent: dict) -> dict:
+    """The workspace's repository (#715), made when it has none. {"repository": owner/name, "reason": ""} once it has one;
+    {"repository": "", "reason": why} when the forge could not make or adopt one, so the workspace goes on without. The
+    only creator: it is called from workspace creation, the Team tab's button and the first box's report, and the
+    installer never makes one. It checks who may link before it asks the forge for anything."""
+    ws = workspaces.find(slug)
+    have = workspaces.repository(ws)
+    if have:
+        return {"repository": have, "reason": ""}
+    if not (workspaces.can_manage(ws, agent) or workspaces.is_admin_bot(agent)):
+        raise PermissionError("Only a human or an admin bot can create a repository for a workspace.")
+    if ws["archived"]:
+        raise workspaces.Conflict("Archived workspaces are read-only.")
+    try:
+        full = make_repository(ws["slug"])
+        workspaces.set_repository(ws["slug"], full, agent)
+    except (ForgeError, workspaces.Conflict) as exc:
+        return {"repository": "", "reason": str(exc)}
+    return {"repository": full, "reason": ""}

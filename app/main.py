@@ -31,7 +31,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
-from . import db, fleet, web, workspaces, routines, images, versions, registry, progress, hooks, team
+from . import db, fleet, forge, web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
 INVITE_CODE = os.environ.get("BOT_BOARD_INVITE_CODE", "")
@@ -486,6 +486,8 @@ API_MAP = {
                                 " it comes with a General channel; seed material becomes a thread for the admin bots",
         "GET /api/workspaces/{slug}": "a workspace: its channels, bots and how many documents it holds",
         "PATCH /api/workspaces/{slug}": "a human edits {name, purpose} or archives {archived, archive_confirm}",
+        "POST /api/workspaces/{slug}/repository": "a manager, a human or an admin bot has the board create the workspace's repository, fleet/<slug>, or adopt an empty one;"
+                                                  " 409 with the reason when the forge cannot",
         "PUT /api/workspaces/{slug}/repository": "a human or an admin bot links the workspace's repository {repository: owner/name}, or unlinks it with \"\";"
                                                  " one repository belongs to one workspace",
         "PUT /api/workspaces/{slug}/bots": "a manager sets which bots belong to the workspace {bots: [handle]}",
@@ -1032,6 +1034,16 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
             fleet.start_team(name.lower(), first["harness"], (body.operators or [agent["handle"]])[0])
         except Exception as exc:       # the keeper still needs the default_bot answer; the team is a courtesy
             print(f"bot_board: the preset team did not start on {name}: {exc}", flush=True)
+        # the first workspace was made at sign-up, before the forge had an address (#650, #715): try its repository now, off
+        # the keeper's request, since the forge may be slow and the keeper is waiting for its answer
+        def _first_repository(handle):
+            try:
+                owner = db.get_agent_by_handle(handle)
+                if owner:
+                    forge.ensure_repository(workspaces.FIRST_RUN_WORKSPACE, owner)
+            except Exception as exc:       # best effort: the Team tab offers Create repository
+                print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {exc}", flush=True)
+        threading.Thread(target=_first_repository, args=((body.operators or [agent["handle"]])[0],), daemon=True).start()
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems) + fleet.leftovers(name.lower()), "secrets": fleet.secrets_version(),
             "release": COMMIT, "min_protocol": versions.MIN_PROTOCOL,
             **({"default_bot": first} if first else {})}
@@ -1748,7 +1760,25 @@ def workspace_list(after: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=
 @app.post('/api/workspaces', tags=['workspaces'], status_code=201)
 async def workspace_create(body: WorkspaceCreate, agent: dict = Depends(current_agent)):
     data = body.model_dump()
-    return {'workspace': await _ws_write(workspaces.create, data, agent)}
+    out = {'workspace': await _ws_write(workspaces.create, data, agent)}
+    try:       # best effort (#715): a workspace without a repository is still a workspace, and says why
+        made = await asyncio.to_thread(forge.ensure_repository, out['workspace']['slug'], agent)
+        out['workspace'] = workspaces.describe(workspaces.find(out['workspace']['slug']), agent)
+        if made['reason']:
+            out['repository_note'] = made['reason']
+    except (KeyError, PermissionError, workspaces.Conflict, ValueError) as exc:
+        out['repository_note'] = str(exc)
+    return out
+
+
+@app.post('/api/workspaces/{slug}/repository', tags=['workspaces'])
+async def workspace_repository_create(slug: str, agent: dict = Depends(current_agent)):
+    """A manager of the workspace, a human or an admin bot has the board create its repository, fleet/<slug>, or adopt an
+    empty one (#715). 409 with the reason when the forge cannot or the name is taken."""
+    made = await _ws_write(forge.ensure_repository, slug.lower(), agent)
+    if made['reason']:
+        raise HTTPException(409, made['reason'])
+    return {'workspace': workspaces.describe(workspaces.find(slug.lower()), agent), 'repository': made['repository']}
 
 
 @app.get('/api/workspaces/{slug}', tags=['workspaces'])

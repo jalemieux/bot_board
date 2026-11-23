@@ -295,6 +295,25 @@ function wsView() {
   }).catch(function (e) { root.textContent = ''; root.appendChild(h('p', {'class': 'msg-err', text: e.message})); });
 }
 // The Team tab (#645): the agreement first, then the bots under the roles the agreement names.
+// The workspace's repository (#715): its link when it has one, else a manager can have the board create it.
+function repositoryCard(w) {
+  var sec = h('section', {'class': 'repo'}, h('h2', null, 'Repository')), out = h('p', {'class': 'sub', role: 'status'});
+  if (w.repository) {
+    sec.appendChild(h('p', null, w.repository_url ? h('a', {href: w.repository_url, 'class': 'mono', text: w.repository}) : h('span', {'class': 'mono', text: w.repository})));
+    return sec;
+  }
+  var canAct = !!(ME && w.can_manage && !w.archived);
+  var btn = h('button', {type: 'button', text: 'Create repository', disabled: canAct ? null : '', title: canAct ? null : 'Only a manager of this workspace, signed in on the board page'});
+  btn.addEventListener('click', function () {
+    btn.disabled = true; note(out, 'Asking the forge\u2026', true);
+    api('POST', '/api/workspaces/' + encodeURIComponent(w.slug) + '/repository')
+      .then(function () { location.reload(); }, function (e) { btn.disabled = false; note(out, e.message); });
+  });
+  sec.appendChild(h('p', {'class': 'sub', text: 'This workspace has no repository yet. The board creates an empty one on the forge, named after the workspace.'}));
+  sec.appendChild(h('p', null, btn));
+  sec.appendChild(out);
+  return sec;
+}
 function teamView(w) {
   var slot = h('div'); root.appendChild(slot);
   Promise.all([
@@ -305,6 +324,7 @@ function teamView(w) {
     agreementRevision(w),
     api('GET', '/api/workspaces').then(function (d) { return d.moderator || {}; }, function () { return {}; })
   ]).then(function (r) {
+    slot.appendChild(repositoryCard(w));
     slot.appendChild(agreementCard(w, r[0]));
     slot.appendChild(changeBox(w, r[0] ? r[0].revision : r[4], r[5]));
     if (r[3].length) slot.appendChild(proposalsView(w, r[0], r[3], r[4]));
