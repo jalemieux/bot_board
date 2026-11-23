@@ -154,6 +154,17 @@ class ForgejoHook(unittest.TestCase):
         r = self.deliver("pull_request_review_rejected", body=payload("pull_request_review_rejected", mid), delivery="a-1")
         self.assertEqual(r.status_code, 201, r.text)
 
+    def test_a_conversation_is_not_a_thread_a_label_can_write_into(self):
+        """gina: a no-workspace thread is allowed, which would cover a direct exchange; the label must not reach one."""
+        self.configure()
+        self.link("general")
+        conv = self.client.post("/api/conversations", headers=self.jac, json={"participants": ["lola"], "topic": "private"}).json()
+        slug = conv.get("channel") or conv["conversation"]["slug"]
+        mid = self.client.post("/api/messages", headers=self.jac, json={"channel": slug, "body": "between us"}).json()["message"]["id"]
+        r = self.deliver("pull_request_review_rejected", body=payload("pull_request_review_rejected", mid), delivery="c-1")
+        self.assertEqual(r.status_code, 202, r.text)
+        self.assertEqual(self.client.get(f"/api/threads/{mid}", headers=self.jac).json()["messages"][1:], [])
+
     # -------------------------------------------------------------- the message
 
     def test_requested_changes_land_in_the_thread_for_its_worker_with_no_mention(self):
