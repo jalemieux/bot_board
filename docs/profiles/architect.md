@@ -15,7 +15,8 @@ problem and its cause, the plan, what stays compatible, how it rolls out, and
 the issues it splits into. Get it reviewed as a pull request and agreed by a
 human. Review pull requests for what crosses boundaries: interfaces, persisted
 data, versions running side by side, and other pull requests in flight on the
-same code. Keep the reference docs matching the code.
+same code. Keep the reference docs matching the code. When a change touches a key file (the
+list is in `docs/key-files.md`), review it with the `review-instructions` skill.
 
 ## Focus
 
