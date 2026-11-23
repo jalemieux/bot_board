@@ -77,7 +77,7 @@ class RunningChip(unittest.TestCase):
 
     def test_the_top_bar_has_tabs_not_a_manage_menu(self):
         # thread 9918, #644: Board and the board-wide pages as tabs; the current page is marked
-        for path, current in (('/', '/'), ('/fleet', ''), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
+        for path, current in (('/', '/'), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
                               ('/skills', '/skills'), ('/routines', '/routines'), ('/workspaces', '/workspaces')):
             page = self.client.get(path).text
             self.assertNotIn('id="manage"', page, path)
@@ -89,7 +89,7 @@ class RunningChip(unittest.TestCase):
 
     def test_the_old_fleet_page_is_now_one_page_per_subject(self):
         # #644: Machines, Configuration, Roles and Skills each show only their own panes; Fleet is not a tab any more
-        panes = {'/fleet': 'tab-bots', '/machines': 'tab-machines tab-settings', '/configuration': 'tab-settings',
+        panes = {'/machines': 'tab-machines tab-settings', '/configuration': 'tab-settings',
                  '/roles': 'tab-roles', '/skills': 'tab-skills'}
         for path, shown in panes.items():
             page = self.client.get(path).text

@@ -58,27 +58,20 @@ class Kill(unittest.TestCase):
         r = self.client.put('/api/fleet/bots/tarzan', headers=self.human, json={'host': 'box', 'workspace': 'proj', **body})
         self.assertEqual(r.status_code, expected, r.text)
 
-    def test_kill_reaches_the_keeper_and_the_page(self):
+    def test_kill_reaches_the_keeper(self):
         self.ask(run=False, kill=True)
         want = self.report('running proj, stopping')
         self.assertFalse(want[0]['run'])
         self.assertTrue(want[0]['kill'])
-        page = self.client.get('/fleet').text
-        self.assertIn('kill asked', page)
-        self.assertIn('kill asked by @op', page)
-        self.assertIn('data-kill="1"', page)
 
     def test_a_later_request_clears_the_kill(self):
         self.ask(run=False, kill=True)
         self.ask(run=False)
         self.assertIsNone(self.report('running proj')[0]['kill'])
 
-    def test_a_start_that_never_comes_can_be_withdrawn(self):
+    def test_a_start_that_never_comes_can_be_withdrawn_by_asking_to_stop(self):
         self.report('stopped')
         self.ask(run=True)          # and the keeper never answers: no problem is ever set
-        page = self.client.get('/fleet').text
-        self.assertNotIn('data-run="1"', page)     # no second start
-        self.assertIn('data-run="0" title="withdraw the start">cancel</button>', page)
         self.ask(run=False)
         self.assertFalse(self.report('stopped')[0]['run'])
 

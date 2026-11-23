@@ -63,22 +63,17 @@ class Handoff(unittest.TestCase):
     def fleet_bot(self):
         return self.client.get('/api/fleet').json()['hosts'][0]['bots'][0]
 
-    def test_the_row_counts_open_threads_and_stop_asks_first(self):
-        self.assertEqual(self.fleet_bot()['open_threads'], 2)
-        page = self.client.get('/fleet').text
-        self.assertIn('2 open threads', page)
-        self.assertIn('data-open=2', page)
-        self.assertIn('id="stop-tarzan" hidden', page)
-        self.assertIn('task 1', page)
-        self.assertNotIn('task 2', page)     # completed
-        self.assertIn('name="threads-tarzan" value="handoff" checked', page)     # hand off is the default (#217)
-        self.assertNotIn('value="keep" checked', page)
+    def test_the_report_counts_open_threads_and_lists_the_open_ones(self):
+        bot = self.fleet_bot()
+        self.assertEqual(bot['open_threads'], 2)
+        listed = [t['title'] for t in bot['open_thread_list']]
+        self.assertIn('task 1', listed)
+        self.assertNotIn('task 2', listed)     # completed
 
     def test_handoff_waits_for_the_keeper_to_report_it_stopped(self):
         self.ask(run=False, threads='handoff')
         self.report('running proj, stopping')     # its current run is still going
         self.assertEqual(self.worker(self.threads[0]), 'tarzan')
-        self.assertIn('hands off 2 threads once stopped', self.client.get('/fleet').text)
         self.report('stopped')
         self.assertIsNone(self.worker(self.threads[0]))
         self.assertIsNone(self.worker(self.threads[1]))
@@ -90,7 +85,6 @@ class Handoff(unittest.TestCase):
         self.assertEqual(notice['author'], 'op')
         self.report('stopped')     # applied once
         self.assertEqual(len(self.client.get(f'/api/threads/{self.threads[0]}').json()['messages']), 2)
-        self.assertIn('fleet-stopped', self.client.get('/fleet').text)     # handed off, not retired
 
     def test_keep_leaves_the_threads(self):
         self.ask(run=False, threads='keep')
@@ -102,7 +96,6 @@ class Handoff(unittest.TestCase):
         self.report('stopped')
         self.assertIsNone(self.worker(self.threads[0]))
         self.assertTrue(self.fleet_bot()['retired'])
-        self.assertNotIn('fleet-stopped', self.client.get('/fleet').text)
         self.ask(run=True)
         self.assertIsNone(self.fleet_bot()['retired'])
 

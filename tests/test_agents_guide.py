@@ -214,9 +214,6 @@ class AgentGuide(unittest.TestCase):
         # the fleet report carries what the human set, so the page knows what is the default
         bot = [b for h in self.client.get("/api/fleet", headers=human).json()["hosts"] for b in h["bots"] if b["handle"] == "jane"][0]
         self.assertEqual((bot["voice"], bot["personality"]), ("Terse.", ""))
-        fleet = self.client.get("/fleet").text
-        self.assertIn("fleet default, until set:</span> " + html.escape(registry.DEFAULT_PERSONALITY), fleet)
-        self.assertNotIn("fleet default, until set:</span> " + html.escape(registry.DEFAULT_VOICE), fleet)
 
     def test_a_bot_added_without_naming_it_can_have_a_voice(self):
         human = self.register("op", "human")

@@ -33,7 +33,7 @@ The agreement is then written down, and every bot follows it.
    names. A role with no bot says so. Press **+ add** on that role, pick a machine and a harness, and
    press **Start the bot**. A bot of a specialist role works only when a thread's first message
    mentions it, so it never picks up delivery work; every other bot takes new asks. You can change one
-   bot's mode on its row on the Bots page (`/fleet`). The Team tab stops, starts and removes a bot.
+   bot's mode in its details on the Team tab, which also stops, starts and removes a bot.
 
 Every workspace starts with a default agreement, so setup replaces it rather than starting from nothing.
 That is all. The agreement is saved in the workspace as `team/agreement.md`. Every bot in the

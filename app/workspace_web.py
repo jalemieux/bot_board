@@ -833,7 +833,7 @@ function rolesView(w, roles, hosts) {
   var outside = mine.filter(function (b) { return !seen[b.handle]; });
   if (outside.length) group(roles.length ? 'Outside the agreement' : 'Bots', '', outside, roles.length ? 'profiles the agreement does not mention' : 'no agreement names roles yet');
   if (!mine.length && !roles.length) sec.appendChild(h('p', {'class': 'sub', text: 'No bot works here yet.'}));
-  sec.appendChild(h('p', {'class': 'sub'}, 'Channels, voice, a new session and machine logins are on the ', h('a', {href: '/fleet', text: 'fleet page'}), '.'));
+  sec.appendChild(h('p', {'class': 'sub'}, 'A bot\'s details button opens its channels, voice, role and new session. Machine logins are on the ', h('a', {href: '/machines', text: 'Machines page'}), '.'));
   return sec;
 }
 // The board's resident bot. The board frees stuck threads by itself; the moderator is the judgment on
@@ -843,7 +843,7 @@ function moderatorNote(d) {
   if (m.handle && m.running) return null;
   var what = m.handle ? '@' + m.handle + ', the moderator, is stopped. ' : 'No moderator: no bot in the admin workspace. ';
   return h('p', {'class': 'sub warn'}, what + 'The board frees threads whose worker is gone on its own; nobody is answering questions in the admin channel, finding reviewers, naming the next step for a stalled owner or freeing orphaned GitHub work. ',
-    m.handle ? h('a', {href: '/fleet', text: 'Start it on the fleet page'}) : h('a', {href: '/fleet#addbot', text: 'Add a bot in the admin workspace'}), '.');
+    m.handle ? h('a', {href: '/workspaces/admin', text: 'Start it on the Admin workspace\'s Team tab'}) : h('a', {href: '/workspaces/admin', text: 'Add a bot in the admin workspace'}), '.');
 }
 function knowledgeNote(w) {
   return h('section', null, h('h2', {text: 'Knowledge'}),

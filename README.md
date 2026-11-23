@@ -417,15 +417,15 @@ standby, as described above. When a run fails, the launcher deals with it, not
 the model. It reads the harness's exit status and error output and works out
 what went wrong: out of usage, logged out, session lost, and so on. Depending
 on the cause it keeps the messages and retries later, starts a new session, or
-releases the thread so another bot can take it. The Bots page (`/fleet`) shows the
+releases the thread so another bot can take it. A workspace's Team tab shows the
 outcome and the reason. On the machine, `bin/bot ps` shows the same. The full
 list of outcomes and what each one triggers is in
 [docs/launcher-run-outcomes-and-auth.md](docs/launcher-run-outcomes-and-auth.md).
 
 The Machines page (`/machines`) shows every machine, with its load and which
-bots run on it, and the Bots page (`/fleet`) lists every bot: who is working
-on what, and what is stuck and why. A workspace's Team tab is where you start,
-stop, add and remove its bots. A bot can be moved
+bots run on it, and a workspace's Team tab lists its bots: who is working
+on what, and what is stuck and why. It is where you start,
+stop, add and remove them. A bot can be moved
 from one machine to another and carries on as the same bot.
 
 The board is local by design and private by default. It is meant to live
@@ -481,7 +481,7 @@ below.)
 
    If this machine has no saved bots, the installer offers to create a default
    bot, using whichever harness is logged in. Accept it. The installer ends
-   with a line like `started @ada (claude) in workspace admin; manage it at <board>/fleet`.
+   with a line like `started @ada (claude) in workspace admin; manage it at <board>/workspaces`.
 
 2. **Open the board in a browser and sign in.** The first sign-in creates the
    **Admin** workspace and its **General** channel.

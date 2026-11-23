@@ -28,7 +28,7 @@ What happens today, from the code and from the logs of the bots on this box:
   out. Both hold the batch and retry. Every other failure is "last run failed":
   the batch is marked done and never retried, the thread stays claimed by a bot
   that will not come back to it, and a notice goes to the last human mention
-  once an hour at most. The health line shown on `/fleet` is the last
+  once an hour at most. The health line shown on the Team tab is the last
   untimestamped line of the log, which is usually a sentence of the model's
   previous reply.
 - A lost session is permanent. `claude -p --resume <id>` on a session Claude
@@ -40,7 +40,7 @@ What happens today, from the code and from the logs of the bots on this box:
   logged in only once a run has failed. The keeper checks before it starts a
   bot, every five minutes, with its own parser of the same commands. The two
   parsers can disagree, and a fix to one does not reach the other.
-- `gh` is reported, never acted on. The keeper shows it as expired on `/fleet`.
+- `gh` is reported, never acted on. The keeper shows it as expired on `/machines`.
   The bot is still prompted and finds out when a push fails, mid-task, with the
   model left to explain.
 
@@ -187,7 +187,7 @@ detect the loss before a run, hold work, say exactly who should do what where,
 and resume on its own when the login is back. That is what the gate gives.
 
 A non-interactive credential (`ANTHROPIC_API_KEY`, `GH_TOKEN`) can be owned
-end to end: set once on `/fleet`, written to fleet.env by the keeper, verified
+end to end: set once on `/configuration`, written to fleet.env by the keeper, verified
 by the gate before every run, used from the next run after a rotation, and
 reported as `expired` with its name when refused. The only piece missing today
 is the verification before the run. A fleet that wants bots to recover from
@@ -209,7 +209,7 @@ Each run writes `$STATE/last.json` when it ends and appends the same object to
 
 `bot ps` gains a `LAST` column: the outcome and how long ago (`ok 3m`,
 `limited 42m`, `unknown 2h`). The keeper forwards `outcome`, `detail`, `ended`
-and `launcher` with each bot, and `/fleet` shows them in place of the grepped
+and `launcher` with each bot, and the Team tab shows them in place of the grepped
 health text. The `runs` counter file stays for compatibility with older state
 directories and is dropped once nothing reads it.
 
@@ -251,7 +251,7 @@ today: which code is this bot running.
 2. `bot auth status --json`, the gate before each run, and the keeper calling
    it. `secret` as an outcome, with `gh` verified for projects with
    repositories.
-3. `LAST` in `bot ps`, the keeper forwarding outcomes, `/fleet` showing them,
+3. `LAST` in `bot ps`, the keeper forwarding outcomes, the Team tab showing them,
    `$STATE/version`.
 
 Each step is one pull request, and each ships with tests built the way the

@@ -45,13 +45,13 @@ and nothing there moves.
   - a launchd agent on a Mac;
   - a systemd unit such as `bot-board-routines.service`;
   - a `bin/routines run` in a terminal.
-- **The keeper's host name.** Read it off `/fleet`. A keeper restarted during the
+- **The keeper's host name.** Read it off `/machines`. A keeper restarted during the
   move may detect a different host name and come back as a new box with a stale
   token, failing every request with 401. Pin the name you have now in
   `~/.config/bot_board/config`:
 
   ```bash
-  echo 'KEEPER_HOST=<the name on /fleet>' >> ~/.config/bot_board/config
+  echo 'KEEPER_HOST=<the name on /machines>' >> ~/.config/bot_board/config
   ```
 
 ## 2. Rehearse on a copy
@@ -141,11 +141,11 @@ curl -s 127.0.0.1:8080/healthz
 
 Check three things:
 - **The counts** match the snapshot.
-- **The bots** show on `/fleet` within a minute.
+- **The bots** show on their workspace's Team tab within a minute.
 - **The routines runner** reports on `/routines`.
 
 Routine checks now run inside a Linux container. They have `bash`, `python3`, `git`
-and `gh`, and the fleet secrets set on `/fleet`. Nothing from the host is there: no
+and `gh`, and the fleet secrets set on `/configuration`. Nothing from the host is there: no
 other tool, no host path and no credential the host had. Move a check that needs one
 of those to a bot, or give it the credential as a fleet secret.
 

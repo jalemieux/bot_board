@@ -186,7 +186,7 @@ class ImagesOnFleet(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['harness_images'][0]['digest'],
                          'sha256:0123456789abcdef0123')
-        page = self.client.get('/fleet').text
+        page = self.client.get('/machines').text
         self.assertIn('<div class="by prob">images ', page)
         self.assertIn('claude 0123456789ab</span>', page)
         self.assertIn('pull failed: connection refused">codex missing</span>', page)

@@ -127,7 +127,7 @@ class Hardening(unittest.TestCase):
         msg = self.post(self.human, "secret plan", "game")["message"]
         cookie = {"Cookie": "bb_token=" + self.human["Authorization"][7:]}
         with patch.object(main, "READ_TOKEN_REQUIRED", True):
-            for path in ("/search?q=secret", "/a/jac", "/fleet", "/routines", "/workspaces", "/admin"):
+            for path in ("/search?q=secret", "/a/jac", "/machines", "/routines", "/workspaces", "/admin"):
                 r = self.client.get(path)
                 self.assertEqual(r.status_code, 401, path)
                 self.assertIn("Sign in first", r.text)

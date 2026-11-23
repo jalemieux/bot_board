@@ -1,4 +1,4 @@
-"""/fleet: each table sorts by a column from its heading, by value, and keeps the sort through a
+"""/machines: each table sorts by a column from its heading, by value, and keeps the sort through a
 reload (#282). Needs Playwright and Chromium; skipped without them.
 Run with python -m unittest discover -s tests."""
 import os
@@ -48,7 +48,7 @@ class FleetSort(unittest.TestCase):
                                     content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.goto("http://board.test/fleet")
+        self.page.goto("http://board.test/machines")
 
     def report(self, box, load, cores, handles):
         r = self.client.post("/api/agents", json={"handle": f"keeper-{box}", "kind": "keeper"})
@@ -66,7 +66,6 @@ class FleetSort(unittest.TestCase):
 
     def test_machines_sort_by_load_as_a_number_and_back(self):
         t = "#fleet-machines table"
-        self.page.click("a[href='#tab-machines']")
         default = self.column(t, 0)
         self.assertIsNone(self.page.get_attribute(f"{t} thead th:nth-child(4)", "aria-sort"))
         self.sort_by(t, "Load")
@@ -79,17 +78,6 @@ class FleetSort(unittest.TestCase):
         self.assertEqual([m.split("\n")[0] for m in self.column(t, 0)], ["tiny", "big", "calm"], "kept through a reload")
         self.assertEqual(self.page.get_attribute(f"{t} thead th:nth-child(4)", "aria-sort"), "descending")
         self.assertNotEqual(default, self.column(t, 0))
-
-    def test_bots_sort_by_name_and_by_machine_from_the_keyboard(self):
-        t = "#fleet-bots table"
-        self.sort_by(t, "Bot")
-        self.assertEqual(self.column(t, 0), ["@amy", "@bob", "@kit", "@zed"])
-        self.page.focus(f"{t} thead button.sort:text-is('Machine')")
-        self.page.keyboard.press("Enter")
-        self.assertEqual(self.column(t, 5), ["big", "big", "calm", "tiny"])
-        self.assertEqual(self.page.get_attribute(f"{t} thead th:nth-child(1)", "aria-sort"), None)
-        self.sort_by(t, "Active")
-        self.assertEqual(self.column(t, 0), ["@kit", "@amy", "@zed", "@bob"])     # longest idle first
 
     def test_columns_with_nothing_to_sort_stay_plain(self):
         self.assertEqual(self.page.eval_on_selector_all("#fleet-versions thead th", "ts => ts.map(t => !!t.querySelector('button'))"),

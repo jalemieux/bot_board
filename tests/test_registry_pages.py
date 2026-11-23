@@ -72,22 +72,15 @@ class RegistryPages(unittest.TestCase):
         errors = Balance(page).errors
         self.assertEqual(errors, [], errors[:5])
 
-    def test_registry_buttons_are_not_bot_actions(self):
-        # The fleet page's click handler runs stop/start for every button.act; the registry's own
-        # .act buttons (once the Check button of + Add a skill) made a click also try to add a bot
-        # and alert "refused: 422". The handler takes only buttons that name a bot.
-        page = self.client.get("/fleet").text
-        self.assertIn("closest('button.act[data-handle][data-run]')", page)
-
     def test_fleet_page_keeps_each_section_on_its_tab(self):
         # the seeds name no forge (#394): mark one lifecycle skill mandatory on the developer profile for the star
         p = self.client.get("/api/profiles/developer").json()["profile"]
         self.client.put("/api/profiles/developer", headers=self.human, json={
             **{k: p[k] for k in ("role", "responsibilities", "focus", "avoid")}, "base_revision": 1,
             "skills": [{"name": "github-lifecycle", "mandatory": True}, {"name": "forgejo-lifecycle"}], "reason": "for the test"}).raise_for_status()
-        page = self.client.get("/fleet").text
+        page = self.client.get("/machines").text
         self.balanced(page)
-        for first, then in (("tab-bots", "fleet-bots"), ("fleet-bots", "tab-machines"), ("tab-machines", "fleet-machines"),
+        for first, then in (("tab-machines", "fleet-machines"),
                             ("fleet-machines", "fleet-versions"), ("fleet-versions", "tab-roles"), ("tab-roles", "fleet-profiles"),
                             ("fleet-profiles", "tab-skills"), ("tab-skills", "fleet-skills"), ("fleet-skills", "tab-settings"), ("tab-settings", "secrets")):
             self.assertLess(page.index(f'id="{first}"'), page.index(f'id="{then}"'))
@@ -118,25 +111,6 @@ class RegistryPages(unittest.TestCase):
         # bots without a profile are gathered on the last row
         self.assertIn('id="profile-none"', page)
         self.assertIn('<a href="/a/wren">wren</a>', page)
-
-    def test_bot_rows_and_add_a_bot_carry_the_profile(self):
-        page = self.client.get("/fleet").text
-        self.assertIn("<th>Role</th>", page)
-        self.assertIn('<td data-label="profile" data-sort="developer"><a class="chip" href="/fleet/profiles/developer">developer</a>', page)
-        self.assertIn('<td data-label="profile" data-sort=""><span class="dim">none</span>', page)
-        # a fleet bot's row says where it claims, and offers to change it (board thread 8378)
-        self.assertIn('<div class="by dim">any channel</div>', page)
-        self.assertIn('class="act chan-edit needs-me" data-handle="jane"', page)
-        self.assertIn('<div class="chan-chips" id="newbot-channels"', page)
-        self.assertIn('<select name="profile"', page)
-        self.assertIn('<option value="">none</option>', page)
-        self.assertIn('<option value="developer">developer · A software developer', page)
-        self.assertIn("Its role, voice and personality can be changed later from its row.", page)
-        # and offers to move it to another profile (#395)
-        self.assertIn('class="act role-edit needs-me" data-handle="jane"', page)
-        self.assertIn('<datalist id="profiles-data"><option value="', page)
-        self.assertIn('<option value="developer"></option>', page)
-        self.assertIn("f.elements.profile.value", page)
 
     def test_skill_page_edits_previews_and_lists_history_and_users(self):
         r = self.client.get("/fleet/skills/release-notes")
@@ -282,7 +256,7 @@ class RegistryPages(unittest.TestCase):
         # #347: the "who gets it" segment, saved with the revision, and its own group on /fleet
         page = self.client.get("/fleet/skills/github-lifecycle").text
         self.assertIn('name="who" value="profiles" checked', page)
-        self.assertNotIn("Base skills ·", self.client.get("/fleet").text, "no group until there is a base skill")
+        self.assertNotIn("Base skills ·", self.client.get("/skills").text, "no group until there is a base skill")
         r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
                             "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
         self.assertEqual(r.status_code, 200, r.text)
@@ -293,7 +267,7 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("(mandatory, every bot)", page)
         self.assertRegex(page, r'class="act del-skill"[^>]* disabled')
         Balance(page)
-        page = self.client.get("/fleet").text
+        page = self.client.get("/skills").text
         base, rest = page.index("Base skills · every bot · 1"), page.index("Profile skills ·")
         self.assertLess(base, page.index('id="skill-house-style"'))
         self.assertLess(page.index('id="skill-house-style"'), rest)

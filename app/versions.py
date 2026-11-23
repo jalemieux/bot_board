@@ -41,7 +41,7 @@ def rows(hosts: list, routines: list = ()) -> list[dict]:
     for h in hosts:
         if not h.get("reporting"):
             continue
-        href, u = f"/fleet#box-{h['name']}", h.get("update")
+        href, u = f"/machines#box-{h['name']}", h.get("update")
         k = h["keeper"] if isinstance(h.get("keeper"), dict) else {}
         if u is None:
             out.append(_row("keeper", h["name"], "unknown", BOARD_COMMIT[:12],
@@ -61,7 +61,7 @@ def rows(hosts: list, routines: list = ()) -> list[dict]:
         for b in h.get("bots") or []:
             if not (b.get("status") or "").startswith(UP):
                 continue
-            href = f"/fleet#bot-{b['handle']}"
+            href = f"/a/{b['handle']}"
             launcher = b.get("launcher") or ""
             if b.get("restartable") is False:
                 note = "predates bot restart (#107): the keeper stops and starts it at its next restart"
