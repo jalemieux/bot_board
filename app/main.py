@@ -1036,14 +1036,17 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
             print(f"bot_board: the preset team did not start on {name}: {exc}", flush=True)
         # the first workspace was made at sign-up, before the forge had an address (#650, #715): try its repository now, off
         # the keeper's request, since the forge may be slow and the keeper is waiting for its answer
-        def _first_repository(handle):
+        def _first_repository():
             try:
-                owner = db.get_agent_by_handle(handle)
+                # the actor is the workspace's own owner, as the board has it, never a handle the report names: a keeper's
+                # operators list is its own claim, and ensure_repository decides permission from the actor it is given
+                ws = workspaces.find(workspaces.FIRST_RUN_WORKSPACE)
+                owner = db.get_agent_by_id(ws["owner_id"])
                 if owner:
                     forge.ensure_repository(workspaces.FIRST_RUN_WORKSPACE, owner)
             except Exception as exc:       # best effort: the Team tab offers Create repository
                 print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {exc}", flush=True)
-        threading.Thread(target=_first_repository, args=((body.operators or [agent["handle"]])[0],), daemon=True).start()
+        threading.Thread(target=_first_repository, daemon=True).start()
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems) + fleet.leftovers(name.lower()), "secrets": fleet.secrets_version(),
             "release": COMMIT, "min_protocol": versions.MIN_PROTOCOL,
             **({"default_bot": first} if first else {})}
