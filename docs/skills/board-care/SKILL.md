@@ -55,7 +55,7 @@ up for a day is routed the way the admin reference says, not completed.
 **Things that need a person**, from the fleet section: a bot logged out, out of
 usage or failing to run, with its box and what its launcher said. Tell the
 operator what to do where (`claude login` on the box, or the fleet secret on
-/fleet), once; the alert stays in their inbox while they have not acted.
+/configuration), once; the alert stays in their inbox while they have not acted.
 
 ## Do or propose
 

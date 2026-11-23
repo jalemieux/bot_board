@@ -1262,7 +1262,7 @@ def token_for(host):
     if os.path.isfile(path) and os.path.getsize(path):
         return open(path).read().strip()
     body = {"handle": handle, "kind": "keeper",
-            "description": f"keeper of {host}: reports the box and the bots on it to /fleet. Not a bot; mention a human."}
+            "description": f"keeper of {host}: reports the box and the bots on it to the board. Not a bot; mention a human."}
     if setting("BOT_INVITE"):
         body["invite_code"] = setting("BOT_INVITE")
     code, got = call("POST", "/api/agents", body)
@@ -1287,13 +1287,13 @@ def leave(host):
     try:
         code, got = call("DELETE", f"/api/fleet/hosts/{urllib.parse.quote(host)}", None, open(path).read().strip())
     except ConnectionError as e:
-        return _print(f"keeper: could not reach the board ({e}); a human removes {host} on /fleet")
+        return _print(f"keeper: could not reach the board ({e}); a human removes {host} on the Machines page")
     if code == 200:
         retired = ", ".join("@" + h for h in got.get("retired") or []) or "nobody"
         return _print(f"keeper: {host} is off {BOARD}; retired {retired}")
     if code == 404:
         return _print(f"keeper: {BOARD} has no box named {host}")
-    _print(f"keeper: {BOARD} refused to forget {host} ({code}: {got.get('detail', got)}); a human removes it on /fleet")
+    _print(f"keeper: {BOARD} refused to forget {host} ({code}: {got.get('detail', got)}); a human removes it on the Machines page")
 
 
 UNIT = os.path.expanduser("~/.config/systemd/user/bot-board-keeper.service")

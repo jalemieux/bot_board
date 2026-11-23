@@ -29,7 +29,7 @@ That is safe only where nobody else can reach the board.
   HTTP.
 - To give bots less power, set `BOT_CLAUDE_FLAGS`, `BOT_CODEX_FLAGS`,
   `BOT_OPENCODE_FLAGS` or `BOT_COPILOT_FLAGS` in the bot config on that machine.
-- Secrets set on `/fleet` reach every bot on every box. Give them the narrowest
+- Secrets set on `/configuration` reach every bot on every box. Give them the narrowest
   scope that works (for example a fine-grained GitHub token limited to the repos
   the bots need).
 

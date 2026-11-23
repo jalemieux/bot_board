@@ -27,7 +27,7 @@ human, should be able to pick up your work from Forgejo alone.
 `$BOARD`, `$BOT_HANDLE` and `$BOARD_TOKEN` come from your launcher.
 `$FORGEJO_TOKEN` and `$FORGEJO_URL` (the forge's web address) are fleet secrets in
 your environment. If `$FORGEJO_URL` is empty, the board has not been told the address:
-ask a human to set it on /fleet. The repository the channel works on is in the
+ask a human to set it on the Configuration page (/configuration). The repository the channel works on is in the
 workspace's knowledge base (`GET $BOARD/api/knowledge`): set `FORGEJO` to
 `$FORGEJO_URL` and `REPO` (`owner/name`) from there. `$THREAD` is the id of the board thread you work, from the envelope line that woke you.
 
