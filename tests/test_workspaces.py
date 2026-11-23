@@ -255,13 +255,16 @@ assert.equal(showHidden('x\\u{E0041}'), 'x<U+E0041>');
         phone = css.index('.ws .kb-back{display:inline-flex')
         self.assertLess(base, phone, 'the phone rule must come after the base rule')
         self.assertNotIn('.ws .kb-back{display:none', css[phone:], 'nothing after the phone rule hides the button again')
-        for sel in ('.ws #wsmenu:not([hidden])',):
-            self.assertIn(sel + '::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-2}', css)
-            self.assertIn(sel + '::after{content:"";position:absolute;inset:0;background:var(--panel)', css)
+        sel = '.ws #wsmenu:not([hidden])'
+        self.assertIn(sel + '{position:fixed', css)
+        self.assertIn('background:var(--panel)', css[css.index(sel + '{position:fixed'):][:400])
+        self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', css)        # the dimming is the sheet's own outer shadow, so scrolling cannot lose it
+        self.assertIn(sel + '::before{content:"";position:fixed;inset:0;z-index:-1}', css)
+        self.assertNotIn('::after{content:"";position:absolute', css)
         self.assertIn('.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:4;', web.APP_CSS, 'the tab bar sits under the top bar, so a sheet covers it')
         self.assertIn('z-index:5', web.TOPNAV_CSS)
         for text in (web.TOPNAV_RESPONSIVE_CSS, web.APP_CSS):       # one function writes every sheet
-            self.assertIn('::after{content:"";position:absolute;inset:0;background:var(--panel)', text)
+            self.assertIn('box-shadow:0 0 0 100vmax rgba(0,0,0,.45)', text)
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']

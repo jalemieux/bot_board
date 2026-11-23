@@ -67,13 +67,12 @@ border-radius:6px;padding:5px 9px;font:12px var(--mono)}
 .topnav .me .dot{margin-right:6px}
 """
 def sheet_css(sel: str) -> str:
-    """A sheet from the bottom of a phone screen for `sel` (#647): a scrim over the page and a panel under the rows. The sheet
-    is its own stacking context, so the scrim (::before) and the panel (::after) both sit behind its content, the scrim first."""
-    return (f"{sel}{{position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border:0;background:transparent;"
-            f"border-radius:14px 14px 0 0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:none;z-index:60}}\n"
-            f"{sel}::before{{content:\"\";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:-2}}\n"
-            f"{sel}::after{{content:\"\";position:absolute;inset:0;background:var(--panel);border-radius:inherit;"
-            f"box-shadow:0 -6px 24px rgba(0,0,0,.25);z-index:-1}}\n")
+    """A sheet from the bottom of a phone screen for `sel` (#647). It has its own panel background and dims the page with an outer
+    box-shadow, which does not paint inside the box, so a scrolling sheet keeps its panel. The transparent ::before only catches a
+    tap, which closes the sheet."""
+    return (f"{sel}{{position:fixed;top:auto;left:0;right:0;bottom:0;min-width:0;max-height:80vh;overflow:auto;border:0;background:var(--panel);"
+            f"border-radius:14px 14px 0 0;padding:8px 8px calc(8px + env(safe-area-inset-bottom));box-shadow:0 0 0 100vmax rgba(0,0,0,.45);z-index:60}}\n"
+            f"{sel}::before{{content:\"\";position:fixed;inset:0;z-index:-1}}\n")
 
 
 TOPNAV_RESPONSIVE_CSS = """@media (max-width:1100px){.topnav .links a.x{display:none}}
