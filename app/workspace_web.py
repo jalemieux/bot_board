@@ -34,7 +34,7 @@ WS_CSS = """
 .ws .actfeed .day{padding:10px 0 4px;font:600 12px var(--mono);color:var(--dim);border-top:1px solid var(--line)}.ws .actfeed .day+.ev{border-top:0}
 .ws .actfeed time{color:var(--dim);font:12px var(--mono)}.ws .actfeed .ic{text-align:center;color:var(--accent)}
 .ws .activity .warn{padding:10px 12px;margin:8px 0;border-left:4px solid var(--accent);background:var(--accent-soft)}
-.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:32px}@media (max-width:640px){.ws .activity .quiet{min-height:44px}}
+.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:32px}@media (max-width:700px){.ws .activity .quiet,.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:44px}}
 .ws .activity .empty{padding:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .ws .tabs{display:flex;gap:4px 18px}
 .ws .tabs a{padding:6px 2px;color:var(--ink);text-decoration:none;border-bottom:2px solid transparent}
@@ -346,7 +346,7 @@ function activityView(w) {
     body.appendChild(h('p', {'class': 'sub', title: since.toISOString(), text: 'Since ' + since.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' \u00b7 last ' + a.hours + ' hours'}));
     if (a.forge === 'none') {
       body.appendChild(h('div', {'class': 'warn', role: 'status'}, h('b', null, 'No repository is linked to ' + (w.name || w.slug) + '. '),
-        'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. ', h('a', {href: '#team', text: 'Create or link one on the Team tab.'})));
+        'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. ', h('a', {href: '#team', text: 'A manager can have the board create one on the Team tab.'})));
     } else if (a.forge === 'down') {
       var retry = h('button', {type: 'button', 'class': 'quiet', text: 'Retry'}); retry.addEventListener('click', load);
       body.appendChild(h('div', {'class': 'warn', role: 'alert'}, h('b', null, 'The forge did not answer. '),
