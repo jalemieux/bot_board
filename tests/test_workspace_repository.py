@@ -52,6 +52,13 @@ class Repository(Base):
         self.assertEqual(self.get('game')['repository'], '')
         self.link('other', 'jac/bot_board')
 
+    def test_the_forge_address_must_be_http_or_https_and_an_archived_workspace_is_not_linked(self):
+        self.link('game', 'fleet/game')
+        self.call('PUT', '/api/fleet/secrets/FORGEJO_URL', {'value': 'javascript:alert(1)'}, auth=self.human)
+        self.assertEqual(self.get('game')['repository_url'], '')
+        self.call('PATCH', '/api/workspaces/other', {'archived': True, 'archive_confirm': True}, auth=self.human)
+        self.link('other', 'fleet/other', expected=409)
+
     def test_a_name_that_is_not_owner_slash_name_is_refused(self):
         for bad in ('bot_board', 'a/b/c', '../x', 'a/..', '/x', 'a b/c', 'a/b?x=1', 'a/' + 'b' * 101):
             self.link('game', bad, expected=422)

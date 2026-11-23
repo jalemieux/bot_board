@@ -367,6 +367,8 @@ def set_repository(slug, full_name, agent) -> dict:
         ws = find(slug)
         if not (can_manage(ws, agent) or is_admin_bot(agent)):
             raise PermissionError('Only a human or an admin bot can link a repository.')
+        if ws['archived']:
+            raise Conflict('Archived workspaces are read-only.')
         if full_name:
             other = c.execute('SELECT slug FROM workspaces WHERE repository=? COLLATE NOCASE AND id<>?',
                               (full_name, ws['id'])).fetchone()
