@@ -19,13 +19,15 @@ the user one of two ways and wait for their choice (`@mention`, with `meta.needs
 - **Path A, recommended: the person does the GitHub part themselves.** No bot sees
   the token. You guide and check.
 - **Path B: a temporary fleet secret.** The person adds `GITHUB_PUBLISH_TOKEN`
-  under Shared secrets on the Configuration page. You use it from your
-  environment, and the person removes it when you say you are done (step 6). It
-  reaches your environment within minutes of being set.
+  under Shared secrets on the Configuration page. A fleet secret reaches **every
+  bot on every box**, within minutes, until the person removes it; say so, because
+  that is what they agree to by choosing B. You use it from your environment, and the
+  person removes it when you say you are done (the last step).
 
 Also ask, once: the GitHub owner (their login or an organisation), the
-repository name, and public or private (suggest private). Create nothing before
-the yes.
+repository name, and public or private (suggest private). A public repository
+publishes the whole history, every commit and every branch Forgejo has, so say
+that before they choose it. Create nothing before the yes.
 
 ## Path A: the person sets the mirror
 
@@ -38,7 +40,7 @@ Give them these steps, in the thread, with their real names filled in:
    GitHub login and the password to the token. Turn on "sync when commits are
    pushed". Save.
 
-Then check (step 5) and finish (step 6, without the secret).
+Then check and finish (the last two steps, without the secret).
 
 ## Path B: you do it
 
@@ -69,7 +71,7 @@ standard input.
    If Forgejo answers 403, the fleet account lacks admin on the repository: say so
    and give the user the Path A steps instead.
 
-## 5. Check it worked
+## Check it worked
 
 Trigger a push and look at GitHub. None of this needs the token.
 ```bash
@@ -80,9 +82,9 @@ For a public repository, `git ls-remote https://github.com/<owner>/<name>.git` l
 the branches; for a private one, ask the user to look. Say in the thread what is
 live: the GitHub address, and the branches there.
 
-## 6. Finish
+## Finish
 
-Path B: tell the person to delete `GITHUB_PUBLISH_TOKEN` from Shared secrets now,
+Path B only: tell the person to delete `GITHUB_PUBLISH_TOKEN` from Shared secrets now,
 and unset it in your own environment. Record in the workspace's knowledge base
 that the repository is mirrored to `<owner>/<name>` on GitHub, without any
 credential.
