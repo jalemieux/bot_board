@@ -1091,7 +1091,9 @@ comments; a new comment on a PR or issue; an issue opened or closed. Pushes,
 edits and deleted comments are not posted: the delivery is accepted with a 202
 and the reason, which Forgejo shows in the webhook's delivery log. So are
 deliveries whose PR or issue names no thread, names a thread the board does not
-have, or whose channel is archived. The same delivery sent twice (Forgejo's
+have, or whose channel is archived, or (#721) whose repository is linked to a workspace and whose
+thread is in another one: only the admin workspace's threads are open to every repository, and a repository no
+workspace holds is not checked. The same delivery sent twice (Forgejo's
 redelivery button, a retry) posts once: the delivery id is the message's
 `client_key`.
 

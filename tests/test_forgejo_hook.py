@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
-from app import db, main, status
+from app import db, main, status, workspaces
 
 SECRET = "forgejo-signs-with-this-0123"
 
@@ -52,6 +52,7 @@ class ForgejoHook(unittest.TestCase):
         self.client = TestClient(main.app)
         self.client.__enter__()
         self.jac = self.register("jac", "human")
+        self.agent = db.get_agent_by_handle("jac")
         self.lola = self.register("lola", "claude-code")
         r = self.client.post("/api/messages", headers=self.jac, json={"channel": "general", "body": "versions table please"})
         self.tid = r.json()["message"]["id"]
@@ -125,6 +126,44 @@ class ForgejoHook(unittest.TestCase):
         body = payload("push", self.tid, repository={"full_name": "jac/bot_board", "html_url": "http://evil:3000/jac/bot_board"})
         self.assertIn(self.deliver("push", body=body).status_code, (201, 202))
         self.assertEqual(db.conn().execute("SELECT name FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchall(), [])
+
+    def link(self, workspace, repo="jac/bot_board"):
+        workspaces.set_repository(workspace, repo, self.agent)
+
+    def test_a_repository_linked_to_another_workspace_posts_nothing_into_this_one(self):
+        """#721: the label names a thread; the repository says whose it may be."""
+        self.configure()
+        self.client.post("/api/workspaces", headers=self.jac, json={"slug": "other", "name": "Other", "purpose": "p"}).raise_for_status()
+        self.link("other")
+        r = self.deliver("pull_request_review_rejected")          # the thread is in General
+        self.assertEqual(r.status_code, 202, r.text)
+        self.assertIn("not the workspace that holds jac/bot_board", r.json()["ignored"])
+        self.assertEqual(self.thread()[1:], [])
+
+    def test_a_repository_posts_into_its_own_workspace_and_an_unlinked_one_posts_as_before(self):
+        self.configure()
+        self.assertEqual(self.deliver("pull_request_review_rejected", delivery="u-1").status_code, 201)     # unlinked
+        self.link("general")
+        self.assertEqual(self.deliver("pull_request_review_rejected", delivery="u-2").status_code, 201)     # its own
+
+    def test_the_admin_workspace_is_open_to_every_repository(self):
+        self.configure()
+        self.client.post("/api/workspaces", headers=self.jac, json={"slug": "other", "name": "Other", "purpose": "p"}).raise_for_status()
+        self.link("other")
+        mid = db.post_message("admin", self.agent["id"], "admin thread")["id"]
+        r = self.deliver("pull_request_review_rejected", body=payload("pull_request_review_rejected", mid), delivery="a-1")
+        self.assertEqual(r.status_code, 201, r.text)
+
+    def test_a_conversation_is_not_a_thread_a_label_can_write_into(self):
+        """gina: a no-workspace thread is allowed, which would cover a direct exchange; the label must not reach one."""
+        self.configure()
+        self.link("general")
+        conv = self.client.post("/api/conversations", headers=self.jac, json={"participants": ["lola"], "topic": "private"}).json()
+        slug = conv.get("channel") or conv["conversation"]["slug"]
+        mid = self.client.post("/api/messages", headers=self.jac, json={"channel": slug, "body": "between us"}).json()["message"]["id"]
+        r = self.deliver("pull_request_review_rejected", body=payload("pull_request_review_rejected", mid), delivery="c-1")
+        self.assertEqual(r.status_code, 202, r.text)
+        self.assertEqual(self.client.get(f"/api/threads/{mid}", headers=self.jac).json()["messages"][1:], [])
 
     # -------------------------------------------------------------- the message
 

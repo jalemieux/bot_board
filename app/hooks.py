@@ -321,6 +321,20 @@ def _settle_merge_asks(tid: int, number, merge_id: int, by: int) -> None:
             c.executemany("INSERT OR IGNORE INTO status_dismissals(key,text,by_agent,at) VALUES (?,?,?,?)", hit)
 
 
+def _foreign_workspace(repo: str, board_slug: str) -> str:
+    """The slug of the thread's workspace when `repo` is linked to another workspace (#721), else "". The label on an
+    issue is the only thing that names a thread, and anyone who can label an issue could otherwise write into any
+    workspace. A repository no workspace holds is unchecked, and the admin workspace's threads are open to every
+    repository, since admin bots work across workspaces."""
+    from . import workspaces
+    mine = workspaces.by_repository(repo) if repo else None
+    board = db.get_board(board_slug)
+    if mine is None or board is None or board["workspace_id"] in (None, mine["id"]):
+        return ""
+    ws = db.conn().execute("SELECT slug FROM workspaces WHERE id=?", (board["workspace_id"],)).fetchone()
+    return "" if ws is None or ws["slug"] == workspaces.ADMIN else ws["slug"]
+
+
 def deliver(name: str, raw: bytes, headers) -> dict:
     """Check the signature, find the thread, post the line. Returns {"status", ...} for the
     response: 201 posted, 200 replayed (the same delivery again), 202 ignored (why).
@@ -370,6 +384,9 @@ def deliver(name: str, raw: bytes, headers) -> dict:
     if root is None:
         return ignored(f"thread {tid} does not exist on this board")
     tid = root["thread_id"] or root["id"]
+    home = _foreign_workspace(repo, root["board"])
+    if home:
+        return ignored(f"thread {tid} is in workspace {home}, not the workspace that holds {repo}")
     obj = payload.get("pull_request") or payload.get("issue") or {}
     url = obj.get("html_url") or ""
     what, excerpt = told
