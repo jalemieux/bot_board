@@ -184,6 +184,20 @@ class Routines(unittest.TestCase):
         self.assertEqual(v3['thread'], report['id'])           # without `thread`, it stays where it was
         self.call('PATCH', f"/api/routines/{r['id']}", {'thread': 999999}, auth=self.bot, expected=404)
 
+    def test_a_recipe_without_a_repo_takes_its_workspaces_and_a_different_one_is_flagged(self):
+        # #716: the workspace's repository is the default; a stored recipe keeps what a human approved and the page says so
+        recipe = {'type': 'github-issues', 'workspace': 'admin'}
+        self.add(recipe=recipe, check=None, prompt=None, expected=422)       # no repository anywhere: still an error
+        self.call('PUT', '/api/workspaces/admin/repository', {'repository': 'fleet/admin'})
+        made = self.add(recipe=recipe, check=None, prompt=None)
+        self.assertEqual(self.call('GET', f"/api/routines/{made['id']}")['recipe']['repo'], 'fleet/admin')
+        self.assertEqual(self.call('GET', f"/api/routines/{made['id']}")['repository_differs'], '')
+        other = self.add(name='other', recipe={**recipe, 'repo': 'o/r'}, check=None, prompt=None)
+        self.assertEqual(other['recipe']['repo'], 'o/r', 'a repo written out is kept')
+        self.assertEqual(self.call('GET', f"/api/routines/{other['id']}")['repository_differs'], 'fleet/admin')
+        self.call('PUT', '/api/workspaces/admin/repository', {'repository': ''})
+        self.assertEqual(self.call('GET', f"/api/routines/{other['id']}")['repository_differs'], '', 'nothing to differ from')
+
     def test_a_recipe_stored_before_workspaces_is_read_in_the_current_shape(self):
         r = self.add(recipe={'type': 'github-issues', 'repo': 'o/r', 'workspace': 'admin'}, check=None, prompt=None)
         c = db.conn()
