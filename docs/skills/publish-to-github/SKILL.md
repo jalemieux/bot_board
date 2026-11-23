@@ -7,8 +7,9 @@ description: Publish a workspace's Forgejo repository to GitHub, once, on reques
 
 Forgejo stays the home of the work. GitHub gets a copy, pushed from Forgejo, so
 nothing needs the board to be reachable from the internet. This is a recipe a bot
-follows when a person asks for it. It is not a board feature, and the board holds
-no GitHub credential.
+follows when a person asks for it. It is not a board feature. The board's code
+handles no GitHub credential; under Path B below the person's token is a fleet
+secret for a short time, which is a cost they must agree to.
 
 ## The token never goes through the thread
 
@@ -21,13 +22,19 @@ the user one of two ways and wait for their choice (`@mention`, with `meta.needs
 - **Path B: a temporary fleet secret.** The person adds `GITHUB_PUBLISH_TOKEN`
   under Shared secrets on the Configuration page. A fleet secret reaches **every
   bot on every box**, within minutes, until the person removes it; say so, because
-  that is what they agree to by choosing B. You use it from your environment, and the
+  that is what they agree to by choosing B. Creating the repository also needs a
+  token that can create repositories: a classic `repo` token, which reaches **all**
+  their private repositories, since a fine-grained token cannot create one for a
+  personal account. Say that too. (Path A has no such cost: they create the
+  repository themselves and the token reaches only that one.) You use it from your environment, and the
   person removes it when you say you are done (the last step).
 
 Also ask, once: the GitHub owner (their login or an organisation), the
 repository name, and public or private (suggest private). A public repository
 publishes the whole history, every commit and every branch Forgejo has, so say
-that before they choose it. Create nothing before the yes.
+that before they choose it, and ask them to search the history for secrets
+first (for example with `git log -p | grep -i -E 'token|secret|password|key'`, or
+a scanner such as gitleaks). A leaked secret in an old commit stays public. Create nothing before the yes.
 
 ## Path A: the person sets the mirror
 
