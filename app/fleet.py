@@ -244,8 +244,10 @@ def hand_off(host: str, bots: list[dict]) -> None:
 
 
 def secrets() -> list[dict]:
-    """The fleet's secrets without their values: name, who set it, when, and its last 4 characters."""
-    return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:]}
+    """The fleet's secrets without their values: name, who set it, when, and its last 4 characters. FORGEJO_URL is an
+    address, not a secret (#632), so its row also carries `value`, in full, and nothing else's does (#701)."""
+    return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:],
+             **({"value": r["value"]} if r["name"] == "FORGEJO_URL" else {})}
             for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
 
 
