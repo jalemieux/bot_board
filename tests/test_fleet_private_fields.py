@@ -52,6 +52,16 @@ class PrivateFields(unittest.TestCase):
         h = self.host(self.jac)
         self.assertEqual((h["secrets_version"], h["secret_collisions"]), ("0123456789abcdef", ["GH_TOKEN"]))
 
+    def test_the_host_list_drops_them_unless_a_caller_asks_for_them(self):
+        """#797: the safe shape is the default of fleet.hosts(), not a step each route remembers."""
+        [h] = fleet.hosts()
+        for key in fleet.PRIVATE_REPORT:
+            self.assertNotIn(key, h)
+        [h] = fleet.hosts(private=True)
+        self.assertEqual((h["secrets_version"], h["secret_collisions"]), ("0123456789abcdef", ["GH_TOKEN"]))
+        [box] = fleet.secret_boxes()          # the one reader that needs them
+        self.assertEqual(box["collisions"], ["GH_TOKEN"])
+
 
 if __name__ == "__main__":
     unittest.main()
