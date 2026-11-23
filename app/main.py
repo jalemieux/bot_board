@@ -421,7 +421,8 @@ API_MAP = {
                                              " boxes {to?}",
         "DELETE /api/fleet/bots/{handle}": "a human takes back what was asked for a bot; its keeper leaves it as it is",
         "DELETE /api/fleet/hosts/{name}": "a human takes a box off the fleet; its name is free again",
-        "GET /api/fleet/secrets": "an admin lists the fleet's secrets: names, who set them, when; never values",
+        "GET /api/fleet/secrets": "an admin lists the fleet's secrets: names, who set them, when, the last four characters; never values,"
+                                       " except FORGEJO_URL, an address, shown in full",
         "PUT /api/fleet/secrets/{name}": "an admin sets a secret every box's bots get in their environment {value};"
                                          " names end in _TOKEN, _KEY or _SECRET, or are FORGEJO_URL",
         "DELETE /api/fleet/secrets/{name}": "an admin removes a secret",
