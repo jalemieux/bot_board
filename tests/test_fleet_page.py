@@ -48,7 +48,10 @@ class FleetPage(unittest.TestCase):
                 page, sections = self.render([host(
                     'legacy', [], reporting=reporting,
                     update={'revision': 'v1.0.124', 'result': 'up to date'})])
-                self.assertIn('checkout v1.0.124', sections['fleet-machines'])
+                self.assertIn('checkout v1.0.124', page)      # under Details, folded until opened
+                self.assertIn('<summary>Details</summary>', page)
+                self.assertIn('up to date', sections['fleet-machines'])
+                self.assertNotIn('checkout v1.0.124', sections['fleet-machines'])
                 if reporting:
                     self.assertIn('before #238', page)
 
@@ -91,7 +94,7 @@ class FleetPage(unittest.TestCase):
         self.assertNotIn('class="act" data-handle="ghost"', page)     # nothing there would carry a stop out
         self.assertIn('class="act delete-bot" data-handle="ghost"', page)     # a delete needs no box (#280)
         self.assertNotIn('@gone', page)
-        self.assertIn('5 up · 1 stopped', sections['fleet-machines'])
+        self.assertIn('5 up', sections['fleet-machines'])
         self.assertIn('not reporting', sections['fleet-machines'])
         self.assertIn('offline stopped reporting', sections['fleet-attention'])
 
@@ -158,6 +161,25 @@ class FleetPage(unittest.TestCase):
         self.assertIn('@retry', sections['fleet-bots'])
         self.assertIn('last run failed: temporary error', sections['fleet-bots'])
 
+    def test_a_machine_is_one_short_row_that_says_how_its_bots_run(self):
+        mac = host('mac', [bot('a'), bot('b', 'stopped')], os='Darwin 25.5.0',
+                   update={'revision': 'v1', 'result': "waiting for the board's release commit"},
+                   runtime={'setting': 'docker', 'state': 'ok', 'detail': 'docker 29.5.2'},
+                   host_bots=False, apps=[{'name': 'Xcode', 'version': '26'}, {'name': 'Zed', 'version': '1'}],
+                   credentials=[dict(name='gh', state='ok'), dict(name='claude', state='missing')])
+        bare = host('bare', [], runtime={'setting': 'host', 'state': 'ok'})
+        page, sections = self.render([mac, bare])
+        text = sections['fleet-machines']
+        self.assertIn('in containers', text)
+        self.assertIn('on the host', text)
+        self.assertIn('update waiting', text)
+        self.assertNotIn('stopped', text.replace('stopped reporting', ''), 'a stopped bot has no place on this page')
+        self.assertIn('2 apps found</summary>', page)
+        self.assertNotIn('Xcode', text, 'the app list is folded')
+        self.assertIn('Xcode', page)
+        self.assertIn('class="chip prob">claude missing', page)
+        self.assertNotIn('pip bad', page.split('Host bots')[1].split('</div>')[0], 'off is not a warning')
+
     def test_credentials_and_empty_machine_states(self):
         page, sections = self.render([host('empty', [], credentials=[
             dict(name='claude', state='missing', detail='Run claude /login'),
@@ -167,7 +189,7 @@ class FleetPage(unittest.TestCase):
         held, held_sections = self.render([host('box', [bot('dex', health='logged out of codex')],
                                            credentials=[dict(name='codex', state='missing', detail='not logged in')])])
         self.assertIn('codex missing on box', held_sections['fleet-attention'])
-        self.assertIn('0 up · 0 stopped', sections['fleet-machines'])
+        self.assertIn('0 up', sections['fleet-machines'])
         self.assertIn('No bot is running', sections['fleet-bots'])
         self.assertIn('No box has reported yet', self.render([])[0])
 
