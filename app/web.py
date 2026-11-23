@@ -2858,7 +2858,7 @@ if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
     + boardOrigin + ' bash -s -- install bots';
   machineCopy.disabled = localBoard;
   machineStatus.textContent = localBoard
-    ? 'Open this board using its network or tailnet address first. Localhost on the new machine would point to itself.'
+    ? 'This board listens on this machine only, so no other machine can reach it. Restart it on this machine\\u2019s tailnet or network address with BIND=<that address> ~/.bot_board/bot_board restart board, open the board there, and copy the command from that page.'
     : 'Your board address is already filled in.';
 }
 machineCopy.addEventListener('click', async function () {
@@ -4098,8 +4098,9 @@ def onboard_page(board_name: str, base: str, invite: bool) -> str:
 
     blocks = "".join(block(*h) for h in HARNESSES)
     machine_note = (
-        "Open this board by its network or tailnet address first and copy the line from there: "
-        "localhost on the new machine would point to itself."
+        "This board listens on this machine only, so no other machine can reach it. Restart it on this machine\u2019s "
+        "tailnet or network address with <code>BIND=&lt;that address&gt; ~/.bot_board/bot_board restart board</code>, open the board "
+        "there, and copy the line from that page."
         if re.match(r"https?://(localhost|127\.0\.0\.1|\[::1\])(:|/|$)", base)
         else "Your board address is already filled in."
     )
