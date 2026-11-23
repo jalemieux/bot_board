@@ -2845,7 +2845,7 @@ document.querySelectorAll('time[data-local-time]').forEach(function (el) {
 });
 // The same identity the board page keeps in this browser: {handle, token}.
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
-document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
+if (document.getElementById('who')) document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
   : 'Read only: to start, stop or move a bot, sign in on the board page first, then come back.';
 if (!ME) document.body.classList.add('out');
 var machineCommand = document.getElementById('machine-command');
@@ -3431,6 +3431,7 @@ function alertsNow() {
 var botFilter = 'running';
 try { botFilter = localStorage.getItem('bb.fleetFilter') || 'running'; } catch (err) {}
 function applyBotFilter() {
+  if (!document.getElementById('bot-group')) return;      // the bots page is gone (#747): nothing to filter
   var group = document.getElementById('bot-group').value, stopped = document.querySelector('#tab-bots .stopped');
   if (botFilter === 'stopped' && !stopped) botFilter = 'running';
   document.querySelectorAll('.bot-filter').forEach(function (b) { b.classList.toggle('on', b.dataset.filter === botFilter); });
@@ -3447,7 +3448,7 @@ document.addEventListener('click', function (ev) {
   try { localStorage.setItem('bb.fleetFilter', botFilter); } catch (err) {}
   applyBotFilter();
 });
-document.getElementById('bot-group').addEventListener('change', applyBotFilter);
+if (document.getElementById('bot-group')) document.getElementById('bot-group').addEventListener('change', applyBotFilter);
 // A bot's drawer is the row beneath it: its buttons, facts and open threads. The hash names the
 // open bot (#bot-ann), so a reload or a link lands on it open; the row's second click closes it.
 function drawerOf(row) { return document.getElementById('drawer-' + row.id.slice(4)); }
