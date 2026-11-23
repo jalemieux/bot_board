@@ -206,6 +206,14 @@ read path cannot write. The install makes it itself for a Forgejo it makes.
 
 ## 5. Bring a repository over
 
+A workspace's repository is a field the board keeps, so after you bring one over, **link it to its workspace instead of
+writing it down** in the knowledge base: on the workspace's Team tab, the Repository card, or
+`PUT /api/workspaces/<slug>/repository {"repository": "owner/name"}` (a human or an admin bot). The bots read `REPO`
+from it, a new issue-feed routine takes its `repo` from it, and the Activity tab shows its pull requests and issues. To
+have the board make an empty one instead, use the card's "Create repository" (`POST` to the same path). A workspace
+made while the board has a forge address and token gets one by itself. The board needs `FORGEJO_URL` and `FORGEJO_TOKEN`
+for that (step 4 and the install above).
+
 Sign in to Forgejo as the admin at the `ROOT_URL`. The import can be done from
 the UI (the `+` menu, New migration, Git) or with one API call from the Forgejo
 box, which is what was done:
