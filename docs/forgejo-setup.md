@@ -192,6 +192,18 @@ The bots are meant to see this token: it is how they open issues and pull
 requests on Forgejo, the way `GH_TOKEN` is for GitHub. It cannot change the
 server, because the `fleet` account is not an admin.
 
+A Forgejo you already run can be wired in one line instead of by hand: give the install its address and that token.
+It sets `FORGEJO_TOKEN`, `FORGEJO_URL`, and `FORGEJO_READ_TOKEN` when you have one, as fleet secrets, each only when
+the board has none. It makes nothing on that Forgejo, so the webhook (step 6) stays yours.
+
+```bash
+FORGE_ADDRESS=http://forge.example:3000 FORGEJO_TOKEN=<the fleet token> FORGEJO_READ_TOKEN=<read-only, optional> \
+  ~/.bot_board/bot_board install board
+```
+
+`FORGEJO_READ_TOKEN` is the token the board reads with (scopes `read:repository` and `read:issue`), so a bug on the
+read path cannot write. The install makes it itself for a Forgejo it makes.
+
 ## 5. Bring a repository over
 
 Sign in to Forgejo as the admin at the `ROOT_URL`. The import can be done from

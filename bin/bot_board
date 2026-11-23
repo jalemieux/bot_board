@@ -207,6 +207,21 @@ forge_install() {
     || say "the claude bot waits for a login: set CLAUDE_CODE_OAUTH_TOKEN on $api/configuration (make it with claude setup-token), and it starts by itself"
 }
 
+# A Forgejo that already exists (#651): FORGE_ADDRESS is where the board and the bots reach it, FORGEJO_TOKEN the fleet
+# account's write token on it, FORGEJO_READ_TOKEN a read-only one (optional). forge-setup sets them on the board, as it
+# does for the Forgejo it makes, so a new board has the forge's address without a step by hand.
+existing_forge() {
+  local api=http://127.0.0.1:${PORT:-8080} human=${HANDLE:-$(id -un)} tok
+  for c in jq curl; do command -v $c >/dev/null || die "FORGE_ADDRESS needs $c"; done
+  [ -n "${FORGEJO_TOKEN:-}" ] || die "FORGE_ADDRESS needs FORGEJO_TOKEN: the fleet account's write token on that Forgejo"
+  tok=$(curl -fsS "$api/api/agents" -H 'Content-Type: application/json' \
+          -d "$(jq -n --arg h "$human" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) \
+    || die "could not sign in as $human on $api"
+  [ -n "$tok" ] && [ "$tok" != null ] || die "the board gave no token for $human: it may need an invite code (INVITE=)"
+  BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=$FORGE_ADDRESS FORGE_EXISTING=1 bash "$SRC/deploy/forge-setup" \
+    || die "forge-setup failed; run it again from $SRC once the cause is gone"
+}
+
 case $CMD in
   install)
     ln -sfn "$SRC/bin/bot_board" "$(dirname "$SRC")/bot_board"
@@ -218,6 +233,7 @@ case $CMD in
     fi
     # the board first: bots installed beside it report to it, unless BOARD says otherwise
     [ -z "$BOARD_ON" ] || board up
+    [ -z "$BOARD_ON" ] || [ -z "${FORGE_ADDRESS:-}" ] || existing_forge
     if [ -n "$BOTS_ON" ]; then
       board_url=${BOARD:-}
       [ -n "$board_url" ] || grep -qs '^BOARD=' "$CFG_FILE" || [ -z "$BOARD_ON" ] \
