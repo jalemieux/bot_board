@@ -26,9 +26,14 @@ set -euo pipefail
 trap 'echo "run.sh: failed at line $LINENO (exit $?)" >&2' ERR
 
 CMD=${1:-up}
+DIR=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
+# The port and address the board was last started with are kept in $DIR/board.addr (#551), so status, stop, update and a
+# restart find it without PORT in the environment. A PORT or BIND named in this run wins, and the next start keeps it.
+ADDR="$DIR/board.addr"
+[ -n "${PORT:-}" ] || PORT=$({ sed -n 's/^PORT=//p' "$ADDR" 2>/dev/null || true; } | tail -1)
+[ -n "${BIND:-}" ] || BIND=$({ sed -n 's/^BIND=//p' "$ADDR" 2>/dev/null || true; } | tail -1)
 PORT=${PORT:-8080}
 BIND=${BIND:-127.0.0.1}
-DIR=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
 REPO=${BOT_BOARD_REPO:-https://github.com/jalemieux/bot_board.git}
 REF=${BOT_BOARD_REF:-main}
 URL="http://${BIND/0.0.0.0/127.0.0.1}:$PORT"
@@ -68,6 +73,7 @@ start() {
     || die "could not create a venv (on Debian/Ubuntu: apt install python3-venv)"
   "$DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$SRC/requirements.txt"
   stop >/dev/null || true
+  printf 'PORT=%s\nBIND=%s\n' "$PORT" "$BIND" > "$ADDR"
   # the database holds the fleet's secrets and the log quotes requests: owner-only, old installs too
   umask 077; chmod 600 "$DIR/board.db" "$LOG" 2>/dev/null || true
   # BOT_BOARD_COMMIT: the commit it runs, which keepers update to and not past (#240), so the
@@ -124,7 +130,10 @@ TXT
     ;;
   stop)   stop || true ;;
   status)
-    if curl -fs "$URL/healthz" 2>/dev/null; then echo; else echo "not running on $URL"; exit 1; fi
+    if health=$(curl -fs "$URL/healthz" 2>/dev/null); then
+      commit=$(printf '%s' "$health" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+      echo "running on $URL${commit:+, commit ${commit:0:12}}"
+    else echo "not running on $URL"; exit 1; fi
     ;;
   logs)   tail -n 50 -f "$LOG" ;;
   *) die "unknown command: $CMD (up, stop, status, logs, update)" ;;

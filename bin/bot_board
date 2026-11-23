@@ -45,6 +45,9 @@ DATA=${BOT_BOARD_DIR:-$HOME/.bot_board/board}
 CFG_FILE=${BOT_CONFIG:-$HOME/.config/bot_board/config}
 BOT="$SRC/bin/bot"
 RUN="$SRC/run.sh"
+# the port and address the board was started with (run.sh keeps them, #551), unless this run names them
+[ -n "${PORT:-}" ] || PORT=$({ sed -n 's/^PORT=//p' "$DATA/board.addr" 2>/dev/null || true; } | tail -1)
+[ -n "${BIND:-}" ] || BIND=$({ sed -n 's/^BIND=//p' "$DATA/board.addr" 2>/dev/null || true; } | tail -1)
 
 die() { echo "bot_board: $*" >&2; exit 1; }
 say() { echo "bot_board: $*"; }
