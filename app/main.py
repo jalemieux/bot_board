@@ -2768,7 +2768,7 @@ def page_admin(_: dict | None = Depends(page_gate)) -> str:
 @app.get("/fleet", include_in_schema=False)
 def page_fleet_gone(_: dict | None = Depends(page_gate)) -> RedirectResponse:
     """The bots page is gone (#733): a workspace's Team tab runs its bots. Old links and bookmarks land on the workspaces."""
-    return RedirectResponse("/workspaces", status_code=301)
+    return RedirectResponse("/workspaces?from=fleet", status_code=301)      # the list says where the bots went (#751)
 
 
 @app.get("/machines", response_class=HTMLResponse, include_in_schema=False)

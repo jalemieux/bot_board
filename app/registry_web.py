@@ -223,7 +223,7 @@ REG_SECTION_JS = r"""
       msg.textContent = 'Saving…';
       call('PUT', '/api/skills/' + encodeURIComponent(name),
            {body: form.elements.body.value, fields: {description: form.elements.description.value.trim()},
-            base_revision: 0, reason: 'added on the fleet page'})
+            base_revision: 0, reason: 'added on the Skills page'})
       .then(function () { location.href = '/fleet/skills/' + encodeURIComponent(name); },
             function (e) { msg.textContent = e.message; });
     });
@@ -476,7 +476,7 @@ SKILL_PAGE_JS = r"""
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest('button.del-skill'); if (!b || !need()) return;
     if (!confirm('Delete the skill ' + S.name + '? Its history is kept.')) return;
-    call('DELETE', '/api/skills/' + encodeURIComponent(S.name), {base_revision: S.revision, reason: 'deleted on the fleet page'})
+    call('DELETE', '/api/skills/' + encodeURIComponent(S.name), {base_revision: S.revision, reason: 'deleted on the Skills page'})
       .then(function () { location.href = '/skills'; }, function (e) { alert(e.message); });
   });
 })();

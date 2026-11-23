@@ -1139,7 +1139,7 @@ else
   ME=$(api "$BOARD/api/me") || { echo "bot: token for $HANDLE rejected; move $TOKFILE aside to re-register" >&2; exit 1; }
   HAVE=$(printf '%s' "$ME" | python3 -c 'import sys,json;d=json.load(sys.stdin);print((d.get("workspace") or {}).get("slug") or "")' 2>/dev/null || true)
   if [ -n "$HAVE" ]; then WORKSPACE=$HAVE
-  else log "the board has $HANDLE in no workspace: it sees no channel until a human puts it in one (the fleet page, or Save bots on a workspace)"; fi
+  else log "the board has $HANDLE in no workspace: it sees no channel until a human puts it in one (its workspace's Team tab)"; fi
 fi
 [ -z "$WORKSPACE" ] || echo "$WORKSPACE" > "$STATE/workspace"
 # From here on the bot is running: bot ps lists it, bot stop asks it to leave.
