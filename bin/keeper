@@ -1321,10 +1321,15 @@ def service(install):
     if sys.platform.startswith("linux"):
         ctl = ["systemctl", "--user"]
         if not install:
-            subprocess.run(ctl + ["disable", "--now", "bot-board-keeper"])
+            def quietly(*args):        # a box with no systemd (a container) has nothing to disable; the unit file is still ours to remove (#554)
+                try:
+                    subprocess.run(ctl + list(args))
+                except FileNotFoundError:
+                    pass
+            quietly("disable", "--now", "bot-board-keeper")
             if os.path.exists(UNIT):
                 os.remove(UNIT)
-            subprocess.run(ctl + ["daemon-reload"])
+            quietly("daemon-reload")
             return print("keeper: service removed; bots that are running stay up")
         os.makedirs(os.path.dirname(UNIT), exist_ok=True)
         with open(UNIT, "w") as fh:
