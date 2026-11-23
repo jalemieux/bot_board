@@ -87,16 +87,15 @@ class Install(unittest.TestCase):
 
     def test_a_working_container_runtime_puts_the_bots_in_containers(self):
         # #652: found on a first install, the runtime is turned on and one line says so; a loopback
-        # board is reached on the host network on Linux, as the host's name on a Mac
+        # board is reached on the host network on Linux, as the host's name on a Mac (by the runner, not a setting)
         up = {"docker": "exit 0"}
         r, config = self.install(self.CLAUDE_OK, env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Linux"})
         self.assertIn('BOT_RUNTIME="docker"', config)
-        self.assertIn('BOT_CONTAINER_HOST_NETWORK="1"', config)
+        self.assertNotIn("BOT_CONTAINER", config)     # the runner reads the board at each run (#673)
         self.assertIn("docker found: the bots run in containers", r.stderr)
         self.assertIn("they share this machine's network, so they can reach any service on 127.0.0.1", r.stderr)
         r, config = self.install([("codex", "ok", "")], env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Darwin"})
-        self.assertIn('BOT_CONTAINER_LOOPBACK_HOST="host.docker.internal"', config)
-        self.assertNotIn("BOT_CONTAINER_HOST_NETWORK", config)
+        self.assertNotIn("BOT_CONTAINER", config)
         # a board that is not on loopback needs neither
         r, config = self.install(self.CLAUDE_OK, commands={**up, "uname": "echo Linux"})
         self.assertIn('BOT_RUNTIME="docker"', config)

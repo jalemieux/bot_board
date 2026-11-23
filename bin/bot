@@ -202,12 +202,11 @@ if [ "${1:-}" = install ]; then
       _set BOT_RUNTIME "$_rt"
       case $_board in
         http://127.*|http://localhost*|http://\[::1\]*)
-          if [ "$(uname -s)" = Darwin ]; then
-            _set BOT_CONTAINER_LOOPBACK_HOST "$([ "$_rt" = podman ] && echo host.containers.internal || echo host.docker.internal)"
-            _net="they can also reach every port this Mac listens on"
-          else _set BOT_CONTAINER_HOST_NETWORK 1; _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
+          # container_run reaches a loopback board by itself: as the host on a Mac, on the host network on Linux (#673)
+          if [ "$(uname -s)" = Darwin ]; then _net="they can also reach every port this Mac listens on"
+          else _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
       esac
-      echo "bot: $_rt found: the bots run in containers. They cannot read this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
+      echo "bot: $_rt found: the bots run in containers. They cannot read the rest of this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg" >&2
     fi
   fi
   "$SRC/bin/bot" keeper install "$@" || exit $?
@@ -311,20 +310,27 @@ container_run() {
   #    so the container resolves it and routes to it through the host (proven on minipc-1, #501). A
   #    loopback board cannot be reached this way, and a name the host itself cannot resolve means the
   #    box cannot reach the board: fail loud in both, rather than run the harness to no effect.
+  # Both are read from the BOARD of this run, so a setting cannot outlive a board that moved (#673): on Linux
+  # a loopback board runs the container on the host network; on a Mac it is reached as the host, by the
+  # runtime's own name for it. BOT_CONTAINER_HOST_NETWORK and BOT_CONTAINER_LOOPBACK_HOST override both.
+  local board_host board_ip loop_host=${BOT_CONTAINER_LOOPBACK_HOST:-} host_net=${BOT_CONTAINER_HOST_NETWORK:-}
+  board_host=$(printf '%s' "${BOARD:-}" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
+  if [ "$(uname -s)" = Darwin ]; then
+    [ -n "$loop_host" ] || loop_host=$([ "${BOT_RUNTIME##*/}" = podman ] && echo host.containers.internal || echo host.docker.internal)
+  elif [ -z "$loop_host" ]; then
+    case $board_host in 127.*|localhost|"[::1]"|::1) host_net=1 ;; esac
+  fi
   if [ "$mode" = bot ]; then
-    if [ -n "${BOT_CONTAINER_HOST_NETWORK:-}" ]; then
+    if [ -n "$host_net" ]; then
       run+=(--network host)
     else
-      local board_host board_ip
-      board_host=$(printf '%s' "${BOARD:-}" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
       case $board_host in
         ""|127.*|localhost|"[::1]"|::1)
-          # A laptop's board listens on loopback. With BOT_CONTAINER_LOOPBACK_HOST set (the installer
-          # sets it on a Mac, #652), the container reaches the host by that name instead, and gets a
-          # BOARD that says so. Docker Desktop, OrbStack and Colima serve host.docker.internal; podman serves host.containers.internal.
-          if [ -n "$board_host" ] && [ -n "${BOT_CONTAINER_LOOPBACK_HOST:-}" ]; then
+          # A laptop's board listens on loopback. On a Mac (or with BOT_CONTAINER_LOOPBACK_HOST set) the
+          # container reaches the host by that name instead, and gets a BOARD that says so. Docker Desktop, OrbStack and Colima serve host.docker.internal; podman serves host.containers.internal.
+          if [ -n "$board_host" ] && [ -n "$loop_host" ]; then
             # the second -e BOARD overrides the by-name one above: the last wins in Docker and Podman
-            run+=(--add-host "$BOT_CONTAINER_LOOPBACK_HOST:host-gateway" -e "BOARD=${BOARD/"//$board_host"/"//$BOT_CONTAINER_LOOPBACK_HOST"}")
+            run+=(--add-host "$loop_host:host-gateway" -e "BOARD=${BOARD/"//$board_host"/"//$loop_host"}")
           else
             echo "bot: BOARD is ${BOARD:-}, which a bridge container cannot reach (loopback is the container itself). Set BOARD to the box's tailnet name, or BOT_CONTAINER_HOST_NETWORK=1 for a --network host runtime, before enabling BOT_RUNTIME." >&2
             return 1
@@ -374,14 +380,14 @@ except OSError: pass' "$_xh" 2>/dev/null || true)
   # A loopback FORGEJO_URL is the container itself on a bridge network (#692), as a loopback BOARD is: the same
   # rewrite to the loopback host name when the installer set one, and a warning, not a refusal, when it did not
   # (a turn may not need the forge). The last -e FORGEJO_URL wins over the by-name one above.
-  if [ "$mode" = bot ] && [ -z "${BOT_CONTAINER_HOST_NETWORK:-}" ] && [ -n "${FORGEJO_URL:-}" ]; then
+  if [ "$mode" = bot ] && [ -z "$host_net" ] && [ -n "${FORGEJO_URL:-}" ]; then
     local _fh
     _fh=$(printf '%s' "$FORGEJO_URL" | sed -E 's#^[a-zA-Z]+://##; s#[/?].*$##; s#:[0-9]+$##')
     case $_fh in
       127.*|localhost|"[::1]"|::1)
-        if [ -n "${BOT_CONTAINER_LOOPBACK_HOST:-}" ]; then
-          case " ${run[*]} " in *" $BOT_CONTAINER_LOOPBACK_HOST:host-gateway "*) ;; *) run+=(--add-host "$BOT_CONTAINER_LOOPBACK_HOST:host-gateway") ;; esac
-          run+=(-e "FORGEJO_URL=${FORGEJO_URL/"//$_fh"/"//$BOT_CONTAINER_LOOPBACK_HOST"}")
+        if [ -n "$loop_host" ]; then
+          case " ${run[*]} " in *" $loop_host:host-gateway "*) ;; *) run+=(--add-host "$loop_host:host-gateway") ;; esac
+          run+=(-e "FORGEJO_URL=${FORGEJO_URL/"//$_fh"/"//$loop_host"}")
         else
           echo "bot: FORGEJO_URL is $FORGEJO_URL, which a bridge container cannot reach (loopback is the container itself). Set it to the forge's tailnet name under Secrets on /fleet, or BOT_CONTAINER_LOOPBACK_HOST on this box." >&2
         fi ;;
