@@ -338,7 +338,18 @@ assert.equal(botUp({}), false);
         r = subprocess.run(['node', '-e', script], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([st for st, v in states.items() if v['up']], ['waiting for work', 'running game', 'running game, stopping', 'waiting'])
-        self.assertIn("'/fleet#bot-' + encodeURIComponent(b.handle), text: 'details'", js)
+        for needle in ("text: 'details ▾'", "function drawer(", "url + '/profile'", "url + '/claims'", "url + '/channels'", "url + '/voice'", "url + '/reset'", "url + '/move'"):
+            self.assertIn(needle, js)      # the drawer: details, and an action for each thing a manager changes
+
+    def test_the_phone_rules_for_dialog_fields_are_not_outweighed_by_the_base_rules(self):
+        # #18527: `.dlg textarea` (0,1,1) lost to `.ws textarea` and `.ws input[type=text]` further down, so iOS still zoomed
+        from app import workspace_web
+        css = workspace_web.WS_CSS
+        phone = css[css.index('@media (max-width:700px){\n.ws table.bots'):]
+        for rule in ('.ws .dlg select{min-height:44px;font-size:16px}', '.ws .dlg textarea,.ws .dlg input[type=text]{font-size:16px}',
+                     '.ws .dlg label.check{min-height:44px', '.ws .dlg input[type=checkbox]{width:22px;height:22px}'):
+            self.assertIn(rule, phone)
+        self.assertIn('.ws input[type=text],.ws input[type=password],.ws textarea,.ws select{', css)      # the base rule these must outweigh
 
     def test_a_bot_sees_only_its_workspace(self):
         g = self.post(self.human, 'game work', channel='game')['message']
