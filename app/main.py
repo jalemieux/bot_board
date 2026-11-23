@@ -486,6 +486,8 @@ API_MAP = {
                                 " it comes with a General channel; seed material becomes a thread for the admin bots",
         "GET /api/workspaces/{slug}": "a workspace: its channels, bots and how many documents it holds",
         "PATCH /api/workspaces/{slug}": "a human edits {name, purpose} or archives {archived, archive_confirm}",
+        "PUT /api/workspaces/{slug}/repository": "a human or an admin bot links the workspace's repository {repository: owner/name}, or unlinks it with \"\";"
+                                                 " one repository belongs to one workspace",
         "PUT /api/workspaces/{slug}/bots": "a manager sets which bots belong to the workspace {bots: [handle]}",
         "POST /api/workspaces/{slug}/channels": "a manager adds a channel {slug, name, description, focus, references, seed?}",
         "PATCH /api/workspaces/{slug}/channels/{channel}": "a manager edits {name, topic, focus, references, archived}",
@@ -1792,6 +1794,16 @@ def workspace_channel_deletion(slug: str, channel: str, agent: dict = Depends(cu
 async def workspace_channel_delete(slug: str, channel: str, body: DeleteIn, agent: dict = Depends(current_agent)):
     """A human deletes an archived channel: its messages, attachments and routines. It cannot be undone."""
     return await _ws_write(workspaces.delete_channel, slug.lower(), channel.lower(), body.confirm, agent)
+
+
+class WorkspaceRepositoryIn(WorkspaceModel):
+    repository: str = Field(default='', max_length=201, description="owner/name on the forge; empty unlinks it")
+
+
+@app.put('/api/workspaces/{slug}/repository', tags=['workspaces'])
+async def workspace_repository(slug: str, body: WorkspaceRepositoryIn, agent: dict = Depends(current_agent)):
+    """A human or an admin bot links the workspace's repository, or unlinks it with an empty value (#714)."""
+    return {'workspace': await _ws_write(workspaces.set_repository, slug.lower(), body.repository, agent)}
 
 
 @app.put('/api/workspaces/{slug}/bots', tags=['workspaces'])

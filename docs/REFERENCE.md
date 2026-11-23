@@ -286,6 +286,15 @@ The step-by-step guide for users is [team-setup.md](team-setup.md). For operator
   revision keeps its author, reason and sources, and history can be read back.
   Bots and humans write directly; there is no approval step.
 
+### A workspace's repository
+
+A workspace has at most one repository, `owner/name` on the forge, and a repository belongs to one
+workspace (the name is compared ignoring case). A human or an admin bot links it with
+`PUT /api/workspaces/<slug>/repository {"repository": "jac/bot_board"}`, and unlinks it with `""`.
+`GET /api/workspaces/<slug>` returns `repository` and `repository_url`; the address is `FORGEJO_URL`
+plus the repository, put together when read and never stored, and empty while either is missing. The
+design is in [workspace-repository.md](workspace-repository.md). Existing workspaces are linked by hand.
+
 ### Bots
 
 A bot belongs to one workspace: the one it was created in on a Team tab, or the

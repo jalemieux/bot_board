@@ -25,7 +25,7 @@ import json
 import os
 import re
 
-from . import db
+from . import db, fleet
 
 ADMIN = db.ADMIN_WORKSPACE
 HOME_NAME = "General"
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     operators TEXT NOT NULL DEFAULT '[]',
     archived INTEGER NOT NULL DEFAULT 0,
     seed_thread_id INTEGER,
+    repository TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 -- How many bots each profile should have in a workspace (#650). The agreement names roles; this is the
@@ -115,6 +116,11 @@ def init():
                 c.execute("ALTER TABLE workspaces ADD COLUMN seed_thread_id INTEGER")
         c.executescript(SCHEMA)
         _migrate(c)
+        # the workspace's repository (#714): owner/name, one workspace per repository, empty when none
+        if "repository" not in {r["name"] for r in c.execute("PRAGMA table_info(workspaces)")}:
+            c.execute("ALTER TABLE workspaces ADD COLUMN repository TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_repository ON workspaces(repository COLLATE NOCASE)"
+                  " WHERE repository IS NOT NULL")
         c.commit()
 
 
@@ -324,7 +330,7 @@ def moderation() -> dict:
 def describe(ws, agent=None, full=True) -> dict:
     out = {k: ws[k] for k in ('id', 'slug', 'name', 'purpose', 'created_at', 'updated_at', 'seed_thread_id')}
     out.update(channel=home_slug(ws), archived=bool(ws['archived']), can_manage=can_manage(ws, agent),
-               bots=bots_of(ws))
+               bots=bots_of(ws), repository=repository(ws), repository_url=repository_url(ws))
     if full:
         out.update(channels=channels_of(ws),
                    documents=db.conn().execute(
@@ -334,6 +340,41 @@ def describe(ws, agent=None, full=True) -> dict:
     else:
         out['purpose'] = out['purpose'][:160]
     return out
+
+
+REPOSITORY = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}')
+
+
+def repository(ws) -> str:
+    """The workspace's repository as owner/name, or "" when none (#714). This and set_repository are the only
+    code that reads or writes the column."""
+    return ws['repository'] or ''
+
+
+def repository_url(ws) -> str:
+    """Its address on the forge, put together on read from FORGEJO_URL and never stored; "" when either is missing."""
+    base = fleet.forge_url()
+    return f'{base}/{repository(ws)}' if base and repository(ws) else ''
+
+
+def set_repository(slug, full_name, agent) -> dict:
+    """Link a repository to a workspace, or unlink it with "". A human or an admin bot may. A repository belongs
+    to one workspace; another's is refused."""
+    full_name = (full_name or '').strip()
+    if full_name and not REPOSITORY.fullmatch(full_name):
+        raise ValueError('The repository is owner/name: letters, digits, dot, dash and underscore.')
+    with db._write_lock, db.conn() as c:
+        ws = find(slug)
+        if not (can_manage(ws, agent) or is_admin_bot(agent)):
+            raise PermissionError('Only a human or an admin bot can link a repository.')
+        if full_name:
+            other = c.execute('SELECT slug FROM workspaces WHERE repository=? COLLATE NOCASE AND id<>?',
+                              (full_name, ws['id'])).fetchone()
+            if other:
+                raise Conflict(f'{full_name} belongs to the workspace {other["slug"]}.')
+        c.execute('UPDATE workspaces SET repository=?, updated_at=? WHERE id=?', (full_name or None, db.now(), ws['id']))
+        _audit(c, ws['id'], agent, 'set_repository', {'repository': full_name})
+    return describe(find(slug), agent)
 
 
 def list_workspaces(agent=None, after=0, limit=50) -> dict:
