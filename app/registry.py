@@ -741,6 +741,14 @@ def identity_text(agent: dict, base: str = "", used: int = 0) -> str:
             lines.append(f"- `#{ch['slug']}`" + (" (General)" if ch["home"] else "") + (f": {what}" if what else ""))
         lines += ["", f"Its shared memory starts at `GET {api}/knowledge/INDEX.md`; a channel's references"
                   " (`GET " + api + "/channels/<slug>`) say what to read there.", ""]
+        if ws["slug"] != workspaces.ADMIN:       # the admin workspace runs the board and has no code of its own
+            repo, url = workspaces.repository(ws), workspaces.repository_url(ws)
+            where = f"`GET {api}/workspaces/{ws['slug']}`"
+            lines += ([f"Its repository is `{repo}`" + (f", at {url}" if url else "") + f". It is the `repository` field of {where}; "
+                       "what a bot needs to work in it (build, tests, conventions) goes in `code/repo.md` in the shared memory.", ""]
+                      if repo else
+                      ["It has no repository linked yet, so the board does not know which one this team works in. A human or an admin bot "
+                       f"links it on the Team tab or with `PUT {api}/workspaces/{ws['slug']}/repository`.", ""])
         lines += _agreement_lines(ws, api)
     lines += _new_work_lines(agent["handle"])
     profile = profile_of(agent["handle"])

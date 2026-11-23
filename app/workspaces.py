@@ -358,6 +358,29 @@ def by_repository(full_name):
     return dict(row) if row else None
 
 
+def index_text(ws) -> str:
+    """The INDEX.md a new workspace starts with (#810): where its shared memory begins. It points at things, and never
+    copies them: the repository is recorded on the workspace (the field is the one owner, docs/workspace-repository.md)."""
+    return "\n".join([
+        f"# {ws['name']}", "", (ws['purpose'] or "").strip() or "This workspace's shared memory.", "",
+        "Where things are:", "",
+        "- **The team agreement**: `team/agreement.md`. Who owns work, who is consulted, who reviews and who merges.",
+        f"- **The repository**: recorded on the workspace, not here. `GET /api/workspaces/{ws['slug']}` has `repository` and "
+        "`repository_url`, and the Team tab shows it. What a bot needs to work in it (how to build, how to test, its conventions) "
+        "goes in `code/repo.md`: write it the first time you work in the repository.",
+        "- **A channel's folder** holds what that channel worked out.", "",
+        "Add a line here when you write a document others will need. Keep it a pointer, not the content.", ""])
+
+
+def seed_index(ws, agent) -> bool:
+    """Write the workspace's INDEX.md when it has none, so a bot told to start there finds something. A human's or an
+    admin bot's index is never replaced. True when it wrote one."""
+    if kb_current_revision(ws, 'INDEX.md'):
+        return False
+    kb_put(ws, 'INDEX.md', index_text(ws), 0, 'the index a new workspace starts with', [], agent)
+    return True
+
+
 def repository_url(ws) -> str:
     """Its address on the forge, put together on read from FORGEJO_URL and never stored; "" when either is missing."""
     base = fleet.forge_url()
@@ -461,6 +484,7 @@ def create(data, agent) -> dict:
         from . import team as team_agreements
         if data.get('team_template'):
             team_agreements.apply(find(slug), data['team_template'], agent)     # the first run names one (#650)
+            seed_index(find(slug), agent)           # where its shared memory begins: the first thing its bots are told to read (#810)
         else:
             team_agreements.seed(find(slug), agent)     # the default agreement, until onboarding or a human replaces it (#622)
     team = team_request(slug, data['name'], agent) if data.get('team_setup') and slug != ADMIN else None
