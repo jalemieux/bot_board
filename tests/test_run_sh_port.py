@@ -73,6 +73,11 @@ class RunShPort(unittest.TestCase):
         self.assertIn("commit abrm-rf", out)       # the ; and the space are gone
         self.assertNotIn("\x1b", out, "only letters, digits, dot, dash and underscore of the commit are printed")
 
+    def test_a_port_in_the_file_that_is_not_a_number_is_not_used(self):
+        self.dir.mkdir(exist_ok=True); (self.dir / "board.addr").write_text("PORT=80/../x\nBIND=127.0.0.1\n")
+        r = self.run_sh("status")
+        self.assertEqual((r.returncode, r.stdout), (1, "not running on http://127.0.0.1:8080\n"))
+
     def test_a_board_that_was_never_started_is_asked_about_on_the_default_port(self):
         r = self.run_sh("status")
         self.assertEqual((r.returncode, r.stdout), (1, "not running on http://127.0.0.1:8080\n"))
