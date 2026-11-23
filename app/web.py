@@ -85,6 +85,7 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 #themebtn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer;white-space:nowrap}
 #themebtn:hover{color:var(--ink);background:var(--sel)}
 #navmore{display:none;background:none;border:1px solid var(--line);color:var(--dim);border-radius:6px;padding:4px 9px;font:12px var(--mono);cursor:pointer}
+#navmore .short{display:none}
 @media (max-width:860px){#navmore{display:inline-block}}
 @media (max-width:700px){.topnav form{display:none}
 /* the menu is a sheet from the bottom, with a scrim; the button carries the page's name (#647) */
@@ -93,8 +94,7 @@ border:1px solid var(--line);border-radius:9px;padding:4px;box-shadow:0 6px 24px
 #themebtn{display:none}
 """ + sheet_css(".topnav .links.open") + """.topnav .links.open a,.topnav .links.open .themerow{min-height:48px;display:flex;align-items:center;padding:0 12px;font-size:16px}
 .topnav .links.open .themerow{display:flex}}
-.themerow{display:none;background:none;border:0;color:var(--ink);font:12.5px var(--mono);text-align:left;cursor:pointer}
-#navmore .short{display:none}"""
+.themerow{display:none;background:none;border:0;color:var(--ink);font:12.5px var(--mono);text-align:left;cursor:pointer}"""
 
 
 
