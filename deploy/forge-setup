@@ -59,8 +59,9 @@ command -v jq >/dev/null || die "needs jq"
 BOARD_TOKEN=${BOARD_HUMAN_TOKEN:-}     # not BOARD_TOKEN: in a bot's shell that is the bot's own
 if [ -z "$BOARD_TOKEN" ]; then
   read -rp "Your handle on the board at $BOARD: " handle
-  BOARD_TOKEN=$(curl -fsS "$BOARD/api/agents" -H 'Content-Type: application/json' \
-    -d "$(jq -n --arg h "${handle#@}" --arg i "${INVITE:-}" '{handle: $h, kind: "human", invite_code: $i}')" | jq -r .token) \
+  # the invite code reaches jq by the environment and curl by standard input, never in their arguments (SECURITY.md, #832)
+  BOARD_TOKEN=$(H=${handle#@} I=${INVITE:-} jq -n '{handle: env.H, kind: "human", invite_code: env.I}' \
+    | curl -fsS "$BOARD/api/agents" -H 'Content-Type: application/json' --data @- | jq -r .token) \
     || die "could not sign in as ${handle#@} (a bot's handle, or the board needs INVITE)"
 fi
 ME=$(board GET /api/me | jq -r '.agent.handle // .handle') || die "the board at $BOARD refused that token"
@@ -135,7 +136,11 @@ fi
 [ -s "$PWFILE" ] || die "the site webhook needs $ME's Forgejo password in $PWFILE"
 HOOK=${HOOK:-$( [ -n "${FORGEJO_BIN:-}" ] && echo "$BOARD/api/hooks/forgejo" || echo http://bot_board:8080/api/hooks/forgejo )}
 IDFILE=$(dirname "$PWFILE")/forgejo-hook-id
-admin() { curl -fsS -u "$ME:$(cat "$PWFILE")" -H 'Content-Type: application/json' "$@"; }
+# the admin password reaches curl as a config on standard input, not as `-u` in its arguments; a body goes by `--data-binary @<(...)`
+admin() {
+  local u=$ME p; p=$(cat "$PWFILE"); u=${u//\\/\\\\}; u=${u//\"/\\\"}; p=${p//\\/\\\\}; p=${p//\"/\\\"}
+  printf 'user = "%s:%s"\n' "$u" "$p" | curl -fsS -K - -H 'Content-Type: application/json' "$@"
+}
 id=$(cat "$IDFILE" 2>/dev/null || true)
 if [ -n "$id" ] && admin "$FORGE/api/v1/admin/hooks/$id" 2>/dev/null | jq -e --arg u "$HOOK" '.config.url == $u' >/dev/null \
    && board GET /api/hooks/forgejo | jq -e '.configured' >/dev/null; then
@@ -143,13 +148,13 @@ if [ -n "$id" ] && admin "$FORGE/api/v1/admin/hooks/$id" 2>/dev/null | jq -e --a
 else
   [ -z "$id" ] || admin -X DELETE "$FORGE/api/v1/admin/hooks/$id" >/dev/null 2>&1 || true
   secret=$(openssl rand -hex 32)
-  board PUT /api/hooks/forgejo "$(jq -n --arg s "$secret" '{secret: $s}')" >/dev/null
+  board PUT /api/hooks/forgejo "$(S=$secret jq -n '{secret: env.S}')" >/dev/null
   admin -X POST "$FORGE/api/v1/admin/hooks" \
-    -d "$(jq -n --arg s "$secret" --arg u "$HOOK" '{type: "forgejo", active: true, branch_filter: "*",
-          config: {url: $u, content_type: "json", secret: $s},
+    --data-binary @<(S=$secret U=$HOOK jq -n '{type: "forgejo", active: true, branch_filter: "*",
+          config: {url: env.U, content_type: "json", secret: env.S},
           events: ["issues", "issue_comment", "pull_request", "pull_request_review_approved",
                    "pull_request_review_rejected", "pull_request_review_comment", "pull_request_sync",
-                   "pull_request_label", "pull_request_comment", "pull_request_review_request"]}')" \
+                   "pull_request_label", "pull_request_comment", "pull_request_review_request"]}') \
     | jq -r .id > "$IDFILE"
   say "site webhook made: every repository's events reach the board"
 fi
