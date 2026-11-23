@@ -3187,8 +3187,7 @@ function secretCall(method, name, body) {
     headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token}, body: body ? JSON.stringify(body) : undefined})
   .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
 }
-function isUrl(name) { return name === 'FORGEJO_URL'; }      // a URL typed blind cannot be checked: shown as text
-var SECRET_NAME = /^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|FORGEJO_URL)$/;     // the server checks it too; this only helps while typing
+// a plain secret (the forge's address; the list marks it `plain`) is shown as text: a URL typed blind cannot be checked
 function sEl(tag, attrs) {
   var n = document.createElement(tag);
   Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
@@ -3237,7 +3236,7 @@ function saveSecret(name, value, done) {
   }, function (e) { if (e) secretNote(e.message); });
 }
 function replaceRow(x, cell, actions) {
-  var inp = sEl('input', {type: isUrl(x.name) ? 'text' : 'password', autocomplete: isUrl(x.name) ? 'off' : 'new-password', 'aria-label': 'New value for ' + x.name, placeholder: 'new value'});
+  var inp = sEl('input', {type: x.plain ? 'text' : 'password', autocomplete: x.plain ? 'off' : 'new-password', 'aria-label': 'New value for ' + x.name, placeholder: 'new value'});
   var save = sEl('button', {type: 'button', 'class': 'primary', text: 'Save', disabled: ''}), cancel = sEl('button', {type: 'button', text: 'Cancel'});
   cell.classList.add('secret-edit'); cell.textContent = ''; cell.appendChild(inp);
   actions.textContent = ''; actions.appendChild(save); actions.appendChild(cancel);
@@ -3287,7 +3286,7 @@ function listSecrets() {
     box.textContent = '';
     var body = sEl('tbody');
     d.secrets.forEach(function (x) {
-      var cell = sEl('td', {'data-label': 'Value', 'class': 'mono', text: isUrl(x.name) && x.value ? x.value : '\\u2026' + x.ends}), acts = sEl('td', {'class': 'secret-acts'});
+      var cell = sEl('td', {'data-label': 'Value', 'class': 'mono', text: x.plain && x.value ? x.value : '\\u2026' + x.ends}), acts = sEl('td', {'class': 'secret-acts'});
       var rep = sEl('button', {type: 'button', text: 'Replace', 'aria-label': 'Replace ' + x.name});
       var rm = sEl('button', {type: 'button', 'class': 'danger', text: 'Remove', 'aria-label': 'Remove ' + x.name});
       rep.addEventListener('click', function () { replaceRow(x, cell, acts); });
@@ -3297,12 +3296,14 @@ function listSecrets() {
     });
     var name = sEl('input', {autocomplete: 'off', 'aria-label': 'Name of a new secret', placeholder: 'NEW_SECRET_NAME', 'aria-describedby': 'secrethint'});
     var val = sEl('input', {type: 'password', autocomplete: 'new-password', 'aria-label': 'Value of the new secret', placeholder: 'value'});
-    var add = sEl('button', {type: 'button', 'class': 'primary', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.'});
+    var add = sEl('button', {type: 'button', 'class': 'primary', text: 'Add', disabled: ''}), hint = sEl('p', {id: 'secrethint', 'class': 'sub', text: shape});
+    var plainName = d.plain_name, shape = 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or ' + plainName + '.';
+    var SECRET_NAME = new RegExp('^([A-Z][A-Z0-9_]*_(TOKEN|KEY|SECRET)|' + plainName + ')$');      // the server checks it too; this only helps while typing
     var check = function () {
       var bad = name.value && !SECRET_NAME.test(name.value);
       hint.className = 'sub' + (bad ? ' secret-err' : '');
-      hint.textContent = bad ? 'Not accepted: use capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.' : 'Capitals, digits and underscores, ending in _TOKEN, _KEY or _SECRET, or FORGEJO_URL.';
-      var want = isUrl(name.value.trim()) ? 'text' : 'password';
+      hint.textContent = bad ? 'Not accepted: use ' + shape.charAt(0).toLowerCase() + shape.slice(1) : shape;
+      var want = name.value.trim() === plainName ? 'text' : 'password';
       if (val.type !== want) { val.value = ''; val.type = want; val.setAttribute('autocomplete', want === 'text' ? 'off' : 'new-password'); }     // a typed secret never turns visible
       add.disabled = !(SECRET_NAME.test(name.value) && val.value);
     };

@@ -54,7 +54,8 @@ class Repository(Base):
 
     def test_the_forge_address_must_be_http_or_https_and_an_archived_workspace_is_not_linked(self):
         self.link('game', 'fleet/game')
-        self.call('PUT', '/api/fleet/secrets/FORGEJO_URL', {'value': 'javascript:alert(1)'}, auth=self.human)
+        # such an address is refused when it is saved (#762), so it never reaches a link
+        self.call('PUT', '/api/fleet/secrets/FORGEJO_URL', {'value': 'javascript:alert(1)'}, auth=self.human, expected=422)
         self.assertEqual(self.get('game')['repository_url'], '')
         self.call('PATCH', '/api/workspaces/other', {'archived': True, 'archive_confirm': True}, auth=self.human)
         self.link('other', 'fleet/other', expected=409)

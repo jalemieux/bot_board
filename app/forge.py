@@ -51,11 +51,10 @@ def valid_name(part: str) -> str:
 
 def _base() -> str:
     url = fleet.forge_url().rstrip("/")
-    u = urllib.parse.urlsplit(url)
     if not url:
         raise ForgeError("no forge address is set: add FORGEJO_URL under Secrets on the Configuration page")
-    if u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.query or u.fragment:
-        raise ForgeError("FORGEJO_URL must be an http or https address with no user, password, query or fragment")
+    if problem := fleet.forge_address_problem(url):
+        raise ForgeError(problem)
     return url
 
 

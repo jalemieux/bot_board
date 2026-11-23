@@ -10,6 +10,7 @@ import hashlib
 import json
 import random
 import re
+import urllib.parse
 from datetime import datetime, timezone
 
 from . import db
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS fleet_secrets (
 # What a secret may be called: the names bin/bot and the keeper accept from fleet.env,
 # so a secret cannot move a box's BOARD or PATH.
 PLAIN_SECRET = "FORGEJO_URL"     # the one name that is not a secret: the forge's address (#632), shown in full in the list (#701)
-SECRET_NAME = re.compile(r"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)|FORGEJO_URL")   # the one plain name: the forge's address (#632)
+SECRET_NAME = re.compile(rf"[A-Z][A-Z0-9_]*_(?:TOKEN|KEY|SECRET)|{PLAIN_SECRET}")
 # A move, in two steps: move_to is set on the row while the bot's own box packs it
 # and hands the archive over; then the row points at the new box with fetch naming
 # the archive, until that box has unpacked it. The archive holds the bot's token,
@@ -249,6 +250,7 @@ def secrets() -> list[dict]:
     """The fleet's secrets without their values: name, who set it, when, and its last 4 characters. FORGEJO_URL is an
     address, not a secret (#632), so its row also carries `value`, in full, and nothing else's does (#701)."""
     return [{"name": r["name"], "set_by": r["set_by"], "set_at": r["set_at"], "ends": r["value"][-4:],
+             "plain": r["name"] == PLAIN_SECRET,
              **({"value": r["value"]} if r["name"] == PLAIN_SECRET else {})}
             for r in db.conn().execute("SELECT * FROM fleet_secrets ORDER BY name")]
 
@@ -273,10 +275,21 @@ def secret_values() -> dict[str, str]:
     return {r["name"]: r["value"] for r in db.conn().execute("SELECT name, value FROM fleet_secrets ORDER BY name")}
 
 
+def forge_address_problem(url: str) -> str:
+    """Why this is not an address the board will use for the forge, or "": http or https, a host, and no user, password,
+    query or fragment (the token goes to this address, and the list shows it in full). One rule for the save and the use."""
+    u = urllib.parse.urlsplit(url)
+    try:
+        bad = u.scheme not in ("http", "https") or not u.hostname or u.username or u.password or u.query or u.fragment
+    except ValueError:
+        bad = True
+    return "" if not bad else f"{PLAIN_SECRET} must be an http or https address with no user, password, query or fragment"
+
+
 def forge_url() -> str:
     """The forge's web address (FORGEJO_URL, #632), or "" when none is set. It is an address, not a secret:
     this reads that one name and no other."""
-    r = db.conn().execute("SELECT value FROM fleet_secrets WHERE name='FORGEJO_URL'").fetchone()
+    r = db.conn().execute("SELECT value FROM fleet_secrets WHERE name=?", (PLAIN_SECRET,)).fetchone()
     url = r["value"].strip().rstrip("/") if r else ""
     return url if url.startswith(("http://", "https://")) else ""
 
@@ -299,6 +312,8 @@ def secrets_version() -> str:
 
 
 def set_secret(name: str, value: str, by: str) -> None:
+    if name == PLAIN_SECRET and (problem := forge_address_problem(value)):
+        raise ValueError(problem)       # the list shows it in full, and the token goes to it
     c = db.conn()
     with db._write_lock:
         c.execute("INSERT INTO fleet_secrets (name, value, set_by, set_at) VALUES (?,?,?,?)"
