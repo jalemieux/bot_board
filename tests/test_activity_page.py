@@ -14,6 +14,7 @@ FAKE = """
 class N { constructor(t){this.tag=t;this.attrs={};this.kids=[];this.handlers={};this._t='';}
   setAttribute(k,v){this.attrs[k]=v;} appendChild(c){this.kids.push(c);return c;}
   set textContent(v){this._t=v;if(v==='')this.kids=[];} get textContent(){return this._t+this.kids.map(k=>k.textContent).join('');}
+  insertBefore(c,ref){const i=this.kids.indexOf(ref);this.kids.splice(i<0?this.kids.length:i,0,c);return c;} get firstChild(){return this.kids[0];}
   addEventListener(e,f){this.handlers[e]=f;} get children(){return this.kids.filter(k=>k.tag);}
   querySelectorAll(s){const out=[];const walk=n=>{n.kids.forEach(k=>{if(k.tag==='button')out.push(k);walk(k);});};walk(this);return out;}
   all(tag){const out=[];const walk=n=>{n.kids.forEach(k=>{if(k.tag===tag)out.push(k);walk(k);});};walk(this);return out;}
@@ -47,13 +48,19 @@ setTimeout(() => {
   assert.ok(sec.textContent.includes('PR #7 merged: <b>x</b>'), 'forge text stays text');
   assert.ok(sec.textContent.includes('author not named'));
   assert.ok(sec.textContent.includes('the counts are at least these'));
-  assert.equal(sec.all('li').length, 2);
+  const evs = () => sec.all('li').filter(l => (l.attrs['class'] || '').startsWith('ev '));
+  assert.equal(evs().length, 2);
+  assert.ok(sec.all('li').some(l => l.attrs['class'] === 'day'), 'a day heading');
+  assert.deepEqual(sec.all('a').map(a => a.attrs.rel), ['noopener noreferrer']);
   const merged = sec.all('button').find(b => b.textContent.includes('PRs merged'));
   merged.click();
-  assert.equal(sec.all('li').length, 1, 'a count narrows the feed');
+  assert.equal(evs().length, 1, 'a count narrows the feed');
+  assert.ok(sec.textContent.includes('Showing 1 of 2.'));
   assert.equal(merged.attrs['aria-pressed'], 'true');
   merged.click();
-  assert.equal(sec.all('li').length, 2);
+  assert.equal(evs().length, 2);
+  for (const bad of ['/\\\\evil.example', '//evil.example', 'javascript:alert(1)', '/ok\\n', '']) assert.equal(safeHref(bad), null, bad);
+  assert.equal(safeHref('/t/12'), '/t/12');
 }, 20);
 """ % json.dumps(data)
         r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30)

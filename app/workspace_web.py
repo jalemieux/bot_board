@@ -30,9 +30,11 @@ WS_CSS = """
 .ws .actstrip .stat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--ink);font:inherit;text-align:left}
 .ws .actstrip button.stat{cursor:pointer;min-height:44px}.ws .actstrip button.stat[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
 .ws .actstrip .stat b{font:600 20px var(--mono)}.ws .actstrip .stat span{color:var(--dim);font-size:12px}
-.ws .actfeed{list-style:none;margin:0 0 12px;padding:0}.ws .actfeed .ev{display:grid;grid-template-columns:52px 20px 1fr;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.ws .actfeed{list-style:none;margin:0 0 12px;padding:0}.ws .actfeed .ev{display:grid;grid-template-columns:72px 20px 1fr;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.ws .actfeed .day{padding:10px 0 4px;font:600 12px var(--mono);color:var(--dim);border-top:1px solid var(--line)}.ws .actfeed .day+.ev{border-top:0}
 .ws .actfeed time{color:var(--dim);font:12px var(--mono)}.ws .actfeed .ic{text-align:center;color:var(--accent)}
 .ws .activity .warn{padding:10px 12px;margin:8px 0;border-left:4px solid var(--accent);background:var(--accent-soft)}
+.ws .activity .warn .quiet,.ws .activity .msg-err .quiet{min-height:32px}@media (max-width:640px){.ws .activity .quiet{min-height:44px}}
 .ws .activity .empty{padding:18px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
 .ws .tabs{display:flex;gap:4px 18px}
 .ws .tabs a{padding:6px 2px;color:var(--ink);text-decoration:none;border-bottom:2px solid transparent}
@@ -317,7 +319,12 @@ function wsView() {
 var ACT_STATS = [['merged', 'PRs merged'], ['opened', 'PRs and issues opened'], ['closed', 'issues closed'], ['review', 'reviews'],
                  ['commit', 'commits'], ['thread', 'threads started or completed'], ['message', 'messages'], ['bots', 'bots active']];
 var ACT_ICON = {merged: '\u2713', opened: '+', closed: '\u2713', review: '\u25cf', commit: '\u2325', thread: '\u2022'};
-function safeHref(u) { return /^(https?:\/\/|\/)/.test(u || '') && !/^\/\//.test(u) ? u : null; }
+function safeHref(u) { u = u || ''; return /^(https?:\/\/|\/(?![\/\\]))/.test(u) && !/[\\\u0000-\u001f\u007f]/.test(u) ? u : null; }
+function dayName(t) {      // "Today", "Yesterday", else the date: a 24-hour window spans two days
+  var midnight = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+  var days = Math.round((midnight(new Date()) - midnight(t)) / 86400000);
+  return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : t.toLocaleDateString([], {month: 'short', day: 'numeric'});
+}
 function activityView(w) {
   var sec = h('section', {'class': 'activity'}), body = h('div', {'aria-live': 'polite'}), filter = null;
   sec.appendChild(h('h2', null, 'Activity'));
@@ -339,11 +346,12 @@ function activityView(w) {
     body.appendChild(h('p', {'class': 'sub', title: since.toISOString(), text: 'Since ' + since.toLocaleString([], {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}) + ' \u00b7 last ' + a.hours + ' hours'}));
     if (a.forge === 'none') {
       body.appendChild(h('div', {'class': 'warn', role: 'status'}, h('b', null, 'No repository is linked to ' + (w.name || w.slug) + '. '),
-        'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. Create or link one on the Team tab.'));
+        'Pull requests, issues, reviews and commits are not shown; the counts below are from the board only. ', h('a', {href: '#team', text: 'Create or link one on the Team tab.'})));
     } else if (a.forge === 'down') {
       var retry = h('button', {type: 'button', 'class': 'quiet', text: 'Retry'}); retry.addEventListener('click', load);
       body.appendChild(h('div', {'class': 'warn', role: 'alert'}, h('b', null, 'The forge did not answer. '),
-        'Showing threads and messages from the board only. Pull requests, issues, reviews and commits will appear when it answers. ', h('span', {'class': 'sub', text: a.reason}), ' ', retry));
+        'Showing threads and messages from the board only. Pull requests, issues, reviews and commits will appear when it answers. ', retry,
+        h('details', null, h('summary', {text: 'Details'}), h('span', {'class': 'sub', text: a.reason}))));
     }
     if (!a.events.length && !a.counts.message) {
       body.appendChild(h('div', {'class': 'empty'}, h('h3', {text: 'Nothing in the last ' + a.hours + ' hours'}),
@@ -352,15 +360,18 @@ function activityView(w) {
       var strip = h('div', {'class': 'actstrip'}), feed = h('ul', {'class': 'actfeed'});
       var fill = function () {
         feed.textContent = '';
-        a.events.filter(function (e) { return !filter || e.kind === filter; }).forEach(function (e) {
-          var href = safeHref(e.url), when = new Date(e.at);
+        var shown = a.events.filter(function (e) { return !filter || e.kind === filter; }), day = '';
+        shown.forEach(function (e) {
+          var href = safeHref(e.url), when = new Date(e.at), d = dayName(when);
+          if (d !== day) { day = d; feed.appendChild(h('li', {'class': 'day', text: d})); }
           feed.appendChild(h('li', {'class': 'ev ' + e.kind},
             h('time', {datetime: e.at, title: when.toISOString(), text: when.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}),
             h('span', {'class': 'ic', 'aria-hidden': 'true', text: ACT_ICON[e.kind] || '\u2022'}),
-            h('div', null, href ? h('a', {href: href, text: e.text}) : h('span', {text: e.text}),
+            h('div', null, href ? h('a', {href: href, rel: 'noopener noreferrer', text: e.text}) : h('span', {text: e.text}),
               h('div', {'class': 'sub', text: e.by ? '@' + e.by : 'author not named'}))));
         });
-        if (!feed.children.length) feed.appendChild(h('li', {'class': 'sub', text: 'Nothing of that kind in this time.'}));
+        if (filter) feed.insertBefore(h('li', {'class': 'sub', text: 'Showing ' + shown.length + ' of ' + a.events.length + '.'}), feed.firstChild);
+        if (!shown.length) feed.appendChild(h('li', {'class': 'sub', text: filter ? 'Nothing of that kind in this time.' : 'Nothing to list.'}));
       };
       ACT_STATS.forEach(function (s) {
         if (a.counts[s[0]] === undefined) return;       // the forge's counts are absent, not zero, when the forge is
