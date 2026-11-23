@@ -286,6 +286,27 @@ class ForgeInstall(unittest.TestCase):
         self.assertIn("Forgejo: http://localhost:3000 (in Docker; sign in as ada, password in ~/.bot_board/forgejo-admin-password", block)
         self.assertIn("the bots run in a container (they share this machine's network, so they can reach any service on 127.0.0.1)", block)
 
+    def test_the_log_never_holds_the_human_token_and_a_webhook_warning_stays_on_the_screen(self):
+        # #769 (gina): the log names each step and holds its output; a command line with BOARD_HUMAN_TOKEN is never written
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE.replace("exit 0", "[ \"$1\" = start ] && echo 'forgejo-native: the settings allow webhooks to private, not loopback (BOARD): change ALLOWED_HOST_LIST in app.ini and restart'\nexit 0"))
+        script(self.src / "deploy" / "forge-setup", "#!/bin/sh\necho \"forge-setup BOARD=$BOARD TOKEN=$BOARD_HUMAN_TOKEN FORGE=$FORGE BIN=$FORGEJO_BIN\" >> \"$FAKE_LOG\"\n")
+        r = self.run_install(FORGE_NATIVE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        log = (self.cfg.parent / "keeper.log").read_text()
+        self.assertIn("--- forge-setup", log)
+        self.assertIn("--- forgejo-native start", log)
+        self.assertNotIn("tok-human", log, "the human's board token is not in the log")
+        self.assertIn("the settings allow webhooks to private, not loopback", r.stderr, "an action line of the step still prints")
+
+    def test_the_forgejo_line_has_a_fallback_when_status_says_nothing(self):
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE.replace('[ "$1" = status ] && echo "forgejo-native: running at http://localhost:3001/"', ""))
+        script(self.src / "deploy" / "forge-setup", FAKE_SETUP)
+        r = self.run_install(FORGE_NATIVE="1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Forgejo: not answering yet: run ~/.bot_board/src/deploy/forgejo-native status", r.stdout.replace(str(self.src), "~/.bot_board/src"))
+
     def test_a_failing_step_prints_the_end_of_its_log_and_the_cause(self):
         script(self.src / "run.sh", FAKE_RUN)
         script(self.src / "deploy" / "forgejo-native", FAKE_NATIVE)

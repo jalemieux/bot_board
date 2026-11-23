@@ -144,6 +144,7 @@ forge_summary() {
   add "the board, in $(tilde "$DATA") (data: board.db, back it up; log: board.log)"
   if [ -n "$native" ]; then
     forgejo=$(BOARD=$api bash "$SRC/deploy/forgejo-native" status 2>/dev/null | sed 's/.* at //')
+    [ -n "$forgejo" ] || forgejo="not answering yet: run $(tilde "$SRC")/deploy/forgejo-native status"
     add "Forgejo: $forgejo (in $(tilde "$FORGEJO_HOME"); sign in as $human, password in ~/.bot_board/forgejo-admin-password; the board has its address as FORGEJO_URL)"
     add "manage it with $(tilde "$(dirname "$SRC")")/bot_board stop|start board, or $(tilde "$SRC")/deploy/forgejo-native status"
     where="run as you, with your user's access, so they can read Forgejo's admin password; a container install keeps them out of it"
@@ -167,8 +168,9 @@ forge_summary() {
 # lines of it, so the cause is on the screen. What a person must do is printed.
 install_log() { echo "$(dirname "$CFG_FILE")/keeper.log"; }
 note() { local log; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "bot_board: $*" >> "$log"; }
+# quietly LABEL COMMAND...: the log gets the label and the output, never the command line, which may carry a token (BOARD_HUMAN_TOKEN=...).
 quietly() {
-  local log rc=0; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "--- $*" >> "$log"
+  local log rc=0 label=$1; shift; log=$(install_log); mkdir -p "$(dirname "$log")"; echo "--- $label" >> "$log"
   "$@" >> "$log" 2>&1 || { rc=$?; tail -n 20 "$log" >&2; return $rc; }
 }
 forge_install() {
@@ -189,7 +191,10 @@ forge_install() {
   if [ -n "$native" ]; then
     say "starting the board and Forgejo: the first run takes a few minutes"
     BOT_BOARD_QUIET=1 board up
-    quietly env BOARD=$api bash "$SRC/deploy/forgejo-native" start || die "Forgejo did not start"
+    mark=$(wc -l < "$(install_log)" 2>/dev/null || echo 0)
+    quietly "forgejo-native start" env BOARD=$api bash "$SRC/deploy/forgejo-native" start || die "Forgejo did not start"
+    # a warning of that step that a person must act on stays on the screen (the webhook setting of Forgejo's app.ini)
+    tail -n +$((mark + 1)) "$(install_log)" 2>/dev/null | grep -F "the settings allow webhooks" | tail -1 >&2 || true
   else
   [ -f "$SRC/.env" ] || cp "$SRC/.env.example" "$SRC/.env"
   for _pair in BOT_BOARD_BIND_IP:${BOT_BOARD_BIND_IP:-} FORGEJO_HOST:${FORGEJO_HOST:-}; do
@@ -197,7 +202,7 @@ forge_install() {
     { grep -v "^#\?${_pair%%:*}=" "$SRC/.env" || true; echo "${_pair%%:*}=${_pair#*:}"; } > "$SRC/.env.new" && mv "$SRC/.env.new" "$SRC/.env"
   done
   say "starting the board and Forgejo in Docker: the first build takes a few minutes"
-  (cd "$SRC" && quietly $d compose --profile forge up -d --build) || die "docker compose failed: is Docker running, and may you use it (DOCKER=\"sudo docker\")?"
+  (cd "$SRC" && quietly "docker compose up" $d compose --profile forge up -d --build) || die "docker compose failed: is Docker running, and may you use it (DOCKER=\"sudo docker\")?"
   fi
   for i in $(seq 1 90); do curl -fsS "$api/healthz" >/dev/null 2>&1 && break; sleep 2; done
   curl -fsS "$api/healthz" >/dev/null 2>&1 || die "the board does not answer at $api"
@@ -208,16 +213,16 @@ forge_install() {
   if [ -n "$native" ]; then
     _pair=$(BOARD=$api bash "$SRC/deploy/forgejo-native" env) || die "Forgejo is not set up: $SRC/deploy/forgejo-native start"
     ( eval "$_pair"      # in a subshell: it sets FORGE, which is this script's flag
-      quietly env BOARD=$api BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" ) \
+      quietly "forge-setup" env BOARD=$api BOARD_HUMAN_TOKEN=$tok bash "$SRC/deploy/forge-setup" ) \
       || die "forge-setup failed; run it again from $SRC once the cause is gone"
   else
-  quietly env BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
+  quietly "forge-setup" env BOARD=$api BOARD_HUMAN_TOKEN=$tok FORGE=http://127.0.0.1:3000 COMPOSE="$d compose --profile forge" bash "$SRC/deploy/forge-setup" \
     || die "forge-setup failed; run it again from $SRC once the cause is gone"
   fi
   # 3. the first bot's harness runs in a container: an image of its own, built here, and its login
   if [ -z "$native" ]; then
   note "building the $harness image for the bots' containers"
-  quietly $d build --build-arg "HARNESS=$harness" -f "$SRC/deploy/harness.Dockerfile" -t "localhost/jac/bot_board-harness-$harness:latest" "$SRC" \
+  quietly "harness image" $d build --build-arg "HARNESS=$harness" -f "$SRC/deploy/harness.Dockerfile" -t "localhost/jac/bot_board-harness-$harness:latest" "$SRC" \
     || die "the $harness image did not build"
   fi
   if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ "$harness" = claude ]; then
