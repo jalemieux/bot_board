@@ -106,7 +106,9 @@ case "$CMD" in
     fetch
     start
     healthy || { tail -n 20 "$LOG" >&2; die "the board did not come up; log above, full log in $LOG"; }
-    if [ "$CMD" = update ]; then
+    if [ -n "${BOT_BOARD_QUIET:-}" ]; then
+      :      # under `bot_board install`, which prints the one block itself (#766)
+    elif [ "$CMD" = update ]; then
       echo "bot_board updated to $(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown) and running at $URL"
     else
       # what the output holds is what a person needs now (#766); the rest is in the README

@@ -1306,6 +1306,15 @@ def service(install):
     the PATH of the shell that installs it, where the harnesses are. Settings stay in the
     config file: copied in here they would override it for good (#153)."""
     env = {"PATH": os.environ.get("PATH", "")}
+
+    def tell(text):
+        """What the install did, for the person; under `bot_board install` (BOT_BOARD_QUIET) it goes to the keeper's log
+        and that command prints one block (#766)."""
+        if not os.environ.get("BOT_BOARD_QUIET"):
+            return print(text)
+        os.makedirs(CFG, mode=0o700, exist_ok=True)
+        with open(os.path.join(CFG, "keeper.log"), "a") as fh:
+            fh.write(text + "\n")
     if os.environ.get("BOT_CONFIG"):
         env["BOT_CONFIG"] = os.environ["BOT_CONFIG"]
     if sys.platform.startswith("linux"):
@@ -1327,10 +1336,10 @@ def service(install):
         subprocess.run(ctl + ["daemon-reload"], check=True)
         subprocess.run(ctl + ["enable", "bot-board-keeper"], check=True)
         subprocess.run(ctl + ["restart", "bot-board-keeper"], check=True)
-        print(f"keeper: installed and started ({UNIT}); logs: journalctl --user -u bot-board-keeper")
+        tell(f"keeper: installed and started ({UNIT}); logs: journalctl --user -u bot-board-keeper")
         user = os.environ.get("USER", "")
         if "Linger=yes" not in out("loginctl", "show-user", user, "-p", "Linger"):
-            print(f"keeper: it runs while {user} is logged in. To have it start at boot and survive logout, once: "
+            tell(f"keeper: it runs while {user} is logged in. To have it start at boot and survive logout, once: "
                   f"sudo loginctl enable-linger {user}")
     elif sys.platform == "darwin":
         dom = f"gui/{os.getuid()}"
@@ -1355,7 +1364,7 @@ def service(install):
                      f"<key>StandardOutPath</key><string>{x(log)}</string>\n"
                      f"<key>StandardErrorPath</key><string>{x(log)}</string>\n</dict></plist>\n")
         subprocess.run(["launchctl", "bootstrap", dom, PLIST], check=True)
-        print(f"keeper: installed and started ({PLIST}); logs: {log}")
+        tell(f"keeper: installed and started ({PLIST}); logs: {log}")
     else:
         die(f"no service installer for {sys.platform}; run `keeper run` under whatever keeps things running here")
 

@@ -83,6 +83,35 @@ class EntryPoint(unittest.TestCase):
         self.assertEqual(calls, ["run.sh up", "bot install"])
         self.assertEqual(os.readlink(self.home / ".bot_board/bot_board"), str(self.src / "bin/bot_board"))
 
+    def test_install_runs_its_steps_quietly_and_prints_one_block(self):
+        # #766: run.sh, bin/bot and the keeper keep their details for their logs under `bot_board install`; this prints one block
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\necho "run.sh $* QUIET=${BOT_BOARD_QUIET:-}" >> "$CALLS"\n')
+        (self.src / "bin/bot").write_text(
+            '#!/usr/bin/env bash\necho "bot $* QUIET=${BOT_BOARD_QUIET:-}" >> "$CALLS"\n'
+            'if [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+            'printf \'KEEPER_DEFAULT_BOT="claude"\\n# default bot: @ada (claude) in workspace admin, started\\n\' >> "$HOME/.config/bot_board/config"; fi\n')
+        r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(calls, ["run.sh up QUIET=1", "bot install QUIET=1"])
+        self.assertEqual(r.stdout, "bot_board is up at http://127.0.0.1:8080\n"
+                                   "  Installed: the board, in ~/.bot_board/board (data: board.db, back it up; log: board.log)\n"
+                                   "             a keeper and a default bot, @ada (claude), running as you\n"
+                                   "  Runs:      in the background until you stop it or restart this machine\n"
+                                   "  Manage:    ~/.bot_board/bot_board status|stop|restart|update|uninstall\n"
+                                   "\n"
+                                   "Next:   open http://127.0.0.1:8080 and sign in with any handle\n")
+        self.assertEqual(r.stderr, "")
+
+    def test_the_install_block_says_when_the_default_bot_was_already_here_and_names_a_container(self):
+        (self.src / "run.sh").write_text('#!/usr/bin/env bash\n:\n')
+        (self.src / "bin/bot").write_text(
+            '#!/usr/bin/env bash\nif [ "$1" = install ]; then mkdir -p "$HOME/.config/bot_board"; '
+            'printf \'BOT_RUNTIME="docker"\\n# default bot: ada is on this box already\\n\' >> "$HOME/.config/bot_board/config"; fi\n')
+        r, _ = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("a keeper; a default bot, ada, was already here", r.stdout)
+        self.assertEqual(len(r.stdout.splitlines()), 7, r.stdout)
+
     def test_without_a_component_it_acts_on_what_is_installed(self):
         self.installed(board=False)
         r, calls = self.run_bb("restart")

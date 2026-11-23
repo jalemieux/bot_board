@@ -207,6 +207,31 @@ forge_install() {
     || say "the claude bot waits for a login: set CLAUDE_CODE_OAUTH_TOKEN on $api/configuration (make it with claude setup-token), and it starts by itself"
 }
 
+# The one block that ends `bot_board install` (#766): what was installed, how it runs, how to manage it, and the next step.
+tilde() { printf '%s' "${1/#$HOME/\~}"; }
+install_summary() {
+  local url=${1:-http://${BIND:-127.0.0.1}:${PORT:-8080}} note harness who where first=1
+  url=${url/0.0.0.0/127.0.0.1}
+  add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
+  if [ -n "$BOARD_ON" ]; then echo "bot_board is up at $url"; else echo "bot_board is installed; the board is at $url"; fi
+  [ -z "$BOARD_ON" ] || add "the board, in $(tilde "$DATA") (data: board.db, back it up; log: board.log)"
+  if [ -n "$BOTS_ON" ]; then
+    note=$(sed -n 's/^# default bot: //p' "$CFG_FILE" 2>/dev/null | tail -1)
+    harness=$(sed -n 's/^KEEPER_DEFAULT_BOT="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1)
+    where="running as you"; ! grep -qs '^BOT_RUNTIME=' "$CFG_FILE" || where="in a container"
+    case $note in
+      *started) who=${note%, started}; add "a keeper and a default bot, ${who%% in workspace*}, $where" ;;
+      waiting:*) add "a keeper and a default bot, $harness, which starts when you sign in" ;;
+      "") if [ -n "$harness" ]; then add "a keeper and a default bot, $harness, which starts when the keeper reaches the board"; else add "a keeper (no default bot)"; fi ;;
+      *) add "a keeper; a default bot, ${note%% *}, was already here" ;;
+    esac
+  fi
+  echo "  Runs:      in the background until you stop it or restart this machine"
+  echo "  Manage:    $(tilde "$(dirname "$SRC")")/bot_board status|stop|restart|update|uninstall"
+  echo
+  echo "Next:   open $url and sign in with any handle"
+}
+
 # A Forgejo that already exists (#651): FORGE_ADDRESS is where the board and the bots reach it, FORGEJO_TOKEN the fleet
 # account's write token on it, FORGEJO_READ_TOKEN a read-only one (optional). forge-setup sets them on the board, as it
 # does for the Forgejo it makes, so a new board has the forge's address without a step by hand.
@@ -236,16 +261,17 @@ case $CMD in
       else say "manage the keeper with $(dirname "$SRC")/bot_board status|stop|restart bots; the board and Forgejo with docker compose in $SRC"; fi
       exit 0
     fi
-    # the board first: bots installed beside it report to it, unless BOARD says otherwise
-    [ -z "$BOARD_ON" ] || board up
+    # the board first: bots installed beside it report to it, unless BOARD says otherwise. The steps run quietly (BOT_BOARD_QUIET:
+    # run.sh, bin/bot and the keeper keep their details for their logs) and this prints one block at the end (#766).
+    [ -z "$BOARD_ON" ] || BOT_BOARD_QUIET=1 board up
     [ -z "$BOARD_ON" ] || [ -z "${FORGE_ADDRESS:-}" ] || existing_forge
     if [ -n "$BOTS_ON" ]; then
       board_url=${BOARD:-}
       [ -n "$board_url" ] || grep -qs '^BOARD=' "$CFG_FILE" || [ -z "$BOARD_ON" ] \
         || board_url="http://127.0.0.1:${PORT:-8080}"
-      BOARD=$board_url BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install
+      BOT_BOARD_QUIET=1 BOARD=$board_url BOT_BOARD_DIR=$(dirname "$SRC") bash "$BOT" install
     fi
-    say "installed; manage it all with $(dirname "$SRC")/bot_board status|stop|restart|update|uninstall" ;;
+    install_summary "${board_url:-}" ;;
   start|restart)
     [ -z "$BOARD_ON" ] || board up        # up stops a running board first
     [ -z "$BOARD_ON" ] || ! has_native_forgejo || native_forgejo start || say "Forgejo did not start: $SRC/deploy/forgejo-native start shows why"

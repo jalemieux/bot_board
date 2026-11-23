@@ -56,6 +56,7 @@ class Install(unittest.TestCase):
                                                 "BOT_TTY": str(home / ("tty" if tty is not None else "none")),
                                                 **(env or {})})
             self.assertEqual(r.returncode, 0, r.stderr)
+            self.log = (home / "keeper.log").read_text() if (home / "keeper.log").exists() else ""      # the quiet install's notes (#766)
             return r, config.read_text()
 
     CLAUDE_OK = [("claude", "ok", ""), ("codex", "missing", "not logged in"), ("copilot", "absent", ""),
@@ -100,6 +101,24 @@ class Install(unittest.TestCase):
         r, config = self.install(self.CLAUDE_OK, commands={**up, "uname": "echo Linux"})
         self.assertIn('BOT_RUNTIME="docker"', config)
         self.assertNotIn("BOT_CONTAINER", config)
+
+    def test_under_bot_board_install_the_notes_go_to_the_log_and_only_actions_print(self):
+        # #766: bot_board install prints one block; the container note and the outcome lines are in the keeper's log
+        up = {"docker": "exit 0", "uname": "echo Linux"}
+        r, config = self.install(self.CLAUDE_OK, note="@ada (claude) in workspace admin, started", commands=up, env={"BOT_BOARD_QUIET": "1"})
+        self.assertEqual(r.stdout.splitlines(), ["keeper", "install"])
+        self.assertEqual(r.stderr, "", "nothing informative on the screen")
+        for line in ("no terminal to ask on: starting a default bot with claude", "docker found: the bots run in containers", "started @ada (claude) in workspace admin"):
+            self.assertIn(line, self.log)
+        self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
+        # what a person must do still prints: a harness that is not logged in
+        r, _ = self.install([("claude", "missing", "not logged in"), ("codex", "absent", ""), ("copilot", "absent", ""), ("opencode", "absent", "")],
+                            note="@ada (claude) in workspace admin, started", commands=up, env={"BOT_BOARD_QUIET": "1"})
+        self.assertIn("claude is not logged in on this machine yet", r.stderr)
+        # and a failure: no harness at all
+        r, _ = self.install([("claude", "absent", ""), ("codex", "absent", ""), ("copilot", "absent", ""), ("opencode", "absent", "")],
+                            env={"BOT_BOARD_QUIET": "1"})
+        self.assertIn("no default bot: no harness found", r.stderr)
 
     def test_no_working_runtime_says_the_bots_run_on_the_machine(self):
         r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 1"})   # installed, engine down
