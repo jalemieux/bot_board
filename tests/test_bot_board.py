@@ -329,6 +329,21 @@ class EntryPoint(unittest.TestCase):
         self.assertIn("BOARD=http://127.0.0.1:8080", calls)
         self.assertIn("this machine's config names the board http://old-board:8080: the keeper now reports to http://127.0.0.1:8080", r.stdout)
 
+    def test_a_board_that_listens_on_another_address_keeps_its_saved_board_and_the_install_says_nothing(self):
+        # #553 (gina): after `bot_board expose` the board is at its BIND address, not on loopback: re-installing must not rewrite BOARD to loopback
+        self.fake_install()
+        self.cfg.mkdir(parents=True, exist_ok=True)
+        (self.cfg / "config").write_text('BOARD="http://100.64.0.7:8080"\n')
+        r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="", BIND="100.64.0.7")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("BOARD=http://100.64.0.7:8080", calls)
+        self.assertNotIn("not the board installed here", r.stdout)
+        self.assertNotIn("this machine's config names the board", r.stdout)
+        self.assertIn("bot_board is up at http://100.64.0.7:8080", r.stdout)
+        # 0.0.0.0 is reached as loopback from this machine
+        r, calls = self.run_bb("install", BOT_BOARD_FROM_SRC="1", BOARD="", BIND="0.0.0.0")
+        self.assertIn("BOARD=http://127.0.0.1:8080", calls)
+
     def test_the_board_of_the_environment_is_still_used_when_only_bots_are_installed(self):
         self.fake_install()
         r, calls = self.run_bb("install", "bots", BOT_BOARD_FROM_SRC="1", BOARD="http://other-board:8080")

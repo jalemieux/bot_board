@@ -256,9 +256,11 @@ forge_install() {
 }
 
 # The one block that ends `bot_board install` (#766): what was installed, how it runs, how to manage it, and the next step.
+# where the board installed here listens, as this machine reaches it: its BIND and PORT (the saved ones after `expose`), 127.0.0.1 for 0.0.0.0 (#553)
+board_here() { local b=${BIND:-127.0.0.1}; [ "$b" != 0.0.0.0 ] || b=127.0.0.1; echo "http://$b:${PORT:-8080}"; }
 tilde() { if [ -n "$HOME" ]; then case $1 in "$HOME"|"$HOME"/*) printf '~%s' "${1#"$HOME"}"; return ;; esac; fi; printf '%s' "$1"; }      # a path under $HOME as ~/…; no ${//} replacement, whose `\~` bash 3.2 prints with its backslash
 install_summary() {
-  local url=${1:-http://${BIND:-127.0.0.1}:${PORT:-8080}} note harness who where named first=1
+  local url=${1:-$(board_here)} note harness who where named first=1
   url=${url/0.0.0.0/127.0.0.1}
   add() { if [ -n "$first" ]; then printf '  Installed: %s\n' "$1"; first=; else printf '             %s\n' "$1"; fi; }
   if [ -n "$BOARD_ON" ]; then echo "bot_board is up at $url"; else echo "bot_board is installed; the board is at $url"; fi
@@ -401,7 +403,7 @@ case $CMD in
     if [ -n "$BOTS_ON" ]; then
       board_url=${BOARD:-}
       if [ -n "$BOARD_ON" ]; then
-        here="http://127.0.0.1:${PORT:-8080}"
+        here=$(board_here)
         saved=$(sed -n 's/^BOARD="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$CFG_FILE" 2>/dev/null | tail -1 || true)
         [ -z "$board_url" ] || [ "$board_url" = "$here" ] || say "BOARD is $board_url in your environment, which is not the board installed here: the keeper reports to $here. To report to $board_url, run: BOARD=$board_url $(tilde "$(dirname "$SRC")")/bot_board install bots"
         [ -n "$board_url" ] || [ -z "$saved" ] || [ "$saved" = "$here" ] || say "this machine's config names the board $saved: the keeper now reports to $here, the board installed here"
