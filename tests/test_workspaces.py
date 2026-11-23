@@ -134,6 +134,13 @@ class Workspaces(Base):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn("botsSection", workspace_web.WS_JS)      # the Channels tab has no Bots card; the Team tab lists the bots
 
+    def test_an_old_fleet_link_lands_on_the_workspaces_list_that_says_where_the_bots_went(self):      # #751
+        r = self.client.get('/fleet', follow_redirects=False)
+        self.assertEqual((r.status_code, r.headers['location']), (301, '/workspaces?from=fleet'))
+        from app import workspace_web
+        for needle in ("[?&]from=fleet", "The bots page moved", "Machines and Configuration have their own pages", "history.replaceState(null, '', '/workspaces')", "scope && !moved"):
+            self.assertIn(needle, workspace_web.WS_JS)
+
     def test_only_a_human_or_an_admin_bot_changes_the_team_agreement(self):
         # #622: the agreement is written out in every bot's guide, so a bot of the workspace cannot rewrite it
         path = '/api/workspaces/game/knowledge/team/agreement.md'

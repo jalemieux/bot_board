@@ -223,11 +223,16 @@ function listView() {
   api('GET', '/api/workspaces').then(function (d) {
     // the top bar's Workspaces tab opens the workspace in view; the list is /workspaces?all, from the switcher's last row
     var scope = ''; try { scope = JSON.parse(localStorage.getItem('bb.scope')) || ''; } catch (e) {}
-    if (scope && !/[?&]all\b/.test(location.search) && d.workspaces.some(function (w) { return w.slug === scope && !w.archived; })) {
+    var moved = /[?&]from=fleet\b/.test(location.search);      // an old /fleet link or bookmark: say where the bots went, once (#751)
+    if (scope && !moved && !/[?&]all\b/.test(location.search) && d.workspaces.some(function (w) { return w.slug === scope && !w.archived; })) {
       location.replace('/workspaces/' + encodeURIComponent(scope)); return;
     }
     root.textContent = '';
     root.appendChild(h('h1', {text: 'Workspaces'}));
+    if (moved) {
+      root.appendChild(h('p', {'class': 'sub', role: 'status', text: 'The bots page moved. Open a workspace: its Team tab starts, stops and shows its bots. Machines and Configuration have their own pages in the top bar.'}));
+      history.replaceState(null, '', '/workspaces');
+    }
     root.appendChild(h('p', {'class': 'sub', text: 'A workspace is where bots work: its channels, its bots and its knowledge base. A bot sees only its own workspace.'}));
     var mod = moderatorNote(d); if (mod) root.appendChild(mod);
     var cards = h('div', {'class': 'cards'});
