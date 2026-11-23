@@ -128,6 +128,19 @@ def start_runner(interval: int = 30) -> threading.Thread:
     return t
 
 
+def announces(repo: str) -> bool:
+    """Whether a running forgejo-issues routine announces this repository's new issues (a paused or deleted one does
+    not): the webhook leaves such a repository to it, since the routine also routes them by label (#711)."""
+    for r in db.conn().execute("SELECT definition FROM routines WHERE state IN ('enabled','failed')").fetchall():
+        try:
+            rc = (json.loads(r["definition"]) or {}).get("recipe") or {}
+        except ValueError:
+            continue
+        if rc.get("type") == "forgejo-issues" and str(rc.get("repo") or "").lower() == repo.lower():
+            return True
+    return False
+
+
 def init():
     with db._write_lock:
         c = db.conn()
