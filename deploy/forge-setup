@@ -72,7 +72,7 @@ set_secret() { board PUT "/api/fleet/secrets/$1" "$(V=$2 jq -n '{value: env.V}')
 # a Forgejo this script did not make: the address and the tokens the person supplies, nothing made there
 existing_forge() {
   [ -n "${FORGEJO_TOKEN:-}" ] || die "FORGE_EXISTING needs FORGEJO_TOKEN: the fleet account's write token on $FORGE"
-  login=$(curl -fsS -H "Authorization: token $FORGEJO_TOKEN" "$FORGE/api/v1/user" | jq -er .login) \
+  login=$(printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" | curl -fsS -K - "$FORGE/api/v1/user" | jq -er .login) \
     || die "Forgejo at $FORGE refused FORGEJO_TOKEN"
   say "Forgejo at $FORGE knows that token as $login"
   if has_secret FORGEJO_TOKEN; then say "the board has FORGEJO_TOKEN already"; else
