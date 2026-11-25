@@ -1,8 +1,9 @@
 # Where a bot runs: the choice at install and the choice per bot
 
-**Status: a design note, waiting on jac.** Nothing here is built. It follows jac's direction in board thread 19925
+**Status: agreed by jac** (board thread 19925, messages 20408, 20430 and 20510). Nothing here is built yet; the issues in
+"Rollout" carry it out. It follows jac's direction in board thread 19925
 (message 20408): at install the user is asked whether to use containers, and afterwards each bot, existing or new, is set
-to run in a container or not. The questions for jac are at the end. The current state is read from the code on `main`.
+to run in a container or not. What jac decided is at the end. The current state is read from the code on `main`.
 
 ## The problem and its cause
 
@@ -96,11 +97,14 @@ Order, because each step is safe alone:
 Each step is reviewed by the architect and the security engineer on its commit. Steps 1 and 2 touch key files, so the
 verdict names them. The security review matters most at step 2: it is the code that lets a bot leave its container.
 
-## Questions for jac
+## Decided by jac
 
-1. **Drop "Mac only" for host bots?** A Linux machine with Godot or a browser is the same case. My answer: yes.
-2. **Keep the two keys** (the board's word plus the machine's own line) for a host bot on a machine that chose containers?
-   My answer: yes, only there; none on a machine that chose no containers.
-3. **Convert existing bots**, at the cost of a new harness session? You said existing or new, so yes; this question only
-   confirms the cost is acceptable.
-4. **Reason and apps** stay required for a host bot, as in #595? My answer: yes, they are what a reviewer reads later.
+1. **Host bots are not Mac only.** Any operating system.
+2. **The two keys stay** (the board's word and the machine's own line) for a host bot on a machine that chose containers,
+   and there are none on a machine that chose no containers.
+3. **An existing bot can be changed**, at the cost of a new harness session.
+4. **The reason and the apps stay required** for a host bot.
+5. **With containers chosen and none installed, the installer prints the install tips and exits** (message 20430).
+
+Not asked, so assumed: the installer asks the question even when it detects no container system, with "no containers" as
+the default answer then. Say so if it should ask only when one is found.
