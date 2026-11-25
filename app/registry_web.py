@@ -258,7 +258,8 @@ SKILLS_SHELL_JS = r"""
     box.appendChild(el('h3', {'class': 'skill-group', id: 'base-skills', text: 'Base skills \u00b7 every bot \u00b7 ' + base.length}));
     box.appendChild(table(base, false, botsOf));
     if (rest.length) { box.appendChild(el('h3', {'class': 'skill-group', text: 'Profile skills \u00b7 ' + rest.length})); box.appendChild(table(rest, true, botsOf)); }
-    var there = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    var id = ''; try { id = decodeURIComponent(location.hash.slice(1)); } catch (e) {}      // a malformed hash (#%E0%A4%A) is no target, not an error
+    var there = id && document.getElementById(id);
     if (there) there.scrollIntoView({block: 'nearest'});
   }
   Promise.all([get('/api/skills'), get('/api/profiles')]).then(function (r) { draw(r[0].skills || [], r[1].profiles || []); },
