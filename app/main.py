@@ -811,8 +811,7 @@ def set_interactive(handle: str, body: InteractiveIn, agent: dict = Depends(curr
     a = db.get_agent_by_handle(handle.lstrip("@"))
     if a is None:
         raise HTTPException(404, "no such agent")
-    if agent["kind"] != "human" and agent["id"] != a["id"]:
-        raise HTTPException(403, "only a human, or the session itself, says whether a handle is interactive")
+    workspaces.require_human(agent, "only a human, or the session itself, says whether a handle is interactive", unless=agent["id"] == a["id"])
     if a["kind"] in db.UNSCOPED_KINDS:
         raise HTTPException(409, "humans, keepers and runners never hold threads anyway")
     return {"agent": db.public_agent(db.set_agent_interactive(a["id"], body.interactive))}
@@ -825,8 +824,7 @@ def delete_agent(handle: str, agent: dict = Depends(current_agent)) -> dict:
     its old messages keep its handle, which is not given out again. On its box, by the keeper:
     it is stopped (a busy bot finishes its run first) and its config, token, working directory
     and harness sessions are removed; a box not reporting now does it when it reports again."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human deletes a bot")
+    workspaces.require_human(agent, "only a human deletes a bot")
     why = fleet.delete(handle.lstrip("@"), agent)
     if why is not None:
         raise HTTPException(409 if why else 404, why or "no such agent")
@@ -1017,8 +1015,7 @@ class FleetClearIn(BaseModel):
 @app.post("/api/fleet/clear", tags=["fleet"])
 def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dict:
     """Cancel stale requests for freshly confirmed stopped workers; preserve their state."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human clears fleet alerts")
+    workspaces.require_human(agent, "only a human clears fleet alerts")
     try:
         return {"cleared": fleet.clear_alerts([item.model_dump() for item in body.items], agent["handle"])}
     except PermissionError as exc:
@@ -1074,8 +1071,7 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     """A human says where a bot should be running, or that it should stop. Nothing
     happens here: the keeper of that box reads it with its next report and does it.
     A handle the box does not know is a new bot, started there under that name."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    workspaces.require_human(agent, "only a human starts or stops a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
@@ -1097,8 +1093,7 @@ class FleetHostDetailsIn(BaseModel):
 @app.put("/api/fleet/bots/{handle}/host", tags=["fleet"])
 def fleet_host_details(handle: str, body: FleetHostDetailsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human edits a host bot's reason and apps (#595). The flag itself is only set when the bot is created."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human edits a host bot")
+    workspaces.require_human(agent, "only a human edits a host bot")
     why = fleet.set_host_details(handle, body.reason, body.apps)
     if why:
         raise HTTPException(409, why)
@@ -1108,8 +1103,7 @@ def fleet_host_details(handle: str, body: FleetHostDetailsIn, agent: dict = Depe
 @app.delete("/api/fleet/bots/{handle}/host", tags=["fleet"])
 def fleet_host_clear(handle: str, agent: dict = Depends(current_agent)) -> dict:
     """A human moves a host bot back to a container (#595): it runs there from its next start."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human moves a host bot back to a container")
+    workspaces.require_human(agent, "only a human moves a host bot back to a container")
     why = fleet.clear_host(handle)
     if why:
         raise HTTPException(409, why)
@@ -1119,8 +1113,7 @@ def fleet_host_clear(handle: str, agent: dict = Depends(current_agent)) -> dict:
 @app.put("/api/fleet/hosts/{name}/host-bots", tags=["fleet"])
 def fleet_host_bots(name: str, body: FleetHostBotsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human turns the host-bots switch of a Mac on or off (#595). A bot's token is refused."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human changes whether a box may run host bots")
+    workspaces.require_human(agent, "only a human changes whether a box may run host bots")
     why = fleet.set_host_bots(name, body.on, agent["handle"])
     if why:
         raise HTTPException(409, why)
@@ -1130,8 +1123,7 @@ def fleet_host_bots(name: str, body: FleetHostBotsIn, agent: dict = Depends(curr
 @app.put("/api/fleet/bots/{handle}/claims", tags=["fleet"])
 def fleet_claims(handle: str, body: FleetClaimsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human sets how a fleet bot takes new threads (#622): open, or only when its first message mentions it."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human sets how a bot takes new threads")
+    workspaces.require_human(agent, "only a human sets how a bot takes new threads")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.set_claims(handle, body.claims)
@@ -1144,8 +1136,7 @@ def fleet_claims(handle: str, body: FleetClaimsIn, agent: dict = Depends(current
 def fleet_channels(handle: str, body: FleetChannelsIn, agent: dict = Depends(current_agent)) -> dict:
     """A human binds a fleet bot to channels of its workspace: it then claims new threads
     only there, and takes part elsewhere when mentioned. An empty list unbinds it. Takes effect at the bot's next claim; threads it holds stay."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human binds a bot to channels")
+    workspaces.require_human(agent, "only a human binds a bot to channels")
     why = fleet.set_channels(handle, [c.strip().lower() for c in body.channels if c.strip()])
     if why:
         raise HTTPException(409, why)
@@ -1161,8 +1152,7 @@ def fleet_profile(handle: str, body: FleetProfileIn, agent: dict = Depends(curre
     """A human moves a fleet bot to another profile (#395). It keeps its handle, token, box,
     channels and voice, and whatever else was asked for it; its channels are checked against
     the new profile. Its next prompt carries the new guide and skills."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human gives a bot a profile")
+    workspaces.require_human(agent, "only a human gives a bot a profile")
     why = fleet.set_profile(handle, body.profile.strip().lower())
     if why:
         raise HTTPException(409, why)
@@ -1179,8 +1169,7 @@ def fleet_voice(handle: str, body: FleetVoiceIn, agent: dict = Depends(current_a
     """A human sets how a fleet bot writes to people and who it is. Both go in its composed
     AGENTS.md, so an edit reaches it at its next wake; a long session may keep some of its old
     tone until it gets a new one."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human sets a bot's voice")
+    workspaces.require_human(agent, "only a human sets a bot's voice")
     why = fleet.set_voice(handle, body.voice.strip(), body.personality.strip())
     if why:
         raise HTTPException(409, why)
@@ -1206,8 +1195,7 @@ class FleetNewIn(BaseModel):
 def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
     """A human starts a new bot on a box without naming it: the board picks a first name
     nobody has used, and the keeper starts it under that name, in that workspace, as with PUT."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    workspaces.require_human(agent, "only a human starts or stops a bot from the board")
     handle = fleet.free_name()
     why = fleet.want(handle, body.host, True, body.harness, agent["handle"], workspace=body.workspace.lower(),
                      profile=(body.profile or "").strip().lower() or None,
@@ -1222,8 +1210,7 @@ def fleet_new(body: FleetNewIn, agent: dict = Depends(current_agent)) -> dict:
 def fleet_restart(handle: str, agent: dict = Depends(current_agent)) -> dict:
     """A human has a running bot start itself again (#15251): same bot, token and session, on the bin/bot now on its
     box, once its run ends. Its keeper passes it to bin/bot restart and reports what the launcher said."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human restarts a bot from the board")
+    workspaces.require_human(agent, "only a human restarts a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.restart(handle, agent["handle"])
@@ -1237,8 +1224,7 @@ def fleet_reset(handle: str, agent: dict = Depends(current_agent)) -> dict:
     """A human gives a bot a new harness session (#221): its old one keeps the role it was
     started with. The keeper of its box sets the old session aside; the bot reads the rules
     again on its next run, at once if it is idle."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human resets a bot from the board")
+    workspaces.require_human(agent, "only a human resets a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.reset(handle, agent["handle"])
@@ -1252,8 +1238,7 @@ def fleet_move(handle: str, body: FleetMoveIn, agent: dict = Depends(current_age
     """A human moves a pool bot to another box: same handle, token, cursor and, for
     Claude Code, sessions. The keeper of its box stops and packs it and hands the
     archive over by ssh; the keeper of the new box unpacks and starts it."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human moves a bot from the board")
+    workspaces.require_human(agent, "only a human moves a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
     why = fleet.move(handle, body.to, agent["handle"], body.start)
@@ -1272,8 +1257,7 @@ def fleet_drain(name: str, body: FleetDrainIn | None = None, agent: dict = Depen
     """A human empties a box: every pool bot up on it is moved to other boxes, as with
     the move of one bot. Bots dedicated to a repo, or already moving, are skipped and
     said so. Nothing is stopped that cannot be moved."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human drains a box")
+    workspaces.require_human(agent, "only a human drains a box")
     got = fleet.drain(name, agent["handle"], body.to if body else None)
     if isinstance(got, str):
         raise HTTPException(409, got)
@@ -1284,8 +1268,7 @@ def fleet_drain(name: str, body: FleetDrainIn | None = None, agent: dict = Depen
 def fleet_unwant(handle: str, agent: dict = Depends(current_agent)) -> dict:
     """A human takes back what was asked for a bot. Its keeper then leaves the bot as
     it is, running or not; this is also how a mistyped name leaves the page."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human starts or stops a bot from the board")
+    workspaces.require_human(agent, "only a human starts or stops a bot from the board")
     why = fleet.unwant(handle, agent["handle"])
     if why is not None:
         raise HTTPException(409 if why else 404, why or f"nothing is asked for {handle}")
@@ -1301,9 +1284,8 @@ def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_a
     m = fleet.members(name)
     if m is None:
         raise HTTPException(404, f"no box named {name}")
-    own = agent["kind"] != "human" and m["keeper"] and agent["handle"].lower() == m["keeper"].lower()
-    if agent["kind"] != "human" and not own:
-        raise HTTPException(403, "only a human, or the box's own keeper, takes a box off the fleet")
+    own = bool(m["keeper"]) and agent["handle"].lower() == m["keeper"].lower()
+    workspaces.require_human(agent, "only a human, or the box's own keeper, takes a box off the fleet", unless=own)
     if agent["kind"] == "human" and m["reporting"] and not force:
         raise HTTPException(409, f"the keeper of {name} is still reporting: stop it first, or remove it anyway")
     # a bot another reporting box has (moved there, by the board or by hand) lives on
@@ -1330,8 +1312,7 @@ class SecretIn(BaseModel):
 
 
 def _secrets_admin(agent: dict) -> None:
-    if not workspaces.is_admin(agent):
-        raise HTTPException(403, "only a human manages the fleet's secrets")
+    workspaces.require_human(agent, "only a human manages the fleet's secrets")
 
 
 @app.get("/api/fleet/secrets", tags=["fleet"])
@@ -1395,8 +1376,7 @@ def hook_status(name: str, _: dict = Depends(current_agent)) -> dict:
 def hook_secret(name: str, body: HookSecretIn, agent: dict = Depends(current_agent)) -> dict:
     """A human sets the secret the Forgejo webhook is configured with. It stays on the board:
     it is not a fleet secret, so bots never see it."""
-    if not workspaces.is_admin(agent):
-        raise HTTPException(403, "only a human sets a hook's secret")
+    workspaces.require_human(agent, "only a human sets a hook's secret")
     if "\n" in body.secret or "\0" in body.secret:
         raise HTTPException(422, "a secret is one line")
     hooks.set_secret(_hook_name(name), body.secret.strip(), agent["handle"])
@@ -1532,8 +1512,7 @@ def skill_put(name: str, body: SkillIn, agent: dict = Depends(current_agent)) ->
 
 def _reset_all(handles: list[str], agent: dict) -> dict:
     """fleet.reset() for each bot, as a single reset is: {reset: [handles], skipped: {handle: why}}."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human resets a bot from the board")
+    workspaces.require_human(agent, "only a human resets a bot from the board")
     out: dict = {"reset": [], "skipped": {}}
     for h in handles:
         why = fleet.reset(h, agent["handle"])
@@ -1833,15 +1812,13 @@ class FirstRunIn(BaseModel):
 def first_run_get(request: Request, agent: dict = Depends(current_agent)) -> dict:
     """The first-run guide's saved state for this human and the facts it shows (#774). null: no guide, as on every board
     that existed before it. Humans only: a bot gets 403. Nothing here is a secret."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "the first-run guide is for a person")
+    workspaces.require_human(agent, "the first-run guide is for a person")
     return guide.facts(agent, str(request.base_url))
 
 
 @app.put('/api/first-run', tags=['workspaces'])
 def first_run_put(body: FirstRunIn, agent: dict = Depends(current_agent)) -> dict:
-    if agent["kind"] != "human":
-        raise HTTPException(403, "the first-run guide is for a person")
+    workspaces.require_human(agent, "the first-run guide is for a person")
     try:
         return {"state": guide.save(agent["handle"], body.state)}
     except ValueError as exc:
@@ -2530,8 +2507,7 @@ def show_thread(tid: int, agent: dict = Depends(current_agent)) -> dict:
 
 
 def _set_hidden(tid: int, agent: dict, hidden: bool) -> dict:
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human hides a thread")
+    workspaces.require_human(agent, "only a human hides a thread")
     root = _visible(db.get_message(tid), agent)
     tid = root["thread_id"] or root["id"]
     db.hide_thread(tid, agent["handle"], hidden)
@@ -2744,8 +2720,7 @@ class DismissIn(BaseModel):
 def status_dismiss(body: DismissIn, agent: dict = Depends(current_agent)) -> dict:
     """A human hides an alert (by its `key`) until its cause is gone; returns the new status."""
     from . import status
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human dismisses alerts")
+    workspaces.require_human(agent, "only a human dismisses alerts")
     try:
         return status.dismiss(body.key, agent)     # m<id>: a waiting or mention item
     except KeyError as exc:
@@ -2757,8 +2732,7 @@ def status_mentions_done(agent: dict = Depends(current_agent)) -> dict:
     """A human clears all their mentions at once, without replying; returns the new status. What a
     bot marked as waiting on them stays until they answer it."""
     from . import status
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human clears mentions")
+    workspaces.require_human(agent, "only a human clears mentions")
     return status.dismiss_mentions(agent)
 
 
@@ -2766,8 +2740,7 @@ def status_mentions_done(agent: dict = Depends(current_agent)) -> dict:
 def status_restore(key: str, agent: dict = Depends(current_agent)) -> dict:
     """A human brings a dismissed alert back; returns the new status."""
     from . import status
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human restores alerts")
+    workspaces.require_human(agent, "only a human restores alerts")
     return status.restore(key, agent)
 
 
@@ -2901,8 +2874,7 @@ def _link_key(code: str) -> str:
 def make_signin_link(agent: dict = Depends(current_agent)) -> dict:
     """A link that signs a browser in as you, once: for a human with a token (the installer) to open
     the board already signed in. It expires after ten minutes or its first use."""
-    if agent["kind"] != "human":
-        raise HTTPException(403, "only a human signs a browser in")
+    workspaces.require_human(agent, "only a human signs a browser in")
     code = secrets.token_urlsafe(24)
     with _signin_lock:
         now = time.time()
@@ -2938,6 +2910,13 @@ def page_onboard(request: Request) -> str:
     per harness, with the address rewritten to however they reached us."""
     base = str(request.base_url).rstrip("/")
     return web.onboard_page(BOARD_NAME, base, bool(INVITE_CODE))
+
+
+@app.exception_handler(PermissionError)
+async def permission_error(request: Request, exc: PermissionError):
+    """A rule helper in a module (workspaces.require_human, require_manage, registry.require_writer) says no with
+    PermissionError; the answer is a 403 with its words, like every other refusal (#840)."""
+    return await http_error(request, HTTPException(403, str(exc)))
 
 
 @app.exception_handler(HTTPException)
