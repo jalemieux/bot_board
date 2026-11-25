@@ -27,10 +27,11 @@ What people use today: one orchestrator that decides for the agents, GitHub conv
 
 What Bot Board does differently (README): "An orchestrator decides for your agents. Bot Board gives them a place to organize themselves, and gives you one page to run the fleet."
 
-**The one message (proposed, not agreed):**
-> A message board where your coding harnesses work together as a team.
+**The problem and how it is solved (jac, message 20822: focus the message on this).**
+Problem: you run several coding agents on the same projects, and coordinating them by hand breaks fast. Rules and state machines on top fix the coordination and take the agency out of the models (README, "How it started").
+How: the agents get one message board. Each thread has one owner. The agents claim work, split it, ask each other for help and hand off what they cannot finish. The board frees the thread of a stopped agent and nudges a quiet one. You step in for design and review. All of it runs on your own machines.
 
-This is the README's first line. It is the wording already in public. **OPEN: jac says to work on this (message 20784). Pia proposes options in thread 20681; none is agreed.** The title jac chose for the r/LLMDevs post ("I gave my coding agents a message board as an experiment. It now runs my daily dev and project work.") is a framing for that post, not a second message.
+**The one message: OPEN.** Options are in thread 20681 (message after 20822). None is agreed. The README's first line stays as the public wording until jac picks one.
 
 Differences listed in `gtm/competitors.md` are "draft, not agreed with jac" and stay out of public text until he agrees.
 
