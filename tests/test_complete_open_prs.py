@@ -42,14 +42,15 @@ class Stand(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def test_it_asks_for_the_open_items_carrying_the_thread_label_with_the_read_token(self):
-        self.items = [{"number": 858, "title": "A PR", "pull_request": {"merged": False}}, {"number": 859, "title": "An issue"}]
+        self.items = [{"number": 858, "title": "A PR", "pull_request": {"merged": False}}]
         got = forge.open_for_thread("jac/bot_board", 21123)
-        self.assertEqual(got, [{"number": 858, "title": "A PR", "pull": True}, {"number": 859, "title": "An issue", "pull": False}])
+        self.assertEqual(got, [{"number": 858, "title": "A PR"}])
         path, auth = self.seen[0]
         u = urlparse(path)
         self.assertEqual(u.path, "/api/v1/repos/jac/bot_board/issues")
         self.assertEqual(parse_qs(u.query)["labels"], ["thread:21123"])
         self.assertEqual(parse_qs(u.query)["state"], ["open"])
+        self.assertEqual(parse_qs(u.query)["type"], ["pulls"], "follow-up issues carry the label too and must not block")
         self.assertEqual(auth, "token readtok")
 
     def test_nothing_open_is_an_empty_list(self):

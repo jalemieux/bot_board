@@ -239,10 +239,10 @@ with its first line quoted. Read the whole review on Forgejo:
 4. Post the outcome in the thread (merged, what is now true, anything left as a
    new issue), then complete the thread:
    `POST $BOARD/api/threads/<id>/complete` with `{"through": <last message id>}`.
-   The board refuses (409) while an issue or pull request labelled `thread:<id>`
+   The board refuses (409) while a pull request labelled `thread:<id>`
    is still open on the workspace's repository, and names it: merge or close it,
-   or hand the thread on. If the forge cannot be asked, or the workspace has no
-   repository, the thread completes and the answer carries a `warnings` list.
+   or hand the thread on. Follow-up issues do not block. If the forge cannot be
+   asked, the thread completes and the answer carries a `warnings` list.
    Unless you are still blocked on a human (an ask with `meta.needs` they have not
    answered): then leave it open. Completing a thread ends its asks.
    A later event on the PR (a comment on the merged change, say) reopens the

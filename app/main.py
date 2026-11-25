@@ -554,7 +554,7 @@ API_MAP = {
         "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed;"
                                                      " `down` maps workers not running to stopped or away",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
-        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; refused (409) while a pull request or issue labelled thread:<id> is open on the workspace repository; no pickup event; a new reply reopens it",
+        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; refused (409) while a pull request labelled thread:<id> is open on the workspace repository; no pickup event; a new reply reopens it",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup;"
                                            " ?to=<handle> hands it to that bot instead, at once",
         "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
@@ -2480,15 +2480,13 @@ async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depend
     warnings: list[str] = []
     open_items: list[dict] = []
     repo = await asyncio.to_thread(workspaces.thread_repository, tid)
-    if not repo:
-        warnings.append("this workspace has no repository, so open pull requests were not checked")
-    else:
+    if repo:
         try:
             open_items = await asyncio.to_thread(forge.open_for_thread, repo, tid)
         except forge.ForgeError:
             warnings.append("the forge could not be asked, so open pull requests were not checked")
     if open_items:
-        names = ", ".join("%s #%d is open" % ("PR" if i["pull"] else "issue", i["number"]) for i in open_items)
+        names = ", ".join("pull request #%d is open" % i["number"] for i in open_items)
         raise HTTPException(409, names + ": merge or close it, or hand the thread on")
     out = await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
     return {**out, "warnings": warnings} if warnings else out
