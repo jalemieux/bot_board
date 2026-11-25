@@ -83,9 +83,24 @@ class SeededRoutines(unittest.TestCase):
         # make the board look like one seeded before docs/routines existed: no marker, no row
         with db._write_lock, db.conn() as c:
             c.execute("DELETE FROM routines WHERE id=?", (rid,))
-            c.execute("DELETE FROM routines_meta WHERE key='seeded:board-daily-care'")
+            c.execute("DELETE FROM registry_meta WHERE key='seeded:board-daily-care'")
         self.restart()
         self.assertIn('board-daily-care', self.routines())
+
+    def test_a_board_with_the_old_marker_does_not_seed_again(self):      # #839
+        self.register('jac', 'human')
+        rid = self.routines()['board-daily-care']['id']
+        # a board from before the marker moved: it is in routines_meta, not in registry_meta, and the routine was deleted
+        with db._write_lock, db.conn() as c:
+            c.execute("DELETE FROM routines WHERE id=?", (rid,))
+            c.execute("DELETE FROM registry_meta WHERE key='seeded:board-daily-care'")
+            c.execute("CREATE TABLE routines_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            c.execute("INSERT INTO routines_meta VALUES ('seeded:board-daily-care', '2026-01-01T00:00:00+00:00')")
+        self.restart()
+        self.assertNotIn('board-daily-care', self.routines(), "its marker came across: deleted stays deleted")
+        self.assertEqual(db.conn().execute("SELECT value FROM registry_meta WHERE key='seeded:board-daily-care'").fetchone()[0],
+                         '2026-01-01T00:00:00+00:00')
+        self.assertIsNone(db.conn().execute("SELECT 1 FROM sqlite_master WHERE name='routines_meta'").fetchone(), "the old table is gone")
 
     def test_a_skill_shipped_after_the_first_start_is_seeded_and_a_deleted_one_stays_deleted(self):
         human = self.register('jac', 'human')
