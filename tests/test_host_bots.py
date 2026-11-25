@@ -1,6 +1,6 @@
-"""Host bots (#595), the board side: a new bot on a Mac can run outside its container, as the operator.
-Only a human sets it, only on a box that reported macOS with the switch on, only for a new bot; the box's
-keeper is told to run it on the host only while all of that holds. Run with python -m unittest discover -s tests."""
+"""Host bots (#595) and where a bot runs (#875), the board side: a bot can run outside its container, as the operator, on any
+box and for a new bot or an existing one. Only a human sets it; on a box that chose containers it needs the box's switch and a
+reason; the box's keeper is told to run it on the host only while all of that holds. Run with python -m unittest discover -s tests."""
 import os
 import sys
 import tempfile
@@ -57,27 +57,30 @@ class HostBots(unittest.TestCase):
         self.assertEqual(r.status_code, expected, r.text)
         return r
 
-    def test_only_a_human_turns_the_switch_and_only_on_a_mac(self):
+    def test_only_a_human_turns_the_switch_on_any_box(self):
         self.switch("mac", True, auth=self.bot, expected=403)
         self.switch("mac", True, auth=self.keepers["mac"], expected=403)
-        self.assertIn("not a Mac", self.switch("linux", True, expected=409).json()["error"])
         self.assertIn("no box named", self.switch("nowhere", True, expected=409).json()["error"])
         self.switch("mac", True)
+        self.switch("linux", True)          # not Mac only (#875)
         hosts = {h["name"]: h for h in self.client.get("/api/fleet").json()["hosts"]}
-        self.assertEqual((hosts["mac"]["host_bots"], hosts["linux"]["host_bots"]), (True, None), "a Linux box has no such switch")
+        self.assertEqual((hosts["mac"]["host_bots"], hosts["linux"]["host_bots"]), (True, None),
+                         "the Machines page shows the switch for a Mac only, until the Team tab sets `runs`")
 
-    def test_a_host_bot_needs_the_switch_a_mac_a_reason_and_to_be_new(self):
+    def test_a_host_bot_needs_the_switch_and_a_reason_on_any_box_and_may_be_an_existing_bot(self):
         why = lambda r: r.json()["error"]
         self.assertIn("off on mac", why(self.make(expected=409)))
+        self.assertIn("off on linux", why(self.make(box="linux", expected=409)), "not Mac only")
         self.switch("mac", True)
-        self.assertIn("not a Mac", why(self.make(box="linux", expected=409)))
+        self.switch("linux", True)
         self.assertIn("why the bot needs the host", why(self.make(host_reason="  ", expected=409)))
-        self.assertIn("created running", why(self.make(run=False, expected=409)))
-        self.assertIn("already exists", why(self.make(handle="edie", expected=409)), "an existing bot is not converted")
         self.assertEqual(self.client.put("/api/fleet/bots/mira", headers=self.bot,
                                          json={"host": "mac", "run": True, "host_reason": "x"}).status_code, 403)
-        self.make()                                              # a new bot, all conditions met
-        self.assertIn("already exists", why(self.make(expected=409)), "and not made twice")
+        self.make()                                              # all conditions met
+        self.make(handle="penn", box="linux")                    # on a Linux box too
+        self.report("mac", bots=[{"handle": "edie", "harness": "claude", "status": "waiting", "serves": "/pool", "pool": True}])
+        self.make(handle="edie")                                 # an existing bot is converted (#875)
+        self.assertTrue(self.report("mac")["edie"]["host_flag"])
 
     def test_the_keeper_is_told_to_run_it_on_the_host_only_while_everything_holds(self):
         self.switch("mac", True)
@@ -91,9 +94,7 @@ class HostBots(unittest.TestCase):
         self.assertTrue(self.report("mac")["mira"]["host_flag"], "but the bot keeps its flag")
         self.switch("mac", True)
         self.assertTrue(self.report("mac")["mira"]["on_host"], "and the switch on brings it back")
-        self.report("mac", os_name="Linux 6.8")                   # the box's name now belongs to a Linux keeper
-        self.assertFalse(self.report("mac", os_name="Linux 6.8")["mira"]["on_host"], "a box that does not report macOS has no host bots")
-        self.assertTrue(self.report("mac")["mira"]["on_host"])
+        self.assertTrue(self.report("mac", os_name="Linux 6.8")["mira"]["on_host"], "not Mac only: the box's OS does not matter")
         # moved to another box (a pool move): it is no longer the box it was made for
         r = self.client.put("/api/fleet/bots/mira", headers=self.human, json={"host": "linux", "run": True})
         self.assertEqual(r.status_code, 200, r.text)
@@ -103,8 +104,7 @@ class HostBots(unittest.TestCase):
         self.switch("mac", True)
         r = self.client.post("/api/agents", json={"handle": "mira", "kind": "claude-code"})   # the bot registers itself later
         self.assertEqual(r.status_code, 201)
-        # an agent that exists is refused as a host bot: the flag is made before the bot registers
-        self.assertIn("already exists", self.make(expected=409).json()["error"])
+        self.make()                       # an agent that exists may be set to run on the host too (#875)
         fresh = self.make(handle="zed")
         self.report("mac")
         tok = self.client.post("/api/agents", json={"handle": "zed", "kind": "claude-code"})

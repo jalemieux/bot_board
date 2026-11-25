@@ -150,6 +150,22 @@ later. A route may wait for work, off the event loop, with `asyncio.to_thread(..
 not background work.
 Not: a thread a route starts and forgets.
 
+### Where a bot runs
+One way: a bot has `runs`, `container` or `host`, in `fleet_bots`; unset means its machine's setting (`BOT_RUNTIME`). The rule
+is `fleet._runs_problem`: any operating system, a new bot or an existing one; `container` needs a container runtime on the
+box; `host` on a box that chose containers needs the box's host-bots switch and a one-line reason with the apps, and the
+machine's own consent line besides; a box with no runtime has nothing to gate. `GET /api/me` answers it, and `host_bot`
+too while an older launcher reads that. The launcher obeys it at every start (`decide_run` in `bin/bot`): `host` on a box
+that chose containers waits for the box's own line in `host-bots-allowed` and says so in its health line; `container` on a
+box with no runtime is not started and says what to install; an older board that answers no `runs` leaves the box's default.
+The keeper reports each box's consent lines on every operating system (`host_facts` in `bin/keeper`). Design:
+`docs/runtime-choice.md`.
+Example: `app/fleet.py`, `_runs_problem` and `_set_runs`; `bin/bot`, `decide_run`.
+The machine's setting comes from one question, asked in `deploy/containers`: at install, and again with `bot_board
+containers`. Example: `deploy/containers` (the answer, the default, the exit when containers are wanted and none is installed).
+Not yet: the Team tab sets it (#877). Today the board carries it, the launcher and the keeper obey it, and the installer sets the
+machine's default.
+
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
 Example: `docker-compose.yml` sets it, and `run.sh` sets it for the native install (`bin/bot_board install`).

@@ -3482,7 +3482,8 @@ function revealInLists(t) {
 // The hash says which tab: a tab's own name, or anything inside one, so older links such as
 // #bot-ada, #box-m1 and #secrets still land where they point, with its folded list opened.
 function showTarget() {
-  var name = decodeURIComponent(location.hash.slice(1)), t = name && document.getElementById(name);
+  var name = ''; try { name = decodeURIComponent(location.hash.slice(1)); } catch (e) {}      // a malformed hash (#%E0%A4%A) is no target, not an error (#909)
+  var t = name && document.getElementById(name);
   var shown = document.querySelector('.fleet-page').dataset.panes.split(' ');      // the panes this page shows (#644)
   var home = {'tab-machines': '/machines', 'tab-settings': '/machines', 'tab-roles': '/roles', 'tab-skills': '/skills'};
   var there = t && t.closest('.tab-pane');
@@ -3686,7 +3687,7 @@ FLEET_CSS = """
 .fleet-page .hostform input:not([type=checkbox]),.fleet-page .hostform select{min-height:44px;font-size:16px}
 .fleet-page .hostform .chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:16px}
 .fleet-page .hostform input[type=checkbox]{width:22px;height:22px;flex:none}
-.fleet-page .hostnew summary,.fleet-page .hostbox .apps summary{display:list-item;padding:12px 0;min-height:44px;box-sizing:border-box}      /* list-item keeps the disclosure triangle (flex removes it) */
+.fleet-page .hostnew summary,.fleet-page .hostbox .apps summary{display:list-item;padding:12px 0;min-height:44px;box-sizing:border-box;font-size:16px}      /* list-item keeps the disclosure triangle (flex removes it) */
 }
 .fleet-page .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .addbot-cta,body.out .fleet-page .voice-edit{display:none}

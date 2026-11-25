@@ -1101,6 +1101,8 @@ function markdown(src) {
   return out.join('');
 }
 var openDoc = function () {};    // set by knowledgeSection; channel references call it
+// location.hash, decoded; a malformed one (#%E0%A4%A) is no hash at all, not an error that ends the script (#909)
+function hashText() { try { return decodeURIComponent(location.hash); } catch (e) { return ''; } }
 function knowledgeSection(w) {
   var base = '/api/workspaces/' + encodeURIComponent(w.slug) + '/knowledge';
   var sec = h('section', {id: 'kb'}, h('h2', null, 'Knowledge base', h('small', {text: String(w.documents) + ' document' + (w.documents === 1 ? '' : 's')})));
@@ -1199,12 +1201,12 @@ function knowledgeSection(w) {
     }, 250);
   });
   window.addEventListener('hashchange', function () {     // a pasted or edited #doc= link
-    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(decodeURIComponent(location.hash));
+    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(hashText());
     if (m) show(m[1], m[2] ? Number(m[2]) : null);
   });
   api('GET', base).then(function (d) {
     docs = d.documents; drawTree(docs, '');
-    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(decodeURIComponent(location.hash));
+    var m = /#doc=([^@]+)(?:@(\d+))?$/.exec(hashText());
     if (m) show(m[1], m[2] ? Number(m[2]) : null);
     else if (docs.some(function (x) { return x.path === 'INDEX.md'; })) show('INDEX.md');
   }).catch(function (e) { tree.replaceChildren(h('p', {'class': 'msg-err', text: e.message})); });

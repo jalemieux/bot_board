@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# containers — where the bots run: in containers, or on this machine as you (#878, docs/runtime-choice.md).
+#
+#   deploy/containers install   at install: look for Docker or Podman, say what was found, ask "Run bots in containers?"
+#                               (or take the default when nobody can be asked), and write the answer
+#   deploy/containers ask       later, as `bot_board containers`: the same question; the default is what is set now
+#
+# The answer is the machine's default for its bots: yes writes BOT_RUNTIME to the bots' config, no leaves it out (and removes it
+# on `ask`). The default answer is yes when a container runtime works, no when none does, and no for a claude bot on a Mac
+# (its login is in the Keychain, which a container cannot read). A person is asked on /dev/tty, since `curl ... | bash` has no
+# stdin; with no terminal the default is taken, never a hang.
+#
+# Exit 0: the answer is written. Exit 3: containers were chosen and no runtime is installed; how to install one is printed and
+# nothing is written. The install is then run again; this never installs Docker and never goes on without containers by itself.
+#
+# Env: BOT_BOARD_CONTAINERS=1 or 0 answers the question (`bot_board install --containers` / `--no-containers`); BOT_CONFIG (the bots'
+# config); BOT_TTY (the terminal to ask on, default /dev/tty); BOT_HARNESS (the default bot's harness, default what the config says);
+# BOARD (the board the bots report to, for the network note); BOT_BOARD_QUIET (notes that only inform go to the keeper's log).
+set -euo pipefail
+
+MODE=${1:-install}
+CFG=${BOT_CONFIG:-$HOME/.config/bot_board/config}
+QUIET=${BOT_BOARD_QUIET:-}
+
+info() {
+  if [ -n "$QUIET" ]; then ( umask 077; mkdir -p "$(dirname "$CFG")"; echo "bot: $*" >> "$(dirname "$CFG")/keeper.log" )
+  else echo "bot: $*" >&2; fi
+}
+say() { echo "bot: $*" >&2; }
+config_value() { sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$CFG" 2>/dev/null | tail -1 || true; }
+set_runtime() {
+  mkdir -p "$(dirname "$CFG")"; chmod 700 "$(dirname "$CFG")"; touch "$CFG"
+  { grep -v '^BOT_RUNTIME=' "$CFG" || true; printf 'BOT_RUNTIME="%s"\n' "$1"; } > "$CFG.new" && mv "$CFG.new" "$CFG"
+}
+unset_runtime() { [ -f "$CFG" ] || return 0; { grep -v '^BOT_RUNTIME=' "$CFG" || true; } > "$CFG.new" && mv "$CFG.new" "$CFG"; }
+
+case $MODE in install|ask) ;; *) echo "usage: containers install|ask" >&2; exit 2 ;; esac
+
+# 1. what is here
+RT=
+for c in docker podman; do command -v "$c" >/dev/null 2>&1 && "$c" info >/dev/null 2>&1 && { RT=$c; break; }; done
+HARNESS=${BOT_HARNESS:-$(config_value KEEPER_DEFAULT_BOT)}
+MAC_CLAUDE=
+[ "$(uname -s)" = Darwin ] && [ "$HARNESS" = claude ] && MAC_CLAUDE=1
+CURRENT=$(config_value BOT_RUNTIME)
+
+# 2. the default answer
+if [ "$MODE" = ask ] && [ -n "$CURRENT" ]; then DEFAULT=yes
+elif [ -n "$RT" ] && [ -z "$MAC_CLAUDE" ]; then DEFAULT=yes
+else DEFAULT=no; fi
+
+if [ -n "$RT" ]; then info "$RT is here and works."
+else info "no container runtime (Docker or Podman) was found."; fi
+if [ -n "$MAC_CLAUDE" ] && [ -n "$RT" ]; then
+  info "Claude Code's login is in the macOS Keychain, which a container cannot read, so the default is no. To use containers anyway, run claude setup-token and set CLAUDE_CODE_OAUTH_TOKEN as a fleet secret on the board's Configuration page."
+fi
+
+# 3. the answer: the switch, else the person, else the default
+ANSWER=
+case ${BOT_BOARD_CONTAINERS:-} in
+  1|yes|true) ANSWER=yes ;;
+  0|no|false) ANSWER=no ;;
+  "") ;;
+  *) say "BOT_BOARD_CONTAINERS is 1 or 0"; exit 2 ;;
+esac
+if [ -z "$ANSWER" ]; then
+  if { exec 3<"${BOT_TTY:-/dev/tty}"; } 2>/dev/null; then
+    say "A container keeps each bot away from the rest of this machine: your files, your logins, the other bots. Answering no runs every bot as you, with your user's access to all of it."
+    case ${BOARD:-} in
+      http://127.*|http://localhost*|http://\[::1\]*)
+        if [ "$(uname -s)" = Darwin ]; then say "In a container the bots can still reach every port this Mac listens on."
+        else say "In a container the bots share this machine's network, so they can reach any service on 127.0.0.1."; fi ;;
+    esac
+    if [ "$DEFAULT" = yes ]; then printf 'Run bots in containers? [Y/n] ' >&2; else printf 'Run bots in containers? [y/N] ' >&2; fi
+    read -r reply <&3 || reply=
+    exec 3<&-
+    case $reply in
+      [Yy]|[Yy][Ee][Ss]) ANSWER=yes ;;
+      [Nn]|[Nn][Oo]) ANSWER=no ;;
+      "") ANSWER=$DEFAULT ;;
+      *) say "answer y or n"; exit 2 ;;
+    esac
+  else
+    ANSWER=$DEFAULT
+    if [ "$ANSWER" = yes ]; then info "no terminal to ask on: the default is containers"; else info "no terminal to ask on: the default is no containers"; fi
+  fi
+fi
+
+# 4. write it
+if [ "$ANSWER" = yes ]; then
+  if [ -z "$RT" ]; then
+    say "containers need Docker or Podman, and neither is installed or running here. Nothing was changed."
+    if [ "$(uname -s)" = Darwin ]; then say "On a Mac: install Docker Desktop (brew install --cask docker), start it, then run the install again."
+    else say "On Linux: install your distribution's package (docker.io on Debian and Ubuntu, docker on Fedora, or podman), start it, then run the install again."; fi
+    say "To run the bots on this machine instead, answer no (--no-containers)."
+    exit 3
+  fi
+  set_runtime "$RT"
+  net=
+  case ${BOARD:-} in
+    http://127.*|http://localhost*|http://\[::1\]*)
+      if [ "$(uname -s)" = Darwin ]; then net="they can also reach every port this Mac listens on"
+      else net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
+  esac
+  info "the bots run in containers ($RT). They cannot read the rest of this machine's files${net:+, but $net}."
+else
+  unset_runtime
+  info "the bots run on this machine, with your user's access."
+fi
+if [ "$MODE" = ask ]; then
+  info "bots that are running keep their way until they restart: bot_board restart bots"
+fi
