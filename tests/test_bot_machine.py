@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient       # noqa: E402
 from app import db, main                         # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 
 
 class Machine(unittest.TestCase):
@@ -100,8 +102,7 @@ class MachineInTheCard(unittest.TestCase):
                 self.skipTest(f"no browser: {str(e).splitlines()[0][:80]}")
             try:
                 page = browser.new_page()
-                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
-                                     % m.human["Authorization"].split()[1])
+                page.add_init_script(bare_board.signed_in({"handle": "jac", "token": m.human["Authorization"].split()[1]}))
 
                 def serve(route):
                     path = route.request.url.replace("http://board.test", "")
@@ -140,8 +141,7 @@ class MachineInTheCard(unittest.TestCase):
                 self.skipTest(f"no browser: {str(e).splitlines()[0][:80]}")
             try:
                 page = browser.new_page(viewport={"width": 1100, "height": 600})
-                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
-                                     % m.human["Authorization"].split()[1])
+                page.add_init_script(bare_board.signed_in({"handle": "jac", "token": m.human["Authorization"].split()[1]}))
 
                 def serve(route):
                     path = route.request.url.replace("http://board.test", "")

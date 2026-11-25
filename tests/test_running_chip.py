@@ -137,12 +137,13 @@ class RunningChip(unittest.TestCase):
     def test_the_top_bar_has_tabs_not_a_manage_menu(self):
         # thread 9918, #644: Board and the board-wide pages as tabs; the current page is marked
         for path, current in (('/', '/'), ('/machines', '/machines'), ('/configuration', '/configuration'), ('/roles', '/roles'),
-                              ('/skills', '/skills'), ('/routines', '/routines'), ('/workspaces', '/workspaces')):
+                              ('/skills', '/skills'), ('/workspaces', '/workspaces')):
             page = self.client.get(path).text
             self.assertNotIn('id="manage"', page, path)
             self.assertNotIn('id="navboard"', page, path)
             self.assertNotIn('<a href="/fleet" class="tab"', page, path)     # the bots are a tab of each workspace
-            for href in ('/', '/workspaces', '/machines', '/configuration', '/roles', '/skills', '/routines'):
+            self.assertNotIn('<a href="/routines" class="tab"', page, path)    # so are the routines (#820)
+            for href in ('/', '/workspaces', '/machines', '/configuration', '/roles', '/skills'):
                 cur = ' aria-current="page"' if href == current else ''
                 self.assertRegex(page, f'<a href="{href}" class="tab" title="[^"]*"{cur}>', (path, href))
 
