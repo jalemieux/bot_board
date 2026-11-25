@@ -190,6 +190,18 @@ class FleetPage(unittest.TestCase):
             self.assertIn(kept, page)
         self.assertIn('id="tab-machines"', web.fleet_page('board', hosts, page='machines'), 'Machines still draws its own data (#872)')
 
+    def test_the_skills_page_is_an_empty_shell_that_reads_the_api(self):
+        # #874 (part of #845): the route reads no skill or profile for it; the script reads /api/skills and /api/profiles
+        skill = {"name": "SECRETSKILL", "description": "d", "revision": 1, "updated_at": "2026-01-01T00:00:00+00:00", "author": "jac",
+                 "base": False, "used_by": []}
+        page = web.fleet_page('board', [host('SECRETBOX', [])], profiles=[{"name": "SECRETPROFILE", "role": "x"}], skills=[skill], page='skills')
+        self.assertEqual(page, web.skills_page('board'))
+        for gone in ('SECRETSKILL', 'SECRETPROFILE', 'SECRETBOX', 'id="tab-machines"', 'id="tab-roles"'):
+            self.assertNotIn(gone, page)
+        for kept in ('<h1>Skills</h1>', 'data-panes="tab-skills"', 'id="skills-list"', 'id="skill-add"', "get('/api/skills')", "get('/api/profiles')"):
+            self.assertIn(kept, page)
+        self.assertIn('id="skill-SECRETSKILL"', web.fleet_page('board', [], skills=[skill], page='roles'), 'Roles still draws the hidden skills pane (#873)')
+
     def test_the_top_bar_has_no_connect_your_harness_link(self):
         page = web.fleet_page('board', [])
         self.assertNotIn('href="/onboard" class="x"', page)
