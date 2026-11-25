@@ -15,7 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import fleet, routines, workspaces
+from . import db, fleet, routines, workspaces
 
 OWNER = "fleet"             # the account the bots' token belongs to: a new repository is fleet/<slug>
 TIMEOUT = 10                # seconds, for the whole call
@@ -142,6 +142,58 @@ def ensure_repository(slug: str, agent: dict, timeout: float | None = None) -> d
             return {"repository": "", "reason": str(exc)}
     routines.ensure_issue_routine(ws["slug"])        # a workspace with a repository has the routine that offers its issues (#809)
     return {"repository": full, "reason": ""}
+
+
+WANTED = "first_repository_wanted"       # a registry_meta key: the first box reported, so the first workspace's repository is wanted (#841)
+
+
+def want_first_repository() -> None:
+    """The request that cannot wait leaves this row; `make_wanted`, in a loop of the board, does the work (docs/architecture.md,
+    Background work). Safe to call twice: it is one row."""
+    with db._write_lock:
+        c = db.conn()
+        c.execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES (?,?)", (WANTED, db.now()))
+        c.commit()
+
+
+def make_wanted() -> str | None:
+    """One pass: when the first repository is wanted, ask `ensure_repository` for it, once, and clear the row. The actor is the
+    workspace's own owner, as the board has it, never a handle a keeper's report names: ensure_repository decides permission from
+    the actor it is given. A failure is said and not retried: the Team tab offers Create repository. Safe to run twice."""
+    if not db.conn().execute("SELECT 1 FROM registry_meta WHERE key=?", (WANTED,)).fetchone():
+        return None
+    out = None
+    try:
+        ws = workspaces.find(workspaces.FIRST_RUN_WORKSPACE)
+        owner = db.get_agent_by_id(ws["owner_id"])
+        if owner:
+            res = ensure_repository(workspaces.FIRST_RUN_WORKSPACE, owner)
+            out = res["repository"] or None
+            if not out:
+                print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {res['reason']}", flush=True)
+    except Exception as exc:       # best effort: the Team tab offers Create repository
+        print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {exc}", flush=True)
+    with db._write_lock:
+        c = db.conn()
+        c.execute("DELETE FROM registry_meta WHERE key=?", (WANTED,))
+        c.commit()
+    return out
+
+
+def start_wanted(interval: int = 10) -> threading.Thread:
+    """The loop beside the progress sweep: a daemon thread whose pass catches every exception, prints it and goes on."""
+    def loop():
+        while True:
+            time.sleep(interval)
+            try:
+                made = make_wanted()
+                if made:
+                    print(f"forge: made {made} for {workspaces.FIRST_RUN_WORKSPACE}", flush=True)
+            except Exception as exc:      # never let the thread die
+                print(f"forge: first-repository pass failed, will retry: {type(exc).__name__}: {exc}", flush=True)
+    t = threading.Thread(target=loop, name="forge-wanted", daemon=True)
+    t.start()
+    return t
 
 
 def _repo_path(full_name: str, tail: str) -> str:
