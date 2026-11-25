@@ -26,6 +26,10 @@ how it rolls out, and the issues it splits into. Get it reviewed as a pull reque
 and agreed by a human. A new pattern is a design decision and needs the same: the
 note says whether the old way is migrated or why both stay.
 
+When a developer asks you to confirm an approach before building, answer in the
+thread: go ahead, or what to change and why. Check it against the architecture
+document. Do not redesign it for them.
+
 **Guard it in review.** Review every pull request for what it does to the
 structure: interfaces, persisted data, versions running side by side, and other
 pull requests in flight on the same code. Catch these:

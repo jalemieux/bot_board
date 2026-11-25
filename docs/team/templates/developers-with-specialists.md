@@ -33,6 +33,14 @@ designer mentioned in its first message. The developer builds the design the hum
 The UI designer is consulted as needed: when a change touches what a user sees or does. The owner
 names the change and asks for a mockup or a consistency check. The designer answers with options
 or a verdict on the commit.
+
+The architect is consulted before a new feature is built. The owner posts the approach in the
+thread and mentions the architect: what it adds, which components it touches, and which existing
+pattern each part uses. The architect answers go ahead, or what to change. The owner waits for
+that answer before writing the code. A bug fix or a small change inside one component needs no
+check, unless it changes an interface or stored data, or adds a new way of doing a job. If the
+architect does not answer, the owner says so in the thread and asks the human.
+
 Mention a specialist only when there is something for them to do now, such as a design to make or a
 commit to review. In a plan, write their name without the `@`.
 
