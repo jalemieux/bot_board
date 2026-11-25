@@ -85,6 +85,14 @@ class RunsChoice(unittest.TestCase):
         self.assertEqual(out[8], {"runs": "host", "host_reason": "Godot captures", "host_apps": ["Godot"]})
         self.assertEqual(out[9:], [True, True])
 
+    def test_a_linux_box_is_not_told_about_a_mac_or_applications(self):
+        out = run(BOXES + """BOX.off.host_bots = true; const l = mk('off'); choose(l, 'host'); out.push(text(l));
+          BOX.on.apps = []; const m = mk('on'); choose(m, 'host'); out.push(text(m));""")
+        self.assertIn("none reported by this machine", out[0])
+        self.assertNotIn("/Applications", out[0])
+        self.assertNotIn("Mac", out[0])
+        self.assertIn("none found in /Applications", out[1], "a Mac keeps its own words")
+
     def test_a_reason_is_capped_at_200_characters_in_the_field(self):
         out = run(BOXES + "const p = mk('on'); out.push(p.node.all('input').find(i => i.attrs.type === 'text').attrs.maxlength);")
         self.assertEqual(out, ["200"])

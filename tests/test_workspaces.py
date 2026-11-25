@@ -130,7 +130,7 @@ class Workspaces(Base):
                        "'Outside the agreement'", "/knowledge/team/agreement.md", "ev.key === 'Escape'",
                        "ev.key !== 'Tab'", "root.appendChild(ov)", "(danger ? cancel :", "fail(e.message)",
                        "'Pause team'", "'Resume team'", "The team is paused", "Promise.allSettled",
-                       "function hostBlock(", "function runsPart(", "where it runs…", "if (b.host_flag) d.appendChild(hostBlock(b, ctx))", "its Mac is not reporting",
+                       "function hostBlock(", "function runsPart(", "where it runs…", "if (b.host_flag) d.appendChild(hostBlock(b, ctx))", "its machine is not reporting",
                        "function stopDialog(", "body.threads = choice", "stopDialog(b, true, ctx)", "ctx.stopThreads(b)"):
             self.assertIn(needle, workspace_web.WS_JS)
         self.assertNotIn("botsSection", workspace_web.WS_JS)      # the Channels tab has no Bots card; the Team tab lists the bots

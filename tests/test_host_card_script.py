@@ -66,6 +66,14 @@ class HostCard(unittest.TestCase):
     def rows(self, hosts, rows=("box-jacs-m5", "box-box")):
         return run(list(rows), {"/api/fleet": {"hosts": hosts}, **API})
 
+    def test_a_linux_box_card_says_machine_not_mac(self):      # #877: the switch is on any operating system
+        card = self.rows([mac(host_allowed=[], os="Linux 6.8", apps=[])])[1]
+        self.assertIn("allowed on this machine: nobody yet", card)
+        self.assertIn("none reported by this machine", card)
+        self.assertNotIn("this Mac", card)
+        self.assertNotIn("the Mac", card)
+        self.assertNotIn("/Applications", card)
+
     def test_a_mac_gets_a_full_width_row_under_its_machine_and_a_linux_box_gets_none(self):
         out = self.rows([mac(), dict(name="box", reporting=True, host_bots=None, bots=[])])
         self.assertEqual(len(out), 3)
@@ -78,7 +86,7 @@ class HostCard(unittest.TestCase):
         self.assertIn('class="act host-switch needs-me" data-host="jacs-m5" data-on="0"', card)      # on: the button turns it off
         self.assertIn('<a href="/a/mira">@mira</a>', card)
         self.assertNotIn("@edie", card, "only the bots that run as the user")
-        self.assertIn("allowed on this Mac: mira", card)
+        self.assertIn("allowed on this machine: mira", card)
         self.assertIn("1 apps found</summary>Godot 4.6.1", card)      # the app list sits folded under its count
         self.assertIn('<form class="hostform" data-host="jacs-m5">', card)
         self.assertIn("It can read every bot", card)                       # the warning the form carries
@@ -93,9 +101,9 @@ class HostCard(unittest.TestCase):
         base = mac()
         base.pop("host_allowed")
         card = self.rows([base])[1]
-        self.assertIn("allowed on this Mac: shown to signed-in humans", card)
+        self.assertIn("allowed on this machine: shown to signed-in humans", card)
         self.assertNotIn("nobody yet", card)
-        self.assertIn("allowed on this Mac: nobody yet", self.rows([mac(host_allowed=[])])[1])
+        self.assertIn("allowed on this machine: nobody yet", self.rows([mac(host_allowed=[])])[1])
 
     def test_off_has_no_form_and_says_every_bot_runs_in_a_container(self):
         card = self.rows([mac(on=False, bots=[{"handle": "edie", "host_flag": False}])])[1]

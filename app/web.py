@@ -1354,9 +1354,9 @@ function crewBots(ws, slug){      // slug: the channel, or null for the whole wo
     return a.kind !== 'human' && !a.interactive && a.workspace === ws && (!slug || !bound.length || bound.indexOf(slug.toLowerCase()) >= 0);
   }).sort(function(x, y){ return (rank[x.presence] - rank[y.presence]) || (x.handle < y.handle ? -1 : 1); });
 }
-function hostMark(a){      // a bot that runs outside its container, as the user of its Mac (#595): marked wherever its name shows
+function hostMark(a){      // a bot that runs outside its container, as the user of its machine (#595): marked wherever its name shows
   return a && a.host_by !== null && a.host_by !== undefined
-    ? '<span class="hostbadge" title="runs outside a container, as the user of its Mac">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
+    ? '<span class="hostbadge" title="runs outside a container, as the user of its machine">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
 }
 function roleOf(a){      // the short role of an agent: its profile name, or "human" (the hover card and the @ list use one rule)
   return a.kind === 'human' ? 'human' : a.profile || '';
@@ -2634,7 +2634,7 @@ def _sortable(*labels: str) -> str:
 
 
 HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home folder and your ssh keys, and it can open "
-                "windows on this Mac's screen while you work. Moving it to another machine puts it back in a container.")
+                "windows on this machine's screen while you work. Moving it to another machine puts it back in a container.")
 
 
 
@@ -2784,7 +2784,7 @@ function renderFleetAlerts(root, model) {
   if (model.banner) {
     var n = model.banner.n;
     root.appendChild(fleetNode('section', {'class': 'hostbanner', role: 'status', 'aria-label': 'host bots'},
-      fleetNode('b', {}, n + ' bot' + (n !== 1 ? 's' : '') + ' run' + (n === 1 ? 's' : '') + ' outside a container, as the user of ' + (n === 1 ? 'its' : 'their') + ' Mac'),
+      fleetNode('b', {}, n + ' bot' + (n !== 1 ? 's' : '') + ' run' + (n === 1 ? 's' : '') + ' outside a container, as the user of ' + (n === 1 ? 'its' : 'their') + ' machine'),
       fleetNode('ul', {}, model.banner.items.map(function (x) {
         return fleetNode('li', {}, fleetNode('a', {href: '/a/' + encodeURIComponent(x.handle)}, '@' + x.handle), ' on ' + x.box + ' · ' + x.reason);
       }))));
@@ -2964,7 +2964,7 @@ document.addEventListener('click', function (ev) {
     if (r.ok) location.reload(); else alert(d.error || d.detail || ('refused: ' + r.status)); }); })
   .catch(function () { alert('could not reach the board'); });
 });
-// Host bots (#595): the Mac's switch, a new host bot, editing why and apps, and moving one back to a container.
+// Host bots (#595): a machine's switch, a new host bot, editing why and apps, and moving one back to a container.
 function hostCall(method, path, body) {
   if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
   fetch(path, {method: method, headers: {'Authorization': 'Bearer ' + ME.token, 'Content-Type': 'application/json'},
@@ -2976,8 +2976,8 @@ function hostCall(method, path, body) {
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest('button.host-switch'); if (!b) return;
   var on = b.dataset.on === '1';
-  if (on && !confirm('Allow host bots on ' + b.dataset.host + '? A host bot runs outside a container, as the user of this Mac, '
-      + 'and can read every bot token, the home folder and the ssh keys. Each one also needs its name in host-bots-allowed on the Mac.')) return;
+  if (on && !confirm('Allow host bots on ' + b.dataset.host + '? A host bot runs outside a container, as the user of this machine, '
+      + 'and can read every bot token, the home folder and the ssh keys. Each one also needs its name in host-bots-allowed on the machine.')) return;
   if (!on && !confirm('Turn host bots off on ' + b.dataset.host + '? Each host bot runs in a container again from its next start.')) return;
   hostCall('PUT', '/api/fleet/hosts/' + encodeURIComponent(b.dataset.host) + '/host-bots', {on: on});
 });
@@ -3836,9 +3836,9 @@ def configuration_page(board_name) -> str:
 <script>{FLEET_JS}</script>""")
 
 
-# The Mac's card (#595, #890) is drawn by the page's script from /api/fleet, /api/workspaces and /api/profiles, as a full-width row under
+# A machine's host-bots card (#595, #890, #877) is drawn by the page's script from /api/fleet, /api/workspaces and /api/profiles, as a full-width row under
 # its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
-# creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
+# creates a host bot. Nothing on a box with no container runtime (host_bots is null there). Every value goes in as text. The click and submit
 # handlers in FLEET_JS read its class names and data-* attributes.
 HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\u003c") + ";" + r"""
 (function () {
@@ -3868,7 +3868,7 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
     apps.forEach(function (a) {
       pick.appendChild(el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'app', value: a.name}), ' ' + a.name + ' ' + (a.version || '')));
     });
-    if (!apps.length) pick.appendChild(el('span', {'class': 'dim', text: 'none found in /Applications'}));
+    if (!apps.length) pick.appendChild(el('span', {'class': 'dim', text: /^Darwin/.test(h.os || '') ? 'none found in /Applications' : 'none reported by this machine'}));
     return el('details', {'class': 'hostnew'}, el('summary', {text: 'Start a host bot'}),
       el('form', {'class': 'hostform', 'data-host': h.name},
         el('p', {'class': 'prob', text: HOST_WARNING}),
@@ -3878,7 +3878,7 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
         pick,
         el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'ack', required: ''}), ' I understand this bot can read everything my user can.'),
         el('button', {type: 'submit', 'class': 'act needs-me', text: 'Start the host bot'}),
-        el('p', {'class': 'dim', text: 'After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.'})));
+        el('p', {'class': 'dim', text: 'After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the machine; it waits until then.'})));
   }
   function card(h, workspaces, profiles) {
     var on = !!h.host_bots, mine = (h.bots || []).filter(function (b) { return b.host_flag && !b.deleted; });
@@ -3893,7 +3893,7 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
     var box = el('div', {'class': 'hostbox', 'data-host': h.name}, el('b', {text: 'Host bots'}), ' ',
       on ? el('span', null, el('span', {'class': 'pip ok'}), 'on') : 'off', ' ',
       el('button', {type: 'button', 'class': 'act host-switch needs-me', 'data-host': h.name, 'data-on': on ? '0' : '1', text: 'turn ' + (on ? 'off' : 'on')}),
-      who, el('div', {'class': 'by', text: 'allowed on this Mac: ' + (Array.isArray(h.host_allowed) ? (h.host_allowed.join(', ') || 'nobody yet') : 'shown to signed-in humans')}),
+      who, el('div', {'class': 'by', text: 'allowed on this machine: ' + (Array.isArray(h.host_allowed) ? (h.host_allowed.join(', ') || 'nobody yet') : 'shown to signed-in humans')}),
       el('details', {'class': 'by apps'}, el('summary', {text: found.length + ' apps found'}), appText));
     if (on && h.reporting) box.appendChild(form(h, workspaces, profiles));
     return el('tr', {'class': 'bot-drawer hostrow'}, el('td', {colspan: '7'}, box));

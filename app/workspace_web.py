@@ -716,7 +716,7 @@ function runsPart(o) {
     appsBox.textContent = '';
     var apps = (box.apps || []).filter(function (a) { return a && a.name; });
     apps.forEach(function (a) { appsBox.appendChild(h('label', {'class': 'check'}, h('input', {type: 'checkbox', value: a.name}), ' ' + a.name + ' ' + (a.version || ''))); });
-    if (!apps.length) appsBox.appendChild(h('span', {'class': 'dim', text: 'none found in /Applications'}));
+    if (!apps.length) appsBox.appendChild(h('span', {'class': 'dim', text: /^Darwin/.test(box.os || '') ? 'none found in /Applications' : 'none reported by this machine'}));
     var texts = [];
     if (!o.handle && !none && choice === 'host' && gateOk()) texts.push('After you start it, ' + name + ' must also allow this bot: add its handle as one line in ~/.config/bot_board/host-bots-allowed there. The Team tab shows the handle once the bot exists. Until then it runs in a container.');
     if (!none && choice === 'container' && /^Darwin/.test(box.os || '') && o.harness && o.harness() === 'claude')
@@ -737,27 +737,27 @@ function runsPart(o) {
               host_apps: Array.prototype.filter.call(appsBox.querySelectorAll('input'), function (i) { return i.checked; }).map(function (i) { return i.value; })};
     }};
 }
-// A host bot's block (#733, from the bots page's #595): how it runs, who set it and when, why, whether its Mac listed it, its apps
-// (a warning for one the Mac does not have), and the two things a manager does: edit the reason and apps, move it back to a container.
+// A host bot's block (#733, from the bots page's #595): how it runs, who set it and when, why, whether its machine listed it, its apps
+// (a warning for one the machine does not have), and the two things a manager does: edit the reason and apps, move it back to a container.
 function hostBlock(b, ctx) {
   var box = (ctx.allHosts || []).filter(function (x) { return x.name === b._host; })[0] || {}, silent = !box.reporting, url = '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/host';
   var lc = function (x) { return String(x).toLowerCase(); };
-  var hidden = !silent && !Array.isArray(box.host_allowed);       // the list is for signed-in humans (#927): without it, whether the Mac listed the bot is unknown, not no
+  var hidden = !silent && !Array.isArray(box.host_allowed);       // the list is for signed-in humans (#927): without it, whether the machine listed the bot is unknown, not no
   var listed = silent || hidden || box.host_allowed.map(lc).indexOf(lc(b.handle)) >= 0;
   var found = {}; (box.apps || []).forEach(function (a) { if (a && a.name) found[lc(a.name)] = a.version || ''; });
-  var runs = b.on_host && b.runmode === 'host' ? 'on its Mac, outside a container' : b.on_host ? 'in a container now, and on its Mac from its next start'
-    : 'in a container (its Mac\'s host switch is off, or it moved)';
+  var runs = b.on_host && b.runmode === 'host' ? 'on its machine, outside a container' : b.on_host ? 'in a container now, and on its machine from its next start'
+    : 'in a container (its machine\'s host switch is off, or it moved)';
   var d = h('div', {'class': 'd-host'}, h('h4', {text: 'Runs on the host'}));
   d.appendChild(h('div', {'class': 'd-facts'}, h('span', null, 'runs ', h('b', {text: runs})),
     h('span', null, 'set by ', h('b', {text: b.host_by || '?'}), b.host_at ? ' ' + ago(b.host_at) : ''),
-    silent ? h('span', {'class': 'warn'}, 'its Mac is not reporting, so whether it is listed and which apps it has are not known')
-           : hidden ? h('span', {'class': 'dim'}, 'whether the Mac listed it is shown to signed-in humans')
-           : listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
-  if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac.'), d.firstChild.nextSibling);
+    silent ? h('span', {'class': 'warn'}, 'its machine is not reporting, so whether it is listed and which apps it has are not known')
+           : hidden ? h('span', {'class': 'dim'}, 'whether the machine listed it is shown to signed-in humans')
+           : listed ? h('span', null, 'listed in the machine\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
+  if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the machine.'), d.firstChild.nextSibling);
   d.appendChild(h('p', {'class': 'sub clamp'}, h('b', {text: 'Why it needs the host: '}), b.host_reason || ''));
   if ((b.host_apps || []).length) d.appendChild(h('ul', {'class': 'd-apps'}, b.host_apps.map(function (n) {
     var v = found[lc(n)];
-    return silent ? h('li', null, n) : v === undefined ? h('li', {'class': 'warn'}, n + ' ', h('b', {text: 'not found in /Applications on this Mac'})) : h('li', null, n + ' ', h('b', {text: v}));
+    return silent ? h('li', null, n) : v === undefined ? h('li', {'class': 'warn'}, n + ' ', h('b', {text: (/^Darwin/.test(box.os || '') ? 'not found in /Applications on this Mac' : 'not reported by this machine')})) : h('li', null, n + ' ', h('b', {text: v}));
   })));
   var acts = h('div', {'class': 'd-acts'});
   var act = function (text, fn, cls) {
