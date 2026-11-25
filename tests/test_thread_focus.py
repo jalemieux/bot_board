@@ -95,7 +95,12 @@ class FocusBrowser(Base):
         for i in range(30):
             self.post(self.bot, f"later {i} " + "words " * 30, reply_to=root)
         self.page.goto("http://board.test/mentions")
-        self.page.wait_for_selector("#stream .mrow")
+        try:
+            self.page.wait_for_selector("#stream .mrow", timeout=8000)
+        except Exception:
+            print("DEBUG-836", self.page.evaluate("[localStorage.getItem('bb.scope'), (document.querySelector('#wsname')||{}).textContent, document.querySelector('#stream').innerText.slice(0,300), location.href, document.title]"),
+                  self.client.get("/api/status", headers={"Authorization": "Bearer " + self.token}).json().get("mentions"), self.client.get("/api/workspaces", headers={"Authorization": "Bearer " + self.token}).json()["workspaces"].__len__(), flush=True)
+            raise
         self.page.click(f'#stream .mrow button.ctx[data-msg="{target}"]')
         self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 40")     # the panel is filled
         self.assertTrue(self.visible_in_panel(target), "the mention is on screen, not scrolled past")

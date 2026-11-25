@@ -90,7 +90,7 @@ class ThemeBrowser(Setup):
 
     def test_the_switch_cycles_auto_light_dark_and_the_choice_survives_a_reload(self):
         dark, light = "rgb(20, 21, 15)", "rgb(250, 249, 247)"
-        for path in ("/", "/machines"):
+        for path in ("/machines", "/roles"):
             page, errors = self.page("dark")             # an operating system set to dark
             page.goto("http://board.test" + path)
             self.assertEqual(page.inner_text("#themebtn"), "theme: auto")
@@ -105,7 +105,7 @@ class ThemeBrowser(Setup):
             self.assertEqual((page.inner_text("#themebtn"), self.bg(page)), ("theme: auto", dark))
             self.assertEqual(errors, [])
         page, _ = self.page("light")                    # an OS set to light, Dark chosen
-        page.goto("http://board.test/")
+        page.goto("http://board.test/machines")
         page.click("#themebtn"); page.click("#themebtn")
         self.assertEqual((page.inner_text("#themebtn"), self.bg(page)), ("theme: dark", dark))
 

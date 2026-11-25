@@ -50,21 +50,17 @@ class BoardRail(unittest.TestCase):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ");"
+        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"bbb\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ");"
                                   "localStorage.setItem('bb.seen', '{\"aaa\":0,\"bbb\":0}')")
 
     def rail(self):
         return self.page.eval_on_selector_all("#channels li.sub", "ls => ls.map(l => l.querySelector('.name').title)")
 
-    def test_a_folded_workspace_shows_only_its_unread_count(self):
+    def test_the_rail_lists_only_the_workspace_in_view_and_the_switcher_counts_the_others(self):
+        """#648: the rail is scoped to one workspace; what waits in the others is a number in the switcher, not a folded group."""
         self.page.goto("http://board.test/#bbb")
-        self.page.wait_for_selector("#channels li.ws")
-        self.assertEqual(self.rail(), ["#bbb"], "the open channel stays; unread in the other workspace does not")
-        self.assertEqual(self.page.inner_text("#channels li.ws[data-proj=aaa] .badge.sum"), "1")
-        self.page.click("#channels li.ws[data-proj=aaa] button.fold")
-        self.assertEqual(sorted(self.rail()), ["#aaa", "#bbb"], "opened, it lists its channels")
-        self.page.click("#channels li.ws[data-proj=aaa] button.fold")
-        self.assertEqual(self.rail(), ["#bbb"], "and folds again, unread or not")
+        self.page.wait_for_selector("#channels li.sub")
+        self.assertEqual(self.rail(), ["#bbb"], "only the workspace in view")
         self.assertEqual(self.errors, [])
 
     def test_a_thread_with_no_replies_can_be_replied_to(self):
