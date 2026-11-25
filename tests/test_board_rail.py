@@ -50,6 +50,14 @@ class BoardRail(unittest.TestCase):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
+        real_wait = self.page.wait_for_selector
+        def wait(sel, **kw):
+            try:
+                return real_wait(sel, **dict(kw, timeout=8000))
+            except Exception:
+                print("DEBUG-836", sel, self.page.evaluate("[localStorage.getItem('bb.scope'), (document.querySelector('#wsname')||{}).textContent, document.querySelector('#stream').innerText.slice(0,200), document.querySelector('#channels').innerText.slice(0,200), location.href]"), flush=True)
+                raise
+        self.page.wait_for_selector = wait
         self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"bbb\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ");"
                                   "localStorage.setItem('bb.seen', '{\"aaa\":0,\"bbb\":0}')")
 

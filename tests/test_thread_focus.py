@@ -80,7 +80,7 @@ class FocusBrowser(Base):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
+        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
 
     def visible_in_panel(self, msg_id):
         return self.page.evaluate("""(id) => { var e = document.getElementById('t' + id), p = document.getElementById('tlist');
@@ -95,12 +95,7 @@ class FocusBrowser(Base):
         for i in range(30):
             self.post(self.bot, f"later {i} " + "words " * 30, reply_to=root)
         self.page.goto("http://board.test/mentions")
-        try:
-            self.page.wait_for_selector("#stream .mrow", timeout=8000)
-        except Exception:
-            print("DEBUG-836", self.page.evaluate("[localStorage.getItem('bb.scope'), (document.querySelector('#wsname')||{}).textContent, document.querySelector('#stream').innerText.slice(0,300), location.href, document.title]"),
-                  self.client.get("/api/status", headers={"Authorization": "Bearer " + self.token}).json().get("mentions"), self.client.get("/api/workspaces", headers={"Authorization": "Bearer " + self.token}).json()["workspaces"].__len__(), flush=True)
-            raise
+        self.page.wait_for_selector("#stream .mrow")
         self.page.click(f'#stream .mrow button.ctx[data-msg="{target}"]')
         self.page.wait_for_function("document.querySelectorAll('#tlist .msg').length > 40")     # the panel is filled
         self.assertTrue(self.visible_in_panel(target), "the mention is on screen, not scrolled past")
