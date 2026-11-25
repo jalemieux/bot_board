@@ -14,93 +14,13 @@ Writes go through the API with the identity the board page keeps in this browser
 """
 from __future__ import annotations
 
-import json
-import re
-
 from . import registry
 from .web import FLEET_CSS, ago, e, shell
 
 STARS = "★"
 
 
-def _json(data) -> str:
-    """JSON for a <script type="application/json"> block: no '<' survives, so no text from the
-    API can close the block or start a tag."""
-    return json.dumps(data).replace("<", "\\u003c")
-
-
-# ---------------------------------------------------------------- markdown
-
-def md_html(text: str) -> str:
-    """Enough Markdown for a SKILL.md: headings, fenced code, lists, paragraphs, `code`
-    and **bold**. Everything is escaped first; the client-side preview does the same."""
-    out, para, lst, code = [], [], None, None
-
-    def flush_para():
-        if para:
-            out.append("<p>" + _inline(" ".join(para)) + "</p>")
-            para.clear()
-
-    def close_list():
-        nonlocal lst
-        if lst:
-            out.append(f"</{lst}>")
-            lst = None
-    for raw in text.splitlines():
-        line = raw.rstrip()
-        if code is not None:
-            if line.startswith("```"):
-                out.append("<pre><code>" + e("\n".join(code)) + "</code></pre>")
-                code = None
-            else:
-                code.append(line)
-            continue
-        if line.startswith("```"):
-            flush_para(); close_list()
-            code = []
-            continue
-        m = re.match(r"^(#{1,6})\s+(.*)$", line)
-        if m:
-            flush_para(); close_list()
-            n = min(len(m.group(1)) + 2, 6)
-            out.append(f"<h{n}>{_inline(m.group(2))}</h{n}>")
-            continue
-        m = re.match(r"^\s*([-*]|\d+[.)])\s+(.*)$", line)
-        if m:
-            flush_para()
-            kind = "ul" if m.group(1) in "-*" else "ol"
-            if lst != kind:
-                close_list()
-                out.append(f"<{kind}>")
-                lst = kind
-            out.append("<li>" + _inline(m.group(2)) + "</li>")
-            continue
-        if not line.strip():
-            flush_para(); close_list()
-            continue
-        if lst and raw.startswith(("  ", "\t")):
-            out[-1] = out[-1][:-5] + " " + _inline(line.strip()) + "</li>"
-            continue
-        close_list()
-        para.append(line.strip())
-    flush_para(); close_list()
-    if code is not None:
-        out.append("<pre><code>" + e("\n".join(code)) + "</code></pre>")
-    return "\n".join(out)
-
-
-def _inline(s: str) -> str:
-    s = e(s)
-    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
-    return s
-
-
 # ---------------------------------------------------------------- pieces
-
-def _paragraphs(text: str) -> str:
-    """Blank lines separate paragraphs; a single newline is a wrapped line."""
-    return "".join(f"<p>{e(' '.join(p.split()))}</p>" for p in re.split(r"\n\s*\n", text.strip()) if p.strip())
 
 
 def _revision(skill: dict) -> str:
@@ -258,7 +178,8 @@ SKILLS_SHELL_JS = r"""
     box.appendChild(el('h3', {'class': 'skill-group', id: 'base-skills', text: 'Base skills \u00b7 every bot \u00b7 ' + base.length}));
     box.appendChild(table(base, false, botsOf));
     if (rest.length) { box.appendChild(el('h3', {'class': 'skill-group', text: 'Profile skills \u00b7 ' + rest.length})); box.appendChild(table(rest, true, botsOf)); }
-    var there = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    var id = ''; try { id = decodeURIComponent(location.hash.slice(1)); } catch (e) {}      // a malformed hash (#%E0%A4%A) is no target, not an error
+    var there = id && document.getElementById(id);
     if (there) there.scrollIntoView({block: 'nearest'});
   }
   Promise.all([get('/api/skills'), get('/api/profiles')]).then(function (r) { draw(r[0].skills || [], r[1].profiles || []); },
@@ -364,100 +285,114 @@ body.out .fleet-page .needs-me,body.out .fleet-page details#addskill{display:non
 """
 
 
-# -------------------------------------------------------------- skill page
+# --------------------------------------------------------- the three pages
+#
+# One way a page gets its data (docs/architecture.md): the route sends an empty shell and the page's script reads
+# /api with the identity this browser keeps (#860). The renderers are plain functions of the data, which return an HTML
+# string with every value through esc(), so a test can run them under node without a browser.
 
-def skill_page(board_name: str, skill: dict, history: list, profiles: list) -> str:
-    name = e(skill["name"])
-    bots_of = {p["name"]: p.get("bots") or [] for p in profiles}
-    used = skill.get("used_by") or []
-    used_html = "".join(
-        f'<li><a class="chip" href="/fleet/profiles/{e(p)}">{e(p)}</a> <span class="dim">{len(bots_of.get(p, []))} bot'
-        f'{"s" * (len(bots_of.get(p, [])) != 1)}' + (" · " + ", ".join(f"@{e(b)}" for b in bots_of.get(p, [])) if bots_of.get(p) else "")
-        + '</span></li>' for p in used) or '<li class="dim">No profile lists it yet. A profile created or cloned from now on can.</li>'
-    hist_html = "".join(
-        f'<li><span class="rev">rev {h["revision"]}</span><span class="dim nw">{e(ago(h["updated_at"]))} · {e(h["author"])}</span>'
-        f'<span class="reason">{e(h["reason"]) or "<span class=dim>no reason given</span>"}{" <span class=dim>· every bot</span>" if h["base"] else ""}</span>'
-        + (f'<button type="button" class="act restore needs-me" data-rev="{h["revision"]}">restore</button>'
-           if h["revision"] != skill["revision"] and not h["deleted"] else "")
-        + ("<span class=dim>deleted</span>" if h["deleted"] else "") + '</li>' for h in history)
-    base = skill["base"]
-    bots = registry.bots_of_skill(skill["name"])
-    if base:
-        used_html = (f'<li>every bot <span class="dim">{len(bots)} on the fleet'
-                     + (" · " + ", ".join(f"@{e(b)}" for b in bots) if bots else "") + '</span></li>' + (
-                         f'<li class="dim">Also listed by {", ".join(e(p) for p in used)}.</li>' if used else ""))
-    data = _json({"name": skill["name"], "revision": skill["revision"], "description": skill["description"],
-                  "body": skill["body"], "bots": bots})
-    danger = (f'<button type="button" class="act del-skill" data-name="{name}" data-rev="{skill["revision"]}"'
-              + (" disabled" if used or base else "") + '>Delete this skill</button>'
-              + ('<p>Refused while every bot has it. Make it profile-only first.</p>' if base else f'<p>Refused while {len(used)} profile{"s" * (len(used) != 1)} list{"" if len(used) != 1 else "s"} it: '
-                 f'{", ".join(e(p) for p in used)}. Edit {"them" if len(used) != 1 else "it"} to drop it, then come back.</p>'
-                 if used else '<p>No profile lists it. History is kept; the name can be used again.</p>'))
-    body_field = f'<textarea name="body" rows="22" required>{e(skill["body"])}</textarea>'
-    content = f"""
-<style>{FLEET_CSS}{REG_CSS}</style>
-<div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/skills">Skills</a> › {name}</p>
-<div class="reg-head"><h1>{name}</h1><div class="right">{_revision(skill)}</div></div>
-<p class="sub">{e(skill["description"])}</p>
-<div class="two"><div>
-<div class="card" id="editor">
-<div class="tabs" role="tablist" style="padding:0;margin:0 0 10px">
-<button type="button" class="tab" role="tab" aria-selected="true" data-tab="edit">Edit</button>
-<button type="button" class="tab" role="tab" aria-selected="false" data-tab="preview">Preview</button>
-<button type="button" class="tab" role="tab" aria-selected="false" data-tab="gets">What a bot gets</button>
-</div>
-<form class="reg-form" id="skill-edit" style="padding:0">
-<label class="fld"><span>Name</span><input name="name" value="{name}" readonly></label>
-<div class="fld"><span id="who-label">Who gets it</span>
-<div class="seg" role="radiogroup" aria-labelledby="who-label">
-<label><input type="radio" name="who" value="profiles"{"" if base else " checked"}> Profiles that list it</label>
-<label><input type="radio" name="who" value="base"{" checked" if base else ""}> Every bot</label></div>
-<small class="note" id="who-note"></small></div>
-<label class="fld"><span>Description <small>· one line; this is what a bot sees in its profile</small></span>
-<input name="description" value="{e(skill["description"])}" maxlength="500" required></label>
-<label class="fld"><span>Instructions <small>· Markdown; the body of SKILL.md</small></span>{body_field}</label>
-<label class="fld"><span>Reason for this change <small>· required, as in a knowledge write; it shows in History</small></span>
-<input name="reason" required maxlength="500" placeholder="what changed, and why" autocomplete="off"></label>
-<div class="row needs-me"><button type="submit" class="addbot-go">Save as rev {skill["revision"] + 1}</button>
-<span class="note">Bots on it are told at their next prompt.</span></div>
-<p class="status-line" role="status" aria-live="polite"></p>
-</form>
-<div class="md" id="skill-preview" hidden>{md_html(skill["body"])}</div>
-<div id="skill-gets" hidden><p class="sub">Exactly what <code>GET /api/skills/{name}</code> returns, and the line a profile carries for it.</p>
-<pre class="what" id="skill-text">{e(registry.skill_text(skill))}</pre>
-<pre class="what">- **{name}**{" (mandatory, every bot)" if base else ""}: {e(skill["description"])}</pre></div>
-</div>
-</div><div>
-<div class="card"><h2>Details</h2><dl><dt>read at</dt><dd><code>GET /api/skills/{name}</code></dd>
-<dt>revision</dt><dd>{skill["revision"]} · {e(ago(skill["updated_at"]))} · {e(skill["author"])}</dd>
-<dt>who gets it</dt><dd>{"every bot" if base else "profiles that list it"}</dd></dl></div>
-<div class="card"><h2>Used by · {"every bot" if base else len(used)}</h2><ul class="hist">{used_html}</ul>
-<p class="sub" style="margin:8px 0 0">Read-only here: a profile's skill list is edited on the profile's page.</p>
-{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all bots on it</button>' if bots else ''}
-<p class="status-line" id="reset-note" role="status" aria-live="polite"></p></div>
-<div class="card" id="history"><h2>History · {len(history)}</h2><ul class="hist">{hist_html}</ul>
-<p class="sub" style="margin:8px 0 0">Restore writes a new revision with the old body; nothing is rewritten in place.</p></div>
-<div class="card danger"><h2>Danger</h2>{danger}</div>
-</div></div>
-<script type="application/json" id="skill-data">{data}</script>
-</div></div>
-<script>{SKILL_PAGE_JS}</script>"""
-    return shell(board_name, f"skill {skill['name']}", content, here="/skills")
+REG_COMMON_JS = r"""
+var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+if (!ME) document.body.classList.add('out');
+function need() { if (!ME) alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return !!ME; }
+function call(method, path, body) {
+  var headers = {'content-type': 'application/json'};
+  if (ME) headers['Authorization'] = 'Bearer ' + ME.token;
+  return fetch(path, {method: method, headers: headers, body: body ? JSON.stringify(body) : undefined})
+    .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
+      if (!r.ok) { var err = new Error(d.error || d.detail || ('refused: ' + r.status)); err.status = r.status; throw err; } return d; }); });
+}
+var ENT = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;'};
+function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return ENT[c]; }); }
+function ago(ts) {
+  if (!ts) return 'never';
+  var then = new Date(ts); if (isNaN(then)) return String(ts);
+  var secs = (Date.now() - then.getTime()) / 1000;
+  if (secs < 60) return Math.floor(secs) + 's ago';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+  if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+  return Math.floor(secs / 86400) + 'd ago';
+}
+function plural(n, word, many) { return n + ' ' + (n === 1 ? word : (many || word + 's')); }
+function showMissing(root, what, err) {
+  root.innerHTML = '<p class="sub">' + (err && err.status === 404 ? esc('no ' + what + ' with that name') : esc(err && err.message || 'could not load it')) + '</p>';
+}
+"""
 
+# ------------------------------------------------------------ the skill page
 
-SKILL_PAGE_JS = r"""
-(function () {
-  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
-  if (!ME) document.body.classList.add('out');
-  function need() { if (!ME) alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return !!ME; }
-  function call(method, path, body) {
-    return fetch(path, {method: method, headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + (ME ? ME.token : '')},
-                        body: body ? JSON.stringify(body) : undefined})
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
-        if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
-  }
-  var S = JSON.parse(document.getElementById('skill-data').textContent);
+SKILL_PAGE_JS = REG_COMMON_JS + r"""
+var NAME = decodeURIComponent(location.pathname.split('/').pop());
+// the same Markdown subset the board renders: headings, fenced code, lists, paragraphs
+function inline(s) { return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
+function md(text) {
+  var out = [], para = [], list = null, code = null;
+  function flush() { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } }
+  function close() { if (list) { out.push('</' + list + '>'); list = null; } }
+  text.split('\n').forEach(function (raw) {
+    var line = raw.replace(/\s+$/, ''), m;
+    if (code !== null) { if (line.indexOf('```') === 0) { out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); code = null; } else code.push(line); return; }
+    if (line.indexOf('```') === 0) { flush(); close(); code = []; return; }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); close(); var n = Math.min(m[1].length + 2, 6); out.push('<h' + n + '>' + inline(m[2]) + '</h' + n + '>'); return; }
+    if ((m = line.match(/^\s*([-*]|\d+[.)])\s+(.*)$/))) { flush(); var k = /^[-*]$/.test(m[1]) ? 'ul' : 'ol'; if (list !== k) { close(); out.push('<' + k + '>'); list = k; } out.push('<li>' + inline(m[2]) + '</li>'); return; }
+    if (!line.trim()) { flush(); close(); return; }
+    if (list && /^(\s{2,}|\t)/.test(raw)) { out[out.length - 1] = out[out.length - 1].slice(0, -5) + ' ' + inline(line.trim()) + '</li>'; return; }
+    close(); para.push(line.trim());
+  });
+  flush(); close(); if (code !== null) out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
+  return out.join('\n');
+}
+// D: {skill, bots, history, profiles, text}: what GET /api/skills/<name>?json, its history, /api/profiles and the SKILL.md give
+function skillHtml(D) {
+  var skill = D.skill, name = esc(skill.name), base = !!skill.base, used = skill.used_by || [], bots = D.bots || [], history = D.history || [];
+  var botsOf = {}; (D.profiles || []).forEach(function (p) { botsOf[p.name] = p.bots || []; });
+  var usedHtml = used.map(function (p) {
+    var b = botsOf[p] || [];
+    return '<li><a class="chip" href="/fleet/profiles/' + esc(p) + '">' + esc(p) + '</a> <span class="dim">' + plural(b.length, 'bot')
+      + (b.length ? ' · ' + b.map(function (h) { return '@' + esc(h); }).join(', ') : '') + '</span></li>';
+  }).join('') || '<li class="dim">No profile lists it yet. A profile created or cloned from now on can.</li>';
+  var histHtml = history.map(function (h) {
+    return '<li><span class="rev">rev ' + h.revision + '</span><span class="dim nw">' + esc(ago(h.updated_at)) + ' · ' + esc(h.author) + '</span>'
+      + '<span class="reason">' + (h.reason ? esc(h.reason) : '<span class=dim>no reason given</span>') + (h.base ? ' <span class=dim>· every bot</span>' : '') + '</span>'
+      + (h.revision !== skill.revision && !h.deleted ? '<button type="button" class="act restore needs-me" data-rev="' + h.revision + '">restore</button>' : '')
+      + (h.deleted ? '<span class=dim>deleted</span>' : '') + '</li>';
+  }).join('');
+  if (base) usedHtml = '<li>every bot <span class="dim">' + bots.length + ' on the fleet' + (bots.length ? ' · ' + bots.map(function (h) { return '@' + esc(h); }).join(', ') : '') + '</span></li>'
+    + (used.length ? '<li class="dim">Also listed by ' + used.map(esc).join(', ') + '.</li>' : '');
+  var danger = '<button type="button" class="act del-skill" data-name="' + name + '" data-rev="' + skill.revision + '"' + (used.length || base ? ' disabled' : '') + '>Delete this skill</button>'
+    + (base ? '<p>Refused while every bot has it. Make it profile-only first.</p>'
+       : used.length ? '<p>Refused while ' + plural(used.length, 'profile') + ' list' + (used.length !== 1 ? '' : 's') + ' it: ' + used.map(esc).join(', ') + '. Edit ' + (used.length !== 1 ? 'them' : 'it') + ' to drop it, then come back.</p>'
+       : '<p>No profile lists it. History is kept; the name can be used again.</p>');
+  return '<p class="crumbs"><a href="/skills">Skills</a> › ' + name + '</p>'
+    + '<div class="reg-head"><h1>' + name + '</h1><div class="right">rev ' + skill.revision + ' · ' + esc(ago(skill.updated_at)) + ' · ' + esc(skill.author) + '</div></div>'
+    + '<p class="sub">' + esc(skill.description) + '</p>'
+    + '<div class="two"><div><div class="card" id="editor">'
+    + '<div class="tabs" role="tablist" style="padding:0;margin:0 0 10px"><button type="button" class="tab" role="tab" aria-selected="true" data-tab="edit">Edit</button>'
+    + '<button type="button" class="tab" role="tab" aria-selected="false" data-tab="preview">Preview</button><button type="button" class="tab" role="tab" aria-selected="false" data-tab="gets">What a bot gets</button></div>'
+    + '<form class="reg-form" id="skill-edit" style="padding:0"><label class="fld"><span>Name</span><input name="name" value="' + name + '" readonly></label>'
+    + '<div class="fld"><span id="who-label">Who gets it</span><div class="seg" role="radiogroup" aria-labelledby="who-label">'
+    + '<label><input type="radio" name="who" value="profiles"' + (base ? '' : ' checked') + '> Profiles that list it</label>'
+    + '<label><input type="radio" name="who" value="base"' + (base ? ' checked' : '') + '> Every bot</label></div><small class="note" id="who-note"></small></div>'
+    + '<label class="fld"><span>Description <small>· one line; this is what a bot sees in its profile</small></span><input name="description" value="' + esc(skill.description) + '" maxlength="500" required></label>'
+    + '<label class="fld"><span>Instructions <small>· Markdown; the body of SKILL.md</small></span><textarea name="body" rows="22" required>' + esc(skill.body) + '</textarea></label>'
+    + '<label class="fld"><span>Reason for this change <small>· required, as in a knowledge write; it shows in History</small></span><input name="reason" required maxlength="500" placeholder="what changed, and why" autocomplete="off"></label>'
+    + '<div class="row needs-me"><button type="submit" class="addbot-go">Save as rev ' + (skill.revision + 1) + '</button><span class="note">Bots on it are told at their next prompt.</span></div>'
+    + '<p class="status-line" role="status" aria-live="polite"></p></form>'
+    + '<div class="md" id="skill-preview" hidden>' + md(skill.body) + '</div>'
+    + '<div id="skill-gets" hidden><p class="sub">Exactly what <code>GET /api/skills/' + name + '</code> returns, and the line a profile carries for it.</p>'
+    + '<pre class="what" id="skill-text">' + esc(D.text) + '</pre><pre class="what">- **' + name + '**' + (base ? ' (mandatory, every bot)' : '') + ': ' + esc(skill.description) + '</pre></div>'
+    + '</div></div><div>'
+    + '<div class="card"><h2>Details</h2><dl><dt>read at</dt><dd><code>GET /api/skills/' + name + '</code></dd><dt>revision</dt><dd>' + skill.revision + ' · ' + esc(ago(skill.updated_at)) + ' · ' + esc(skill.author) + '</dd>'
+    + '<dt>who gets it</dt><dd>' + (base ? 'every bot' : 'profiles that list it') + '</dd></dl></div>'
+    + '<div class="card"><h2>Used by · ' + (base ? 'every bot' : used.length) + '</h2><ul class="hist">' + usedHtml + '</ul>'
+    + '<p class="sub" style="margin:8px 0 0">Read-only here: a profile\'s skill list is edited on the profile\'s page.</p>'
+    + (bots.length ? '<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all bots on it</button>' : '')
+    + '<p class="status-line" id="reset-note" role="status" aria-live="polite"></p></div>'
+    + '<div class="card" id="history"><h2>History · ' + history.length + '</h2><ul class="hist">' + histHtml + '</ul>'
+    + '<p class="sub" style="margin:8px 0 0">Restore writes a new revision with the old body; nothing is rewritten in place.</p></div>'
+    + '<div class="card danger"><h2>Danger</h2>' + danger + '</div></div></div>';
+}
+function wireSkill(S, form) {
   function resetAll(path, bots, note) {
     if (!need()) return;
     if (!confirm('Give ' + bots.map(function (h) { return '@' + h; }).join(', ') + ' a new session? Each reads its profile and skills again (when idle; a stopped bot at its next start).')) return;
@@ -471,27 +406,6 @@ SKILL_PAGE_JS = r"""
   if (all) all.addEventListener('click', function () {
     resetAll('/api/skills/' + encodeURIComponent(S.name) + '/reset', S.bots, document.getElementById('reset-note'));
   });
-  var form = document.getElementById('skill-edit');
-  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; }); }
-  function inline(s) { return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
-  // the same Markdown subset the board renders: headings, fenced code, lists, paragraphs
-  function md(text) {
-    var out = [], para = [], list = null, code = null;
-    function flush() { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } }
-    function close() { if (list) { out.push('</' + list + '>'); list = null; } }
-    text.split('\n').forEach(function (raw) {
-      var line = raw.replace(/\s+$/, ''), m;
-      if (code !== null) { if (line.indexOf('```') === 0) { out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); code = null; } else code.push(line); return; }
-      if (line.indexOf('```') === 0) { flush(); close(); code = []; return; }
-      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) { flush(); close(); var n = Math.min(m[1].length + 2, 6); out.push('<h' + n + '>' + inline(m[2]) + '</h' + n + '>'); return; }
-      if ((m = line.match(/^\s*([-*]|\d+[.)])\s+(.*)$/))) { flush(); var k = /^[-*]$/.test(m[1]) ? 'ul' : 'ol'; if (list !== k) { close(); out.push('<' + k + '>'); list = k; } out.push('<li>' + inline(m[2]) + '</li>'); return; }
-      if (!line.trim()) { flush(); close(); return; }
-      if (list && /^(\s{2,}|\t)/.test(raw)) { out[out.length - 1] = out[out.length - 1].slice(0, -5) + ' ' + inline(line.trim()) + '</li>'; return; }
-      close(); para.push(line.trim());
-    });
-    flush(); close(); if (code !== null) out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
-    return out.join('\n');
-  }
   function text() {
     var d = form.elements.description.value.trim();
     var q = /[:#"'\n]/.test(d) || !d ? JSON.stringify(d) : d;
@@ -529,8 +443,7 @@ SKILL_PAGE_JS = r"""
     var b = ev.target.closest('button.restore'); if (!b || !need()) return;
     var rev = b.dataset.rev;
     if (!confirm('Restore rev ' + rev + ' as a new revision ' + (S.revision + 1) + '? Nothing is rewritten; the revisions between stay in the history.')) return;
-    fetch('/api/skills/' + encodeURIComponent(S.name) + '?json&revision=' + rev, {headers: {'Authorization': 'Bearer ' + ME.token}})
-      .then(function (r) { return r.json(); }).then(function (d) {
+    call('GET', '/api/skills/' + encodeURIComponent(S.name) + '?json&revision=' + rev).then(function (d) {
         return call('PUT', '/api/skills/' + encodeURIComponent(S.name),
                     {body: d.skill.body, fields: {description: d.skill.description}, base_revision: S.revision, reason: 'restored rev ' + rev});
       }).then(function () { location.reload(); }, function (e) { alert(e.message); });
@@ -541,129 +454,93 @@ SKILL_PAGE_JS = r"""
     call('DELETE', '/api/skills/' + encodeURIComponent(S.name), {base_revision: S.revision, reason: 'deleted on the Skills page'})
       .then(function () { location.href = '/skills'; }, function (e) { alert(e.message); });
   });
-})();
+}
+// r: [GET /api/skills/<n>?json, its /history, GET /api/profiles, GET /api/skills/<n> (the SKILL.md)]
+function composeSkill(r) { return {skill: r[0].skill, bots: r[0].bots, history: r[1].revisions, profiles: r[2].profiles, text: r[3]}; }
+function loadSkill() {
+  var root = document.getElementById('reg'), url = '/api/skills/' + encodeURIComponent(NAME);
+  Promise.all([call('GET', url + '?json'), call('GET', url + '/history'), call('GET', '/api/profiles'),
+               fetch(url, {headers: ME ? {'Authorization': 'Bearer ' + ME.token} : {}}).then(function (r) { return r.ok ? r.text() : ''; })])
+  .then(function (r) {
+    var D = composeSkill(r);
+    document.title = 'skill ' + D.skill.name;
+    root.innerHTML = skillHtml(D);
+    wireSkill({name: D.skill.name, revision: D.skill.revision, bots: D.bots}, document.getElementById('skill-edit'));
+  }, function (e) { showMissing(root, 'skill', e); });
+}
+if (typeof document !== 'undefined' && document.getElementById('reg')) loadSkill();
 """
 
 
-# ------------------------------------------------------------ profile page
+# --------------------------------------------------------- the profile page
 
-def profile_page(board_name: str, profile: dict, bots: list, history: list, skills: list, base: str) -> str:
-    name = e(profile["name"])
-    also = registry.also_has(profile)
-    own = {s["name"]: bool(s.get("mandatory")) for s in profile.get("skills") or [] if s["name"] not in {b["name"] for b in also}}
-    skill_rows = "".join(
-        f'<tr><td><input type="checkbox" name="skill" value="{e(s["name"])}" aria-label="include {e(s["name"])}"{" checked" if s["name"] in own else ""}></td>'
-        f'<td class="who"><a href="/fleet/skills/{e(s["name"])}">{e(s["name"])}</a><div class="by desc">{e(s["description"])}</div></td>'
-        f'<td data-label="mandatory"><label><input type="checkbox" name="mandatory" value="{e(s["name"])}" aria-label="{e(s["name"])} mandatory"'
-        f'{" checked" if own.get(s["name"]) else ""}> read before any work</label></td>'
-        f'<td data-label="revision" class="nw dim">rev {s["revision"]}</td></tr>'
-        for s in skills if not s.get("base"))
-    skills_html = (f'<table class="bots pick"><thead><tr><th><span class="sr-only">Include</span></th><th>Skill</th><th>Mandatory</th><th>Rev</th></tr></thead>'
-                   f'<tbody>{skill_rows}</tbody></table>' if skill_rows else
-                   '<p class="sub">The registry has no profile skill yet; its bots have the guide and their workspace\'s knowledge base.</p>')
-    if also:
-        skills_html += ('<p class="sub" id="base-skills">Base skills, every bot has them: '
-                        + ", ".join(f'<a class="chip" href="/fleet/skills/{e(s["name"])}">{e(s["name"])}</a>' for s in also)
-                        + ". Not this profile's: set on the skill itself.</p>")
-    bot_rows = ""
-    for b in bots:
-        st = b.get("state") or {}
-        last = b.get("last_run") or ""
-        ws = f'<a href="/workspaces/{e(b["workspace"])}">{e(b["workspace"])}</a>' if b.get("workspace") else "—"
-        tone = {"working": "run", "waiting": "ok", "stopped": "", "unknown": ""}.get(st.get("state"), "warn")
-        bot_rows += (f'<tr><td class="who"><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a></td>'
-                     f'<td data-label="workspace">{ws}</td>'
-                     f'<td data-label="status"><span class="pip {tone}"></span>{e(st.get("words") or b.get("status") or "")}</td>'
-                     f'<td data-label="last run" class="dim">{e(ago(last)) if last else "never"}'
-                     f'<div class="by">on <a href="/machines#box-{e(b["host"])}">{e(b["host"])}</a></div></td>'
-                     f'<td class="acts"><button type="button" class="reset" data-handle="{e(b["handle"])}" '
-                     'title="set its harness session aside; it reads the profile and its skills again">new session</button></td></tr>')
-    bots_html = (f'<table class="bots"><thead><tr><th>Bot</th><th>Workspace</th><th>Status</th><th>Last run</th>'
-                 f'<th><span class="sr-only">Actions</span></th></tr></thead><tbody>{bot_rows}</tbody></table>'
-                 if bots else '<p class="sub">No bot carries it yet. Pick it under Profile when you add a bot.</p>')
-    origin = profile.get("from") or ""
-    templates = {t["name"] for t in registry.templates()}
-    try:
-        source = registry.get_profile(origin) if origin else None
-    except KeyError:
-        source = None
-    if origin and origin.lower() == profile["name"].lower():
-        from_html = f"from the shipped {e(origin)} template"
-    elif source:
-        from_html = f'cloned from <a href="/fleet/profiles/{e(origin)}">{e(origin)}</a>'
-    elif origin in templates:
-        from_html = f"from the {e(origin)} template"
-    elif origin:
-        from_html = f"from {e(origin)}, since deleted"
-    else:
-        from_html = "from a blank form"
-    clones = profile.get("clones") or []
-    clones_html = ("".join(f'<li><a class="chip" href="/fleet/profiles/{e(c)}">{e(c)}</a></li>' for c in clones)
-                   if clones else '<li class="dim">no profile was cloned from it yet</li>')
-    hist_html = "".join(
-        f'<li><span class="rev">rev {h["revision"]}</span><span class="dim nw">{e(ago(h["updated_at"]))} · {e(h["author"])}</span>'
-        f'<span class="reason">{e(h["reason"]) or "<span class=dim>no reason given</span>"}</span></li>' for h in history)
-    latest = history[0] if history else {"updated_at": profile["created_at"], "author": profile["created_by"]}
-    n = len(bots)
-    danger = (f'<button type="button" class="act del-profile" data-name="{name}"{" disabled" if n else ""}>Delete this profile</button>'
-              + (f'<p>Not while {n} bot{"s" * (n != 1)} carr{"y" if n != 1 else "ies"} it. Retire {"them" if n != 1 else "it"} first; the name is never reused.</p>'
-                 if n else '<p>No bot carries it. The name stays taken: profiles are never reused under an old name.</p>'))
-    # a base skill the profile lists has no row here; a save carries it over as it was, not drops it (#426)
-    rowless = {s["name"] for s in skills if s.get("base")}
-    kept = [s for s in profile.get("skills") or [] if s["name"] in rowless]
-    data = _json({"name": profile["name"], "revision": profile["revision"], "bots": [b["handle"] for b in bots], "kept": kept})
-    content = f"""
-<style>{FLEET_CSS}{REG_CSS}</style>
-<div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/roles">Roles</a> › {name}</p>
-<div class="reg-head"><h1>{name}</h1>
-<div class="right">rev {profile["revision"]} · {e(ago(latest["updated_at"]))} · {e(latest["author"])} · <a class="addbot-btn needs-me" href="/fleet/profiles/new?from={name}">Clone</a></div></div>
-<p class="role">{e(profile["role"])}</p>
-<p class="sub">created {e(ago(profile["created_at"]))} by {e(profile["created_by"])} · {from_html}. Edited in place: a change reaches the bots that carry it at their next prompt, with no new session. Clone makes a variant under another name.{"" if profile.get("takes_new_work", True) else " <b>Works when mentioned:</b> a new bot of it takes a thread only when its first message mentions it."}</p>
-<div class="two"><div>
-<form class="card reg-form" id="profile-edit" style="gap:12px"><h2>What it says</h2>
-<label class="fld"><span>Role <small>· one line: what this bot is</small></span><input name="role" required maxlength="4000" value="{e(profile["role"])}" autocomplete="off"></label>
-<label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000">{e(profile.get("responsibilities") or "")}</textarea></label>
-<label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000">{e(profile.get("focus") or "")}</textarea></label>
-<label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000">{e(profile.get("avoid") or "")}</textarea></label>
-<label class="fld"><span><input type="checkbox" name="takes_new_work"{" checked" if profile.get("takes_new_work", True) else ""}> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row.</small></span></label>
-<div><h2 style="margin-bottom:6px">Skills · {len(own)}</h2>{skills_html}
-<p class="sub" style="margin:8px 0 0">A skill dropped here leaves its bots' skill directories at their next prompt; one added arrives there.</p></div>
-<label class="fld"><span>Reason for this change <small>· required, as in a knowledge write; it shows in History</small></span>
-<input name="reason" required maxlength="500" placeholder="what changed, and why" autocomplete="off"></label>
-<div class="row needs-me"><button type="submit" class="addbot-go">Save as rev {profile["revision"] + 1}</button>
-<span class="note">{f"{n} bot{'s' * (n != 1)} on it read it at their next prompt." if n else "No bot carries it yet."}</span></div>
-<p class="status-line" role="status" aria-live="polite"></p>
-</form>
-<div class="card" id="bots"><h2>Bots with this profile · {n}</h2>
-<p class="sub">A bot reads this profile and its skills at the start of a session, and again at its next prompt after an edit. New session makes one start over.</p>{bots_html}
-{'<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all ' + str(n) + ' bot' + 's' * (n != 1) + '</button><p class="status-line" id="reset-note" role="status" aria-live="polite"></p>' if n else ''}</div>
-</div><div>
-<div class="card" id="gets"><h2>What a bot gets</h2><p class="sub">The text <code>GET /api/me/profile</code> returns to a bot of this profile.</p>
-<pre class="what">{e(registry.profile_text(profile, base))}</pre></div>
-<div class="card" id="history"><h2>History · {len(history)}</h2><ul class="hist">{hist_html}</ul>
-<p class="sub" style="margin:8px 0 0">Every save is a new revision; <code>GET /api/profiles/{name}/history</code> has the text of each.</p></div>
-<div class="card" id="lineage"><h2>Lineage</h2><dl><dt>from</dt><dd>{from_html}</dd><dt>clones</dt><dd><ul class="hist" style="margin:0">{clones_html}</ul></dd></dl></div>
-<div class="card danger"><h2>Danger</h2>{danger}</div>
-</div></div>
-<script type="application/json" id="profile-data">{data}</script>
-</div></div>
-<script>{PROFILE_PAGE_JS}</script>"""
-    return shell(board_name, f"profile {profile['name']}", content, here="/roles")
-
-
-PROFILE_PAGE_JS = r"""
-(function () {
-  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
-  if (!ME) document.body.classList.add('out');
-  function need() { if (!ME) alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return !!ME; }
-  function call(method, path, body) {
-    return fetch(path, {method: method, headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + (ME ? ME.token : '')},
-                        body: body ? JSON.stringify(body) : undefined})
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
-        if (!r.ok) throw new Error(d.error || d.detail || ('refused: ' + r.status)); return d; }); });
-  }
-  var P = JSON.parse(document.getElementById('profile-data').textContent);
+PROFILE_PAGE_JS = REG_COMMON_JS + r"""
+var NAME = decodeURIComponent(location.pathname.split('/').pop());
+// D: {profile (with base_skills, text), history, skills, bots, profiles, templates}
+function profileHtml(D) {
+  var profile = D.profile, name = esc(profile.name), skills = D.skills || [], bots = D.bots || [], history = D.history || [];
+  var also = profile.base_skills || [], alsoNames = {}; also.forEach(function (s) { alsoNames[s.name] = true; });
+  var own = {}, ownCount = 0;
+  (profile.skills || []).forEach(function (s) { if (!alsoNames[s.name]) { own[s.name] = !!s.mandatory; ownCount++; } });
+  var skillRows = skills.filter(function (s) { return !s.base; }).map(function (s) {
+    return '<tr><td><input type="checkbox" name="skill" value="' + esc(s.name) + '" aria-label="include ' + esc(s.name) + '"' + (s.name in own ? ' checked' : '') + '></td>'
+      + '<td class="who"><a href="/fleet/skills/' + esc(s.name) + '">' + esc(s.name) + '</a><div class="by desc">' + esc(s.description) + '</div></td>'
+      + '<td data-label="mandatory"><label><input type="checkbox" name="mandatory" value="' + esc(s.name) + '" aria-label="' + esc(s.name) + ' mandatory"' + (own[s.name] ? ' checked' : '') + '> read before any work</label></td>'
+      + '<td data-label="revision" class="nw dim">rev ' + s.revision + '</td></tr>';
+  }).join('');
+  var skillsHtml = skillRows ? '<table class="bots pick"><thead><tr><th><span class="sr-only">Include</span></th><th>Skill</th><th>Mandatory</th><th>Rev</th></tr></thead><tbody>' + skillRows + '</tbody></table>'
+    : '<p class="sub">The registry has no profile skill yet; its bots have the guide and their workspace\'s knowledge base.</p>';
+  if (also.length) skillsHtml += '<p class="sub" id="base-skills">Base skills, every bot has them: ' + also.map(function (s) { return '<a class="chip" href="/fleet/skills/' + esc(s.name) + '">' + esc(s.name) + '</a>'; }).join(', ')
+    + '. Not this profile\'s: set on the skill itself.</p>';
+  var botRows = bots.map(function (b) {
+    var st = b.state || {}, tone = {working: 'run', waiting: 'ok', stopped: '', unknown: ''}[st.state]; if (tone === undefined) tone = 'warn';
+    return '<tr><td class="who"><a href="/a/' + esc(b.handle) + '">@' + esc(b.handle) + '</a></td>'
+      + '<td data-label="workspace">' + (b.workspace ? '<a href="/workspaces/' + esc(b.workspace) + '">' + esc(b.workspace) + '</a>' : '—') + '</td>'
+      + '<td data-label="status"><span class="pip ' + tone + '"></span>' + esc(st.words || b.status || '') + '</td>'
+      + '<td data-label="last run" class="dim">' + (b.last_run ? esc(ago(b.last_run)) : 'never') + '<div class="by">on <a href="/machines#box-' + esc(b.host) + '">' + esc(b.host) + '</a></div></td>'
+      + '<td class="acts"><button type="button" class="reset" data-handle="' + esc(b.handle) + '" title="set its harness session aside; it reads the profile and its skills again">new session</button></td></tr>';
+  }).join('');
+  var n = bots.length;
+  var botsHtml = n ? '<table class="bots"><thead><tr><th>Bot</th><th>Workspace</th><th>Status</th><th>Last run</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>' + botRows + '</tbody></table>'
+    : '<p class="sub">No bot carries it yet. Pick it under Profile when you add a bot.</p>';
+  var origin = profile.from || '', templates = {}; (D.templates || []).forEach(function (t) { templates[t.name] = true; });
+  var source = null; (D.profiles || []).forEach(function (p) { if (origin && p.name.toLowerCase() === origin.toLowerCase()) source = p; });
+  var fromHtml = origin && origin.toLowerCase() === profile.name.toLowerCase() ? 'from the shipped ' + esc(origin) + ' template'
+    : source ? 'cloned from <a href="/fleet/profiles/' + esc(origin) + '">' + esc(origin) + '</a>'
+    : templates[origin] ? 'from the ' + esc(origin) + ' template' : origin ? 'from ' + esc(origin) + ', since deleted' : 'from a blank form';
+  var clones = profile.clones || [];
+  var clonesHtml = clones.length ? clones.map(function (c) { return '<li><a class="chip" href="/fleet/profiles/' + esc(c) + '">' + esc(c) + '</a></li>'; }).join('') : '<li class="dim">no profile was cloned from it yet</li>';
+  var histHtml = history.map(function (h) {
+    return '<li><span class="rev">rev ' + h.revision + '</span><span class="dim nw">' + esc(ago(h.updated_at)) + ' · ' + esc(h.author) + '</span><span class="reason">' + (h.reason ? esc(h.reason) : '<span class=dim>no reason given</span>') + '</span></li>';
+  }).join('');
+  var latest = history[0] || {updated_at: profile.created_at, author: profile.created_by};
+  var danger = '<button type="button" class="act del-profile" data-name="' + name + '"' + (n ? ' disabled' : '') + '>Delete this profile</button>'
+    + (n ? '<p>Not while ' + plural(n, 'bot') + ' carr' + (n !== 1 ? 'y' : 'ies') + ' it. Retire ' + (n !== 1 ? 'them' : 'it') + ' first; the name is never reused.</p>'
+         : '<p>No bot carries it. The name stays taken: profiles are never reused under an old name.</p>');
+  var takes = profile.takes_new_work !== false;
+  return '<p class="crumbs"><a href="/roles">Roles</a> › ' + name + '</p>'
+    + '<div class="reg-head"><h1>' + name + '</h1><div class="right">rev ' + profile.revision + ' · ' + esc(ago(latest.updated_at)) + ' · ' + esc(latest.author) + ' · <a class="addbot-btn needs-me" href="/fleet/profiles/new?from=' + name + '">Clone</a></div></div>'
+    + '<p class="role">' + esc(profile.role) + '</p>'
+    + '<p class="sub">created ' + esc(ago(profile.created_at)) + ' by ' + esc(profile.created_by) + ' · ' + fromHtml + '. Edited in place: a change reaches the bots that carry it at their next prompt, with no new session. Clone makes a variant under another name.'
+    + (takes ? '' : ' <b>Works when mentioned:</b> a new bot of it takes a thread only when its first message mentions it.') + '</p>'
+    + '<div class="two"><div><form class="card reg-form" id="profile-edit" style="gap:12px"><h2>What it says</h2>'
+    + '<label class="fld"><span>Role <small>· one line: what this bot is</small></span><input name="role" required maxlength="4000" value="' + esc(profile.role) + '" autocomplete="off"></label>'
+    + '<label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000">' + esc(profile.responsibilities || '') + '</textarea></label>'
+    + '<label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000">' + esc(profile.focus || '') + '</textarea></label>'
+    + '<label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000">' + esc(profile.avoid || '') + '</textarea></label>'
+    + '<label class="fld"><span><input type="checkbox" name="takes_new_work"' + (takes ? ' checked' : '') + '> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row.</small></span></label>'
+    + '<div><h2 style="margin-bottom:6px">Skills · ' + ownCount + '</h2>' + skillsHtml + '<p class="sub" style="margin:8px 0 0">A skill dropped here leaves its bots\' skill directories at their next prompt; one added arrives there.</p></div>'
+    + '<label class="fld"><span>Reason for this change <small>· required, as in a knowledge write; it shows in History</small></span><input name="reason" required maxlength="500" placeholder="what changed, and why" autocomplete="off"></label>'
+    + '<div class="row needs-me"><button type="submit" class="addbot-go">Save as rev ' + (profile.revision + 1) + '</button><span class="note">' + (n ? plural(n, 'bot') + ' on it read it at their next prompt.' : 'No bot carries it yet.') + '</span></div>'
+    + '<p class="status-line" role="status" aria-live="polite"></p></form>'
+    + '<div class="card" id="bots"><h2>Bots with this profile · ' + n + '</h2><p class="sub">A bot reads this profile and its skills at the start of a session, and again at its next prompt after an edit. New session makes one start over.</p>' + botsHtml
+    + (n ? '<button type="button" class="act needs-me" id="reset-all" style="margin-top:8px">New session for all ' + plural(n, 'bot') + '</button><p class="status-line" id="reset-note" role="status" aria-live="polite"></p>' : '') + '</div>'
+    + '</div><div><div class="card" id="gets"><h2>What a bot gets</h2><p class="sub">The text <code>GET /api/me/profile</code> returns to a bot of this profile.</p><pre class="what">' + esc(profile.text) + '</pre></div>'
+    + '<div class="card" id="history"><h2>History · ' + history.length + '</h2><ul class="hist">' + histHtml + '</ul><p class="sub" style="margin:8px 0 0">Every save is a new revision; <code>GET /api/profiles/' + name + '/history</code> has the text of each.</p></div>'
+    + '<div class="card" id="lineage"><h2>Lineage</h2><dl><dt>from</dt><dd>' + fromHtml + '</dd><dt>clones</dt><dd><ul class="hist" style="margin:0">' + clonesHtml + '</ul></dd></dl></div>'
+    + '<div class="card danger"><h2>Danger</h2>' + danger + '</div></div></div>';
+}
+function wireProfile(P) {
   var form = document.getElementById('profile-edit');
   form.addEventListener('change', function (ev) {
     if (ev.target.name === 'mandatory' && ev.target.checked) form.querySelector('input[name=skill][value="' + ev.target.value + '"]').checked = true;
@@ -707,76 +584,76 @@ PROFILE_PAGE_JS = r"""
     call('DELETE', '/api/profiles/' + encodeURIComponent(b.dataset.name))
       .then(function () { location.href = '/roles'; }, function (e) { alert(e.message); });
   });
-})();
+}
+// r: [GET /api/profiles/<n>, its /history, GET /api/skills, GET /api/fleet, GET /api/profiles, GET /api/profiles/templates]
+function composeProfile(r) {
+  var profile = r[0].profile, bots = [];
+  r[3].hosts.forEach(function (h) { h.bots.forEach(function (b) { if ((b.profile || '').toLowerCase() === profile.name.toLowerCase()) bots.push(Object.assign({}, b, {host: h.name})); }); });
+  bots.sort(function (a, b) { return a.handle.toLowerCase() < b.handle.toLowerCase() ? -1 : 1; });
+  return {profile: profile, history: r[1].revisions, skills: r[2].skills, bots: bots, profiles: r[4].profiles, templates: r[5].templates};
+}
+function loadProfile() {
+  var root = document.getElementById('reg'), url = '/api/profiles/' + encodeURIComponent(NAME);
+  Promise.all([call('GET', url), call('GET', url + '/history'), call('GET', '/api/skills'), call('GET', '/api/fleet'), call('GET', '/api/profiles'), call('GET', '/api/profiles/templates')])
+  .then(function (r) {
+    var D = composeProfile(r), profile = D.profile, bots = D.bots;
+    document.title = 'profile ' + profile.name;
+    root.innerHTML = profileHtml(D);
+    // a base skill the profile lists has no row here; a save carries it over as it was, not drops it (#426)
+    var rowless = {}; D.skills.forEach(function (s) { if (s.base) rowless[s.name] = true; });
+    wireProfile({name: profile.name, revision: profile.revision, bots: bots.map(function (b) { return b.handle; }),
+                 kept: (profile.skills || []).filter(function (s) { return rowless[s.name]; })});
+  }, function (e) { showMissing(root, 'profile', e); });
+}
+if (typeof document !== 'undefined' && document.getElementById('reg')) loadProfile();
 """
 
 
 # ------------------------------------------------------------- create form
 
-def profile_new_page(board_name: str, templates: list, profiles: list, skills: list, start: str | None) -> str:
-    starters = ([{"key": "", "label": "Blank", "kind": "blank", "data": {"name": "", "role": "", "responsibilities": "",
-                                                                          "focus": "", "avoid": "", "skills": [], "takes_new_work": True}}]
-                + [{"key": "template:" + t["name"], "label": t["name"], "kind": "template", "data": t} for t in templates]
-                + [{"key": p["name"], "label": p["name"], "kind": "profile",
-                    "data": {k: p.get(k) for k in ("name", "role", "responsibilities", "focus", "avoid", "skills", "takes_new_work")}}
-                   for p in profiles])
-    keys = [s["key"] for s in starters]
-    # ?from= names a profile (Clone) or a template; the default is the developer starter
-    chosen = next((k for k in (start, "template:" + (start or ""), "developer", "template:developer") if k in keys), "")
-    chips = "".join(f'<button type="button" data-key="{e(s["key"])}" aria-pressed="{"true" if s["key"] == chosen else "false"}">'
-                    f'{e(s["label"])}{" <small>template</small>" if s["kind"] == "template" else ""}</button>'
-                    for s in starters)
-    # a base skill reaches every bot whatever its profile (#347): shown ticked and fixed, never sent
-    skills = sorted(skills, key=lambda s: not s.get("base"))
-    skill_rows = "".join(
-        f'<tr{" class=dim" if s.get("base") else ""}><td><input type="checkbox" name="skill" value="{e(s["name"])}" aria-label="include {e(s["name"])}"'
-        f'{" checked disabled" if s.get("base") else ""}></td>'
-        f'<td class="who"><a href="/fleet/skills/{e(s["name"])}">{e(s["name"])}</a><div class="by desc">'
-        f'{"base: every bot has it. " if s.get("base") else ""}{e(s["description"])}</div></td>'
-        f'<td data-label="mandatory"><label><input type="checkbox" name="mandatory" value="{e(s["name"])}" aria-label="{e(s["name"])} mandatory"'
-        f'{" checked disabled" if s.get("base") else ""}> read before any work</label></td></tr>'
-        for s in skills)
-    skills_html = (f'<table class="bots pick"><thead><tr><th><span class="sr-only">Include</span></th><th>Skill</th><th>Mandatory</th></tr></thead>'
-                   f'<tbody>{skill_rows}</tbody></table>' if skills else
-                   '<p class="sub">The registry is empty. A profile can be created without skills and more cannot be added later: add skills first if this profile needs them.</p>')
-    taken = sorted(registry.taken_names(), key=str.lower)     # deleted ones too: a name is never reused
-    data = _json({"starters": starters, "chosen": chosen, "taken": taken, "base": ""})
-    content = f"""
-<style>{FLEET_CSS}{REG_CSS}</style>
-<div class="fleet-page"><div class="reg">
-<p class="crumbs"><a href="/roles">Roles</a> › new profile</p>
-<div class="reg-head"><h1 style="font-family:var(--sans)">Create a profile</h1></div>
-<p class="sub">A profile is a role and the skills that go with it. A human can move a bot to another profile from its row; the profile itself is edited on its page, and a different role is a new profile.</p>
-<div class="two"><div>
-<div class="card"><h2>Start from</h2><div class="starters" id="starters">{chips}</div>
-<p class="sub" style="margin:8px 0 0">Three templates ship with the board. Any existing profile can be picked too, which is what Clone does. Switching replaces the fields below; nothing is saved until Create.</p></div>
-<form class="card reg-form" id="profile-new" style="gap:12px">
-<label class="fld"><span>Name <small>· slug; cannot be changed later, and a name once used is never reused</small></span>
-<input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{{1,63}}" placeholder="developer-2" autocomplete="off"></label>
-<label class="fld"><span>Role <small>· one line: what this bot is</small></span><input name="role" required maxlength="4000" autocomplete="off"></label>
-<label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000"></textarea></label>
-<label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000"></textarea></label>
-<label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000"></textarea></label>
-<label class="fld"><span><input type="checkbox" name="takes_new_work" checked> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row. Turn it off for a reviewer or an adviser, such as a security engineer.</small></span></label>
-<div><h2 style="margin-bottom:6px">Skills</h2>{skills_html}</div>
-<div class="row needs-me"><button type="submit" class="addbot-go" id="create-go">Create</button><span class="note" id="create-note"></span></div>
-<p class="status-line" role="status" aria-live="polite"></p>
-</form>
-</div><div>
-<div class="card"><h2>What a bot will get</h2><pre class="what" id="preview"></pre></div>
-<div class="card" id="starting"><h2>Starting point</h2><p class="sub" id="starting-text" style="margin:0"></p></div>
-</div></div>
-<script type="application/json" id="new-data">{data}</script>
-</div></div>
-<script>{NEW_PROFILE_JS}</script>"""
-    return shell(board_name, "new profile", content, here="/roles")
-
-
-NEW_PROFILE_JS = r"""
-(function () {
-  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
-  if (!ME) document.body.classList.add('out');
-  var D = JSON.parse(document.getElementById('new-data').textContent);
+NEW_PROFILE_JS = REG_COMMON_JS + r"""
+// D: {starters, chosen, taken, skills}; built from /api/profiles/templates, /api/profiles, /api/skills
+function newProfileHtml(D) {
+  var chips = D.starters.map(function (s) {
+    return '<button type="button" data-key="' + esc(s.key) + '" aria-pressed="' + (s.key === D.chosen ? 'true' : 'false') + '">' + esc(s.label) + (s.kind === 'template' ? ' <small>template</small>' : '') + '</button>';
+  }).join('');
+  // a base skill reaches every bot whatever its profile (#347): shown ticked and fixed, never sent
+  var skills = D.skills.slice().sort(function (a, b) { return (a.base ? 0 : 1) - (b.base ? 0 : 1); });
+  var rows = skills.map(function (s) {
+    return '<tr' + (s.base ? ' class=dim' : '') + '><td><input type="checkbox" name="skill" value="' + esc(s.name) + '" aria-label="include ' + esc(s.name) + '"' + (s.base ? ' checked disabled' : '') + '></td>'
+      + '<td class="who"><a href="/fleet/skills/' + esc(s.name) + '">' + esc(s.name) + '</a><div class="by desc">' + (s.base ? 'base: every bot has it. ' : '') + esc(s.description) + '</div></td>'
+      + '<td data-label="mandatory"><label><input type="checkbox" name="mandatory" value="' + esc(s.name) + '" aria-label="' + esc(s.name) + ' mandatory"' + (s.base ? ' checked disabled' : '') + '> read before any work</label></td></tr>';
+  }).join('');
+  var skillsHtml = rows ? '<table class="bots pick"><thead><tr><th><span class="sr-only">Include</span></th><th>Skill</th><th>Mandatory</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    : '<p class="sub">The registry is empty. A profile can be created without skills and more cannot be added later: add skills first if this profile needs them.</p>';
+  return '<p class="crumbs"><a href="/roles">Roles</a> › new profile</p><div class="reg-head"><h1 style="font-family:var(--sans)">Create a profile</h1></div>'
+    + '<p class="sub">A profile is a role and the skills that go with it. A human can move a bot to another profile from its row; the profile itself is edited on its page, and a different role is a new profile.</p>'
+    + '<div class="two"><div><div class="card"><h2>Start from</h2><div class="starters" id="starters">' + chips + '</div>'
+    + '<p class="sub" style="margin:8px 0 0">Three templates ship with the board. Any existing profile can be picked too, which is what Clone does. Switching replaces the fields below; nothing is saved until Create.</p></div>'
+    + '<form class="card reg-form" id="profile-new" style="gap:12px"><label class="fld"><span>Name <small>· slug; cannot be changed later, and a name once used is never reused</small></span>'
+    + '<input name="name" required pattern="[a-z0-9][a-z0-9_\\-]{1,63}" placeholder="developer-2" autocomplete="off"></label>'
+    + '<label class="fld"><span>Role <small>· one line: what this bot is</small></span><input name="role" required maxlength="4000" autocomplete="off"></label>'
+    + '<label class="fld"><span>Responsibilities <small>· what the bot is for, in a paragraph it can judge work against</small></span><textarea name="responsibilities" rows="4" maxlength="4000"></textarea></label>'
+    + '<label class="fld"><span>Focus <small>· what to prefer when several threads are open</small></span><textarea name="focus" rows="4" maxlength="4000"></textarea></label>'
+    + '<label class="fld"><span>Avoid <small>· work this bot leaves to others</small></span><textarea name="avoid" rows="3" maxlength="4000"></textarea></label>'
+    + '<label class="fld"><span><input type="checkbox" name="takes_new_work" checked> Takes new work by default <small>· a new bot of it takes new threads that mention nobody. Off: it works only when a thread&#39;s first message mentions it. Used when a bot is added; each bot can be changed on its row. Turn it off for a reviewer or an adviser, such as a security engineer.</small></span></label>'
+    + '<div><h2 style="margin-bottom:6px">Skills</h2>' + skillsHtml + '</div>'
+    + '<div class="row needs-me"><button type="submit" class="addbot-go" id="create-go">Create</button><span class="note" id="create-note"></span></div>'
+    + '<p class="status-line" role="status" aria-live="polite"></p></form></div><div>'
+    + '<div class="card"><h2>What a bot will get</h2><pre class="what" id="preview"></pre></div>'
+    + '<div class="card" id="starting"><h2>Starting point</h2><p class="sub" id="starting-text" style="margin:0"></p></div></div></div>';
+}
+function buildStarters(templates, profiles, start) {
+  var starters = [{key: '', label: 'Blank', kind: 'blank', data: {name: '', role: '', responsibilities: '', focus: '', avoid: '', skills: [], takes_new_work: true}}]
+    .concat(templates.map(function (t) { return {key: 'template:' + t.name, label: t.name, kind: 'template', data: t}; }))
+    .concat(profiles.map(function (p) { return {key: p.name, label: p.name, kind: 'profile',
+      data: {name: p.name, role: p.role, responsibilities: p.responsibilities, focus: p.focus, avoid: p.avoid, skills: p.skills, takes_new_work: p.takes_new_work}}; }));
+  var keys = starters.map(function (s) { return s.key; });
+  // ?from= names a profile (Clone) or a template; the default is the developer starter
+  var chosen = [start, 'template:' + (start || ''), 'developer', 'template:developer'].filter(function (k) { return k && keys.indexOf(k) >= 0; })[0] || '';
+  return {starters: starters, chosen: chosen};
+}
+function wireNewProfile(D) {
   var form = document.getElementById('profile-new'), current = null;
   function starter(key) { return D.starters.filter(function (s) { return s.key === key; })[0]; }
   function fill(key) {
@@ -827,19 +704,47 @@ NEW_PROFILE_JS = r"""
   });
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
-    if (!ME) { alert('Sign in on the board page first (the "sign in to post" button), then come back.'); return; }
+    if (!need()) return;
     var msg = form.querySelector('.status-line'), f = form.elements, name = f.name.value.trim().toLowerCase();
     msg.textContent = 'Creating…';
-    fetch('/api/profiles', {method: 'POST', headers: {'content-type': 'application/json', 'Authorization': 'Bearer ' + ME.token},
-      body: JSON.stringify({name: name, role: f.role.value.trim(), responsibilities: f.responsibilities.value.trim(),
-                            focus: f.focus.value.trim(), avoid: f.avoid.value.trim(), skills: skills(),
-                            takes_new_work: f.takes_new_work.checked,
-                            from: current && current.kind !== 'blank' ? current.data.name : null})})
-    .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
-      if (!r.ok) { msg.textContent = d.error || d.detail || ('refused: ' + r.status); return; }
-      location.href = '/fleet/profiles/' + encodeURIComponent(name); }); })
-    .catch(function () { msg.textContent = 'could not reach the board'; });
+    call('POST', '/api/profiles', {name: name, role: f.role.value.trim(), responsibilities: f.responsibilities.value.trim(),
+        focus: f.focus.value.trim(), avoid: f.avoid.value.trim(), skills: skills(), takes_new_work: f.takes_new_work.checked,
+        from: current && current.kind !== 'blank' ? current.data.name : null})
+    .then(function () { location.href = '/fleet/profiles/' + encodeURIComponent(name); },
+          function (e) { msg.textContent = e.status ? e.message : 'could not reach the board'; });
   });
   fill(D.chosen);
-})();
+}
+// r: [GET /api/profiles/templates, GET /api/profiles, GET /api/skills]; start: ?from=
+function composeNew(r, start) {
+  var b = buildStarters(r[0].templates, r[1].profiles, start || null);
+  return {starters: b.starters, chosen: b.chosen, taken: r[1].taken, skills: r[2].skills};
+}
+function loadNewProfile() {
+  var root = document.getElementById('reg');
+  Promise.all([call('GET', '/api/profiles/templates'), call('GET', '/api/profiles'), call('GET', '/api/skills')]).then(function (r) {
+    var D = composeNew(r, (new URLSearchParams(location.search).get('from') || '').trim().toLowerCase());
+    root.innerHTML = newProfileHtml(D);
+    wireNewProfile(D);
+  }, function (e) { showMissing(root, 'profile page', e); });
+}
+if (typeof document !== 'undefined' && document.getElementById('reg')) loadNewProfile();
 """
+
+
+def _shell(board_name: str, title: str, here: str, js: str) -> str:
+    """The page, empty: the script fills #reg from /api."""
+    return shell(board_name, title, f'<style>{FLEET_CSS}{REG_CSS}</style><div class="fleet-page"><div class="reg" id="reg">'
+                                    f'<p class="sub">Loading…</p></div></div><script>{js}</script>', here=here)
+
+
+def skill_page(board_name: str) -> str:
+    return _shell(board_name, "skill", "/skills", SKILL_PAGE_JS)
+
+
+def profile_page(board_name: str) -> str:
+    return _shell(board_name, "profile", "/roles", PROFILE_PAGE_JS)
+
+
+def profile_new_page(board_name: str) -> str:
+    return _shell(board_name, "new profile", "/roles", NEW_PROFILE_JS)

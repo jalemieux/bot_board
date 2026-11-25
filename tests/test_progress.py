@@ -12,6 +12,8 @@ sys.path.insert(0, str(ROOT))
 os.environ["BOT_BOARD_PROGRESS"] = "0"      # the sweep is called by hand here
 from fastapi.testclient import TestClient
 from app import db, main, progress
+sys.path.insert(0, str(ROOT / "tests"))
+import regpages
 
 LONG_AGO = "2026-01-01T00:00:00+00:00"
 
@@ -110,8 +112,9 @@ class WhoMayClaim(Base):
         self.add("lena", profile="artist", channels=[self.art], claims="open")
         r = self.client.put("/api/fleet/bots/lena/channels", headers=self.human, json={"channels": []})
         self.assertEqual(r.status_code, 200, r.text)                           # unbinding is fine too
-        self.assertIn("Takes new work by default", self.client.get("/fleet/profiles/artist").text)
-        self.assertNotIn("Specialized", self.client.get("/fleet/profiles/artist").text)
+        page = regpages.profile_html(self.client, "artist")
+        self.assertIn("Takes new work by default", page)
+        self.assertNotIn("Specialized", page)
         # a new profile that takes no new work; the old flag still means the same on write
         for name, body in (("sound", {"takes_new_work": False}), ("sec", {"specialized": True}), ("plain", {})):
             r = self.client.post("/api/profiles", headers=self.human, json={"name": name, "role": "x", **body})

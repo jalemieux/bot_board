@@ -63,7 +63,6 @@ class ClearAlerts(unittest.TestCase):
         self.assertEqual(bot['status'], 'stopped')
         self.assertNotIn('clear_key', bot)
         self.assertEqual(self.client.get('/api/agents/worker').json(), identity)
-        self.assertNotIn('id="fleet-attention"', self.client.get('/machines').text)
 
     def test_live_unknown_and_new_failure_are_not_silently_cleared(self):
         item = self.item()
@@ -94,11 +93,13 @@ class ClearAlerts(unittest.TestCase):
     def test_clear_controls_are_present_for_individual_and_group_alerts(self):
         fleet.want('worker', 'box', False, 'codex', 'operator')
         fleet.wanted('box', {'worker':'old failure'})
+        # the page's script draws the button (tests/test_fleet_alerts.py) from the bot's clear_key
         page = self.client.get('/machines').text
-        self.assertIn('>Dismiss</button>', page)
+        self.assertIn("'Dismiss'", page)
         self.assertIn('/api/fleet/clear', page)
+        self.assertIn('clear_key', self.client.get('/api/fleet').json()['hosts'][0]['bots'][0])
         self.report(status='running game')
-        self.assertNotIn('class="clear-alert"', self.client.get('/machines').text)
+        self.assertNotIn('clear_key', self.client.get('/api/fleet').json()['hosts'][0]['bots'][0])
 
 
 if __name__ == '__main__':

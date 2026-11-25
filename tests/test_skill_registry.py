@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
 from app import db, main, registry
+sys.path.insert(0, str(ROOT / "tests"))
+import regpages
 
 SKILL = """---
 name: release-notes
@@ -61,7 +63,7 @@ class Registry(unittest.TestCase):
         self.assertEqual(skills["github-lifecycle"]["revision"], 1)
         self.assertEqual(skills["github-lifecycle"]["author"], "board")
         self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager"])
-        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer", "product-manager", "architect", "reviewer", "voice", "security-engineer", "marketer", "ui-designer", "admin", "publisher"})
+        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer", "product-manager", "architect", "reviewer", "voice", "security-engineer", "marketer", "ui-designer", "admin", "publisher", "render-publisher"})
         dev = profiles["developer"]
         self.assertEqual(dev["skills"], [{"name": "github-lifecycle", "mandatory": False}, {"name": "forgejo-lifecycle", "mandatory": False}])
         self.assertTrue(dev["responsibilities"].startswith("Work the threads"))
@@ -79,7 +81,7 @@ class Registry(unittest.TestCase):
         self.assertNotIn("artist", self.profiles())
         # ...but the template is still offered
         names = [t["name"] for t in self.client.get("/api/profiles/templates", headers=self.human).json()["templates"]]
-        self.assertEqual(names, ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "reviewer", "security-engineer", "ui-designer", "voice"])
+        self.assertEqual(names, ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "render-publisher", "reviewer", "security-engineer", "ui-designer", "voice"])
 
     def test_a_starter_shipped_after_the_first_start_arrives_at_the_next(self):
         # #631: as with skills, a starter whose name no profile ever had becomes a profile at the next start
@@ -142,9 +144,9 @@ class Registry(unittest.TestCase):
         lister = self.client.get("/api/profiles/lister", headers=self.bot).json()["profile"]
         self.assertEqual([s["name"] for s in lister["base_skills"]], ["house-style"])     # listed or not, it is base
         self.assertIn('id="base-skills">Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">',
-                      self.client.get("/fleet/profiles/developer").text)
+                      regpages.profile_html(self.client, "developer"))
         # listed by the profile too, it is still shown as base, and not as one of the profile's own (#396)
-        page = self.client.get("/fleet/profiles/lister").text
+        page = regpages.profile_html(self.client, "lister")
         self.assertIn('id="base-skills">Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">', page)
         self.assertNotIn('name="skill" value="house-style"', page)
         self.assertIn("Skills · 1", page)
@@ -152,20 +154,21 @@ class Registry(unittest.TestCase):
     def test_the_create_form_shows_base_skills_ticked_and_fixed(self):
         # #396: ticked, disabled and noted on the form; the form's script never sends them
         self.make_base()
-        page = self.client.get("/fleet/profiles/new").text
+        shell = self.client.get("/fleet/profiles/new").text
+        page = regpages.new_profile_html(self.client)
         self.assertIn('name="skill" value="house-style" aria-label="include house-style" checked disabled>', page)
         self.assertIn('name="mandatory" value="house-style" aria-label="house-style mandatory" checked disabled>', page)
         self.assertIn("base: every bot has it. How to write.", page)
         self.assertLess(page.index('value="house-style"'), page.index('value="github-lifecycle"'))
         self.assertRegex(page, r'name="skill" value="github-lifecycle" aria-label="include github-lifecycle">')
-        self.assertIn("input[name=skill]:checked:not(:disabled)", page)
+        self.assertIn("input[name=skill]:checked:not(:disabled)", shell)       # the script, in the shell
         # what the form posts, without the base skill: the page lists it under base skills
         self.client.post("/api/profiles", headers=self.human, json={
             "name": "newbie", "role": "New.", "skills": [{"name": "github-lifecycle", "mandatory": True}]}).raise_for_status()
         self.assertEqual(self.client.get("/api/profiles/newbie", headers=self.bot).json()["profile"]["skills"],
                          [{"name": "github-lifecycle", "mandatory": True}])
         self.assertIn('Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">',
-                      self.client.get("/fleet/profiles/newbie").text)
+                      regpages.profile_html(self.client, "newbie"))
 
     def test_an_edit_keeps_base_unless_it_says_false_and_history_shows_when(self):
         self.make_base()
@@ -582,7 +585,7 @@ class Registry(unittest.TestCase):
             c.execute("ALTER TABLE profile_history DROP COLUMN takes_new_work")
         registry.init()
         got = {n: p["takes_new_work"] for n, p in self.profiles().items()}
-        self.assertEqual({n for n, v in got.items() if not v}, {"architect", "security-engineer", "publisher", "ui-designer", "sec-2"})
+        self.assertEqual({n for n, v in got.items() if not v}, {"architect", "security-engineer", "publisher", "render-publisher", "ui-designer", "sec-2"})
         self.assertTrue(got["artist"] and got["reviewer"] and got["developer"])
         registry.init()       # again: nothing changes
         self.assertEqual({n: p["takes_new_work"] for n, p in self.profiles().items()}, got)
