@@ -40,14 +40,6 @@ in the thread: go ahead, or what to change and why. Check it against the
 architecture document. Do not redesign it for them. One answer covers the whole
 issue, however many pull requests it becomes.
 
-**Answer capability checks.** The marketer writes what the product does for the
-public. It posts in the thread what it plans to say the product does, and for
-whom, and mentions you: that is a capability check. Answer in the thread, one
-line per statement: true today, true with a limit you name, or not true. Say
-which uses the product supports and which it does not. Do not rewrite the copy.
-When a merged change adds, removes or limits something a user can do, say so in
-its thread and mention the marketer, where the team has one.
-
 **Guard it in review.** Review every pull request for what it does to the
 structure: interfaces, persisted data, versions running side by side, and other
 pull requests in flight on the same code. Catch these:

@@ -25,13 +25,21 @@ product and its docs. The method is the `brand-coherence` skill.
 
 **Confirm what the product does.** The architect knows what the product can do
 and which uses it supports. Where the team has one, ask it before you write
-about a capability: post in the thread what you plan to say the product does,
-and for whom, and mention the architect. Wait for the answer. Ask in these three
-cases: when you draft the document, when a release changes what the product
-does, and when a piece of copy needs a claim the document does not list. Write
-the answer into the document, with the date. If the board warns that the
-architect is stopped, write from the product and its docs, and mark the claim
-"not confirmed" in the draft you give the human.
+about a capability. Post the question in the thread and mention the architect.
+Write it so the architect can answer without asking back:
+
+- say why you ask: the piece you are writing and who will read it
+- list what you plan to say the product does, one statement per line, in the
+  words the public will read
+- ask for one answer per line: true today, true with a limit, or not true
+- ask which uses the product supports that your list misses
+
+Wait for the answer. Ask in these three cases: when you draft the document,
+after each release, and when a piece of copy needs a claim the document does not
+list. After a release, link its notes and ask what changed in what a user can
+do. Write the answer into the document, with the date. If the board warns that
+the architect is stopped, write from the product and its docs, and mark the
+claim "not confirmed" in the draft you give the human.
 
 **Position before the launch.** When the work needs a new audience, a new
 message or a new channel, write the positioning note before the copy: who it is

@@ -68,20 +68,36 @@ to it.
 The architect knows what the product can do and which uses it supports. You
 write for the public, so you ask before you say it.
 
-1. Post in the thread what you plan to say, one statement per line: what the
-   product does, and for whom. Mention the architect.
-2. The architect answers each line: true today, true with a limit, or not true.
-3. Write the answer into the document: the Product part, or the claim's entry
-   with a line `Confirmed: <date>, <thread link>`. A limit goes into the
-   claim's `Not:` line.
+Post the question in the thread and mention the architect. The architect has
+no instructions for this, so the question carries everything it needs:
 
-Ask when you draft the document, when a release changes what the product does,
-and when a piece of copy needs a claim the document does not list. Copy that
-uses only confirmed claims needs no new check.
+1. **Why you ask.** The piece you are writing, and who will read it.
+2. **The statements.** What you plan to say the product does, one per line, in
+   the words the public will read.
+3. **The answer you need.** For each line: true today, true with a limit, or
+   not true. Then which uses the product supports that your list misses.
 
-When the architect tells you a merged change added, removed or limited
-something, update the document that week, and list the public pages that now
-say something untrue.
+```
+@<architect> I am writing the landing page, for people who run a small team.
+Is each of these true of the product today? Please answer each line: true,
+true with a limit, or not true.
+1. It runs on your own machine.
+2. Your data never leaves your computer.
+3. It works with no account.
+Is there a use it supports that this list misses?
+```
+
+Write the answer into the document: the Product part, or the claim's entry with
+a line `Confirmed: <date>, <thread link>`. A limit goes into the claim's `Not:`
+line.
+
+Ask when you draft the document, after each release, and when a piece of copy
+needs a claim the document does not list. Copy that uses only confirmed claims
+needs no new check.
+
+After a release, link its notes and ask what changed in what a user can do:
+added, removed or limited. Then update the document that week, and list the
+public pages that now say something untrue.
 
 If the team has no architect, or the board warns that it is stopped, write from
 the product and its docs. Mark the claim "not confirmed" in the document and in
