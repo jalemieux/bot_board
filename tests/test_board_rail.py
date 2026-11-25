@@ -50,25 +50,21 @@ class BoardRail(unittest.TestCase):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ");"
+        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"bbb\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ");"
                                   "localStorage.setItem('bb.seen', '{\"aaa\":0,\"bbb\":0}')")
 
     def rail(self):
         return self.page.eval_on_selector_all("#channels li.sub", "ls => ls.map(l => l.querySelector('.name').title)")
 
-    def test_a_folded_workspace_shows_only_its_unread_count(self):
-        self.page.goto("http://board.test/#bbb")
-        self.page.wait_for_selector("#channels li.ws")
-        self.assertEqual(self.rail(), ["#bbb"], "the open channel stays; unread in the other workspace does not")
-        self.assertEqual(self.page.inner_text("#channels li.ws[data-proj=aaa] .badge.sum"), "1")
-        self.page.click("#channels li.ws[data-proj=aaa] button.fold")
-        self.assertEqual(sorted(self.rail()), ["#aaa", "#bbb"], "opened, it lists its channels")
-        self.page.click("#channels li.ws[data-proj=aaa] button.fold")
-        self.assertEqual(self.rail(), ["#bbb"], "and folds again, unread or not")
+    def test_the_rail_lists_only_the_workspace_in_view_and_the_switcher_counts_the_others(self):
+        """#648: the rail is scoped to one workspace; what waits in the others is a number in the switcher, not a folded group."""
+        self.page.goto("http://board.test/c/bbb")
+        self.page.wait_for_selector("#channels li.sub")
+        self.assertEqual(self.rail(), ["#bbb"], "only the workspace in view")
         self.assertEqual(self.errors, [])
 
     def test_a_thread_with_no_replies_can_be_replied_to(self):
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         button = f"#m{self.root} button.replies.none"
         self.page.wait_for_selector(button, state="attached")
         self.page.hover(f"#m{self.root}")
@@ -96,7 +92,7 @@ class BoardRail(unittest.TestCase):
                          json={"channel": "bbb", "reply_to": self.root, "body": "the picture",
                                "image_attachment": base64.b64encode(buf.getvalue()).decode("ascii")}).raise_for_status()
         self.page.set_viewport_size({"width": 560, "height": 420})
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
         self.page.hover("#m%d" % self.root)
         self.page.click("#m%d button.replies" % self.root)
@@ -115,7 +111,7 @@ class BoardRail(unittest.TestCase):
             self.client.post("/api/messages", headers=self.human,
                              json={"channel": "bbb", "reply_to": self.root, "body": "reply number %d" % i}).raise_for_status()
         self.page.set_viewport_size({"width": 560, "height": 360})
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
         self.page.hover("#m%d" % self.root)
         self.page.click("#m%d button.replies" % self.root)
@@ -146,21 +142,22 @@ class BoardRail(unittest.TestCase):
         with db.conn() as c:     # "bound" works only in another channel of aaa, so it is not listed in #aaa
             c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, channels) VALUES ('bound','box','claude',0,'jac','now','[\"aaa.dev\"]')")
         self.client.post("/api/agents", json={"handle": "outsider", "kind": "claude-code", "workspace": "bbb"}).raise_for_status()
-        self.page.goto("http://board.test/#bbb")
-        self.page.wait_for_selector("#channels li.ws")
-        self.page.click("#channels li.ws[data-proj=aaa] .name")
+        self.page.goto("http://board.test/w/aaa/c/aaa")       # one workspace in view at a time (#648)
+        self.page.wait_for_selector("#channels li[data-slug=aaa]")
         self.page.hover("#channels li[data-slug=aaa]")
         self.page.wait_for_selector(".crew:not([hidden])")
         self.assertEqual(self.page.inner_text(".crew h3"), "#aaa · 2 bots")
         self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@jane", "@tarzan"])
-        self.page.hover("#channels li[data-slug=bbb]")
-        self.page.wait_for_function("document.querySelector('.crew h3').innerText.includes('bbb')")
-        self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@outsider"])
         # a workspace row lists every bot of the workspace, "bound" included, never the interactive session
         self.page.hover("#channels li.ws[data-proj=aaa]")
-        self.page.wait_for_function("document.querySelector('.crew h3').innerText.startsWith('aaa')")
+        self.page.wait_for_function("(document.querySelector('.crew h3') || {innerText: ''}).innerText.startsWith('aaa')")
         self.assertEqual(self.page.inner_text(".crew h3"), "aaa · 3 bots")
         self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@bound", "@jane", "@tarzan"])
+        self.page.goto("http://board.test/w/bbb/c/bbb")
+        self.page.wait_for_selector("#channels li[data-slug=bbb]")
+        self.page.hover("#channels li[data-slug=bbb]")
+        self.page.wait_for_function("(document.querySelector('.crew h3') || {innerText: ''}).innerText.includes('bbb')")
+        self.assertEqual(self.page.eval_on_selector_all(".crew .who", "e => e.map(x => x.textContent)"), ["@outsider"])
         self.page.mouse.move(700, 300)
         self.page.wait_for_selector(".crew", state="hidden")
         self.assertEqual(self.errors, [])

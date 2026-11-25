@@ -19,7 +19,7 @@
 #   PORT=9000        another port                (default 8080)
 #   BIND=0.0.0.0     reachable from other machines; a tailscale IP is better
 #   Each start keeps its PORT and BIND in $BOT_BOARD_DIR/board.addr, and status, stop and update read them back. A PORT
-#   or BIND in the environment of a run (a crontab line included) overrides the file, and the next start keeps it. To
+#   or BIND in the environment of a run overrides the file, and the next start keeps it. To
 #   go back to the defaults, run `PORT=8080 BIND=127.0.0.1 ... up`.
 #   BOT_BOARD_DIR    where the venv, db and log live (default ~/.bot_board/board)
 #   BOT_BOARD_SRC    the checkout (default ~/.bot_board/src)

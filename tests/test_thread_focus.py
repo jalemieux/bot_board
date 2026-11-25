@@ -80,7 +80,7 @@ class FocusBrowser(Base):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
+        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
 
     def visible_in_panel(self, msg_id):
         return self.page.evaluate("""(id) => { var e = document.getElementById('t' + id), p = document.getElementById('tlist');
