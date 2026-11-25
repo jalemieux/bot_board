@@ -55,17 +55,6 @@ class FleetPage(unittest.TestCase):
                 if reporting:
                     self.assertIn('before #238', page)
 
-    def test_health_timestamps_are_localizable_and_diagnostics_stay_escaped(self):
-        health = 'out of codex usage since 2026-10-17T06:57:20Z: <script>bad</script>'
-        page, _ = self.render([host('live', [bot('limited', health=health)])])
-        self.assertEqual(page.count('data-local-time datetime="2026-10-17T06:57:20Z"'), 1)
-        self.assertIn('&lt;script&gt;bad&lt;/script&gt;', page)
-        self.assertNotIn('<script>bad</script>', page)
-        self.assertIn("timeZoneName: 'short'", page)
-        self.assertIn('toLocaleString', page)
-        self.assertEqual(web._fleet_detail('bad 2026-99-99T06:57:20Z <x>'),
-                         'bad 2026-99-99T06:57:20Z &lt;x&gt;')
-
     def render(self, hosts):
         page = web.fleet_page('board', hosts)
         return page, FleetSections(page).sections
@@ -78,25 +67,10 @@ class FleetPage(unittest.TestCase):
                           bot('leaving', 'running game, stopping'), bot('old', 'stopped')]),
             host('offline', [bot('ghost'), bot('gone', 'stopped')], reporting=False),
         ])
-        self.assertIn('Needs you · 3', page)     # the usage limit, the login, the box gone dark
         self.assertIn('1 not reporting', page)
         self.assertNotIn('id="fleet-bots"', page)     # the bots are on the workspaces' Team tabs (#733)
         self.assertIn('5 up', sections['fleet-machines'])
         self.assertIn('not reporting', sections['fleet-machines'])
-        self.assertIn('offline stopped reporting', sections['fleet-attention'])
-
-    def test_usage_alert_is_grouped_and_says_nothing_needs_doing(self):
-        reason = 'out of codex usage: weekly limit; resets Monday'
-        page, sections = self.render([host('live', [
-            bot('one', health=reason),
-            bot('two', 'stopped', health=reason, want='running', set_by='op', set_at=db.now()),
-        ])])
-        attention = sections['fleet-attention']
-        self.assertEqual(attention.count('codex usage limit reached'), 1)
-        self.assertIn('once the limit resets', attention)
-        self.assertIn('@one', attention)
-        self.assertIn('@two', attention)
-        self.assertIn('Stop them', attention)
 
     def test_a_machine_with_bots_can_be_drained(self):
         page, sections = self.render([host('live', [
@@ -104,19 +78,7 @@ class FleetPage(unittest.TestCase):
             bot('retired', 'stopped', health='out of codex usage: old limit', want='stopped',
                 set_by='op', set_at=db.now()),
         ]), host('other', [])])
-        self.assertNotIn('fleet-attention', sections)
         self.assertIn('class="drain"', page)
-
-    def test_requested_start_and_failure_stay_in_view_with_a_fix(self):
-        page, sections = self.render([host('live', [
-            bot('starting', 'stopped', want='running', set_by='op', set_at=db.now()),
-            bot('broken', 'stopped', want='running', problem='codex not installed',
-                set_by='op', set_at=db.now()),
-        ])])
-        self.assertIn('Could not start 1 bot', sections['fleet-attention'])
-        self.assertIn('codex not installed', sections['fleet-attention'])
-        self.assertIn('Try again', sections['fleet-attention'])
-        self.assertIn('Leave stopped', sections['fleet-attention'])
 
     def test_a_machine_is_one_short_row_that_says_how_its_bots_run(self):
         mac = host('mac', [bot('a'), bot('b', 'stopped')], os='Darwin 25.5.0',
@@ -221,22 +183,16 @@ class FleetPage(unittest.TestCase):
         self.assertIn('Your board address is already filled in.', remote)
         self.assertNotIn('listens on this machine only', remote)
 
-    def test_credentials_and_empty_machine_states(self):
-        page, sections = self.render([host('empty', [], credentials=[
-            dict(name='claude', state='missing', detail='Run claude /login'),
-        ])])
-        self.assertIn('Run claude /login', sections['fleet-attention'])
-        # the bots it holds are not one more alert each
-        held, held_sections = self.render([host('box', [bot('dex', health='logged out of codex')],
-                                           credentials=[dict(name='codex', state='missing', detail='not logged in')])])
-        self.assertIn('codex missing on box', held_sections['fleet-attention'])
+    def test_empty_machine_states(self):
+        page, sections = self.render([host('empty', [], credentials=[dict(name='claude', state='missing', detail='Run claude /login')])])
         self.assertIn('0 up', sections['fleet-machines'])
+        self.assertNotIn('Run claude /login', page, 'the alert is the script\'s (#887)')
         self.assertIn('No box has reported yet', self.render([])[0])
 
     def test_untrusted_names_and_health_are_escaped(self):
         page, _ = self.render([host('<machine>', [bot('<worker>', health='out of usage: <script>bad()</script>')])])
         self.assertNotIn('<script>bad()</script>', page)
-        self.assertIn('&lt;script&gt;bad()&lt;/script&gt;', page)
+        self.assertNotIn('<machine>', page)
         self.assertIn('&lt;machine&gt;', page)
 
     def test_add_machine_section_is_present_even_without_hosts(self):

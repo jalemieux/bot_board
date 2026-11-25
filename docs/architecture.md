@@ -150,6 +150,18 @@ later. A route may wait for work, off the event loop, with `asyncio.to_thread(..
 not background work.
 Not: a thread a route starts and forgets.
 
+### Where a bot runs
+One way: a bot has `runs`, `container` or `host`, in `fleet_bots`; unset means its machine's setting (`BOT_RUNTIME`). The rule
+is `fleet._runs_problem`: any operating system, a new bot or an existing one; `container` needs a container runtime on the
+box; `host` on a box that chose containers needs the box's host-bots switch and a one-line reason with the apps, and the
+machine's own consent line besides; a box with no runtime has nothing to gate. `GET /api/me` answers it, and `host_bot`
+too while an older launcher reads that. Design: `docs/runtime-choice.md`.
+Example: `app/fleet.py`, `_runs_problem` and `_set_runs`.
+The machine's setting comes from one question, asked in `deploy/containers`: at install, and again with `bot_board
+containers`. Example: `deploy/containers` (the answer, the default, the exit when containers are wanted and none is installed).
+Not yet: the launcher and the keeper obey `runs` (#876), the Team tab sets it (#877). Today the board carries it, and the
+installer sets the machine's default.
+
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
 Example: `docker-compose.yml` sets it, and `run.sh` sets it for the native install (`bin/bot_board install`).
@@ -210,7 +222,7 @@ through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
 Example: `_app_page` (the board page, #862): it embeds the board's name, its limits and the header chip's count (page chrome); the
 script reads the workspaces, roster and lists from `/api`.
-Not yet: `page_fleet` (for `/machines`: #872) renders data in the route (`page_admin`, `/configuration` and `/skills`
+Not yet: `page_fleet` (for `/machines`: #872; the alerts and host banner of `/machines` are the script's since #887) renders data in the route (`page_admin`, `/configuration` and `/skills`
 are shells, #859, #861 and #874; the skill, profile and roles pages are shells, #860 and #873) (#845).
 
 ### Tests

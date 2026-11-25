@@ -414,13 +414,14 @@ API_MAP = {
                                 " personality?}; the board picks"
                                 " its name -> {handle}",
         "PUT /api/fleet/bots/{handle}": "a human asks for a bot to run on a box, or to stop {host, run, harness,"
-                                        " workspace, profile, voice, personality, kill, threads}; profile gives it a profile, or moves it to another;"
+                                        " workspace, profile, voice, personality, kill, threads, runs}; profile gives it a profile, or moves it to another;"
+                                        " runs is container or host (#875), on any box, for a new bot or an existing one;"
                                         " kill stops it now, ending the run it is in; threads"
                                         " handoff|retire releases its open threads once it has stopped; the box's"
                                         " keeper carries it out",
         "PUT /api/threads/{tid}/hidden": "a human hides a thread from the channel views, for every human; it stays in"
                                          " search and at its link, and bots still see it. DELETE brings it back",
-        "PUT /api/fleet/hosts/{name}/host-bots": "a human allows host bots on a Mac, or not {on}; the host bots on it run in a container again at their next start when it is off (#595)",
+        "PUT /api/fleet/hosts/{name}/host-bots": "a human allows host bots on a box, or not {on}; the host bots on it run in a container again at their next start when it is off (#595, any box #875)",
         "PUT /api/fleet/bots/{handle}/claims": "a human sets how a bot takes new threads {claims: open|mentioned}: open takes"
                                                " any that mention nobody; mentioned only those whose first message names it",
         "PUT /api/fleet/bots/{handle}/channels": "a human binds a bot to channels of its workspace {channels}: it claims"
@@ -776,6 +777,7 @@ def me(agent: dict = Depends(current_agent)) -> dict:
         "admin_bot": workspaces.is_admin_bot(agent),
         "can_create_workspaces": workspaces.is_admin(agent),
         "host_bot": fleet.host_bot(agent["handle"]),     # the board's word that this bot runs on its host (#595), else null
+        "runs": fleet.runs_of(agent["handle"]),          # where this bot is set to run: container, host, or null for its machine's default (#875)
         "cursor": db.cursor(),
         "inbox_total": len(unread),
         "conversations": [c["slug"] for c in db.list_boards(kind="conversation", agent_id=agent["id"])],
@@ -991,10 +993,13 @@ class FleetWantIn(BaseModel):
                               " later with PUT /api/fleet/bots/{handle}/voice.")
     personality: str | None = Field(default=None, max_length=MAX_VOICE, description="Who the bot is: expression only,"
                                     " task rules still win. Changed later with PUT /api/fleet/bots/{handle}/voice.")
-    host_reason: str | None = Field(default=None, max_length=200, description="Makes a NEW bot a host bot (#595): it"
-                                    " runs outside a container, as the operator, on a Mac whose host switch is on."
-                                    " The one-line reason it needs the host. Refused for an existing bot, a box that"
-                                    " is not a Mac, or a box with the switch off.")
+    runs: Literal["container", "host"] | None = Field(default=None, description="Where the bot runs (#875): container, or"
+                                                      " host (outside a container, as the operator). Unset leaves it as it"
+                                                      " is. Any box and any bot, new or existing. container is refused on a"
+                                                      " box with no container runtime. host on a box that chose containers"
+                                                      " needs its host-bots switch on, a host_reason and the host_apps.")
+    host_reason: str | None = Field(default=None, max_length=200, description="Why the bot needs the host: one line. Sent"
+                                    " alone it means runs host, as an older client sends it.")
     host_apps: list[str] | None = Field(default=None, max_length=20, description="With host_reason: the apps"
                                         " the bot uses on the host, by name.")
 
@@ -1034,8 +1039,11 @@ def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dic
 def fleet_hosts(agent: dict | None = Depends(optional_agent)) -> dict:
     """Every box a keeper has reported, with its load and its bots. What a box says about its secrets (a hash of the set it
     holds, the names its environment also holds) goes to a human only (#557)."""
-    hosts = fleet.hosts(private=bool(agent and agent["kind"] == "human"))
-    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER}
+    human = bool(agent and agent["kind"] == "human")
+    hosts = fleet.hosts(private=human)
+    # claude_token_due: the fleet's claude token once it is two weeks from a year old ({set_at, days_left, renew_by}), else null; a
+    # human only, like the secrets' state: the Machines page's script words the alert from it (#887)
+    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER, "claude_token_due": fleet.claude_token_due() if human else None}
 
 
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
@@ -1070,15 +1078,24 @@ def fleet_want(handle: str, body: FleetWantIn, agent: dict = Depends(current_age
     workspaces.require_human(agent, "only a human starts or stops a bot from the board")
     if not db.HANDLE_RE.fullmatch(handle):
         raise HTTPException(422, "handle: letters, digits, dot, dash, underscore; 2 to 32 characters")
+    existed = fleet.known_bot(handle)
+    before = fleet.runs_of(handle) or fleet.runs_default(body.host)
     why = fleet.want(handle, body.host, body.run, body.harness, agent["handle"], body.kill,
                      workspace=(body.workspace or "").lower() or None, threads=body.threads,
                      profile=(body.profile or "").strip().lower() or None,
                      channels=[c.strip().lower() for c in body.channels] if body.channels is not None else None,
                      voice=_text_or_none(body.voice), personality=_text_or_none(body.personality),
-                     host_reason=body.host_reason, host_apps=body.host_apps, claims=body.claims)
+                     host_reason=body.host_reason, host_apps=body.host_apps, claims=body.claims, runs=body.runs)
     if why:
         raise HTTPException(409, why)
-    return {"ok": True}
+    out: dict = {"ok": True}
+    if body.runs and existed and before != body.runs:
+        # an existing bot changes where it runs: it restarts when idle, and its harness session is not the same one: a container keeps
+        # it on a volume, the host in the user's own directory (docs/runtime-choice.md)
+        fleet.restart(handle, agent["handle"])
+        out["note"] = (f"{handle} runs in a different place now: it restarts when it is idle and starts a new harness session,"
+                       " because a session lives in the container's volume or on the host, not both.")
+    return out
 
 
 class FleetHostDetailsIn(BaseModel):
@@ -2672,7 +2689,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     hosts = fleet.hosts()
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts),
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
-                          claude_token=fleet.claude_token_due(), page=page)
+                          page=page)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
