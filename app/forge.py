@@ -260,3 +260,34 @@ def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None
         if isinstance(i, dict) and isinstance(i.get("number"), int):
             out.append({"number": i["number"], "title": str(i.get("title") or "")})
     return out
+
+
+def open_line(thread_id: int, timeout: float = 2.0, failed: list | None = None) -> str:
+    """The line a release or hand-off notice adds (#932): "Open on the forge for this thread: PR #858 (title), PR #860 (title)."
+    Numbers and titles only, titles on one line with their @handles flattened so they mention nobody. "" when nothing is open, when the
+    workspace has no repository, or when the forge cannot be asked in `timeout` seconds: a release is never blocked or changed by the
+    forge. Call it before taking the write lock, never under it. `failed` is a list the caller keeps across several threads: once the
+    forge failed, the rest are not asked, so a dead forge costs one timeout."""
+    if failed:
+        return ""
+    try:
+        repo = workspaces.thread_repository(thread_id)
+        items = open_for_thread(repo, thread_id, timeout=timeout) if repo else []
+    except Exception:       # a hand-off must go through whatever the forge or the lookup does
+        if failed is not None:
+            failed.append(1)
+        return ""
+    if not items:
+        return ""
+    parts = []
+    for i in items[:10]:
+        title = db.MENTION_RE.sub(r"\1", " ".join(i["title"].split()))[:100]
+        parts.append("PR #%d (%s)" % (i["number"], title))
+    more = " and %d more" % (len(items) - 10) if len(items) > 10 else ""
+    return "Open on the forge for this thread: " + ", ".join(parts) + more + "."
+
+
+def line_source():
+    """open_line for a loop over threads (a bot stopped with several): after the first failure it asks no more (#932)."""
+    failed: list = []
+    return lambda tid: open_line(tid, failed=failed)

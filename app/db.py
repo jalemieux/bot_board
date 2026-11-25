@@ -1161,20 +1161,37 @@ def claim_thread(tid: int, agent: dict) -> dict:
         return _claim_thread(c, tid, agent)
 
 
-def release_thread(tid: int, agent: dict, to: str | None = None) -> dict:
+def _check_release(c, tid: int, agent: dict, to: str | None):
+    """(root, claim) of a thread the caller may release; raises what releasing would raise before it does anything."""
+    from . import workspaces
+    root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+    if root is None:
+        raise KeyError("no such thread root")
+    claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+    if claim is None and to is None:
+        return root, claim
+    if agent["id"] not in ((claim["agent_id"],) if claim else ()) + (root["agent_id"],) and not workspaces.is_admin(agent):
+        raise PermissionError("only the worker, thread author or an administrator can release it")
+    return root, claim
+
+
+def can_release(tid: int, agent: dict, to: str | None = None) -> bool:
+    """Raise what a release would raise on who is asking, without releasing and without the write lock: the route asks this
+    before the forge is (#932), so no caller makes the board read a repository it has no right to release a thread in. True when
+    there is something to release: a claim to drop, or a bot to hand the thread to."""
+    _, claim = _check_release(conn(), tid, agent, to)
+    return claim is not None or to is not None
+
+
+def release_thread(tid: int, agent: dict, to: str | None = None, note: str = "") -> dict:
     """Release a thread for any bot to pick up, or, with `to`, hand it to that bot (#468): the
-    claim moves in one transaction, so no other launcher can take it in between."""
+    claim moves in one transaction, so no other launcher can take it in between.
+    `note` is a line the caller already has (the open pull requests, #932); it is added to the notice as it is."""
     from . import workspaces
     with _write_lock, conn() as c:
-        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
-        if root is None:
-            raise KeyError("no such thread root")
-        claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+        root, claim = _check_release(c, tid, agent, to)
         if claim is None and to is None:
             return {"thread_id": tid, "worker": None}
-        if agent["id"] not in ((claim["agent_id"],) if claim else ()) + (root["agent_id"],) \
-                and not workspaces.is_admin(agent):
-            raise PermissionError("only the worker, thread author or an administrator can release it")
         if to is not None:
             target = get_agent_by_handle(to.lstrip("@"))
             if target is None:
@@ -1184,7 +1201,7 @@ def release_thread(tid: int, agent: dict, to: str | None = None) -> dict:
             c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
             worker = _claim_thread(c, tid, target, named=True)      # its checks: refused, nothing changes
             post_message(get_board_by_id(root["board_id"])["slug"], agent["id"],
-                         f"Thread handed to @{target['handle']} by @{agent['handle']}.", reply_to=tid,
+                         f"Thread handed to @{target['handle']} by @{agent['handle']}." + (" " + note if note else ""), reply_to=tid,
                          meta={"kind": "thread_handed", "to": target["handle"]}, system=True, within=c, mentions=[])
             return worker
         if workspaces.is_archived(root["board_id"]):
@@ -1192,7 +1209,7 @@ def release_thread(tid: int, agent: dict, to: str | None = None) -> dict:
         c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
         if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
             return {"thread_id": tid, "worker": None}
-        post_message(get_board_by_id(root["board_id"])["slug"], agent["id"], "Thread worker released; available for pickup.",
+        post_message(get_board_by_id(root["board_id"])["slug"], agent["id"], "Thread worker released; available for pickup." + (" " + note if note else ""),
                      reply_to=tid, meta={"kind": "thread_released"}, system=True, within=c, mentions=[])
     return {"thread_id": tid, "worker": None}
 
@@ -1217,13 +1234,18 @@ def open_threads(handles: list[str] | None = None) -> dict[str, list[dict]]:
     return out
 
 
-def hand_off_threads(handle: str, by: dict) -> int:
+def hand_off_threads(handle: str, by: dict, note=None) -> int:
     """Release every open thread a stopped bot holds, each with a pickup notice saying who
-    released it and why, so the next watching bot claims it. Returns how many."""
+    released it and why, so the next watching bot claims it. Returns how many. `note(thread_id)` gives an extra line for a notice (#932); it is
+    called before the write lock is taken, and a failure of it leaves the notice as it was."""
     from . import workspaces
     bot = get_agent_by_handle(handle)
     n = 0
     for t in open_threads([handle]).get(handle.lower(), []):
+        try:
+            extra = (note(t["thread_id"]) if note else "") or ""
+        except Exception:
+            extra = ""
         with _write_lock, conn() as c:
             root = c.execute("SELECT * FROM messages WHERE id=?", (t["thread_id"],)).fetchone()
             if workspaces.is_archived(root["board_id"]):
@@ -1232,7 +1254,7 @@ def hand_off_threads(handle: str, by: dict) -> int:
                              (root["id"], bot["id"])).rowcount:
                 continue
             post_message(get_board_by_id(root["board_id"])["slug"], by["id"],
-                         f"Thread worker released by @{by['handle']} when stopping @{bot['handle']}; available for pickup.",
+                         f"Thread worker released by @{by['handle']} when stopping @{bot['handle']}; available for pickup." + (" " + extra if extra else ""),
                          reply_to=root["id"], meta={"kind": "thread_released"}, system=True, within=c, mentions=[])
         n += 1
     return n

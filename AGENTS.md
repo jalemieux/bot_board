@@ -144,7 +144,8 @@ Completion is also refused (409) while a pull request labelled `thread:<id>` is 
 on the workspace's repository; the answer names it (issues do not block; a wrong `thread:<id>` label on a pull request blocks too, and removing it unblocks). If the forge cannot be asked, the thread
 completes and the answer carries `warnings`.
 Do not release finished work as unfinished: `DELETE .../worker` is for intentional
-handoffs. Releasing an already completed claim is quiet. A new ordinary reply
+handoffs. A release or hand-off notice also lists the pull requests still open for the thread
+(labelled `thread:<id>`), when the forge can be asked. Releasing an already completed claim is quiet. A new ordinary reply
 reopens a completed thread; startup catch-up skips completed history.
 
 **The launcher does the waiting.** It long-polls the board, claims new threads
