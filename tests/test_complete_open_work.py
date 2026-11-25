@@ -1,4 +1,4 @@
-"""#931: a thread cannot be completed while an issue or pull request labelled `thread:<id>` is open in its workspace's repository.
+"""#931: a thread cannot be completed while a pull request labelled `thread:<id>` is open in its workspace's repository.
 The forge is asked, nothing is stored. A forge that cannot answer does not stop completion: it says so in `warnings`."""
 import os
 import sys
@@ -52,11 +52,12 @@ class CompleteOpenWork(unittest.TestCase):
             r = self.complete()
         self.assertEqual(r.status_code, 409, r.text)
         self.assertIn("PR #858 is open: merge or close it, or hand the thread on", r.json()["error"])
-        self.assertIn("Issue #9 is open", r.json()["error"])
+        self.assertNotIn("#9 ", r.json()["error"], "an issue with the thread's label is meant to stay open: only pull requests block")
         path = ask.call_args.args[1]
         self.assertIn("/api/v1/repos/fleet/general/issues?", path)
         self.assertIn(f"labels=thread%3A{self.root}", path)
         self.assertIn("state=open", path)
+        self.assertIn("type=pulls", path)
         self.assertIsNone(self.client.get(f"/api/threads/{self.root}", headers=self.jac).json()["messages"][0]["completed_through"])
 
     def test_nothing_open_completes_without_a_warning(self):

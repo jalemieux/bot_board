@@ -216,16 +216,17 @@ OPEN_TIMEOUT = 5        # seconds: completing a thread waits this long for the f
 
 
 def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None) -> list[dict]:
-    """The open issues and pull requests of a repository that carry the label `thread:<id>` (#931): the forge's own record of
-    work that belongs to a thread. [{"number", "pull"}], oldest first. The label is built here from an integer and quoted, the
+    """The open pull requests of a repository that carry the label `thread:<id>` (#931): the forge's own record of work
+    that belongs to a thread. Issues are not asked for: a follow-up issue keeps the thread's label and is meant to stay open.
+    [{"number"}], oldest first. The label is built here from an integer and quoted, the
     path is the repository's, and each item is checked for the label again, so a loose match on the forge is not a block."""
     label = "thread:%d" % int(thread_id)
-    q = urllib.parse.urlencode({"state": "open", "labels": label, "limit": 50})
+    q = urllib.parse.urlencode({"state": "open", "type": "pulls", "labels": label, "limit": 50})
     status, data = _call("GET", _repo_path(full_name, "/issues?" + q), read=True, timeout=timeout or OPEN_TIMEOUT)
     if status != 200 or not isinstance(data, list):
-        raise ForgeError(f"the forge answered {status} when asked for the open work labelled {label}")
-    out = [{"number": it["number"], "pull": it.get("pull_request") is not None} for it in data
-           if isinstance(it, dict) and isinstance(it.get("number"), int) and it.get("state", "open") == "open"
+        raise ForgeError(f"the forge answered {status} when asked for the open pull requests labelled {label}")
+    out = [{"number": it["number"]} for it in data
+           if isinstance(it, dict) and isinstance(it.get("number"), int) and it.get("state", "open") == "open" and it.get("pull_request") is not None
            and label in [str(l.get("name")) for l in it.get("labels") or [] if isinstance(l, dict)]]
     return sorted(out, key=lambda i: i["number"])
 
