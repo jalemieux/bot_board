@@ -154,6 +154,7 @@ def _startup() -> None:
         routines.start_runner(int(os.environ.get("ROUTINES_INTERVAL", "30")))
     if os.environ.get("BOT_BOARD_PROGRESS", "1") != "0":   # keeping work moving: the board's own sweep
         progress.start(int(os.environ.get("PROGRESS_INTERVAL", "300")))
+    forge.start_wanted(int(os.environ.get("FORGE_WANTED_INTERVAL", "10")))      # the first repository, when a request wanted it (#841)
 
 
 # ------------------------------------------------------------------ auth
@@ -1048,19 +1049,9 @@ def fleet_report(name: str, body: FleetReportIn, agent: dict = Depends(current_a
             fleet.start_team(name.lower(), first["harness"], (body.operators or [agent["handle"]])[0])
         except Exception as exc:       # the keeper still needs the default_bot answer; the team is a courtesy
             print(f"bot_board: the preset team did not start on {name}: {exc}", flush=True)
-        # the first workspace was made at sign-up, before the forge had an address (#650, #715): try its repository now, off
-        # the keeper's request, since the forge may be slow and the keeper is waiting for its answer
-        def _first_repository():
-            try:
-                # the actor is the workspace's own owner, as the board has it, never a handle the report names: a keeper's
-                # operators list is its own claim, and ensure_repository decides permission from the actor it is given
-                ws = workspaces.find(workspaces.FIRST_RUN_WORKSPACE)
-                owner = db.get_agent_by_id(ws["owner_id"])
-                if owner:
-                    forge.ensure_repository(workspaces.FIRST_RUN_WORKSPACE, owner)
-            except Exception as exc:       # best effort: the Team tab offers Create repository
-                print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {exc}", flush=True)
-        threading.Thread(target=_first_repository, daemon=True).start()
+        # the first workspace was made at sign-up, before the forge had an address (#650, #715): its repository is wanted now.
+        # The forge may be slow and the keeper is waiting for its answer, so this leaves a row and a loop of the board does it (#841)
+        forge.want_first_repository()
     return {"ok": True, "want": fleet.wanted(name.lower(), body.problems) + fleet.leftovers(name.lower()), "secrets": fleet.secrets_version(),
             "release": COMMIT, "min_protocol": versions.MIN_PROTOCOL,
             **({"default_bot": first} if first else {})}
