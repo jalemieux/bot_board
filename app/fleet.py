@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 import re
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import db
 from .errors import Conflict
@@ -269,7 +270,11 @@ def claude_token_due() -> dict | None:
     if row is None:
         return None
     left = CLAUDE_TOKEN_DAYS - (db.seconds_since(row["set_at"]) or 0) / 86400
-    return {"set_at": row["set_at"], "days_left": round(left)} if left < 14 else None
+    if left >= 14:
+        return None
+    # days_left counts the day it ends as one, so 0 or less means it has ended; renew_by is that day, for the card
+    renew_by = (datetime.fromisoformat(row["set_at"]) + timedelta(days=CLAUDE_TOKEN_DAYS)).date().isoformat()
+    return {"set_at": row["set_at"], "days_left": math.ceil(left), "renew_by": renew_by}
 
 
 def secret_values() -> dict[str, str]:

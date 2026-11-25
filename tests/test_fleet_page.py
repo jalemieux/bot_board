@@ -131,11 +131,8 @@ class FleetPage(unittest.TestCase):
         self.assertIn('on the host', text)
         self.assertIn('update waiting', text)
         self.assertNotIn('stopped', text.replace('stopped reporting', ''), 'a stopped bot has no place on this page')
-        self.assertIn('2 apps found</summary>', page)
-        self.assertNotIn('Xcode', text, 'the app list is folded')
-        self.assertIn('Xcode', page)
+        self.assertNotIn('Xcode', text, 'the Mac card, with its app list, is drawn by the script (tests/test_host_card_script.py)')
         self.assertIn('class="chip prob">claude missing', page)
-        self.assertNotIn('pip bad', page.split('Host bots')[1].split('</div>')[0], 'off is not a warning')
 
     def test_the_update_and_runtime_pills_read_each_result_the_keeper_writes(self):
         for result, word, fine in (
@@ -181,21 +178,24 @@ class FleetPage(unittest.TestCase):
     def test_the_configuration_page_is_an_empty_shell_that_reads_the_api(self):
         # #861 (part of #845): the route reads no host, profile or skill for it; the page's script reads /api/fleet/secrets
         hosts = [host('SECRETBOX', [])]
-        page = web.fleet_page('board', hosts, profiles=[{"name": "SECRETPROFILE", "role": "x"}], skills=[{"name": "SECRETSKILL"}], page='configuration')
-        self.assertEqual(page, web.configuration_page('board'))
+        page = web.configuration_page('board')
         for gone in ('SECRETBOX', 'SECRETPROFILE', 'SECRETSKILL', 'id="tab-machines"', 'id="tab-roles"', 'id="tab-skills"', 'fleet-machines'):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Configuration</h1>', 'data-panes="tab-settings"', 'id="secrets"', 'id="secretlist"', 'id="fleet-add-machine"',
                      "'/api/fleet/secrets'"):
             self.assertIn(kept, page)
         self.assertIn('id="tab-machines"', web.fleet_page('board', hosts, page='machines'), 'Machines still draws its own data (#872)')
+        # the Claude login card says when the token is near its year (#880), by the rule of fleet.claude_token_due
+        self.assertIn("d.claude_token_due", page)       # the server decides when it is near: no 14 in the script
+        self.assertNotIn("left < 14", page)
+        for said in ("'expires today'", "It expired on ", "Replace it before then.", "status.bad{background:var(--accent)"):      # sage's four points (#880)
+            self.assertIn(said, page)
 
     def test_the_skills_page_is_an_empty_shell_that_reads_the_api(self):
         # #874 (part of #845): the route reads no skill or profile for it; the script reads /api/skills and /api/profiles
         skill = {"name": "SECRETSKILL", "description": "d", "revision": 1, "updated_at": "2026-01-01T00:00:00+00:00", "author": "jac",
                  "base": False, "used_by": []}
-        page = web.fleet_page('board', [host('SECRETBOX', [])], profiles=[{"name": "SECRETPROFILE", "role": "x"}], skills=[skill], page='skills')
-        self.assertEqual(page, web.skills_page('board'))
+        page = web.skills_page('board')
         for gone in ('SECRETSKILL', 'SECRETPROFILE', 'SECRETBOX', 'id="tab-machines"', 'id="tab-roles"'):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Skills</h1>', 'data-panes="tab-skills"', 'id="skills-list"', 'id="skill-add"', "get('/api/skills')", "get('/api/profiles')"):

@@ -247,9 +247,9 @@ class BoardSide(unittest.TestCase):
         h = fleet.hosts()[0]
         self.assertEqual(h["bots"][0]["session_started"], "2026-10-24T10:00:00Z")
         self.assertNotIn("bot_skills", h)
-        page = self.client.get("/machines").text
-        self.assertNotIn("still lists skills", page)
-        self.assertIn("predates board-only skills (protocol 3)", page)
+        notes = " ".join(r["note"] for r in self.client.get("/api/status").json()["versions"])     # the page's script draws these (#888)
+        self.assertNotIn("still lists skills", notes)
+        self.assertIn("predates board-only skills (protocol 3)", notes)
 
 
 if __name__ == "__main__":

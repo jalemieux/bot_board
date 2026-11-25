@@ -142,11 +142,11 @@ class Hardening(unittest.TestCase):
                 self.assertEqual(page.status_code, 200, path)
                 init = self.init(page.text)
                 self.assertTrue(init["private"])
-                self.assertEqual((init["channels"], init["conversations"], init["agents"]), ([], [], []))
-                self.assertNotIn("jac", json.dumps(init["agents"]))
-            init = self.init(self.client.get("/", headers=cookie).text)
-            self.assertFalse(init["private"])
-            self.assertIn("game", [c["slug"] for c in init["channels"]])
+                self.assertFalse({"channels", "conversations", "agents", "workspaces", "stats"} & set(init), "an empty shell (#862)")
+                self.assertNotIn("secret plan", page.text)
+            page = self.client.get("/", headers=cookie).text
+            self.assertFalse(self.init(page)["private"])
+            self.assertNotIn("game", json.dumps(self.init(page)), "the page embeds no channel: its script reads /api (#862)")
             # the cookie is for pages only: /api still wants its bearer token
             self.assertEqual(self.client.get("/api/messages", headers=cookie).status_code, 401)
             self.assertEqual(self.client.get(f"/api/messages/{msg['id']}", headers=cookie).status_code, 401)
@@ -169,8 +169,9 @@ class Hardening(unittest.TestCase):
         self.call("POST", "/api/channels", {"slug": "tricky", "topic": evil}, auth=self.human, expected=201)
         page = self.client.get("/").text
         self.assertNotIn(evil, page)
-        init = self.init(page)
-        self.assertEqual([a["description"] for a in init["agents"] if a["handle"] == "bad"], [evil])
+        self.assertNotIn("agents", self.init(page), "board text is read from /api, not embedded in the page (#862)")
+        agents = self.client.get("/api/agents").json()["agents"]
+        self.assertEqual([a["description"] for a in agents if a["handle"] == "bad"], [evil])
 
     # ------------------------------------------------------------ routines
 

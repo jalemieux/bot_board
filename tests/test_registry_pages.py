@@ -1,6 +1,8 @@
 """Skills and Profiles on /fleet, and the pages under /fleet/skills/ and /fleet/profiles/.
 Run with python -m unittest discover -s tests."""
+import json
 import os
+import shutil
 import tempfile
 import threading
 import unittest
@@ -10,8 +12,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 from fastapi.testclient import TestClient
 from app import db, main, registry_web
+import regpages
+from test_skills_shell import run as draw_skills      # the Skills page's script run under node (#874)
 
 VOID = {"br", "img", "input", "meta", "link", "hr", "col", "wbr", "source"}
 
@@ -115,9 +120,11 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('<a href="/a/wren">wren</a>', page)
 
     def test_skill_page_edits_previews_and_lists_history_and_users(self):
-        r = self.client.get("/fleet/skills/release-notes")
-        self.assertEqual(r.status_code, 200)
-        page = r.text
+        shell = self.client.get("/fleet/skills/release-notes")
+        self.assertEqual(shell.status_code, 200)
+        self.assertIn('id="reg"', shell.text)                     # an empty shell: the script reads /api
+        self.assertNotIn("<h1>release-notes</h1>", shell.text)       # nothing of the skill is in the HTML: the script fills it in
+        page = regpages.skill_html(self.client, "release-notes")
         self.balanced(page)
         self.assertIn("<h1>release-notes</h1>", page)
         self.assertIn("Save as rev 2", page)
@@ -135,27 +142,26 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("Notes &lt;for&gt; a tag.", page)
         self.assertNotIn("<for>", page)
         # the seeded skill is used by developer, so its delete is refused on the page too
-        page = self.client.get("/fleet/skills/github-lifecycle").text
+        page = regpages.skill_html(self.client, "github-lifecycle")
         self.balanced(page)
         self.assertIn("Used by · 3", page)
         self.assertIn('<a class="chip" href="/fleet/profiles/developer">developer</a> <span class="dim">1 bot · @jane', page)
         self.assertIn('data-name="github-lifecycle" data-rev="1" disabled>', page)
         self.assertIn("Refused while 3 profiles list it: architect, developer, product-manager.", page)
-        self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 404)
+        self.assertEqual(self.client.get("/api/skills/nope?json").status_code, 404)      # the shell answers 200; the page says so from this
         # history grows and old revisions offer restore
         self.client.put("/api/skills/release-notes", headers=self.human,
                         json={"body": "## Steps\n\nNew.\n", "fields": {"description": "Notes."}, "base_revision": 1,
                               "reason": "shorter"}).raise_for_status()
-        page = self.client.get("/fleet/skills/release-notes").text
+        page = regpages.skill_html(self.client, "release-notes")
         self.assertIn("History · 2", page)
         self.assertIn('class="act restore needs-me" data-rev="1"', page)
         self.assertNotIn('data-rev="2">restore', page)
         self.assertIn("shorter", page)
 
     def test_profile_page_edits_in_place_and_shows_bots_text_history_and_lineage(self):
-        r = self.client.get("/fleet/profiles/developer")
-        self.assertEqual(r.status_code, 200)
-        page = r.text
+        self.assertIn('id="reg"', self.client.get("/fleet/profiles/developer").text)
+        page = regpages.profile_html(self.client, "developer")
         self.balanced(page)
         self.assertIn("<h1>developer</h1>", page)
         self.assertIn('href="/fleet/profiles/new?from=developer">Clone</a>', page)
@@ -170,7 +176,6 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="reason" required', page)
         self.assertIn("Save as rev 2", page)
         self.assertIn("History · 1", page)
-        self.assertIn('"revision": 1', page)
         self.assertIn("Bots with this profile · 1", page)
         self.assertIn('<a href="/a/jane">@jane</a>', page)
         self.assertIn('class="reset" data-handle="jane"', page)
@@ -179,16 +184,15 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("from the shipped developer template", page)
         self.assertIn('data-name="developer" disabled>Delete this profile</button>', page)
         self.assertIn("Not while 1 bot carries it.", page)
-        self.assertEqual(page.count("<form"), 2)        # the shell's search form and the edit form
-        self.assertEqual(self.client.get("/fleet/profiles/nope").status_code, 404)
+        self.assertEqual(page.count("<form"), 1)        # the edit form
+        self.assertEqual(self.client.get("/api/profiles/nope").status_code, 404)
         # saved: the page shows the new revision, the dropped skill unticked, and the history grown
         self.client.put("/api/profiles/developer", headers=self.human, json={
             "role": "A developer, on Forgejo.", "skills": [{"name": "forgejo-lifecycle", "mandatory": True}],
             "base_revision": 1, "reason": "Forgejo cutover"}).raise_for_status()
-        page = self.client.get("/fleet/profiles/developer").text
+        page = regpages.profile_html(self.client, "developer")
         self.balanced(page)
         self.assertIn("Save as rev 3", page)
-        self.assertIn('"revision": 2', page)
         self.assertIn("A developer, on Forgejo.", page)
         self.assertIn('name="skill" value="github-lifecycle" aria-label="include github-lifecycle">', page)
         self.assertIn("Skills · 1", page)
@@ -199,14 +203,15 @@ class RegistryPages(unittest.TestCase):
         self.client.post("/api/profiles", headers=self.human, json={
             "name": "developer-2", "role": "Dev two", "skills": [{"name": "release-notes"}], "from": "developer"}).raise_for_status()
         self.assertIn('<a class="chip" href="/fleet/profiles/developer-2">developer-2</a>',
-                      self.client.get("/fleet/profiles/developer").text)
-        page = self.client.get("/fleet/profiles/developer-2").text
+                      regpages.profile_html(self.client, "developer"))
+        page = regpages.profile_html(self.client, "developer-2")
         self.assertIn('cloned from <a href="/fleet/profiles/developer">developer</a>', page)
         self.assertIn("No bot carries it yet.", page)
         self.assertIn('data-name="developer-2">Delete this profile</button>', page)
 
     def test_the_create_form_starts_from_a_template_or_a_profile(self):
-        page = self.client.get("/fleet/profiles/new").text
+        self.assertIn('id="reg"', self.client.get("/fleet/profiles/new").text)
+        page = regpages.new_profile_html(self.client)
         self.balanced(page)
         self.assertIn("<h2>Start from</h2>", page)
         for key in ("", "template:developer", "template:artist", "template:lore-writer", "developer", "artist", "lore-writer"):
@@ -216,23 +221,26 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('name="skill" value="github-lifecycle"', page)
         self.assertIn('name="mandatory" value="release-notes"', page)
         self.assertIn('id="preview"', page)
-        page = self.client.get("/fleet/profiles/new?from=artist").text
+        page = regpages.new_profile_html(self.client, "artist")
         self.assertIn('data-key="artist" aria-pressed="true"', page)
         self.assertIn('data-key="developer" aria-pressed="false"', page)
         # once the seeded profile is gone, its name picks the template
         self.client.delete("/api/profiles/artist", headers=self.human).raise_for_status()
-        page = self.client.get("/fleet/profiles/new?from=artist").text
+        page = regpages.new_profile_html(self.client, "artist")
         self.assertIn('data-key="template:artist" aria-pressed="true"', page)
         self.assertNotIn('data-key="artist"', page)
-        # the embedded data carries the starters and the taken names, as text in a JSON block
-        self.assertIn('"taken": ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "reviewer", "security-engineer", "ui-designer", "voice"]', page)
-        self.assertIn('"kind": "template"', page)
-        self.assertIn('"kind": "profile"', page)
+        # the page's data carries the starters and the taken names (a deleted profile's name stays taken)
+        data = regpages.new_profile_data(self.client, "artist")
+        self.assertEqual(data["taken"], sorted(data["taken"]))
+        for name in ("admin", "artist", "developer", "lore-writer"):
+            self.assertIn(name, data["taken"])
+        self.assertEqual({s["kind"] for s in data["starters"]}, {"blank", "template", "profile"})
+        self.assertEqual(data["chosen"], "template:artist")
 
     def test_a_skills_bots_get_a_new_session_from_its_page(self):
         self.client.put("/api/skills/notes", headers=self.human, json={
             "body": "---\nname: notes\ndescription: Notes.\n---\n\nOne.\n", "base_revision": 0}).raise_for_status()
-        page = self.client.get("/fleet/skills/notes").text
+        page = regpages.skill_html(self.client, "notes")
         self.balanced(page)
         self.assertNotIn('id="src-check"', page)      # #328: nothing to refetch, the board is the source
         self.assertNotIn("Refetch", page)
@@ -243,7 +251,7 @@ class RegistryPages(unittest.TestCase):
             "name": "scribe", "role": "Scribe", "skills": [{"name": "notes"}]}).raise_for_status()
         self.client.put("/api/fleet/bots/ann", headers=self.human, json={
             "host": "box", "run": True, "harness": "claude", "workspace": "proj", "profile": "scribe"}).raise_for_status()
-        self.assertIn('id="reset-all"', self.client.get("/fleet/skills/notes").text)
+        self.assertIn('id="reset-all"', regpages.skill_html(self.client, "notes"))
         bot = self.register("wren", "claude-code", "proj")
         self.assertEqual(self.client.post("/api/skills/notes/reset", headers=bot).status_code, 403)
         self.assertEqual(self.client.post("/api/skills/nope/reset", headers=self.human).status_code, 404)
@@ -252,37 +260,74 @@ class RegistryPages(unittest.TestCase):
         self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["ann"])
         r = self.client.post("/api/profiles/developer/reset", headers=self.human)
         self.assertEqual(r.json()["reset"] + list(r.json()["skipped"]), ["jane"])
-        self.assertIn('id="reset-all"', self.client.get("/fleet/profiles/developer").text)
+        self.assertIn('id="reset-all"', regpages.profile_html(self.client, "developer"))
 
     def test_a_base_skill_is_set_in_the_editor_and_grouped_on_the_list(self):
         # #347: the "who gets it" segment, saved with the revision, and its own group on /fleet
-        page = self.client.get("/fleet/skills/github-lifecycle").text
+        page = regpages.skill_html(self.client, "github-lifecycle")
         self.assertIn('name="who" value="profiles" checked', page)
         r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
                             "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
         self.assertEqual(r.status_code, 200, r.text)
-        page = self.client.get("/fleet/skills/house-style").text
+        page = regpages.skill_html(self.client, "house-style")
         self.assertIn('name="who" value="base" checked', page)
         self.assertIn("Used by · every bot", page)
         self.assertIn("Refused while every bot has it", page)
         self.assertIn("(mandatory, every bot)", page)
         self.assertRegex(page, r'class="act del-skill"[^>]* disabled')
         Balance(page)
-        # /skills is an empty shell (#874): its script groups what /api/skills says
-        listed = {k["name"]: k for k in self.client.get("/api/skills").json()["skills"]}
-        self.assertTrue(listed["house-style"]["base"])
-        self.assertFalse(listed["github-lifecycle"]["base"])
-        self.assertIn("Base skills", registry_web.SKILLS_SHELL_JS)
+
+    def test_each_page_loads_and_wires_itself(self):
+        c = self.client
+        skill = "/api/skills/release-notes"
+        page = regpages.smoke(registry_web.SKILL_PAGE_JS, "/fleet/skills/release-notes", "", regpages.routes_for(c, [
+            skill + "?json", skill + "/history", "/api/profiles", skill]))
+        self.assertIn("<h1>release-notes</h1>", page)
+        prof = "/api/profiles/developer"
+        page = regpages.smoke(registry_web.PROFILE_PAGE_JS, "/fleet/profiles/developer", "", regpages.routes_for(c, [
+            prof, prof + "/history", "/api/skills", "/api/fleet", "/api/profiles", "/api/profiles/templates"]))
+        self.assertIn("<h1>developer</h1>", page)
+        page = regpages.smoke(registry_web.NEW_PROFILE_JS, "/fleet/profiles/new", "?from=artist", regpages.routes_for(c, [
+            "/api/profiles/templates", "/api/profiles", "/api/skills"]))
+        self.assertIn('data-key="artist" aria-pressed="true"', page)
+
+    def test_a_page_for_a_name_that_is_not_there_says_so(self):
+        self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 200)         # the shell; the script finds out
+        out = regpages._run(registry_web.SKILL_PAGE_JS, "(() => { const r = {}; showMissing(r, 'skill', {status: 404}); return r.innerHTML; })()", None)
+        self.assertIn("no skill with that name", out)
+
+    def drawn(self):
+        """What the /skills page's script draws from the API: /skills itself is an empty shell (#874)."""
+        return draw_skills(json.dumps(self.client.get("/api/skills").json()["skills"]), json.dumps(self.client.get("/api/profiles").json()["profiles"]))
+
+    @unittest.skipUnless(shutil.which("node"), "node is needed to run the page's script")
+    def test_a_base_skill_gets_its_own_group_on_the_skills_page_only_when_there_is_one(self):
+        # #347, #874: the group is drawn by the page's script from /api/skills; /skills sends none of it
+        self.assertNotIn("Base skills ·", self.drawn()["list"], "no group until there is a base skill")
+        self.assertNotIn("Base skills", self.client.get("/skills").text.split("<script>")[0])
+        r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
+                            "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
+        self.assertEqual(r.status_code, 200, r.text)
+        out = self.drawn()["list"]
+        base, mine, rest, other = out.index("Base skills · every bot · 1"), out.index("house-style"), out.index("Profile skills ·"), out.index("github-lifecycle")
+        self.assertLess(base, mine)
+        self.assertLess(mine, rest)
+        self.assertLess(rest, other)
 
 
 class Markdown(unittest.TestCase):
+    """The preview's Markdown subset is the skill page's script (`md()`), run under node."""
+
+    def md(self, text):
+        return regpages._run(registry_web.SKILL_PAGE_JS, "md(JSON.parse(require('fs').readFileSync(0, 'utf8')))", text)
+
     def test_subset(self):
-        html = registry_web.md_html("# T\n\npara **b** `c`\n\n- a\n- b\n  more\n\n1. one\n2) two\n\n```\nx < y\n```\n")
+        html = self.md("# T\n\npara **b** `c`\n\n- a\n- b\n  more\n\n1. one\n2) two\n\n```\nx < y\n```\n")
         self.assertEqual(html, "<h3>T</h3>\n<p>para <b>b</b> <code>c</code></p>\n<ul>\n<li>a</li>\n<li>b more</li>\n</ul>\n"
                                "<ol>\n<li>one</li>\n<li>two</li>\n</ol>\n<pre><code>x &lt; y</code></pre>")
 
     def test_everything_is_escaped(self):
-        self.assertNotIn("<script>", registry_web.md_html("<script>x</script>\n\n## <b>\n\n- <i>"))
+        self.assertNotIn("<script>", self.md("<script>x</script>\n\n## <b>\n\n- <i>"))
 
 
 if __name__ == "__main__":
