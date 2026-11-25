@@ -178,15 +178,16 @@ Question for jac: which one, and if (2) stays, which jobs it is for?
 
 ### Errors
 One way inside a module: raise `KeyError` (not found), `PermissionError` (not allowed), `ValueError` (refused input)
-or the module's `Conflict`; return a result for what a caller can act on.
+or `Conflict` (valid, but the stored state says no); return a result for what a caller can act on. `Conflict` is one
+class, in `app/errors.py`; `registry.Conflict` and `workspaces.Conflict` are that same class.
 One way to leave the process: a JSON `{"error", "status"}` for `/api`, an HTML page for a page
 (`http_error` in `app/main.py`).
-**Ways today** to turn the module's error into a status:
-1. A wrapper per area: `_ws_call` (workspaces), `_registry_call`, `_routine_call`. They agree on 404, 403 and 422.
-2. A `try/except` inside the route: the fleet routes, `fleet_clear` (answers 409 for a `ValueError` where the wrappers
-   answer 422).
-Also two classes called `Conflict` (`registry.py`, `workspaces.py`), one per module, each a `ValueError`.
-Question for jac: one wrapper for all, and one status for a refused input?
+One way to turn a module's error into a status: `_call` in `app/main.py`, for every route. A `KeyError` is 404, a
+`PermissionError` 403, a `Conflict` or `sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422. Off the event
+loop: `await asyncio.to_thread(_call, fn, *args)`.
+Not: a `try/except` in each route, and not a status different from that table for the same error. A route that turns
+an error into something other than a status (a best-effort step that is logged and goes on, a page that answers an HTML
+404) is not an error answer and may keep its own `try`.
 
 ### Logging
 One way: `print(f"module: what happened", flush=True)` to the process's output; the service or container keeps it.
