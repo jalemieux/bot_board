@@ -2669,6 +2669,8 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     page = request.url.path.strip("/")
     if page == "configuration":
         return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
+    if page == "skills":
+        return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()

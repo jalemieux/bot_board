@@ -204,6 +204,68 @@ def profiles_section(profiles: list, orphans: list) -> str:
             f'{table}</section>')
 
 
+# The Skills page as an empty shell (#874, part of #845): the script reads /api/skills and /api/profiles and draws what skills_section
+# used to draw in the route. Every value goes in with textContent. It runs only on the shell (data-page=skills).
+SKILLS_SHELL_JS = r"""
+(function () {
+  var box = document.getElementById('skills-list');
+  if (!box || !document.querySelector('.fleet-page[data-page=skills]')) return;
+  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  function get(path) {
+    return fetch(path, {headers: ME && ME.token ? {'Authorization': 'Bearer ' + ME.token} : {}})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) throw new Error(d.error || d.detail || ('HTTP ' + r.status)); return d; }); });
+  }
+  function el(tag, attrs) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
+    for (var i = 2; i < arguments.length; i++) if (arguments[i] != null) n.appendChild(typeof arguments[i] === 'string' ? document.createTextNode(arguments[i]) : arguments[i]);
+    return n;
+  }
+  function ago(iso) {
+    var t = Date.parse(iso); if (isNaN(t)) return iso || 'never';
+    var s = (Date.now() - t) / 1000;
+    return s < 60 ? Math.floor(s) + 's ago' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago';
+  }
+  function usedBy(s, botsOf) {
+    var names = s.used_by || [];
+    if (!names.length) return el('span', {'class': 'dim', text: 'no profile uses it'});
+    var n = names.reduce(function (a, p) { return a + (botsOf[p] || []).length; }, 0), chips = el('div', {'class': 'chips'});
+    names.forEach(function (p, i) { if (i) chips.appendChild(document.createTextNode(' ')); chips.appendChild(el('a', {'class': 'chip', href: '/fleet/profiles/' + encodeURIComponent(p), text: p})); });
+    return el('div', null, chips, el('div', {'class': 'by', text: n + ' bot' + (n === 1 ? '' : 's')}));
+  }
+  function table(group, withUsed, botsOf) {
+    var head = el('tr', null, el('th', {text: 'Skill'}), el('th', {text: 'Revision'}), withUsed ? el('th', {text: 'Used by'}) : null,
+                  el('th', null, el('span', {'class': 'sr-only', text: 'Actions'}))), body = el('tbody');
+    group.forEach(function (s) {
+      var page = '/fleet/skills/' + encodeURIComponent(s.name);
+      var cells = [el('td', {'class': 'who'}, el('a', {href: page, text: s.name}), el('div', {'class': 'by desc', text: s.description || ''})),
+                   el('td', {'data-label': 'revision', 'class': 'nw', text: 'rev ' + s.revision + ' \u00b7 ' + ago(s.updated_at) + ' \u00b7 ' + s.author})];
+      if (withUsed) { var u = el('td', {'data-label': 'used by'}); u.appendChild(usedBy(s, botsOf)); cells.push(u); }
+      cells.push(el('td', {'class': 'acts'}, el('a', {'class': 'act', href: page, text: 'edit'}), el('a', {'class': 'act', href: page + '#history', text: 'history'})));
+      var tr = el('tr', {id: 'skill-' + s.name}); cells.forEach(function (c) { tr.appendChild(c); }); body.appendChild(tr);
+    });
+    return el('table', {'class': 'bots skills'}, el('thead', null, head), body);
+  }
+  function draw(skills, profiles) {
+    var botsOf = {}; profiles.forEach(function (p) { botsOf[p.name] = p.bots || []; });
+    var base = skills.filter(function (s) { return s.base; }), rest = skills.filter(function (s) { return !s.base; });
+    document.getElementById('skills-count').textContent = skills.length + ' skills';
+    document.getElementById('skills-h').textContent = 'Skills \u00b7 ' + skills.length;
+    box.textContent = ''; box.className = '';
+    if (!skills.length) { box.appendChild(el('div', {'class': 'empty', text: 'No skill yet. Add one above.'})); return; }
+    if (!base.length) { box.appendChild(table(skills, true, botsOf)); return; }
+    box.appendChild(el('h3', {'class': 'skill-group', id: 'base-skills', text: 'Base skills \u00b7 every bot \u00b7 ' + base.length}));
+    box.appendChild(table(base, false, botsOf));
+    if (rest.length) { box.appendChild(el('h3', {'class': 'skill-group', text: 'Profile skills \u00b7 ' + rest.length})); box.appendChild(table(rest, true, botsOf)); }
+    var there = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    if (there) there.scrollIntoView({block: 'nearest'});
+  }
+  Promise.all([get('/api/skills'), get('/api/profiles')]).then(function (r) { draw(r[0].skills || [], r[1].profiles || []); },
+    function (e) { box.className = 'sub'; box.textContent = 'Could not load the skills: ' + e.message; document.getElementById('skills-count').textContent = ''; });
+})();
+"""
+
 REG_SECTION_JS = r"""
 (function () {
   var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}

@@ -3784,10 +3784,33 @@ def configuration_page(board_name) -> str:
 <script>{FLEET_JS}</script>""")
 
 
+def skills_page(board_name) -> str:
+    """/skills as an empty shell (#874): the list is drawn by SKILLS_SHELL_JS from /api/skills and /api/profiles. The static settings pane
+    is here because FLEET_JS expects its elements; the page's panes hide it. No skill or profile is read in the route."""
+    from . import registry_web
+    return shell(board_name, "skills", here="/skills", content=f"""
+<style>{FLEET_CSS}{registry_web.REG_CSS}</style>
+<div class="fleet-page" data-page="skills" data-panes="tab-skills">
+<div class="fleet-head"><h1>Skills</h1></div>
+<p class="sub fleet-count" id="skills-count">Loading\u2026</p>
+<noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
+<div class="tab-pane" id="tab-skills">
+<section class="fleet-section reg" id="fleet-skills"><div class="sec-head"><h2 id="skills-h">Skills</h2>{registry_web.ADD_SKILL_PANEL}</div>
+<p class="sub">Fleet-wide, and the board is their only home. A bot gets the skills of its profile when its session starts, and a base skill whatever its profile; an edit reaches every bot on it at its next prompt, which tells it to read the skill again.</p>
+<div id="skills-list" class="sub">Loading\u2026</div></section></div>
+<div class="tab-pane" id="tab-settings">
+{_ADD_MACHINE_HTML}
+{_SECRETS_HTML}
+</div></div>
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
+
+
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
     if page == "configuration":
         return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
+    if page == "skills":
+        return skills_page(board_name)              # an empty shell: its script reads /api/skills and /api/profiles (#874)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
