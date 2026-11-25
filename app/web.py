@@ -2806,7 +2806,8 @@ def _alerts(hosts: list, claude_token: dict | None = None) -> list:
                                   e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
                                   + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "") + fix))
     if claude_token:
-        when = (f'expires in {claude_token["days_left"]} days' if claude_token["days_left"] > 0 else "has expired")
+        when = ("has expired" if claude_token["days_left"] <= 0 else "expires today" if claude_token["days_left"] == 1
+                else f'expires in {claude_token["days_left"]} days')
         out.append(_alert(f"The fleet's claude token {when}",
                           f'It was set on {e(claude_token["set_at"][:10])}, and a token from <code>claude setup-token</code> '
                           'lasts a year. Make a new one and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
@@ -3261,7 +3262,7 @@ function replaceRow(x, cell, actions) {
   cancel.addEventListener('click', undo);
   inp.focus();
 }
-function claudeCard(list) {
+function claudeCard(list, due) {
   var x = list.filter(function (s) { return s.name === 'CLAUDE_CODE_OAUTH_TOKEN'; })[0], box = document.getElementById('claudecard');
   box.textContent = '';
   var cmd = sEl('code', {text: 'claude setup-token'}), copy = sEl('button', {type: 'button', text: 'Copy'});
@@ -3283,10 +3284,12 @@ function claudeCard(list) {
   });
   var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
   var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
+  // the server says when the token is near its year (fleet.claude_token_due): null, or {days_left}
+  var near = !!due, left = due ? due.days_left : null, ended = near && left <= 0, renewOn = near ? fmt(new Date(due.renew_by + 'T00:00:00')) : '';
   box.appendChild(sEl('section', {'class': 'claude-card'},
-    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x ? 'good' : 'none'), text: x ? 'set' : 'not set'})),
+    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (!x ? 'none' : ended ? 'bad' : near ? 'none' : 'good'), text: !x ? 'not set' : ended ? 'expired' : near ? (left === 1 ? 'expires today' : 'expires in ' + left + ' days') : 'set'})),
     sEl('p', {'class': 'sub', text: x
-      ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
+      ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (near ? ', set ' + fmt(d) + '. ' + (ended ? 'It expired on ' + renewOn + '. Replace it now.' : 'It expires on ' + renewOn + '. Replace it before then.') : renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
       : 'Without it, a machine with no Claude login cannot run claude bots. Every bot shares the subscription\\u2019s usage limits.'}),
     sEl('ol', null,
       sEl('li', null, 'On a machine with a browser, run ', cmd, ' ', copy, ' and copy the token it prints.'),
@@ -3307,7 +3310,7 @@ function listSecrets() {
   var box = document.getElementById('secretlist');
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
-    claudeCard(d.secrets);
+    claudeCard(d.secrets, d.claude_token_due);
     box.textContent = '';
     var body = sEl('tbody'), boxes = d.boxes || [];
     d.secrets.forEach(function (x) {
@@ -3648,7 +3651,7 @@ FLEET_CSS = """
 .fleet-page table.secrets button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .fleet-page table.secrets button:disabled,.secret-dlg button:disabled{opacity:.5;cursor:default}
 .fleet-page .status{display:inline-block;border-radius:12px;padding:1px 10px;font:600 12px var(--mono)}
-.fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}
+.fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}.fleet-page .status.bad{background:var(--accent);color:#fff}
 .fleet-page table.secrets{width:100%;border-collapse:collapse;margin:0 0 8px;border:1px solid var(--line);border-radius:10px}
 .fleet-page table.secrets th{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--dim);text-align:left;padding:8px 12px}
 .fleet-page table.secrets td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:middle}
@@ -3836,10 +3839,6 @@ def skills_page(board_name) -> str:
 
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
-    if page == "configuration":
-        return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
-    if page == "skills":
-        return skills_page(board_name)              # an empty shell: its script reads /api/skills and /api/profiles (#874)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}

@@ -1315,7 +1315,8 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes(),
+            "claude_token_due": fleet.claude_token_due()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
