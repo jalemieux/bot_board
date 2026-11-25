@@ -914,6 +914,7 @@ aside.thread .mentions{left:16px}
 .mentions li .prof.human{background:var(--human-soft);color:var(--human)}
 .mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .mentions li.sel{background:var(--sel)}
+@media (max-width:700px){.mentions li{min-height:44px;box-sizing:border-box}}      /* a tap target on a phone (#896) */
 .msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
 
 dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:22px 24px;width:min(440px,calc(100% - 32px));
