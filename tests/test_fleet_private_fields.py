@@ -1,4 +1,4 @@
-"""#557: what a box says about its secrets (secrets_version, secret_collisions) reaches a human, not an unsigned reader or a
+"""#557, #927: what a box says about its secrets (secrets_version, secret_collisions) and about which bots may run unconfined on it (host_allowed) reaches a human, not an unsigned reader or a
 bot. Run with python -m unittest discover -s tests."""
 import os
 import sys
@@ -23,7 +23,7 @@ class PrivateFields(unittest.TestCase):
         self.keeper = self.register("keeper-box", "keeper")
         self.bot = self.register("ann", "claude-code")
         r = self.client.put("/api/fleet/hosts/box", headers=self.keeper, json={
-            "bots": [], "secrets_version": "0123456789abcdef", "secret_collisions": ["GH_TOKEN"]})
+            "bots": [], "secrets_version": "0123456789abcdef", "secret_collisions": ["GH_TOKEN"], "host_allowed": ["mira"]})
         self.assertEqual(r.status_code, 200, r.text)
 
     def tearDown(self):
@@ -50,7 +50,7 @@ class PrivateFields(unittest.TestCase):
 
     def test_a_human_gets_them(self):
         h = self.host(self.jac)
-        self.assertEqual((h["secrets_version"], h["secret_collisions"]), ("0123456789abcdef", ["GH_TOKEN"]))
+        self.assertEqual((h["secrets_version"], h["secret_collisions"], h["host_allowed"]), ("0123456789abcdef", ["GH_TOKEN"], ["mira"]))
 
     def test_the_host_list_drops_them_unless_a_caller_asks_for_them(self):
         """#797: the safe shape is the default of fleet.hosts(), not a step each route remembers."""
@@ -58,7 +58,7 @@ class PrivateFields(unittest.TestCase):
         for key in fleet.PRIVATE_REPORT:
             self.assertNotIn(key, h)
         [h] = fleet.hosts(private=True)
-        self.assertEqual((h["secrets_version"], h["secret_collisions"]), ("0123456789abcdef", ["GH_TOKEN"]))
+        self.assertEqual((h["secrets_version"], h["secret_collisions"], h["host_allowed"]), ("0123456789abcdef", ["GH_TOKEN"], ["mira"]))
         [box] = fleet.secret_boxes()          # the one reader that needs them
         self.assertEqual(box["collisions"], ["GH_TOKEN"])
 

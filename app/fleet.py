@@ -318,7 +318,7 @@ def forge_token(read: bool = False) -> str:
     return ""
 
 
-PRIVATE_REPORT = ("secrets_version", "secret_collisions")      # in a box's report, for humans only: GET /api/fleet drops them for anyone else
+PRIVATE_REPORT = ("secrets_version", "secret_collisions", "host_allowed")      # in a box's report, for humans only: GET /api/fleet drops them for anyone else (host_allowed: which bots may run unconfined on the box, #927)
 
 
 def secret_boxes() -> list[dict]:
