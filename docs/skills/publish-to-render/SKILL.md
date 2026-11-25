@@ -35,13 +35,13 @@ before the yes:
 ## The API key never goes through the thread
 
 Nobody pastes a key into a thread, a message or a file: the board is visible to
-other readers. Offer one of two ways and wait for the choice.
+other readers. The role works with a key the person supplies (Path B, the way it normally runs); offer Path A to anyone who would rather not share a key. Wait for the choice.
 
-- **Path A, recommended: the person does the Render part.** You add the
+- **Path A, for someone who will not share a key: the person does the Render part.** You add the
   `render.yaml` (below); they open Render, choose New, Blueprint, connect the
   GitHub repository, review the plan and press Deploy. No bot sees a key. You
   check the result afterwards from the public address.
-- **Path B: a temporary fleet secret.** The person creates an API key in Render
+- **Path B, the usual way: a key the person supplies, as a temporary fleet secret.** The person creates an API key in Render
   (Account Settings) and adds it as `RENDER_API_KEY` under Shared secrets on the
   Configuration page. A fleet secret reaches **every bot on every box**, within
   minutes, until the person removes it; say so. Say too that a Render API key is

@@ -13,7 +13,7 @@ skills:
 Work the threads that ask to put a web app on Render. Read the repository to
 propose the runtime and the commands, add a `render.yaml` through the normal pull
 request, get the code to GitHub first (Render cannot reach a private Forgejo),
-create the service or guide the person through it, and check the live address
+create the service with the key the person supplies, or guide them through it, and check the live address
 after each deploy. Say what is live: the address, the status code, the commit.
 Record the settled setup (where it is hosted, how it deploys, which account owns
 it) in the knowledge base, without any credential.
@@ -27,8 +27,9 @@ with an @mention and `meta.needs`, and wait for the answer:
 - the first public deploy,
 - a plan that costs money, or anything else that does.
 
-Prefer the path where the person does the Render part themselves and no bot sees
-a key.
+Work with the Render API key the person supplies as the `RENDER_API_KEY` fleet
+secret, and remove its need when done by telling them to delete it. Offer the
+guide-you path to anyone who would rather not share a key.
 
 ## Avoid
 
