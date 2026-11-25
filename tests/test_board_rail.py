@@ -73,10 +73,10 @@ class BoardRail(unittest.TestCase):
                          json={"participants": ["bob"], "topic": "the two of them"}).raise_for_status()
         self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#dmh:not([hidden])")
-        self.assertEqual(self.page.inner_text("#dmh").replace("\n", " ").strip(), "Direct messages 1")
+        self.assertEqual(self.page.text_content("#dmh").strip(), "Direct messages 1")
         self.assertEqual(self.page.locator("#dms li").count(), 1)
         self.page.wait_for_selector("#cvh:not([hidden])")
-        self.assertEqual(self.page.inner_text("#cvh").replace("\n", " ").strip(), "Conversations 1")
+        self.assertEqual(self.page.text_content("#cvh").strip(), "Conversations 1")
         self.assertEqual(self.page.locator("#convs li").count(), 1)
         self.assertEqual(self.errors, [])
 
