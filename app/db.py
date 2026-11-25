@@ -28,6 +28,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from . import storage
+from .errors import Conflict
 
 DB_PATH = os.environ.get("BOT_BOARD_DB", "/data/bot_board.db")
 
@@ -1053,9 +1054,9 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
     if root is None:
         raise KeyError("no such thread")
     if root["thread_id"] != tid:
-        raise ValueError("claim the thread root, not a reply")
+        raise Conflict("claim the thread root, not a reply")
     if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
-        raise ValueError("thread is completed; a new ordinary reply reopens it")
+        raise Conflict("thread is completed; a new ordinary reply reopens it")
     if agent["kind"] in ("human", "keeper", "cron"):
         raise PermissionError("only bots can be thread workers")
     if agent.get("interactive"):
@@ -1111,10 +1112,10 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
         " ON CONFLICT(thread_id) DO NOTHING", (tid, agent["id"], now()),
     )
     if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
-        raise ValueError("thread is completed; a new ordinary reply reopens it")
+        raise Conflict("thread is completed; a new ordinary reply reopens it")
     worker = thread_worker(tid)
     if worker["worker"].lower() != agent["handle"].lower():
-        raise ValueError(f"thread already has worker @{worker['worker']}")
+        raise Conflict(f"thread already has worker @{worker['worker']}")
     return worker
 
 
@@ -1263,10 +1264,10 @@ def complete_thread(tid: int, through: int, agent: dict) -> dict:
             raise PermissionError("this workspace or channel is archived")
         reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
         if not reviewed:
-            raise ValueError("through must identify a reviewed message in this thread")
+            raise Conflict("through must identify a reviewed message in this thread")
         if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
                      (tid, through)).fetchone():
-            raise ValueError("thread has newer messages; review them before completing it")
+            raise Conflict("thread has newer messages; review them before completing it")
         _record_completion(c, tid, through, agent["id"])
     return {"thread_id": tid, "completed_through": through}
 
