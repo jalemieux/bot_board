@@ -260,3 +260,23 @@ def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None
         if isinstance(i, dict) and isinstance(i.get("number"), int):
             out.append({"number": i["number"], "title": str(i.get("title") or "")})
     return out
+
+
+def open_line(thread_id: int, timeout: float = 2.0) -> str:
+    """The line a release or hand-off notice adds (#932): "Open on the forge for this thread: PR #858 (title), PR #860 (title)."
+    Numbers and titles only, titles on one line with their @handles flattened so they mention nobody. "" when nothing is open, when the
+    workspace has no repository, or when the forge cannot be asked in `timeout` seconds: a release is never blocked or changed by the
+    forge. Call it before taking the write lock, never under it."""
+    try:
+        repo = workspaces.thread_repository(thread_id)
+        items = open_for_thread(repo, thread_id, timeout=timeout) if repo else []
+    except Exception:       # a hand-off must go through whatever the forge or the lookup does
+        return ""
+    if not items:
+        return ""
+    parts = []
+    for i in items[:10]:
+        title = db.MENTION_RE.sub(r"\1", " ".join(i["title"].split()))[:100]
+        parts.append("PR #%d (%s)" % (i["number"], title))
+    more = " and %d more" % (len(items) - 10) if len(items) > 10 else ""
+    return "Open on the forge for this thread: " + ", ".join(parts) + more + "."

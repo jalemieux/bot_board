@@ -218,7 +218,7 @@ def delete(handle: str, by: dict) -> str | None:
     if not a and not host:
         return ""
     if a:
-        db.hand_off_threads(handle, by)
+        db.hand_off_threads(handle, by, _open_line)
         db.retire_agent(a["id"])
     if host:
         seen = next((b for b in (box or {}).get("bots", []) if b["handle"].lower() == handle.lower()), {})
@@ -231,6 +231,12 @@ def delete(handle: str, by: dict) -> str | None:
                        by["handle"], now, now))
             c.commit()
     return None
+
+
+def _open_line(tid: int) -> str:
+    """The open pull requests of a thread as a line for its hand-off notice (#932); forge imports this module, so it is imported here."""
+    from . import forge
+    return forge.open_line(tid)
 
 
 def hand_off(host: str, bots: list[dict]) -> None:
@@ -246,7 +252,7 @@ def hand_off(host: str, bots: list[dict]) -> None:
             continue
         by = db.get_agent_by_handle(r["set_by"])
         if by and db.get_agent_by_handle(r["handle"]):
-            db.hand_off_threads(r["handle"], by)
+            db.hand_off_threads(r["handle"], by, _open_line)
         with db._write_lock:
             c.execute("UPDATE fleet_bots SET retired=CASE WHEN threads='retire' THEN ? ELSE retired END,"
                       " threads=NULL WHERE handle=? AND set_at=?", (db.now(), r["handle"], r["set_at"]))
