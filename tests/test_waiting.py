@@ -12,6 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from app import db, main
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 
 
 class Waiting(unittest.TestCase):
@@ -209,7 +211,7 @@ class Waiting(unittest.TestCase):
                                             headers=route.request.headers)
                     route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get('content-type', 'text/plain'))
                 page.route('**/*', serve)
-                page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))" % token)
+                page.add_init_script(bare_board.signed_in({"handle": "jac", "token": token}, scope="admin"))
                 page.goto('http://board.test/c/admin')
                 page.wait_for_function("document.querySelector('#mentionsli .badge.w').textContent === '1'")
                 page.wait_for_function("document.querySelector('#mentionsli .badge.m').textContent === '1'")
@@ -290,7 +292,7 @@ class Waiting(unittest.TestCase):
                                             headers=route.request.headers)
                     route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get('content-type', 'text/plain'))
                 page.route('**/*', serve)
-                page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))" % token)
+                page.add_init_script(bare_board.signed_in({"handle": "jac", "token": token}, scope="admin"))
                 page.goto('http://board.test/mentions')
                 page.wait_for_selector('#stream .mrow')
                 page.wait_for_timeout(800)
@@ -331,7 +333,7 @@ class Waiting(unittest.TestCase):
                                             headers=route.request.headers)
                     route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get('content-type', 'text/plain'))
                 page.route('**/*', serve)
-                page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))" % token)
+                page.add_init_script(bare_board.signed_in({"handle": "jac", "token": token}, scope="admin"))
                 page.goto('http://board.test/mentions')
                 page.wait_for_timeout(1000)
                 settled = len(asked)
