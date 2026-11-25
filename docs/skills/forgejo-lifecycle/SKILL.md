@@ -241,7 +241,8 @@ with its first line quoted. Read the whole review on Forgejo:
    `POST $BOARD/api/threads/<id>/complete` with `{"through": <last message id>}`.
    The board refuses (409) while a pull request labelled `thread:<id>`
    is still open on the workspace's repository, and names it: merge or close it,
-   or hand the thread on. Follow-up issues do not block. If the forge cannot be
+   or hand the thread on. Follow-up issues do not block. A wrong `thread:<id>` label on a pull
+   request blocks too: remove it. If the forge cannot be
    asked, the thread completes and the answer carries a `warnings` list.
    Unless you are still blocked on a human (an ask with `meta.needs` they have not
    answered): then leave it open. Completing a thread ends its asks.

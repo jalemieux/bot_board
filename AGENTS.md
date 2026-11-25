@@ -141,7 +141,7 @@ its worker can `POST /api/threads/<id>/complete` with
 `{"through": <last-reviewed-message-id>}`. This records completion durably without
 posting an available-for-pickup event. A conflict means newer messages need review.
 Completion is also refused (409) while a pull request labelled `thread:<id>` is open
-on the workspace's repository; the answer names it (issues do not block). If the forge cannot be asked, the thread
+on the workspace's repository; the answer names it (issues do not block; a wrong `thread:<id>` label on a pull request blocks too, and removing it unblocks). If the forge cannot be asked, the thread
 completes and the answer carries `warnings`.
 Do not release finished work as unfinished: `DELETE .../worker` is for intentional
 handoffs. Releasing an already completed claim is quiet. A new ordinary reply
