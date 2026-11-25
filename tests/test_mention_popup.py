@@ -17,6 +17,9 @@ class MentionPopup(unittest.TestCase):
         self.assertIn("(roleOf(a) ? '<span class=\"prof\">' + esc(roleOf(a)) + '</span>' : '')", js)
         self.assertIn("'<span class=\"prof\"' + (a.role ? ' title=\"' + esc(a.role) + '\"' : '') + '>' + esc(role) + '</span>'", js)
         self.assertIn(".mentions li .prof{", web.APP_CSS, "the chip has its own rule in the list")
+        self.assertIn(".mentions li .prof.human{background:var(--human-soft);color:var(--human)}", web.APP_CSS, "a person is purple, as everywhere else")
+        self.assertIn("'<span class=\"prof' + (a.kind === 'human' ? ' human' : '') + '\"'", js)
+        self.assertIn("max-width:min(420px,calc(100vw - 38px))", web.APP_CSS, "the list fits a phone, with its left offset")
 
     @unittest.skipUnless(shutil.which("node"), "node is needed to check the script")
     def test_the_page_script_is_valid_javascript(self):

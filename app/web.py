@@ -906,11 +906,12 @@ font:13px var(--sans);cursor:pointer;text-align:left}
 .compose .signin b{color:var(--accent)}
 .compose .signin:hover{border-color:var(--accent);color:var(--ink)}
 .mentions{position:absolute;left:22px;bottom:calc(100% - 4px);z-index:6;background:var(--panel);border:1px solid var(--line);
-border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:420px;padding:4px;list-style:none;margin:0}
+border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:min(420px,calc(100vw - 38px));padding:4px;list-style:none;margin:0}
 aside.thread .mentions{left:16px}
 .mentions[hidden]{display:none}
 .mentions li{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:12.5px var(--mono)}
 .mentions li .prof{flex:none;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
+.mentions li .prof.human{background:var(--human-soft);color:var(--human)}
 .mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .mentions li.sel{background:var(--sel)}
 .msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
@@ -2174,7 +2175,7 @@ function wireCompose(form, target){
       var a = S.agents[h];
       var role = roleOf(a);      // its sentence, the profile's role, is the tooltip
       return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
-        (role ? '<span class="prof"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
+        (role ? '<span class="prof' + (a.kind === 'human' ? ' human' : '') + '"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
         '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
     }).join('');
   }
