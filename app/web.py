@@ -3481,7 +3481,8 @@ function revealInLists(t) {
 // The hash says which tab: a tab's own name, or anything inside one, so older links such as
 // #bot-ada, #box-m1 and #secrets still land where they point, with its folded list opened.
 function showTarget() {
-  var name = decodeURIComponent(location.hash.slice(1)), t = name && document.getElementById(name);
+  var name = ''; try { name = decodeURIComponent(location.hash.slice(1)); } catch (e) {}      // a malformed hash (#%E0%A4%A) is no target, not an error (#909)
+  var t = name && document.getElementById(name);
   var shown = document.querySelector('.fleet-page').dataset.panes.split(' ');      // the panes this page shows (#644)
   var home = {'tab-machines': '/machines', 'tab-settings': '/machines', 'tab-roles': '/roles', 'tab-skills': '/skills'};
   var there = t && t.closest('.tab-pane');
