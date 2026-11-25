@@ -66,6 +66,8 @@ WS_CSS = """
 .dlg h3{margin:0 0 10px;font-size:16px}
 .dlg .form{display:flex;flex-wrap:wrap;gap:8px 16px}.dlg .form label{display:flex;gap:6px;align-items:center}
 .dlg .warn{color:var(--accent);font-weight:600}
+.dlg fieldset.runs{border:1px solid var(--line);border-radius:8px;margin:10px 0;padding:8px 12px}.dlg fieldset.runs legend{font:600 12px var(--mono);color:var(--dim);padding:0 4px}
+.dlg .runs-gate ul.req{margin:8px 0;padding-left:18px;font-size:13px}.dlg .runs-gate .warn{font-weight:600}.dlg .runs-part .form{margin:4px 0 8px}
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .ws .sr-only,.dlg .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
@@ -668,6 +670,73 @@ function dialog(title, nodes, buttons) {
   (danger ? cancel : box.querySelector('select, input') || row.lastChild).focus();
   return close;
 }
+// Where a bot runs (#877, docs/runtime-choice.md): the choice, what its machine must allow, and the reason and apps a bot needs on the
+// machine. The machine's state is said in words, not a greyed control: the choice stays clickable and the box says what blocks it.
+// o: {handle, now ('container' or 'host'), box() the machine's /api/fleet row, harness() the harness, onchange()}. It returns the
+// node, ready() (may the form be sent), changed(), values() (what the API takes) and update(), for the form to call when the machine changes.
+function runsPart(o) {
+  var choice = o.now || 'container', box = {}, why = h('input', {type: 'text', maxlength: '200', 'aria-label': 'why it needs the machine'});
+  var count = h('span', {'class': 'dim', text: '0 / 200'}), gate = h('div', {'class': 'runs-gate'}), norun = h('p', {'class': 'sub', hidden: ''});
+  var group = 'runs-' + (o.handle || 'new'), picks = {};
+  var pick = function (v, title, note) {
+    var i = h('input', {type: 'radio', name: group, value: v}); picks[v] = i;
+    i.addEventListener('change', function () { choice = v; update(); });
+    return h('label', {'class': 'check'}, i, h('span', null, h('b', {text: title}), ' ', h('span', {'class': 'dim', text: note})));
+  };
+  var fieldset = h('fieldset', {'class': 'runs'}, h('legend', {text: 'Runs'}),
+    pick('container', 'In a container', 'Walled off from the machine. The default.'),
+    pick('host', 'On this machine', 'Outside a container: it can read the user\'s files, tokens and screen.'));
+  var appsBox = h('div', {'class': 'form', role: 'group', 'aria-label': 'apps it uses'});
+  var fields = h('div', null, h('label', null, 'Why it needs the machine ', count, why), h('p', {'class': 'sub', text: 'The apps it uses'}), appsBox);
+  var note = h('p', {'class': 'sub', hidden: ''}), block = h('p', {'class': 'warn', hidden: ''});
+  var hostPart = h('div', null, gate, fields);
+  var node = h('div', {'class': 'runs-part'}, fieldset, norun, hostPart, note, block);
+  var noRuntime = function () { return !!(box.runtime && box.runtime.setting === 'host'); };
+  var gateOk = function () { return !!box.reporting && box.host_bots === true; };
+  var row = function (state, cls, text) { return h('li', null, h('b', {'class': cls, text: state}), ' ' + text); };
+  function update() {
+    box = o.box() || {};
+    var name = box.name || 'the machine', none = noRuntime();
+    fieldset.hidden = none; norun.hidden = !none; hostPart.hidden = none || choice !== 'host';
+    norun.textContent = none ? 'Every bot on ' + name + ' runs on the machine, because ' + name + ' has no container runtime. There is nothing to choose.' : '';
+    Object.keys(picks).forEach(function (v) { picks[v].checked = v === choice; });
+    gate.textContent = '';
+    var rows = [];
+    if (!box.reporting) rows.push(row('unknown', 'warn', name + ' is not reporting, so its host-bots switch and its apps are not known.'));
+    else if (box.host_bots !== true) rows.push(row('off', 'warn', 'Host bots are off on ' + name + '. A human turns them on, on the Machines page.'));
+    else rows.push(row('on', '', 'Host bots are on.'));
+    if (o.handle && box.reporting && gateOk()) {
+      var low = function (x) { return String(x).toLowerCase(); };
+      rows.push(!Array.isArray(box.host_allowed) ? row('unknown', 'dim', 'whether ' + name + ' lists @' + o.handle + ': shown to signed-in humans.')
+        : box.host_allowed.map(low).indexOf(low(o.handle)) >= 0 ? row('yes', '', name + ' lists @' + o.handle + '.')
+        : row('no', 'warn', 'Add the line ' + o.handle + ' to ~/.config/bot_board/host-bots-allowed on ' + name + '. Until then the bot runs in a container.'));
+    }
+    gate.appendChild(h('ul', {'class': 'req'}, rows));
+    fields.hidden = !gateOk();
+    appsBox.textContent = '';
+    var apps = (box.apps || []).filter(function (a) { return a && a.name; });
+    apps.forEach(function (a) { appsBox.appendChild(h('label', {'class': 'check'}, h('input', {type: 'checkbox', value: a.name}), ' ' + a.name + ' ' + (a.version || ''))); });
+    if (!apps.length) appsBox.appendChild(h('span', {'class': 'dim', text: 'none found in /Applications'}));
+    var texts = [];
+    if (!o.handle && !none && choice === 'host' && gateOk()) texts.push('After you start it, ' + name + ' must also allow this bot: add its handle as one line in ~/.config/bot_board/host-bots-allowed there. The Team tab shows the handle once the bot exists. Until then it runs in a container.');
+    if (!none && choice === 'container' && /^Darwin/.test(box.os || '') && o.harness && o.harness() === 'claude')
+      texts.push('A claude bot in a container on a Mac needs the fleet secret CLAUDE_CODE_OAUTH_TOKEN: a container cannot read the Keychain login. Set it on the Configuration page.');
+    note.hidden = !texts.length; note.textContent = texts.join(' ');
+    var why_ = ready() || none ? '' : choice !== 'host' ? '' : !box.reporting ? name + ' is not reporting.' : box.host_bots !== true ? 'Host bots are off on ' + name + '.' : 'Say why it needs the machine.';
+    block.hidden = !why_; block.textContent = why_ ? 'Waiting: ' + why_ : '';
+    if (o.onchange) o.onchange();
+  }
+  function ready() { return noRuntime() || choice !== 'host' || (gateOk() && why.value.trim().length > 0); }
+  why.addEventListener('input', function () { count.textContent = why.value.length + ' / 200'; update(); });
+  update();
+  return {node: node, update: update, ready: function () { return ready(); }, changed: function () { return !noRuntime() && choice !== o.now; },
+    values: function () {
+      if (noRuntime()) return {};
+      if (choice !== 'host') return {runs: 'container'};
+      return {runs: 'host', host_reason: why.value.trim(),
+              host_apps: Array.prototype.filter.call(appsBox.querySelectorAll('input'), function (i) { return i.checked; }).map(function (i) { return i.value; })};
+    }};
+}
 // A host bot's block (#733, from the bots page's #595): how it runs, who set it and when, why, whether its Mac listed it, its apps
 // (a warning for one the Mac does not have), and the two things a manager does: edit the reason and apps, move it back to a container.
 function hostBlock(b, ctx) {
@@ -705,13 +774,6 @@ function hostBlock(b, ctx) {
           .then(function () { close(); ctx.said('Host details of @' + b.handle + ' saved.', true); ctx.again(); }).catch(function (e) { el.disabled = false; fail(e.message); });
       }}]);
   });
-  act('move back to a container…', function () {
-    dialog('Move @' + b.handle + ' back to a container?', [h('p', {text: 'It runs there from its next start and keeps its conversation where its harness allows. This cannot be undone: to run it on the host again, start a new host bot.'})],
-      [{text: 'Move it back', danger: true, run: function (el, close, fail) {
-        el.disabled = true;
-        api('DELETE', url).then(function () { close(); ctx.said('@' + b.handle + ' moves back to a container at its next start.', true); ctx.again(); }).catch(function (e) { el.disabled = false; fail(e.message); });
-      }}]);
-  }, 'quiet danger');
   d.appendChild(acts);
   return d;
 }
@@ -746,7 +808,8 @@ function drawer(b, up, ctx) {
   var st = b.state || {}, w = ctx.w, d = h('div', {'class': 'drawer-body'});
   var facts = [['session', b.session_started ? 'started ' + ago(b.session_started) : ''], ['launcher', b.launcher || ''], ['last run', b.last_run ? ago(b.last_run) : ''],
                ['last post', b.last_post ? ago(b.last_post) : ''], ['role', b.profile || 'none'], ['channels', (b.channels || []).length ? b.channels.map(function (c) { return '#' + c; }).join(', ') : 'any'],
-               ['takes new work', b.claims === 'mentioned' ? 'no, works when mentioned' : 'yes']].filter(function (x) { return x[1]; });
+               ['takes new work', b.claims === 'mentioned' ? 'no, works when mentioned' : 'yes'],
+               ['runs', b.runs === 'host' ? 'on the machine' : b.runs === 'container' ? 'in a container' : 'where its machine says']].filter(function (x) { return x[1]; });
   var why = [b.problem, st.reason, up ? b.health : ''].filter(Boolean);
   why.forEach(function (t) { d.appendChild(h('p', {'class': 'warn', text: t})); });      // what is wrong comes first
   d.appendChild(h('div', {'class': 'd-facts'}, facts.map(function (x) { return h('span', null, x[0] + ' ', h('b', {text: x[1]})); })));
@@ -764,6 +827,21 @@ function drawer(b, up, ctx) {
     el.addEventListener('click', fn); acts.appendChild(el); return el;
   };
   var done = function (close, text) { close(); ctx.said(text, true); ctx.again(); };
+  act('where it runs…', function () {
+    var box = (ctx.allHosts || []).filter(function (x) { return x.name === b._host; })[0] || {};
+    var now = b.runs || (box.runtime && box.runtime.setting === 'host' ? 'host' : 'container'), go = null;
+    var part = runsPart({handle: b.handle, now: now, box: function () { return box; }, harness: function () { return b.harness; },
+      onchange: function () { if (go) go.disabled = !(part.changed() && part.ready()); }});
+    dialog('Where @' + b.handle + ' runs', [h('p', {'class': 'sub', text: 'Now: ' + (now === 'host' ? 'on the machine' : 'in a container') + ' on ' + b._host + '.'}), part.node,
+      h('p', {'class': 'sub', text: '@' + b.handle + ' starts a new harness session and rereads its rules. Its checkout stays. The keeper applies the change when the bot is idle, so a run in progress finishes first.'})],
+      [{text: 'Change where it runs', init: function (el) { go = el; el.disabled = true; }, run: function (el, close, fail) {
+        el.disabled = true;
+        var want = b.want === 'running' || (!b.want && botUp(b));      // the change must not start or stop it
+        api('PUT', url, Object.assign({host: b._host, run: want, harness: b.harness || null}, part.values()))
+          .then(function () { done(close, 'Asked for @' + b.handle + ' to run ' + (part.values().runs === 'host' ? 'on the machine' : 'in a container') + '. It starts a new session when it is idle.'); })
+          .catch(function (e) { el.disabled = false; fail(e.message); });
+      }}]);
+  });
   act('role…', function () {
     var sel = h('select', {'aria-label': 'profile'}), fresh = h('input', {type: 'checkbox', id: 'dfresh'});
     api('GET', '/api/profiles').then(function (r) { r.profiles.forEach(function (x) { var o = h('option', {value: x.name, text: x.name}); if (x.name === (b.profile || '')) o.selected = true; sel.appendChild(o); }); });
@@ -920,15 +998,18 @@ function rolesView(w, roles, hosts) {
       nodes.push(h('p', {'class': 'sub', text: role ? 'A bot for the role ' + role.role + '.' : 'A bot with any profile.'}));
       nodes.push(h('div', {'class': 'form'}, h('label', null, 'Profile ', profile), h('label', null, 'Machine ', host), h('label', null, 'Harness ', harness)));
       nodes.push(warn);
+      var boxOf = function () { return reporting.filter(function (x) { return x.name === host.value; })[0]; };
+      var start = null, runs = runsPart({handle: '', now: 'container', box: boxOf, harness: function () { return harness.value; }, onchange: function () { if (start) ready(); }});
+      host.addEventListener('change', function () { runs.update(); }); harness.addEventListener('change', function () { runs.update(); });
+      nodes.push(runs.node);
       nodes.push(h('p', {'class': 'sub', text: 'Whether the bot takes new work is set on the bot, from its profile, not in the agreement.'}));
       if (!reporting.length) { nodes.push(h('p', {'class': 'warn'}, 'No machine is reporting. ', h('a', {href: '/machines', text: 'Add one on the Machines page'}), ' first.')); }
-      var start = null;
-      var ready = function () { if (start) start.disabled = !(role ? role.profile : profile.value); };
+      var ready = function () { if (start) start.disabled = !((role ? role.profile : profile.value) && runs.ready()); };
       if (!role) profile.addEventListener('change', ready);
       dialog('Add a bot', nodes, reporting.length ? [{text: 'Start the bot', init: function (el) { start = el; ready(); }, run: function (el, close, fail) {
         var name = role ? role.profile : profile.value;
         el.disabled = true;
-        api('POST', '/api/fleet/bots', {host: host.value, harness: harness.value, workspace: w.slug, profile: name})
+        api('POST', '/api/fleet/bots', Object.assign({host: host.value, harness: harness.value, workspace: w.slug, profile: name}, runs.values()))
           .then(function () { close(); said('Asked for a ' + name + ' bot. The keeper on ' + host.value + ' starts it within a few seconds.', true); again(); })
           .catch(function (e) { el.disabled = false; fail(e.message); });
       }}] : []);

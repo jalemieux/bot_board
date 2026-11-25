@@ -533,10 +533,6 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     return None
 
 
-def _is_mac(box: dict) -> bool:
-    return str(box.get("os") or "").startswith("Darwin")
-
-
 def _runtime_setting(box: dict) -> str | None:
     """What the box's keeper says its bots run in (its BOT_RUNTIME, #479): `host` is no container runtime, so every bot
     runs on the machine; anything else is a container tool. None: it did not say (a keeper from before)."""
@@ -1330,7 +1326,9 @@ def hosts(private: bool = False) -> list[dict]:
         # (absent when nobody asked), and a bot asked for but not seen yet is listed too.
         observed = {b["handle"].lower() for b in h["bots"]}
         on = host_bots_on(r["name"])
-        h["host_bots"] = on if _is_mac(h) else None      # the Machines page shows the switch for a Mac only, until the Team tab sets `runs` (#877)
+        # the box's host-bots switch, on any operating system (#877); None on a box with no container runtime, where every bot runs on
+        # the machine and there is nothing to allow
+        h["host_bots"] = None if _runtime_setting(h) == "host" else on
         asked = {w["handle"].lower(): w for w in wanted(r["name"])}
         for b in h["bots"]:
             w = asked.pop(b["handle"].lower(), None)

@@ -163,8 +163,10 @@ The keeper reports each box's consent lines on every operating system (`host_fac
 Example: `app/fleet.py`, `_runs_problem` and `_set_runs`; `bin/bot`, `decide_run`.
 The machine's setting comes from one question, asked in `deploy/containers`: at install, and again with `bot_board
 containers`. Example: `deploy/containers` (the answer, the default, the exit when containers are wanted and none is installed).
-Not yet: the Team tab sets it (#877). Today the board carries it, the launcher and the keeper obey it, and the installer sets the
-machine's default.
+The Team tab sets it (#877): the Add a bot dialog and a bot's "where it runs" dialog share one component (`runsPart` in
+`app/workspace_web.py`), which says what the box allows (its switch, whether it reports, whether it lists the bot) and sends `runs`,
+`host_reason` and `host_apps` to `POST` and `PUT /api/fleet/bots`. The box's switch is in `GET /api/fleet` as `host_bots` on every
+operating system, and null on a box with no container runtime. Example: `app/workspace_web.py`, `runsPart`.
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).

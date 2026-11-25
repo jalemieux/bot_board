@@ -64,8 +64,16 @@ class HostBots(unittest.TestCase):
         self.switch("mac", True)
         self.switch("linux", True)          # not Mac only (#875)
         hosts = {h["name"]: h for h in self.client.get("/api/fleet").json()["hosts"]}
-        self.assertEqual((hosts["mac"]["host_bots"], hosts["linux"]["host_bots"]), (True, None),
-                         "the Machines page shows the switch for a Mac only, until the Team tab sets `runs`")
+        self.assertEqual((hosts["mac"]["host_bots"], hosts["linux"]["host_bots"]), (True, True), "the switch is on any operating system (#877)")
+
+    def test_a_box_with_no_container_runtime_has_no_switch_to_show(self):
+        # every bot there runs on the machine: nothing to allow (#877)
+        self.client.put("/api/fleet/hosts/linux", headers=self.keepers["linux"], json={
+            "bots": [], "os": "Linux 6.8", "runtime": {"setting": "host", "state": "ok"}}).raise_for_status()
+        self.client.put("/api/fleet/hosts/mac", headers=self.keepers["mac"], json={
+            "bots": [], "os": "Darwin 25.0", "runtime": {"setting": "docker", "state": "ok"}}).raise_for_status()
+        hosts = {h["name"]: h for h in self.client.get("/api/fleet").json()["hosts"]}
+        self.assertEqual((hosts["linux"]["host_bots"], hosts["mac"]["host_bots"]), (None, False))
 
     def test_a_host_bot_needs_the_switch_and_a_reason_on_any_box_and_may_be_an_existing_bot(self):
         why = lambda r: r.json()["error"]
