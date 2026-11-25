@@ -2785,7 +2785,8 @@ var machineCommand = document.getElementById('machine-command');
 var machineCopy = document.getElementById('machine-copy');
 var machineStatus = document.getElementById('machine-status');
 var localBoard = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
+// the add-a-machine panel is on the Machines page and not on the others: no panel, nothing to fill in
+if (machineCommand && machineCopy && machineStatus && ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
   var boardOrigin = "'" + location.origin.replace(/'/g, "'\\\\''") + "'";
   machineCommand.textContent = 'curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | BOARD='
     + boardOrigin + ' bash -s -- install bots';
@@ -2794,7 +2795,7 @@ if (ME && /^[a-z0-9][a-z0-9._-]{1,31}$/i.test(ME.handle)) {
     ? 'This board listens on this machine only, so no other machine can reach it. To expose it, run bot_board expose <address> here (a Tailscale address is best: tailscale ip -4); it moves the board and this machine\\u2019s own keeper together, and this page then shows the command for the other machine. A board in Docker is in docs/REFERENCE.md, "Reach your fleet from anywhere with Tailscale". Anyone who can reach the board can use it, so use a tailnet or a network you trust.'
     : 'Your board address is already filled in.';
 }
-machineCopy.addEventListener('click', async function () {
+if (machineCopy) machineCopy.addEventListener('click', async function () {
   try {
     await navigator.clipboard.writeText(machineCommand.textContent);
     machineStatus.textContent = 'Copied. Paste into a terminal on the machine you want to add.';
@@ -3261,6 +3262,7 @@ function machineLine(boxes) {
 }
 function listSecrets() {
   var box = document.getElementById('secretlist');
+  if (!box) return;      // only the Configuration page has the list
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
     claudeCard(d.secrets, d.claude_token_due);
@@ -3867,6 +3869,20 @@ def skills_page(board_name) -> str:
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
+def roles_page(board_name) -> str:
+    """/roles as an empty shell: the script reads /api/profiles and /api/fleet (the bots with no role) and draws the table (#873)."""
+    from . import registry_web
+    return shell(board_name, "roles", here="/roles", content=f"""
+<style>{FLEET_CSS}{registry_web.REG_CSS}</style>
+<div class="fleet-page" data-page="roles" data-panes="tab-roles">
+<div class="fleet-head"><h1>Roles</h1></div>
+<p class="sub fleet-count"></p>
+<noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
+<div class="tab-pane" id="tab-roles"><div id="roles-root"><p class="sub">Loading…</p></div></div></div>
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>
+<script>(function () {{{registry_web.ROLES_JS}}})();</script>""")
+
+
 def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
     from . import registry_web
@@ -3875,8 +3891,6 @@ def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
              for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
-    # bots with no profile, gathered on the Profiles table's last row so they are not forgotten
-    orphans = sorted({b["handle"] for h in hosts for b in h["bots"] if not b.get("profile") and not b.get("retired")}, key=str.lower)
     alerts = _alerts(hosts, claude_token)
     versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
@@ -3957,7 +3971,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
                      '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>')
     title, here, panes = FLEET_PAGES[page]
     away = f' · <span class="warn-text">{len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""
-    counts = {"machines": f'{len(hosts)} machines' + away, "roles": f'{len(profiles)} roles', "skills": f'{len(skills)} skills',
+    counts = {"machines": f'{len(hosts)} machines' + away, "skills": f'{len(skills)} skills',
               "configuration": "Shared by every bot on every machine."}[page]
     return shell(board_name, title.lower(), here=here, content=f"""
 <style>{FLEET_CSS}{registry_web.REG_CSS}</style>
@@ -3971,7 +3985,6 @@ def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
 <div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
 <section class="fleet-section" id="fleet-machines">{machines_html}</section>
 {versions_html}</div>
-<div class="tab-pane" id="tab-roles">{registry_web.profiles_section(list(profiles), orphans)}</div>
 <div class="tab-pane" id="tab-skills">{registry_web.skills_section(list(skills), list(profiles))}</div>
 <div class="tab-pane" id="tab-settings">
 {_ADD_MACHINE_HTML}

@@ -2667,6 +2667,8 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
         return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
     if page == "skills":
         return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
+    if page == "roles":
+        return web.roles_page(BOARD_NAME)              # an empty shell: its script reads /api/profiles and /api/fleet (#873)
     hosts = fleet.hosts()
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts),
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
