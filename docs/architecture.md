@@ -210,7 +210,7 @@ through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
 Example: `_app_page` (the board page, #862): it embeds the board's name, its limits and the header chip's count (page chrome); the
 script reads the workspaces, roster and lists from `/api`.
-Not yet: `page_fleet` (for `/machines` and `/roles`: #872, #873) renders data in the route (`page_admin`, `/configuration` and `/skills`
+Not yet: `page_fleet` (for `/machines` and `/roles`: #872, #873; the alerts and host banner of `/machines` are the script's since #887) renders data in the route (`page_admin`, `/configuration` and `/skills`
 are shells, #859, #861 and #874; the skill and profile pages are shells, #860) (#845).
 
 ### Tests
