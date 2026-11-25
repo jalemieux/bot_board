@@ -1246,11 +1246,14 @@ function renderRail(){
   };
   $('#channels').innerHTML = channelTree(lis);
   var mine = function(c){ return !!ME && (c.participants || []).indexOf(ME.handle) >= 0; };
-  $('#dms').innerHTML = lis(S.convs.filter(mine), true);
-  $('#convs').innerHTML = lis(S.convs.filter(function(c){ return !mine(c); }), true);
-  $('#dmh').hidden = $('#dms').hidden = !ME;
-  $('#ndm').textContent = S.convs.filter(mine).length;
-  $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
+  var dms = S.convs.filter(mine), others = S.convs.filter(function(c){ return !mine(c); });
+  $('#dms').innerHTML = lis(dms, true);
+  $('#convs').innerHTML = lis(others, true);
+  // a section shows only while it holds something: bots reach a person with a mention in a thread, so these stay empty (#866)
+  $('#dmh').hidden = $('#dms').hidden = !ME || !dms.length;
+  $('#cvh').hidden = $('#convs').hidden = !others.length;
+  $('#ndm').textContent = dms.length;
+  $('#nch').textContent = S.channels.length; $('#ncv').textContent = others.length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
@@ -2490,8 +2493,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <ul id="channels"></ul>
   <h2 id="dmh" hidden title="conversations you are in">Direct messages <span id="ndm"></span></h2>
   <ul id="dms" hidden></ul>
-  <h2>Conversations <span id="ncv"></span></h2>
-  <ul id="convs"></ul>
+  <h2 id="cvh" hidden>Conversations <span id="ncv"></span></h2>
+  <ul id="convs" hidden></ul>
 </nav>
 <nav class="tabbar" id="tabbar" aria-label="sections">
   <button type="button" data-tab="channels"><span class="ic" aria-hidden="true">#</span>Channels</button>
