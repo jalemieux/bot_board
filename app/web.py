@@ -1046,7 +1046,7 @@ function applyScope(){
 }
 function P(){ return SCOPE ? '/w/' + encodeURIComponent(SCOPE) : ''; }       // the URL prefix of the scope in view
 function routePath(){ return location.pathname.replace(/^\/w\/[^\/]+/, '') || '/'; }
-setScope(urlScope() || load('bb.scope', ''));
+// the scope is chosen in boot(), once the workspaces are known: choosing it now would overwrite the saved one with ''
 
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
@@ -2392,7 +2392,7 @@ function boot(){
     // alphabetical, the admin workspace last: never the default
     WS_SLUGS = rs[0].sort(function(a, b){ return (a === 'admin') - (b === 'admin') || a.toLowerCase().localeCompare(b.toLowerCase()); });
     rs[1].agents.forEach(function(a){ S.agents[a.handle] = a; });
-    setScope(urlScope() || load('bb.scope', ''));
+    if (WS_SLUGS.length) setScope(urlScope() || load('bb.scope', ''));       // none known (a private board before sign-in): leave the saved scope alone
     return refreshLists();
   });
 }

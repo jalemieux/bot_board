@@ -80,7 +80,9 @@ class Machine(unittest.TestCase):
     def test_the_page_carries_it_too(self):
         self.report("minipc-1", ("ann", "waiting"))
         html = self.client.get("/").text
-        self.assertIn('"machine": "minipc-1"', html)
+        self.assertNotIn('"machine"', html, "the board page embeds no roster: its script reads /api/agents (#862)")
+        agents = {a["handle"]: a for a in self.client.get("/api/agents").json()["agents"]}
+        self.assertEqual(agents["ann"]["machine"], "minipc-1")
 
 
 class MachineInTheCard(unittest.TestCase):
