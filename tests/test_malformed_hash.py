@@ -1,6 +1,7 @@
 """#909 (#892): a malformed #hash such as #%E0%A4%A is no target, not an error that ends the page's script. decodeURIComponent throws on it.
 The fleet pages' script runs to its end under node with a bad hash; the workspace page's hash helper returns '' for one; and no script
-decodes location.hash outside a try. Skipped without node. Run with python -m unittest discover -s tests."""
+decodes location.hash or location.pathname outside a try. #920: a skill's or a profile's page with a malformed percent in its path says
+there is no such name, not "Loading". Skipped without node. Run with python -m unittest discover -s tests."""
 import json
 import re
 import shutil
@@ -61,11 +62,39 @@ class MalformedHash(unittest.TestCase):
                                    capture_output=True, text=True, timeout=30)
                 self.assertEqual(json.loads(r.stdout), want, r.stderr[-300:])
 
-    def test_no_script_decodes_the_hash_outside_a_try(self):
+    def test_no_script_decodes_the_hash_or_the_path_outside_a_try(self):
         for path in (ROOT / "app").glob("*.py"):
             for n, line in enumerate(path.read_text().splitlines(), 1):
-                if "decodeURIComponent(location.hash" in line:
-                    self.assertRegex(line, r"try \{[^}]*decodeURIComponent\(location\.hash", f"{path.name}:{n} decodes the hash outside a try")
+                for part in ("hash", "pathname"):
+                    if f"decodeURIComponent(location.{part}" in line:
+                        self.assertRegex(line, r"try \{[^}]*decodeURIComponent\(location\." + part, f"{path.name}:{n} decodes location.{part} outside a try")
+
+    def test_a_skill_or_profile_page_with_a_malformed_path_says_there_is_no_such_name(self):
+        from app import registry_web
+        for js, what in ((registry_web.SKILL_PAGE_JS, "skill"), (registry_web.PROFILE_PAGE_JS, "profile")):
+            for path in ("/fleet/%s/%%E0%%A4%%A" % ("skills" if what == "skill" else "profiles"), "/fleet/skills/%", "/fleet/skills/%zz"):
+                with self.subTest(page=what, path=path):
+                    code = ("global.localStorage = {getItem: () => null};\n"
+                            "const root = {innerHTML: ''};\n"
+                            "global.document = {body: {classList: {add() {}}}, getElementById: id => id === 'reg' ? root : null};\n"
+                            "global.location = {pathname: %s, search: ''};\n"
+                            "global.fetch = () => { throw new Error('a malformed name must not be fetched'); };\n"
+                            % json.dumps(path) + js + "\nprocess.stdout.write(root.innerHTML);")
+                    r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(r.returncode, 0, r.stderr[-400:])
+                    self.assertIn("no %s with that name" % what, r.stdout)
+
+    def test_a_good_path_still_loads_the_page(self):
+        from app import registry_web
+        code = ("global.localStorage = {getItem: () => null};\n"
+                "const root = {innerHTML: ''}; const urls = [];\n"
+                "global.document = {body: {classList: {add() {}}}, getElementById: id => id === 'reg' ? root : null};\n"
+                "global.location = {pathname: '/fleet/skills/art%20to%20mesh', search: ''};\n"
+                "global.fetch = u => { urls.push(u); return new Promise(() => {}); };\n"
+                + registry_web.SKILL_PAGE_JS + "\nprocess.stdout.write(JSON.stringify(urls));")
+        r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-400:])
+        self.assertIn("/api/skills/art%20to%20mesh", json.loads(r.stdout)[0])
 
 
 if __name__ == "__main__":

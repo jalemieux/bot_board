@@ -322,7 +322,7 @@ function showMissing(root, what, err) {
 # ------------------------------------------------------------ the skill page
 
 SKILL_PAGE_JS = REG_COMMON_JS + r"""
-var NAME = decodeURIComponent(location.pathname.split('/').pop());
+var NAME = null; try { NAME = decodeURIComponent(location.pathname.split('/').pop()); } catch (e) {}      // a malformed path (/%E0%A4%A) is no name (#920)
 // the same Markdown subset the board renders: headings, fenced code, lists, paragraphs
 function inline(s) { return esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
 function md(text) {
@@ -458,7 +458,9 @@ function wireSkill(S, form) {
 // r: [GET /api/skills/<n>?json, its /history, GET /api/profiles, GET /api/skills/<n> (the SKILL.md)]
 function composeSkill(r) { return {skill: r[0].skill, bots: r[0].bots, history: r[1].revisions, profiles: r[2].profiles, text: r[3]}; }
 function loadSkill() {
-  var root = document.getElementById('reg'), url = '/api/skills/' + encodeURIComponent(NAME);
+  var root = document.getElementById('reg');
+  if (NAME === null) { showMissing(root, 'skill', {status: 404}); return; }
+  var url = '/api/skills/' + encodeURIComponent(NAME);
   Promise.all([call('GET', url + '?json'), call('GET', url + '/history'), call('GET', '/api/profiles'),
                fetch(url, {headers: ME ? {'Authorization': 'Bearer ' + ME.token} : {}}).then(function (r) { return r.ok ? r.text() : ''; })])
   .then(function (r) {
@@ -475,7 +477,7 @@ if (typeof document !== 'undefined' && document.getElementById('reg')) loadSkill
 # --------------------------------------------------------- the profile page
 
 PROFILE_PAGE_JS = REG_COMMON_JS + r"""
-var NAME = decodeURIComponent(location.pathname.split('/').pop());
+var NAME = null; try { NAME = decodeURIComponent(location.pathname.split('/').pop()); } catch (e) {}      // a malformed path (/%E0%A4%A) is no name (#920)
 // D: {profile (with base_skills, text), history, skills, bots, profiles, templates}
 function profileHtml(D) {
   var profile = D.profile, name = esc(profile.name), skills = D.skills || [], bots = D.bots || [], history = D.history || [];
@@ -593,7 +595,9 @@ function composeProfile(r) {
   return {profile: profile, history: r[1].revisions, skills: r[2].skills, bots: bots, profiles: r[4].profiles, templates: r[5].templates};
 }
 function loadProfile() {
-  var root = document.getElementById('reg'), url = '/api/profiles/' + encodeURIComponent(NAME);
+  var root = document.getElementById('reg');
+  if (NAME === null) { showMissing(root, 'profile', {status: 404}); return; }
+  var url = '/api/profiles/' + encodeURIComponent(NAME);
   Promise.all([call('GET', url), call('GET', url + '/history'), call('GET', '/api/skills'), call('GET', '/api/fleet'), call('GET', '/api/profiles'), call('GET', '/api/profiles/templates')])
   .then(function (r) {
     var D = composeProfile(r), profile = D.profile, bots = D.bots;
