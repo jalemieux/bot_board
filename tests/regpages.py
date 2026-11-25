@@ -73,8 +73,9 @@ const any = new Proxy(function () {}, {get: (t, k) => (k === Symbol.toPrimitive 
 const routes = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 let html = null, failed = null;
 const reg = {set innerHTML(v) { html = v; }, get innerHTML() { return html; }};
+const ROOT_ID = %s;
 global.localStorage = {getItem: () => JSON.stringify({handle: 'jac', token: 't'})};
-global.document = {body: {classList: {add() {}}}, getElementById: (id) => (id === 'reg' ? reg : any), querySelectorAll: () => [], addEventListener() {}, title: ''};
+global.document = {body: {classList: {add() {}}}, getElementById: (id) => (id === ROOT_ID ? reg : any), querySelectorAll: () => [], querySelector: () => any, addEventListener() {}, title: ''};
 global.location = {pathname: ROUTES_PATH, search: ROUTES_SEARCH};
 global.confirm = () => false; global.alert = () => {};
 global.fetch = (url) => { if (!(url in routes)) failed = 'no route for ' + url;
@@ -85,11 +86,11 @@ setTimeout(() => { if (failed) { console.error(failed); process.exit(3); } proce
 """
 
 
-def smoke(js, path, search, routes):
+def smoke(js, path, search, routes, root="reg"):
     """The page's script run to the end on `path`; its routes are {url: body text}. Returns the HTML it made."""
     if not shutil.which("node"):
         raise unittest.SkipTest("node is needed")
-    script = SMOKE.replace("ROUTES_PATH", json.dumps(path)).replace("ROUTES_SEARCH", json.dumps(search)) % js
+    script = SMOKE.replace("ROUTES_PATH", json.dumps(path)).replace("ROUTES_SEARCH", json.dumps(search)).replace("%s", json.dumps(root), 1) % js
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, input=json.dumps(routes))
     assert out.returncode == 0, out.stderr
     return out.stdout
@@ -97,3 +98,10 @@ def smoke(js, path, search, routes):
 
 def routes_for(client, urls, headers=None):
     return {u: client.get(u, headers=headers).text for u in urls}
+
+
+def roles_html(client, headers=None):
+    """The Roles table as the page's script draws it from /api/profiles and /api/fleet (#873)."""
+    from app import registry_web
+    parts = [_get(client, "/api/profiles", headers).json(), _get(client, "/api/fleet", headers).json()]
+    return _run(registry_web.ROLES_JS, "(() => { const D = composeRoles(JSON.parse(require('fs').readFileSync(0, 'utf8'))); return rolesHtml(D.profiles, D.orphans); })()", parts)

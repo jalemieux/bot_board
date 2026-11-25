@@ -88,6 +88,15 @@ class HostCard(unittest.TestCase):
         self.assertIn('<option value="Mac runner">Mac runner</option>', card)
         self.assertIn('name="app" value="Godot"', card)
 
+    def test_a_reader_who_is_not_given_the_consent_list_sees_unknown_not_nobody(self):
+        # #927: host_allowed is for signed-in humans; a missing list is unknown, never "nobody yet"
+        base = mac()
+        base.pop("host_allowed")
+        card = self.rows([base])[1]
+        self.assertIn("allowed on this Mac: shown to signed-in humans", card)
+        self.assertNotIn("nobody yet", card)
+        self.assertIn("allowed on this Mac: nobody yet", self.rows([mac(host_allowed=[])])[1])
+
     def test_off_has_no_form_and_says_every_bot_runs_in_a_container(self):
         card = self.rows([mac(on=False, bots=[{"handle": "edie", "host_flag": False}])])[1]
         self.assertIn('data-on="1"', card)

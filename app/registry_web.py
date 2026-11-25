@@ -85,47 +85,6 @@ def skills_section(skills: list, profiles: list) -> str:
             f'{tables}</section>')
 
 
-def profiles_section(profiles: list, orphans: list) -> str:
-    rows = []
-    for p in profiles:
-        page = f'/fleet/profiles/{e(p["name"])}'
-        bots = p.get("bots") or []
-        # the mandatory skills and one more name it; the page lists them all
-        all_skills = p.get("skills") or []
-        shown = [s for s in all_skills if s.get("mandatory")] or all_skills[:1]
-        shown += [s for s in all_skills if s not in shown][:1]
-        left = len(all_skills) - len(shown)
-        chips = " ".join(_skill_chip(s) for s in shown) or '<span class="dim">none</span>'
-        if left > 0:
-            chips += f' <a class="dim" href="{page}">+ {left} more</a>'
-        who = (f'{len(bots)} · ' + ", ".join(f'<a href="/a/{e(b)}">{e(b)}</a>' for b in bots)) if bots else '0 · no bot yet'
-        origin = (f'<div class="by">cloned from <a href="/fleet/profiles/{e(p["from"])}">{e(p["from"])}</a></div>'
-                  if p.get("from") and p["from"].lower() != p["name"].lower() else "")
-        acts = (f'<a class="act" href="{page}">view</a><a class="act" href="/fleet/profiles/new?from={e(p["name"])}">clone</a>'
-                + (f'<button type="button" class="act del-profile" data-name="{e(p["name"])}">delete</button>' if not bots else ""))
-        spec = '' if p.get("takes_new_work", True) else ' <span class="chip" title="a new bot of it works only when a thread mentions it">when mentioned</span>'
-        rows.append(f'<tr id="profile-{e(p["name"])}"><td class="who"><a href="{page}">{e(p["name"])}</a>{spec}'
-                    f'<div class="by desc">{e(p["role"])}</div>{origin}</td>'
-                    f'<td data-label="skills"><div class="chips">{chips}</div></td>'
-                    f'<td data-label="bots">{who}</td><td class="acts">{acts}</td></tr>')
-    if orphans:
-        who = ", ".join(f'<a href="/a/{e(b)}">{e(b)}</a>' for b in orphans)
-        rows.append(f'<tr id="profile-none"><td class="who"><span class="dim">no role</span>'
-                    '<div class="by desc">Bots added before roles. To give one a role, retire it and add a new bot.</div></td>'
-                    f'<td data-label="skills"><span class="dim">—</span></td><td data-label="bots">{len(orphans)} · {who}</td>'
-                    '<td class="acts"></td></tr>')
-    table = (('<table class="bots profiles"><thead><tr><th>Role</th><th>Skills</th><th>Bots</th>'
-              '<th><span class="sr-only">Actions</span></th></tr></thead><tbody>' + "".join(rows) + '</tbody></table>')
-             if rows else '<div class="empty">No profile yet.</div>')
-    return (f'<section class="fleet-section reg" id="fleet-profiles"><div class="sec-head"><h2>Roles · {len(profiles)}</h2>'
-            '<a class="addbot-btn needs-me" href="/fleet/profiles/new">+ Create a role</a></div>'
-            '<p class="sub">A role is a profile: what a bot is for, and the skills that go with it. A bot is given one when you add it '
-            'and keeps it. A role is edited on its page; its bots follow at their next prompt. Clone makes a variant.</p>'
-            f'{table}</section>')
-
-
-# The Skills page as an empty shell (#874, part of #845): the script reads /api/skills and /api/profiles and draws what skills_section
-# used to draw in the route. Every value goes in with textContent. It runs only on the shell (data-page=skills).
 SKILLS_SHELL_JS = r"""
 (function () {
   var box = document.getElementById('skills-list');
@@ -733,6 +692,57 @@ function loadNewProfile() {
   }, function (e) { showMissing(root, 'profile page', e); });
 }
 if (typeof document !== 'undefined' && document.getElementById('reg')) loadNewProfile();
+"""
+
+
+# ----------------------------------------------------------------- the Roles page
+
+ROLES_JS = REG_COMMON_JS + r"""
+function skillChip(s) {
+  return '<a class="chip" href="/fleet/skills/' + esc(s.name) + '">' + esc(s.name) + (s.mandatory ? ' <span class="star" title="mandatory">★</span>' : '') + '</a>';
+}
+// profiles: GET /api/profiles; orphans: the handles of bots with no profile (from /api/fleet)
+function rolesHtml(profiles, orphans) {
+  var rows = profiles.map(function (p) {
+    var page = '/fleet/profiles/' + esc(p.name), bots = p.bots || [], all = p.skills || [];
+    // the mandatory skills and one more name it; the page lists them all
+    var shown = all.filter(function (s) { return s.mandatory; }); if (!shown.length) shown = all.slice(0, 1);
+    shown = shown.concat(all.filter(function (s) { return shown.indexOf(s) < 0; }).slice(0, 1));
+    var left = all.length - shown.length;
+    var chips = shown.map(skillChip).join(' ') || '<span class="dim">none</span>';
+    if (left > 0) chips += ' <a class="dim" href="' + page + '">+ ' + left + ' more</a>';
+    var who = bots.length ? bots.length + ' · ' + bots.map(function (b) { return '<a href="/a/' + esc(b) + '">' + esc(b) + '</a>'; }).join(', ') : '0 · no bot yet';
+    var origin = p.from && p.from.toLowerCase() !== p.name.toLowerCase() ? '<div class="by">cloned from <a href="/fleet/profiles/' + esc(p.from) + '">' + esc(p.from) + '</a></div>' : '';
+    var acts = '<a class="act" href="' + page + '">view</a><a class="act" href="/fleet/profiles/new?from=' + esc(p.name) + '">clone</a>'
+      + (bots.length ? '' : '<button type="button" class="act del-profile" data-name="' + esc(p.name) + '">delete</button>');
+    var spec = p.takes_new_work === false ? ' <span class="chip" title="a new bot of it works only when a thread mentions it">when mentioned</span>' : '';
+    return '<tr id="profile-' + esc(p.name) + '"><td class="who"><a href="' + page + '">' + esc(p.name) + '</a>' + spec + '<div class="by desc">' + esc(p.role) + '</div>' + origin + '</td>'
+      + '<td data-label="skills"><div class="chips">' + chips + '</div></td><td data-label="bots">' + who + '</td><td class="acts">' + acts + '</td></tr>';
+  });
+  if (orphans.length) rows.push('<tr id="profile-none"><td class="who"><span class="dim">no role</span><div class="by desc">Bots added before roles. To give one a role, retire it and add a new bot.</div></td>'
+    + '<td data-label="skills"><span class="dim">—</span></td><td data-label="bots">' + orphans.length + ' · ' + orphans.map(function (b) { return '<a href="/a/' + esc(b) + '">' + esc(b) + '</a>'; }).join(', ') + '</td><td class="acts"></td></tr>');
+  var table = rows.length ? '<table class="bots profiles"><thead><tr><th>Role</th><th>Skills</th><th>Bots</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>' + rows.join('') + '</tbody></table>'
+    : '<div class="empty">No profile yet.</div>';
+  return '<section class="fleet-section reg" id="fleet-profiles"><div class="sec-head"><h2>Roles · ' + profiles.length + '</h2><a class="addbot-btn needs-me" href="/fleet/profiles/new">+ Create a role</a></div>'
+    + '<p class="sub">A role is a profile: what a bot is for, and the skills that go with it. A bot is given one when you add it and keeps it. A role is edited on its page; its bots follow at their next prompt. Clone makes a variant.</p>'
+    + table + '</section>';
+}
+// r: [GET /api/profiles, GET /api/fleet]; the bots with no profile are gathered on the last row so they are not forgotten
+function composeRoles(r) {
+  var seen = {}, orphans = [];
+  r[1].hosts.forEach(function (h) { h.bots.forEach(function (b) { if (!b.profile && !b.retired && !seen[b.handle]) { seen[b.handle] = true; orphans.push(b.handle); } }); });
+  orphans.sort(function (a, b) { return a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0; });
+  return {profiles: r[0].profiles, orphans: orphans};
+}
+function loadRoles() {
+  var root = document.getElementById('roles-root');
+  Promise.all([call('GET', '/api/profiles'), call('GET', '/api/fleet')]).then(function (r) {
+    var D = composeRoles(r);
+    root.innerHTML = rolesHtml(D.profiles, D.orphans);
+    var count = document.querySelector('.fleet-count'); if (count) count.textContent = D.profiles.length + ' roles';
+  }, function (e) { root.innerHTML = '<p class="sub">' + esc(e.message || 'could not load the roles') + '</p>'; });
+}
+if (typeof document !== 'undefined' && document.getElementById('roles-root')) loadRoles();
 """
 
 
