@@ -12,7 +12,9 @@ from app import web
 class MentionPopup(unittest.TestCase):
     def test_each_row_carries_the_role_chip_escaped(self):
         js = web.APP_JS
-        self.assertIn("var role = a.kind === 'human' ? 'human' : a.profile || '';", js)
+        self.assertIn("function roleOf(a){", js)
+        self.assertIn("var role = roleOf(a);", js, "the list and the hover card share one rule for the chip's text")
+        self.assertIn("(roleOf(a) ? '<span class=\"prof\">' + esc(roleOf(a)) + '</span>' : '')", js)
         self.assertIn("'<span class=\"prof\"' + (a.role ? ' title=\"' + esc(a.role) + '\"' : '') + '>' + esc(role) + '</span>'", js)
         self.assertIn(".mentions li .prof{", web.APP_CSS, "the chip has its own rule in the list")
 

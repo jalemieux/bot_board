@@ -1358,9 +1358,12 @@ function hostMark(a){      // a bot that runs outside its container, as the user
   return a && a.host_by !== null && a.host_by !== undefined
     ? '<span class="hostbadge" title="runs outside a container, as the user of its Mac">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
 }
+function roleOf(a){      // the short role of an agent: its profile name, or "human" (the hover card and the @ list use one rule)
+  return a.kind === 'human' ? 'human' : a.profile || '';
+}
 function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
   return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (roleOf(a) ? '<span class="prof">' + esc(roleOf(a)) + '</span>' : '') + hostMark(a) +
     (a.claims === 'mentioned' ? '<span class="prof" title="takes a new thread only when its first message mentions it">only when mentioned</span>' : '') + '</div>' +
     (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
     (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
@@ -2169,7 +2172,7 @@ function wireCompose(form, target){
   function renderPop(){
     pop.innerHTML = sug.map(function(h, i){
       var a = S.agents[h];
-      var role = a.kind === 'human' ? 'human' : a.profile || '';      // the role, as the hover card names it; its sentence is the tooltip
+      var role = roleOf(a);      // its sentence, the profile's role, is the tooltip
       return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
         (role ? '<span class="prof"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
         '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
