@@ -29,15 +29,20 @@ class AgreementText(unittest.TestCase):
         workspaces._check_agreement_text("notes/anything.md", "a\u200bb")      # only the agreement and its proposals
 
     def test_the_page_and_the_server_spell_the_same_set(self):
+        """The page's expression is a JavaScript one (\\p{Cf} and the like), so node runs it: Python's re has no \\p."""
+        import json
+        import shutil
+        import subprocess
+        if not shutil.which("node"):
+            self.skipTest("node is needed")
         js = (ROOT / "app/workspace_web.py").read_text()
         spelled = re.search(r"var HIDDEN = /(.+)/gu;", js).group(1)
-        # turn the page's expression into Python's: \uXXXX stays, \u{XXXXX} becomes \UXXXXXXXX
-        py = re.sub(r"\\u\{([0-9A-Fa-f]+)\}", lambda m: "\\U" + m.group(1).zfill(8), spelled)
-        rx = re.compile(py)
-        for c in HIDDEN:
-            self.assertTrue(rx.search(c), "the page misses U+%04X" % ord(c))
-        for t in VISIBLE:
-            self.assertFalse(rx.search(t), t)
+        script = ("const rx = new RegExp(%s, 'u'); const hidden = %s, visible = %s;"
+                  "const missed = hidden.filter(c => !rx.test(c)).map(c => c.codePointAt(0).toString(16));"
+                  "const wrong = visible.filter(t => rx.test(t));"
+                  "console.log(JSON.stringify({missed, wrong}));" % (json.dumps(spelled), json.dumps(list(HIDDEN)), json.dumps(list(VISIBLE))))
+        out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=20, check=True).stdout)
+        self.assertEqual(out, {"missed": [], "wrong": []})
 
 
 if __name__ == "__main__":

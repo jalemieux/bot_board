@@ -180,7 +180,7 @@ class Waiting(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.text)
         item = next(a for a in self.status()['attention'] if a['where'] == 'routines')
         self.assertEqual(item['text'], '1 routine change waits for your yes: triage v1')
-        self.assertEqual(item['href'], '/routines#approvals')     # where the yes is given (#380)
+        self.assertTrue(item['href'].startswith('/workspaces/admin#routines/'), item['href'])     # the routine's card on its workspace's tab, where the yes is given (#380, #820)
         rid = r.json()['id']
         self.client.post(f'/api/routines/{rid}/approve', headers=self.jac)       # a human said yes: it waits no more
         self.assertFalse([a for a in self.status()['attention'] if 'waits for your yes' in a['text']])
