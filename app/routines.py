@@ -68,7 +68,6 @@ FIELDS = ("name", "channel", "check", "prompt", "every", "claim_timeout", "done_
 ROUTINES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "routines")
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS routines_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS routines (
     id INTEGER PRIMARY KEY,
     definition TEXT NOT NULL,
@@ -189,6 +188,12 @@ def init():
     with db._write_lock:
         c = db.conn()
         c.executescript(SCHEMA)
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='routines_meta'").fetchone():
+            # a board from before #839 kept its one-time markers here: they move to registry_meta, once, so it does not seed again
+            c.execute("CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")     # registry.init has not run yet
+            c.execute("INSERT OR IGNORE INTO registry_meta(key,value) SELECT key,value FROM routines_meta")
+            c.execute("DROP TABLE routines_meta")
+            c.commit()
         have = {r[1] for r in c.execute("PRAGMA table_info(routines)")}
         for col, ddl in (("run_asked", "INTEGER NOT NULL DEFAULT 0"), ("last_run", "TEXT"),      # #209
                          ("approved_definition", "TEXT"), ("resume", "INTEGER NOT NULL DEFAULT 0"),  # #380
@@ -249,7 +254,7 @@ def seed() -> list[str]:
     c = db.conn()
     for name, definition in shipped():
         key = f"seeded:{name}"
-        if c.execute("SELECT 1 FROM routines_meta WHERE key=?", (key,)).fetchone():
+        if c.execute("SELECT 1 FROM registry_meta WHERE key=?", (key,)).fetchone():
             continue
         try:
             r = _definition({**definition, "channel": definition.get("channel") or workspaces.home_slug(ws)})
@@ -259,7 +264,7 @@ def seed() -> list[str]:
         with db._write_lock, db.conn() as w:
             w.execute("INSERT INTO routines(definition,defined_at,resume,created_by,updated_by,created_at,updated_at)"
                       " VALUES (?,?,1,?,?,?,?)", (json.dumps(r), db.cursor(), author["id"], author["id"], db.now(), db.now()))
-            w.execute("INSERT OR REPLACE INTO routines_meta(key,value) VALUES (?,?)", (key, db.now()))
+            w.execute("INSERT OR REPLACE INTO registry_meta(key,value) VALUES (?,?)", (key, db.now()))
         stored.append(name)
     return stored
 

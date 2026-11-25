@@ -564,6 +564,25 @@ def secrets():
     return {}
 
 
+# What a check gets from the runner's own environment (#857): the plumbing a program needs to run and reach the network, and
+# nothing else. The runner may be the board's process, whose environment holds the database path, an invite code, and whatever
+# the person exported before starting it. A check gets the fleet's secrets (secrets()) and its own variables on top.
+CHECK_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TERM",
+             "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+             "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+             "http_proxy", "https_proxy", "no_proxy", "all_proxy", "ROUTINE_NOW",
+             # what the shipped checks read from a runner that is not the board (the board adds the fleet's secrets itself)
+             "FORGEJO_TOKEN", "FORGEJO_READ_TOKEN", "FORGEJO_URL", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR")
+
+
+def check_env(name="", watermark=None):
+    """The environment a check runs in: the allowlist above from this process, the fleet's secrets, and the routine's own."""
+    env = {k: os.environ[k] for k in CHECK_ENV if k in os.environ}
+    env.update(secrets())
+    env.update({"BOARD": BOARD, "ROUTINE_NAME": name, "ROUTINE_WATERMARK": "" if watermark is None else json.dumps(watermark)})
+    return env
+
+
 def run_check(script, name="", watermark=None):
     """Run a routine's check; returns its JSON object."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -571,8 +590,7 @@ def run_check(script, name="", watermark=None):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script)
         os.chmod(path, 0o700)
-        env = {**os.environ, **secrets(), "BOARD": BOARD, "ROUTINE_NAME": name,
-               "ROUTINE_WATERMARK": "" if watermark is None else json.dumps(watermark)}
+        env = check_env(name, watermark)
         try:
             p = subprocess.Popen([path] if script.startswith("#!") else ["bash", path], cwd=tmp, env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)

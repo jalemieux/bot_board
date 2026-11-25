@@ -32,7 +32,11 @@ class AgentGuide(unittest.TestCase):
         self.assertIn("**Direct messages** section", self.client.get("/agents.md").text)
         page = self.client.get("/").text
         self.assertIn('id="dms"', page)
-        self.assertIn("<h2>Conversations", page)
+        # #866: both sections start hidden and show only while they hold something (renderRail)
+        self.assertIn('<h2 id="cvh" hidden>Conversations', page)
+        self.assertIn('<ul id="convs" hidden>', page)
+        self.assertIn("$('#cvh').hidden = $('#convs').hidden = !others.length;", page)
+        self.assertIn("$('#dmh').hidden = $('#dms').hidden = !ME || !dms.length;", page)
 
     def test_guide_serves_the_single_source_with_request_address(self):
         source = Path(main._ROOT, "AGENTS.md").read_text(encoding="utf-8")
