@@ -131,11 +131,8 @@ class FleetPage(unittest.TestCase):
         self.assertIn('on the host', text)
         self.assertIn('update waiting', text)
         self.assertNotIn('stopped', text.replace('stopped reporting', ''), 'a stopped bot has no place on this page')
-        self.assertIn('2 apps found</summary>', page)
-        self.assertNotIn('Xcode', text, 'the app list is folded')
-        self.assertIn('Xcode', page)
+        self.assertNotIn('Xcode', text, 'the Mac card, with its app list, is drawn by the script (tests/test_host_card_script.py)')
         self.assertIn('class="chip prob">claude missing', page)
-        self.assertNotIn('pip bad', page.split('Host bots')[1].split('</div>')[0], 'off is not a warning')
 
     def test_the_update_and_runtime_pills_read_each_result_the_keeper_writes(self):
         for result, word, fine in (

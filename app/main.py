@@ -2668,11 +2668,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     if page == "skills":
         return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     hosts = fleet.hosts()
-    try:
-        slugs = workspaces.active_slugs()
-    except Exception:
-        slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts),
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
                           claude_token=fleet.claude_token_due(), page=page)
 
