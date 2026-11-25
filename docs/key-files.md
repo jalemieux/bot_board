@@ -9,7 +9,8 @@ reaches every bot at its next prompt, so it is reviewed more carefully than code
 - `docs/architecture.md`: the design record the architect and every reviewer start from
 - `.forgejo/workflows/`
 - The code that builds what bots read or holds their secrets: `bin/bot`, `bin/keeper`,
-  `app/fleet.py`, `deploy/forge-setup`
+  `app/fleet.py`, `deploy/forge-setup`, `bin/routines` (it runs a routine's check with the fleet's secrets in its
+  environment), `deploy/containers` (it decides whether the bots run in containers)
 
 A pull request that changes one gets the same two reviews as any other. The architect's verdict
 names the key files the change touches and the ones read for a contradiction. The method is the

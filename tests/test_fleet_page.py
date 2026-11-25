@@ -162,7 +162,7 @@ class FleetPage(unittest.TestCase):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Skills</h1>', 'data-panes="tab-skills"', 'id="skills-list"', 'id="skill-add"', "get('/api/skills')", "get('/api/profiles')"):
             self.assertIn(kept, page)
-        self.assertIn('id="skill-SECRETSKILL"', web.fleet_page('board', [], skills=[skill], page='roles'), 'Roles still draws the hidden skills pane (#873)')
+        self.assertNotIn('SECRETSKILL', web.fleet_page('board', [], skills=[skill], page='roles'), 'Roles is a shell too (#873)')
 
     def test_the_top_bar_has_no_connect_your_harness_link(self):
         page = web.fleet_page('board', [])
