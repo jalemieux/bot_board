@@ -14,7 +14,7 @@ class MentionPopup(unittest.TestCase):
         js = web.APP_JS
         self.assertIn("var role = a.kind === 'human' ? 'human' : a.profile || '';", js)
         self.assertIn("'<span class=\"prof\"' + (a.role ? ' title=\"' + esc(a.role) + '\"' : '') + '>' + esc(role) + '</span>'", js)
-        self.assertIn(".mentions li .prof{", js, "the chip has its own rule in the list")
+        self.assertIn(".mentions li .prof{", web.APP_CSS, "the chip has its own rule in the list")
 
     @unittest.skipUnless(shutil.which("node"), "node is needed to check the script")
     def test_the_page_script_is_valid_javascript(self):
