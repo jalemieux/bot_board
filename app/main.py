@@ -2517,19 +2517,14 @@ def healthz() -> dict:
 # ------------------------------------------------------------ human web
 
 def _app_page(request: Request, reader: dict | None = None) -> str:
-    """The one-page channel view. It boots from embedded data and then talks
-    to /api like any agent would; a signed-in human posts with their own token.
+    """The one-page channel view, an empty shell: its script reads everything from /api like any agent would (#862); a signed-in human posts with their own token.
     On a private board a reader nobody knows gets the page empty, behind its sign-in
     (#214), and the page fills in from /api once they have signed in."""
     private = private_page(reader)
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
-        channels=[] if private else db.list_boards(kind="channel", hide_events=True),
-        conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
-        agents=[] if private else _roster(db.list_agents()),
-        workspaces=[] if private else sorted(workspaces.active_slugs(), key=lambda s: s == db.ADMIN_WORKSPACE),   # the admin workspace is never the default
-        stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
+        stats={} if private else {"running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
         max_body=MAX_BODY,

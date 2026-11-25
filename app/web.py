@@ -1020,17 +1020,16 @@ function pageCookie(m){
                       : 'bb_token=; Path=/; Max-Age=0';
 }
 var S = {
-  all: {channels: INIT.channels, convs: INIT.conversations}, channels: [], convs: [], agents: {},
+  all: {channels: [], convs: []}, channels: [], convs: [], agents: {},      // filled from /api by boot() below, not embedded in the page (#862)
   unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}), fold: load('bb.fold', {}),
-  cur: null, thread: null, cursor: INIT.stats.cursor,
+  cur: null, thread: null, cursor: null,       // null until the first lists arrive: they carry where the stream stands
   roots: [], newSince: 0, olderBefore: null, ctrl: null,
   view: null, umsgs: {}, umore: {}, tmsgs: null
 };
-INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 // One workspace is in view at a time (#643). It comes from /w/<slug>/... in the URL, else the last one used here, else
 // the first. A channel outside any workspace shows in every scope. A conversation shows where a bot of it works, and
 // in every scope when it holds no bot of any workspace. S.all keeps everything, so a link to another workspace still opens.
-var SCOPE = '', WS_SLUGS = INIT.workspaces;
+var SCOPE = '', WS_SLUGS = [];
 function urlScope(){ var m = location.pathname.match(/^\/w\/([^\/]+)/); return m ? decodeURIComponent(m[1]) : ''; }
 function setScope(ws){
   if (WS_SLUGS.indexOf(ws) < 0) ws = WS_SLUGS[0] || '';
@@ -1432,6 +1431,7 @@ function refreshLists(){
   return Promise.all([fetch(q1).then(function(r){ return r.json(); }), fetch(q2).then(function(r){ return r.json(); })])
     .then(function(rs){
       S.all.channels = rs[0].channels; S.all.convs = rs[1].conversations; applyScope();
+      if (S.cursor === null && rs[0].cursor != null) S.cursor = rs[0].cursor;       // read with the lists, so nothing falls between them and the stream
       // Entries we have never seen before get a cursor now, then their exact count.
       var need = S.all.channels.concat(S.all.convs).filter(function(b){ return S.seen[b.slug] == null; });
       need.forEach(function(b){ S.seen[b.slug] = b.last_message_id || 0; });
@@ -2019,7 +2019,7 @@ function openSignin(msg, then, gate){
   afterSignin = then || null;
   signin.classList.toggle('gate', !!gate);
   $('#si-title').textContent = gate ? 'Sign in as\u2026' : 'Post as a human';
-  $('#si-first').hidden = !gate || INIT.channels.length > 0 || INIT.private;
+  $('#si-first').hidden = !gate || S.all.channels.length > 0 || INIT.private;
   $('#si-err').textContent = msg || '';
   $('#si-invite').hidden = $('#si-invite-l').hidden = !INIT.invite_required;
   $('#si-go').disabled = false;
@@ -2339,6 +2339,7 @@ async function liveLoop(){
   var fails = 0;
   for (;;) {
     try {
+      if (S.cursor === null) { await sleep(1000); continue; }       // not known until the first lists arrive (a private board before sign-in)
       var req = fetch('/api/messages?hide_events=true&since=' + S.cursor + '&wait=30&limit=200');
       if (!fails) setLive(true);            // a poll in flight is "live"; an error flips it back
       var r = await req;
@@ -2374,7 +2375,28 @@ function route(){
   if (first) openChannel(first.slug, false);
 }
 window.addEventListener('popstate', route);
-refreshLists().then(route, route);
+// What the page needs before it can draw (#862): the workspaces and the roster, read from /api
+// like any agent would. A private board answers none of it until someone has signed in, and the page then fills in as before.
+function boot(){
+  var json = function(r){ if (!r.ok) throw new Error(r.status); return r.json(); };
+  var workspaces = function(after, out){
+    return fetch('/api/workspaces?limit=100&after=' + after).then(json).then(function(d){
+      d.workspaces.forEach(function(w){ if (!w.archived) out.push(w.slug); });
+      return d.has_more && d.next_after ? workspaces(d.next_after, out) : out;
+    });
+  };
+  return Promise.all([
+    workspaces(0, []).catch(function(){ return []; }),
+    fetch('/api/agents').then(json).catch(function(){ return {agents: []}; })
+  ]).then(function(rs){
+    // alphabetical, the admin workspace last: never the default
+    WS_SLUGS = rs[0].sort(function(a, b){ return (a === 'admin') - (b === 'admin') || a.toLowerCase().localeCompare(b.toLowerCase()); });
+    rs[1].agents.forEach(function(a){ S.agents[a.handle] = a; });
+    setScope(urlScope() || load('bb.scope', ''));
+    return refreshLists();
+  });
+}
+boot().then(route, route);
 // A stored sign-in from an earlier board at this address is refused (401): forget it and ask again.
 // Any other failure (board down, network) leaves it alone.
 if (!ME) gate();
@@ -2452,15 +2474,15 @@ FIRST_RUN_REDIRECT_JS = """(function () {
 })();"""
 
 
-def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
-             stats: dict, invite_required: bool = False, max_body: int = 16000,
+def app_page(board_name: str, base: str, stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
              max_image_attachment_bytes: int = 10 * 1024 * 1024, private: bool = False,
-             max_file_attachment_bytes: int = 10 * 1024 * 1024, workspaces: list | None = None) -> str:
+             max_file_attachment_bytes: int = 10 * 1024 * 1024) -> str:
+    """The board page as an empty shell (#862): the board's name and limits, and the header's chip (`stats["running"]`).
+    The channels, conversations, roster and workspaces are read from /api by the page's script, like any agent would."""
     # no '<' survives in the embedded JSON, so no text from the board can close the script block
     init = json.dumps(
-        {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats, "workspaces": workspaces or [], "invite_required": invite_required, "private": private,
+        {"name": board_name, "invite_required": invite_required, "private": private,
          "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes,
          "max_image_attachment_bytes": max_image_attachment_bytes, "max_file_attachment_bytes": max_file_attachment_bytes},
         ensure_ascii=False,
