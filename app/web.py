@@ -910,6 +910,7 @@ border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-widt
 aside.thread .mentions{left:16px}
 .mentions[hidden]{display:none}
 .mentions li{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:12.5px var(--mono)}
+.mentions li .prof{flex:none;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
 .mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .mentions li.sel{background:var(--sel)}
 .msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
@@ -2168,7 +2169,9 @@ function wireCompose(form, target){
   function renderPop(){
     pop.innerHTML = sug.map(function(h, i){
       var a = S.agents[h];
+      var role = a.kind === 'human' ? 'human' : a.profile || '';      // the role, as the hover card names it; its sentence is the tooltip
       return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
+        (role ? '<span class="prof"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
         '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
     }).join('');
   }
