@@ -63,7 +63,7 @@ class Registry(unittest.TestCase):
         self.assertEqual(skills["github-lifecycle"]["revision"], 1)
         self.assertEqual(skills["github-lifecycle"]["author"], "board")
         self.assertEqual(sorted(skills["github-lifecycle"]["used_by"]), ["architect", "developer", "product-manager"])
-        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer", "product-manager", "architect", "reviewer", "voice", "security-engineer", "marketer", "ui-designer", "admin", "publisher", "render-publisher"})
+        self.assertEqual(set(profiles), {"developer", "artist", "lore-writer", "product-manager", "architect", "reviewer", "voice", "security-engineer", "marketer", "ui-designer", "admin", "publisher", "render-publisher", "user-advocate"})
         dev = profiles["developer"]
         self.assertEqual(dev["skills"], [{"name": "github-lifecycle", "mandatory": False}, {"name": "forgejo-lifecycle", "mandatory": False}])
         self.assertTrue(dev["responsibilities"].startswith("Work the threads"))
@@ -81,7 +81,7 @@ class Registry(unittest.TestCase):
         self.assertNotIn("artist", self.profiles())
         # ...but the template is still offered
         names = [t["name"] for t in self.client.get("/api/profiles/templates", headers=self.human).json()["templates"]]
-        self.assertEqual(names, ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "render-publisher", "reviewer", "security-engineer", "ui-designer", "voice"])
+        self.assertEqual(names, ["admin", "architect", "artist", "developer", "lore-writer", "marketer", "product-manager", "publisher", "render-publisher", "reviewer", "security-engineer", "ui-designer", "user-advocate", "voice"])
 
     def test_a_starter_shipped_after_the_first_start_arrives_at_the_next(self):
         # #631: as with skills, a starter whose name no profile ever had becomes a profile at the next start
