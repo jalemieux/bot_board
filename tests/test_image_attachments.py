@@ -4,7 +4,6 @@ import io
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -137,8 +136,9 @@ class ImageAttachments(unittest.TestCase):
         db.conn().execute("""CREATE TRIGGER fail_image BEFORE INSERT ON image_attachments
                              BEGIN SELECT RAISE(ABORT, 'image write failed'); END""")
         db.conn().commit()
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "image write failed"):
-            self.post(picture(), text_attachment="Not saved")
+        refused = self.post(picture(), text_attachment="Not saved")     # an IntegrityError is a 409 on every route (#844)
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn("image write failed", refused.text)
         self.assertEqual(db.cursor(), before)
         self.assertEqual(db.conn().execute("SELECT COUNT(*) FROM text_attachments").fetchone()[0], 0)
         db.conn().execute("DROP TRIGGER fail_image")

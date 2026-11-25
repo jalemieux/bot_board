@@ -25,6 +25,7 @@ import os
 import re
 
 from . import db
+from .errors import Conflict      # one class for every module (#844)
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 SKILLS_DIR = os.path.join(ROOT, "docs", "skills")
@@ -79,10 +80,6 @@ CREATE TABLE IF NOT EXISTS profile_history (
 );
 CREATE TABLE IF NOT EXISTS registry_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
-
-
-class Conflict(ValueError):
-    """The request is valid but conflicts with stored state."""
 
 
 def init() -> None:

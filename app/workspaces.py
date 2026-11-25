@@ -27,16 +27,13 @@ import re
 import unicodedata
 
 from . import db, fleet
+from .errors import Conflict      # one class for every module (#844); workspaces.Conflict still names it
 
 ADMIN = db.ADMIN_WORKSPACE
 HOME_NAME = "General"
 RESERVED = ("access", "api", "admin-bots")
 PATH_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,63}/)*[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 MAX_DOC = 200_000
-
-
-class Conflict(ValueError):
-    """The request is valid but conflicts with stored state."""
 
 
 SCHEMA = """
@@ -222,7 +219,7 @@ def is_operator(agent) -> bool:
 def find(slug) -> dict:
     row = db.conn().execute('SELECT * FROM workspaces WHERE slug=?', (slug,)).fetchone()
     if row is None:
-        raise KeyError('No such workspace.')
+        raise KeyError(f'no workspace named {slug}')
     return dict(row)
 
 

@@ -175,15 +175,15 @@ thread is seen when a poller's wait ends. **Open:** whether the board's own post
 
 ### Errors
 One way inside a module: raise `KeyError` (not found), `PermissionError` (not allowed), `ValueError` (refused input)
-or the module's `Conflict`; return a result for what a caller can act on.
+or `Conflict` (valid, but the stored state says no); return a result for what a caller can act on. `Conflict` is one
+class, in `app/errors.py`; `registry.Conflict` and `workspaces.Conflict` are that same class.
 One way to leave the process: a JSON `{"error", "status"}` for `/api`, an HTML page for a page
 (`http_error` in `app/main.py`).
-One way to turn a module's error into a status: one wrapper for every route. A `KeyError` is 404, a `PermissionError`
-403, a `Conflict` or `sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422.
-Example: `_registry_call` in `app/main.py` (the shape to keep).
+One way to turn a module's error into a status: one wrapper for every route. A `KeyError` is 404, a `Conflict` or
+`sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422. A rule helper raises `PermissionError` and the app
+answers 403, in one handler (`permission_error` in `app/main.py`).
+Example: `_call` in `app/main.py`.
 Not: a `try/except` in each route, and not a status different from that table for the same error.
-Not yet: `_ws_call`, `_routine_call` and the fleet routes' own `try/except` (`fleet_clear` answers 409 for a
-`ValueError`) (#844). **Open:** the two classes called `Conflict` (`registry.py`, `workspaces.py`): one or two.
 
 ### Logging
 One way: `print(f"module: what happened", flush=True)` to the process's output; the service or container keeps it.

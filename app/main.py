@@ -31,6 +31,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.datastructures import MutableHeaders
 
+from .errors import Conflict
 from . import activity, db, fleet, forge, guide, web, welcome_web, workspaces, routines, images, versions, registry, progress, hooks, team
 
 BOARD_NAME = os.environ.get("BOT_BOARD_NAME", "bot_board")
@@ -120,6 +121,21 @@ def _on_stop_signals() -> None:
             if callable(before):
                 before(signum, frame)
         signal.signal(sig, handler)
+
+
+def _call(fn, *args):
+    """The one way a route turns a module's error into a status (#844, docs/architecture.md, Errors): `KeyError` is 404,
+    `Conflict` or `sqlite3.IntegrityError` 409, `ValueError` (refused input) 422. A `PermissionError` is not here: it is 403
+    in one place, the app's handler (#855), whether it comes from a rule helper or from a module. Run it off the event
+    loop with `await asyncio.to_thread(_call, fn, *args)` when the work touches the database."""
+    try:
+        return fn(*args)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc.args[0]) if exc.args else "not found") from exc
+    except (Conflict, sqlite3.IntegrityError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def _ensure_admin_workspace(agent: dict | None = None) -> bool:
@@ -716,10 +732,7 @@ def register(body: RegisterIn, response: Response) -> dict:
         raise HTTPException(409, f"handle '{body.handle}' is taken")
     workspace_id = None
     if body.workspace and body.kind not in db.UNSCOPED_KINDS:
-        try:
-            ws = workspaces.find(body.workspace.lower())
-        except KeyError:
-            raise HTTPException(404, f"no workspace named {body.workspace}") from None
+        ws = _call(workspaces.find, body.workspace.lower())
         if ws["archived"]:
             raise HTTPException(409, f"the workspace {body.workspace} is archived")
         workspace_id = ws["id"]
@@ -746,10 +759,7 @@ def _scope(agent: dict | None, workspace: str | None = None) -> int | None:
     sc = db.scope(agent)
     if sc is not None or not workspace:
         return sc
-    try:
-        return workspaces.find(workspace.lower())["id"]
-    except KeyError:
-        raise HTTPException(404, f"no workspace named {workspace}") from None
+    return _call(workspaces.find, workspace.lower())["id"]
 
 
 WorkspaceParam = Query(None, max_length=64, description="For humans: restrict to one workspace. A bot always"
@@ -1017,12 +1027,7 @@ class FleetClearIn(BaseModel):
 def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dict:
     """Cancel stale requests for freshly confirmed stopped workers; preserve their state."""
     workspaces.require_human(agent, "only a human clears fleet alerts")
-    try:
-        return {"cleared": fleet.clear_alerts([item.model_dump() for item in body.items], agent["handle"])}
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    return {"cleared": _call(fleet.clear_alerts, [item.model_dump() for item in body.items], agent["handle"])}
 
 
 @app.get("/api/fleet", tags=["fleet"])
@@ -1322,10 +1327,7 @@ def fleet_secret_set(name: str, body: SecretIn, agent: dict = Depends(current_ag
         raise HTTPException(422, f"name: capitals, digits and _, ending in _TOKEN, _KEY or _SECRET (GH_TOKEN), or {fleet.PLAIN_SECRET}")
     if "\n" in body.value or "\0" in body.value:
         raise HTTPException(422, "a secret is one line")
-    try:
-        fleet.set_secret(name, body.value.strip(), agent["handle"])
-    except ValueError as e:
-        raise HTTPException(422, str(e)) from None
+    _call(fleet.set_secret, name, body.value.strip(), agent["handle"])
     return {"ok": True}
 
 
@@ -1448,19 +1450,6 @@ class ProfileUpdateIn(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-def _registry_call(fn, *args):
-    try:
-        return fn(*args)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc).strip("'")) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except (registry.Conflict, sqlite3.IntegrityError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
 @app.get("/api/skills", tags=["skills"])
 def skills_list(_: dict | None = Depends(optional_agent)) -> dict:
     """Every skill the fleet has, with the profiles that list each. Fleet-wide: a
@@ -1476,7 +1465,7 @@ def skills_drift(_: dict | None = Depends(optional_agent)) -> dict:
 
 @app.get("/api/skills/{name}/history", tags=["skills"])
 def skill_history(name: str, _: dict | None = Depends(optional_agent)) -> dict:
-    return {"name": name.lower(), "revisions": _registry_call(registry.skill_history, name)}
+    return {"name": name.lower(), "revisions": _call(registry.skill_history, name)}
 
 
 @app.get("/api/skills/{name}", tags=["skills"], response_model=None)
@@ -1484,7 +1473,7 @@ def skill_get(name: str, request: Request, revision: int | None = Query(None, ge
               _: dict | None = Depends(optional_agent)):
     """The skill as a SKILL.md, which is what a bot reads. `?json` returns its fields,
     body and revision instead; `?revision=N` an older revision."""
-    skill = _registry_call(registry.skill_revision, name, revision) if revision else _registry_call(registry.get_skill, name)
+    skill = _call(registry.skill_revision, name, revision) if revision else _call(registry.get_skill, name)
     if "json" in request.query_params:
         return {"skill": skill}
     if skill.get("deleted"):
@@ -1496,8 +1485,8 @@ def skill_get(name: str, request: Request, revision: int | None = Query(None, ge
 def skill_put(name: str, body: SkillIn, agent: dict = Depends(current_agent)) -> dict:
     """Create or replace a skill: humans and admin bots. A running bot is not told here:
     its launcher sees X-Skills-Revision move at its next prompt and says so (#328)."""
-    _registry_call(registry.require_writer, agent)
-    skill = _registry_call(registry.put_skill, name, body.body, body.fields, body.base_revision, body.reason, agent)
+    _call(registry.require_writer, agent)
+    skill = _call(registry.put_skill, name, body.body, body.fields, body.base_revision, body.reason, agent)
     return {"skill": skill}
 
 
@@ -1518,14 +1507,14 @@ def _reset_all(handles: list[str], agent: dict) -> dict:
 def skill_reset(name: str, agent: dict = Depends(current_agent)) -> dict:
     """A human gives every bot on the skill (all of them, for a base skill) a new session, each as POST
     /api/fleet/bots/{handle}/reset does: when idle, a stopped bot at its next start."""
-    _registry_call(registry.get_skill, name)
+    _call(registry.get_skill, name)
     return _reset_all(registry.bots_of_skill(name), agent)
 
 
 @app.delete("/api/skills/{name}", tags=["skills"])
 def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_agent)) -> dict:
-    _registry_call(registry.require_writer, agent)
-    return _registry_call(registry.delete_skill, name, body.base_revision, body.reason, agent)
+    _call(registry.require_writer, agent)
+    return _call(registry.delete_skill, name, body.base_revision, body.reason, agent)
 
 
 @app.get("/api/profiles", tags=["profiles"])
@@ -1536,7 +1525,7 @@ def profiles_list(_: dict | None = Depends(optional_agent)) -> dict:
 @app.post("/api/profiles/{name}/reset", tags=["profiles"])
 def profile_reset(name: str, agent: dict = Depends(current_agent)) -> dict:
     """A human gives every bot that carries the profile a new session, as for a skill."""
-    _registry_call(registry.get_profile, name)
+    _call(registry.get_profile, name)
     return _reset_all(registry.bots_by_profile().get(name.lower(), []), agent)
 
 
@@ -1553,10 +1542,7 @@ def team_templates(_: dict | None = Depends(optional_agent)) -> dict:
 
 @app.get("/api/team/templates/{name}", tags=["team"])
 def team_template(name: str, _: dict | None = Depends(optional_agent)) -> dict:
-    try:
-        return {"template": team.template(name)}
-    except KeyError:
-        raise HTTPException(404, f"no team template named {name}")
+    return {"template": _call(team.template, name)}
 
 
 @app.get("/api/profiles/templates", tags=["profiles"])
@@ -1569,12 +1555,12 @@ def profile_templates(_: dict | None = Depends(optional_agent)) -> dict:
 @app.get("/api/profiles/{name}/history", tags=["profiles"])
 def profile_history(name: str, _: dict | None = Depends(optional_agent)) -> dict:
     """Every revision of a profile, newest first: what it said, who changed it and why."""
-    return {"name": name.lower(), "revisions": _registry_call(registry.profile_history, name)}
+    return {"name": name.lower(), "revisions": _call(registry.profile_history, name)}
 
 
 @app.get("/api/profiles/{name}", tags=["profiles"])
 def profile_get(name: str, request: Request, _: dict | None = Depends(optional_agent)) -> dict:
-    profile = _registry_call(registry.get_profile, name)
+    profile = _call(registry.get_profile, name)
     return {"profile": {**profile, "base_skills": registry.also_has(profile),
                         "text": registry.profile_text(profile, str(request.base_url))}}
 
@@ -1583,10 +1569,10 @@ def profile_get(name: str, request: Request, _: dict | None = Depends(optional_a
 def profile_create(body: ProfileIn, agent: dict = Depends(current_agent)) -> dict:
     """A new profile, from scratch, a template or an existing one. Clone is this with
     `from`; to change a profile its bots carry, PUT it instead."""
-    _registry_call(registry.require_writer, agent)
+    _call(registry.require_writer, agent)
     data = body.model_dump()
     data["from"] = data.pop("origin")
-    return {"profile": _registry_call(registry.create_profile, data, agent)}
+    return {"profile": _call(registry.create_profile, data, agent)}
 
 
 @app.put("/api/profiles/{name}", tags=["profiles"])
@@ -1596,15 +1582,15 @@ def profile_put(name: str, body: ProfileUpdateIn, agent: dict = Depends(current_
     the way it reads a changed skill: the AGENTS.md composed for it moves, and the launcher
     hands it over and writes the skills again, dropping any the list no longer names. No
     new session; POST /api/profiles/{name}/reset is that, when a human wants one."""
-    _registry_call(registry.require_writer, agent)
+    _call(registry.require_writer, agent)
     data = body.model_dump()
-    return {"profile": _registry_call(registry.update_profile, name, data, body.base_revision, body.reason, agent)}
+    return {"profile": _call(registry.update_profile, name, data, body.base_revision, body.reason, agent)}
 
 
 @app.delete("/api/profiles/{name}", tags=["profiles"])
 def profile_delete(name: str, agent: dict = Depends(current_agent)) -> dict:
-    _registry_call(registry.require_writer, agent)
-    return _registry_call(registry.delete_profile, name, agent)
+    _call(registry.require_writer, agent)
+    return _call(registry.delete_profile, name, agent)
 
 
 @app.get("/api/me/profile", tags=["agents"], response_model=None)
@@ -1716,21 +1702,8 @@ class DocumentDeleteIn(WorkspaceModel):
     reason: str = Field(default='', max_length=500)
 
 
-def _ws_call(fn, *args):
-    try:
-        return fn(*args)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except (workspaces.Conflict, sqlite3.IntegrityError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
 async def _ws_write(fn, *args):
-    result = await asyncio.to_thread(_ws_call, fn, *args)
+    result = await asyncio.to_thread(_call, fn, *args)
     async with _new_message:
         _new_message.notify_all()      # a seed thread may have been posted
     return result
@@ -1739,7 +1712,7 @@ async def _ws_write(fn, *args):
 def _workspace_for(slug: str, agent: dict | None, write: bool = False) -> dict:
     """The workspace a human or admin bot names; a bot of that workspace itself, too.
     An ordinary bot cannot look at another workspace."""
-    ws = _ws_call(workspaces.find, slug.lower())
+    ws = _call(workspaces.find, slug.lower())
     if agent and agent["kind"] not in db.UNSCOPED_KINDS and not workspaces.is_admin_bot(agent) \
             and agent.get("workspace_id") != ws["id"]:
         raise HTTPException(403, "another workspace: only admin bots and humans reach it")
@@ -1810,10 +1783,7 @@ def first_run_get(request: Request, agent: dict = Depends(current_agent)) -> dic
 @app.put('/api/first-run', tags=['workspaces'])
 def first_run_put(body: FirstRunIn, agent: dict = Depends(current_agent)) -> dict:
     workspaces.require_human(agent, "the first-run guide is for a person")
-    try:
-        return {"state": guide.save(agent["handle"], body.state)}
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    return {"state": _call(guide.save, agent["handle"], body.state)}
 
 
 @app.get('/api/workspaces/{slug}/activity', tags=['workspaces'])
@@ -1837,7 +1807,7 @@ class DeleteIn(BaseModel):
 @app.get('/api/workspaces/{slug}/deletion', tags=['workspaces'])
 def workspace_deletion(slug: str, agent: dict = Depends(current_agent)):
     """What deleting this workspace would remove, and the bots that block it, for the warning."""
-    return {'deletion': _ws_call(workspaces.deletion, slug.lower(), agent)}
+    return {'deletion': _call(workspaces.deletion, slug.lower(), agent)}
 
 
 @app.delete('/api/workspaces/{slug}', tags=['workspaces'])
@@ -1849,7 +1819,7 @@ async def workspace_delete(slug: str, body: DeleteIn, agent: dict = Depends(curr
 
 @app.get('/api/workspaces/{slug}/channels/{channel}/deletion', tags=['workspaces'])
 def workspace_channel_deletion(slug: str, channel: str, agent: dict = Depends(current_agent)):
-    return {'deletion': _ws_call(workspaces.channel_deletion, slug.lower(), channel.lower(), agent)}
+    return {'deletion': _call(workspaces.channel_deletion, slug.lower(), channel.lower(), agent)}
 
 
 @app.delete('/api/workspaces/{slug}/channels/{channel}', tags=['workspaces'])
@@ -1904,8 +1874,8 @@ def _kb_list(ws, q):
 
 def _kb_get(ws, path, revision):
     if revision:
-        return {'document': _ws_call(workspaces.kb_revision, ws, path, revision)}
-    return {'document': _ws_call(workspaces.kb_get, ws, path)}
+        return {'document': _call(workspaces.kb_revision, ws, path, revision)}
+    return {'document': _call(workspaces.kb_get, ws, path)}
 
 
 async def _kb_put(ws, path, body: DocumentIn, agent):
@@ -1925,7 +1895,7 @@ def knowledge_list(q: str | None = Query(None, max_length=200, description="Sear
 
 @app.get('/api/knowledge/{path:path}/history', tags=['knowledge'])
 def knowledge_history(path: str, workspace: str | None = WorkspaceParam, agent: dict | None = Depends(optional_agent)):
-    return _ws_call(workspaces.kb_history, _my_workspace(agent, workspace), path)
+    return _call(workspaces.kb_history, _my_workspace(agent, workspace), path)
 
 
 @app.get('/api/knowledge/{path:path}', tags=['knowledge'])
@@ -1959,7 +1929,7 @@ def ws_knowledge_list(slug: str, q: str | None = Query(None, max_length=200), ag
 
 @app.get('/api/workspaces/{slug}/knowledge/{path:path}/history', tags=['workspaces'])
 def ws_knowledge_history(slug: str, path: str, agent: dict | None = Depends(optional_agent)):
-    return _ws_call(workspaces.kb_history, _workspace_for(slug, agent), path)
+    return _call(workspaces.kb_history, _workspace_for(slug, agent), path)
 
 
 @app.get('/api/workspaces/{slug}/knowledge/{path:path}', tags=['workspaces'])
@@ -2042,10 +2012,7 @@ def create_channel(body: ChannelIn, agent: dict = Depends(current_agent)) -> dic
     sc = _scope(agent, body.workspace)
     if existing and not db.in_scope(existing, sc):
         raise HTTPException(403, f"#{body.slug} is in another workspace")
-    try:
-        return {"channel": db.ensure_board(body.slug, body.topic, agent["id"], force_topic=True, workspace_id=sc or agent.get("workspace_id") or None)}
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    return {"channel": _call(db.ensure_board, body.slug, body.topic, agent["id"], True, sc or agent.get("workspace_id") or None)}
 
 
 @app.get("/api/conversations", tags=["channels"])
@@ -2063,12 +2030,7 @@ def conversations(
 
 @app.post("/api/conversations", tags=["channels"])
 def open_conversation(body: ConversationIn, agent: dict = Depends(current_agent)) -> JSONResponse:
-    try:
-        conv, created = db.create_conversation(agent["id"], body.participants, body.topic)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    conv, created = _call(db.create_conversation, agent["id"], body.participants, body.topic)
     return JSONResponse({"conversation": conv, "created": created}, 201 if created else 200)
 
 
@@ -2220,10 +2182,7 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
             raise HTTPException(422, "file attachment must be between 1 byte and 10 MiB")
         file = (content, _file_name(body.file_attachment.name))
     if body.image_attachment is not None:
-        try:
-            image = await asyncio.to_thread(images.decode, body.image_attachment)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        image = await asyncio.to_thread(_call, images.decode, body.image_attachment)
     channel = body.channel
     parent = db.get_message(body.reply_to) if body.reply_to is not None else None
     if body.reply_to is not None and parent is None:
@@ -2240,17 +2199,12 @@ async def post_message(body: PostIn, request: Request, agent: dict = Depends(cur
     if _makes_no_channels(agent) and db.get_board(channel) is None:
         # channels are a human's or a manager's to make, not a side effect of a bot's post (#465)
         raise HTTPException(422, _no_channel(channel, agent))
-    try:
-        # Off the event loop: a contended SQLite commit must not stall long-pollers.
-        msg = await asyncio.to_thread(
-            db.post_message,
-            channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
-            body.text_attachment, image, db.scope(agent), body.client_key, file,
-        )
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    # Off the event loop: a contended SQLite commit must not stall long-pollers.
+    msg = await asyncio.to_thread(
+        _call, db.post_message,
+        channel, agent["id"], body.body, body.reply_to, body.tags, body.meta,
+        body.text_attachment, image, db.scope(agent), body.client_key, file,
+    )
     # a link a human can click: bots hand it over instead of "thread 512" or "from before"
     url = _thread_url(request, msg["thread_id"] or msg["id"])
     refused = msg.pop("claim_refused", None)
@@ -2355,10 +2309,7 @@ def routine_list(full: bool = Query(True, description="With latest jobs and anno
 
 @app.get("/api/routines/{rid}", tags=["routines"])
 def routine_get(rid: int, _: dict | None = Depends(optional_agent)) -> dict:
-    try:
-        return routines.get(rid)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc).strip("'\"")) from exc
+    return _call(routines.get, rid)
 
 
 @app.post("/api/routines", tags=["routines"], status_code=201)
@@ -2369,26 +2320,26 @@ async def routine_create(body: RoutineIn, agent: dict = Depends(current_agent)) 
                and not (data.get("recipe") is not None and k in ("channel", "check", "prompt"))]
     if missing:
         raise HTTPException(422, f"missing: {', '.join(missing)}")
-    return await _routine_call(routines.create, data, agent)
+    return await asyncio.to_thread(_call, routines.create, data, agent)
 
 
 @app.patch("/api/routines/{rid}", tags=["routines"])
 async def routine_update(rid: int, body: RoutineIn, agent: dict = Depends(current_agent)) -> dict:
     """A new version of the definition (only the fields sent change); paused until enabled again."""
-    return await _routine_call(routines.update, rid, body.model_dump(), agent)
+    return await asyncio.to_thread(_call, routines.update, rid, body.model_dump(), agent)
 
 
 @app.post("/api/routines/upgrades/approve", tags=["routines"])
 async def routine_upgrades_approve(body: dict, agent: dict = Depends(current_agent)) -> dict:
     """A human manager approves the drafted recipe upgrades they were shown, in one step:
     {recipe_version, routines: {id: version}} (#242)."""
-    return await _routine_call(routines.approve_upgrades, body, agent)
+    return await asyncio.to_thread(_call, routines.approve_upgrades, body, agent)
 
 
 @app.post("/api/routines/{rid}/report", tags=["routines"], include_in_schema=False)
 async def routine_report(rid: int, body: dict, agent: dict = Depends(current_agent)) -> dict:
     """The runner's: a test result {test}, or {failed, version}."""
-    return await _routine_call(routines.report, rid, body, agent)
+    return await asyncio.to_thread(_call, routines.report, rid, body, agent)
 
 
 @app.post("/api/routines/{rid}/{action}", tags=["routines"])
@@ -2398,24 +2349,13 @@ async def routine_act(rid: int, action: str = Path(pattern="^(approve|enable|pau
     waits for one (#380); the runner tests it, and it is enabled again when the test passes if it was
     enabled before the change. An admin bot's enable and test of a waiting version cite the human's yes.
     run: an enabled routine checks on the runner's next pass, and fires a job if there is work."""
-    return await _routine_call(routines.act, rid, action, agent, body.approved_by, body.version)
+    return await asyncio.to_thread(_call, routines.act, rid, action, agent, body.approved_by, body.version)
 
 
 @app.delete("/api/routines/{rid}", tags=["routines"])
 async def routine_delete(rid: int, agent: dict = Depends(current_agent)) -> dict:
     """Stop a routine for good."""
-    return await _routine_call(routines.act, rid, "delete", agent)
-
-
-async def _routine_call(fn, *args) -> dict:
-    try:
-        return await asyncio.to_thread(fn, *args)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc).strip("'\"")) from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    return await asyncio.to_thread(_call, routines.act, rid, "delete", agent)
 
 
 def _visible(msg: dict | None, agent: dict | None) -> dict:
@@ -2460,10 +2400,7 @@ class MessageReceiptIn(BaseModel):
 @app.post("/api/message-receipts", tags=["messages"])
 def receive_messages(body: MessageReceiptIn, agent: dict = Depends(current_agent)) -> dict:
     """Launcher heartbeat: messages currently supplied to a harness, then active=false on return."""
-    try:
-        return db.receive_messages(body.messages, agent, body.active)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    return _call(db.receive_messages, body.messages, agent, body.active)
 
 
 @app.get("/api/message-receipts", tags=["messages"])
@@ -2507,22 +2444,12 @@ def _set_hidden(tid: int, agent: dict, hidden: bool) -> dict:
 
 @app.get("/api/threads/{tid}/worker", tags=["messages"])
 def get_thread_worker(tid: int, _: dict | None = Depends(optional_agent)) -> dict:
-    try:
-        return db.thread_worker(tid)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    return _call(db.thread_worker, tid)
 
 
 @app.post("/api/threads/{tid}/worker", tags=["messages"])
 async def claim_thread_worker(tid: int, agent: dict = Depends(current_agent)) -> dict:
-    try:
-        return await asyncio.to_thread(db.claim_thread, tid, agent)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    return await asyncio.to_thread(_call, db.claim_thread, tid, agent)
 
 
 class ThreadCompleteIn(BaseModel):
@@ -2531,28 +2458,14 @@ class ThreadCompleteIn(BaseModel):
 
 @app.post("/api/threads/{tid}/complete", tags=["messages"])
 async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depends(current_agent)) -> dict:
-    try:
-        return await asyncio.to_thread(db.complete_thread, tid, body.through, agent)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    return await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
 
 
 @app.delete("/api/threads/{tid}/worker", tags=["messages"])
 async def release_thread_worker(tid: int, to: str | None = Query(None, max_length=32, description=(
         "Hand the thread to this bot instead of offering it to all: the claim moves at once (#468).")),
         agent: dict = Depends(current_agent)) -> dict:
-    try:
-        result = await asyncio.to_thread(db.release_thread, tid, agent, to)
-    except KeyError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
+    result = await asyncio.to_thread(_call, db.release_thread, tid, agent, to)
     async with _new_message:
         _new_message.notify_all()
     return result
@@ -2712,10 +2625,7 @@ def status_dismiss(body: DismissIn, agent: dict = Depends(current_agent)) -> dic
     """A human hides an alert (by its `key`) until its cause is gone; returns the new status."""
     from . import status
     workspaces.require_human(agent, "only a human dismisses alerts")
-    try:
-        return status.dismiss(body.key, agent)     # m<id>: a waiting or mention item
-    except KeyError as exc:
-        raise HTTPException(404, str(exc).strip("'")) from exc
+    return _call(status.dismiss, body.key, agent)     # m<id>: a waiting or mention item
 
 
 @app.post("/api/status/mentions/done", tags=["fleet"])
