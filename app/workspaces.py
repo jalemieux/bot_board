@@ -803,13 +803,9 @@ def seed_request(slug: str, channel: str | None, seed: dict, agent: dict) -> int
     if text:
         lines += ["", "Pasted material is attached."]
     with db._write_lock, db.conn() as c:
-        mid = c.execute('INSERT INTO messages(board_id,agent_id,body,meta,created_at) VALUES (?,?,?,?,?)',
-                        (admin['board_id'], agent['id'], "\n".join(lines),
-                         json.dumps({'kind': 'seed', 'workspace': slug, 'channel': channel, 'links': links}),
-                         db.now())).lastrowid
-        c.execute('UPDATE messages SET thread_id=id WHERE id=?', (mid,))
-        if text:
-            db.add_text_attachment(c, mid, text)
+        mid = db.post_message(db.get_board_by_id(admin['board_id'])['slug'], agent['id'], "\n".join(lines),
+                              meta={'kind': 'seed', 'workspace': slug, 'channel': channel, 'links': links},
+                              text_attachment=text, system=True, within=c, mentions=[])['id']
     return mid
 
 
@@ -822,10 +818,8 @@ def team_request(slug: str, name: str, agent: dict) -> int:
     home = find(slug)
     body = f"Set up how the team of workspace {name} ({slug}) works together."
     with db._write_lock, db.conn() as c:
-        mid = c.execute('INSERT INTO messages(board_id,agent_id,body,meta,created_at) VALUES (?,?,?,?,?)',
-                        (home['board_id'], agent['id'], body,
-                         json.dumps({'kind': 'team_setup', 'workspace': slug}), db.now())).lastrowid
-        c.execute('UPDATE messages SET thread_id=id WHERE id=?', (mid,))
+        mid = db.post_message(db.get_board_by_id(home['board_id'])['slug'], agent['id'], body,
+                              meta={'kind': 'team_setup', 'workspace': slug}, system=True, within=c, mentions=[])['id']
     return mid
 
 

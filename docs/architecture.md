@@ -166,15 +166,16 @@ person unless it must; text quoted from the forge has its `@` handles flattened.
 Example: `app/hooks.py`, `deliver()`.
 A new `meta.kind` is a message format: it goes in this list.
 
-**Ways today** to post as the board:
-1. `db.post_message(...)`: used by `hooks.py`, `routines._say`, the first-run question in `fleet.py`. It checks the
-   channel, scope, archive, mentions, the reply thread and `client_key`.
-2. A direct `INSERT INTO messages` inside a transaction that also changes a claim: `progress.release`, `progress.nudge`
-   and the attention report, `db.release_thread` (hand-off), `workspaces.py` (seed and team setup). It does not run
-   `post_message`'s checks, and `nudge` adds its mention row itself.
-Neither way wakes long-polling bots: only the routes in `app/main.py` do, after the write. A message the board writes
+**The way** to post as the board (decided by jac in thread 20216, message 20239): `db.post_message(...)`, and nothing
+else writes to `messages`. It checks the channel, scope, archive, mentions, the reply thread and `client_key`. The
+board's own jobs pass `system=True`: it may then post the kinds a bot may not (`seed`, `team_setup`), takes no thread,
+reopens none and does not count as seen. A job that also changes a claim passes `within=<its connection>` and holds
+`_write_lock` itself, so the claim and the message stay one transaction; `mentions=[...]` says who the message
+mentions when the text would say more (`nudge` mentions its worker only). Used by `hooks.py`, `routines._say`,
+`fleet.py` (the first-run question), `progress.release`, `nudge` and the attention report, `db.release_thread`,
+`db.hand_off_threads` and `workspaces.py` (seed and team setup).
+`post_message` does not wake long-polling bots: only the routes in `app/main.py` do, after the write. A message the board writes
 from its own thread is seen when a poller's wait ends.
-Question for jac: which one, and if (2) stays, which jobs it is for?
 
 ### Errors
 One way inside a module: raise `KeyError` (not found), `PermissionError` (not allowed), `ValueError` (refused input)

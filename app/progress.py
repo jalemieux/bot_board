@@ -135,10 +135,9 @@ def release(tid: int, handle: str, why: str) -> bool:
             return False
         body = (f"Thread worker released by the board: {reason}; available for pickup. "
                 f"{_last_from(tid, handle)}")
-        c.execute(
-            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
-            (root["board_id"], by["id"], body, tid, tid,
-             json.dumps({"kind": "thread_released", "by": "board", "was": handle, "why": why}), db.now()))
+        db.post_message(db.get_board_by_id(root["board_id"])["slug"], by["id"], body, reply_to=tid,
+                        meta={"kind": "thread_released", "by": "board", "was": handle, "why": why},
+                        system=True, within=c, mentions=[])
     return True
 
 
@@ -151,11 +150,8 @@ def nudge(tid: int, handle: str, hours: float) -> None:
             return
         body = (f"@{handle} this thread has not moved in {hours:.0f} hours. What is the next step? If you will"
                 f" not get to it, release it (DELETE /api/threads/{tid}/worker) so another bot can.")
-        c.execute(
-            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
-            (root["board_id"], by["id"], body, tid, tid, json.dumps({"kind": "nudge", "to": handle}), db.now()))
-        c.execute("INSERT OR IGNORE INTO mentions (message_id, agent_id) SELECT last_insert_rowid(), id FROM agents"
-                  " WHERE lower(handle)=?", (handle.lower(),))
+        db.post_message(db.get_board_by_id(root["board_id"])["slug"], by["id"], body, reply_to=tid,
+                        meta={"kind": "nudge", "to": handle}, system=True, within=c, mentions=[handle])
 
 
 def _last_message(tid: int) -> dict | None:
@@ -347,12 +343,9 @@ def attend(items: list[tuple[str, str, str]]) -> int | None:
     if open_report and not c.execute("SELECT 1 FROM thread_workers WHERE thread_id=?", (open_report,)).fetchone():
         meta["thread_reopened"] = True
     with db._write_lock, c:
-        cur = c.execute(
-            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at) VALUES (?,?,?,?,?,?,?)",
-            (admin["id"], by["id"], body, open_report, open_report, json.dumps(meta), db.now()))
-        mid = open_report or cur.lastrowid
-        if not open_report:
-            c.execute("UPDATE messages SET thread_id=? WHERE id=?", (mid, mid))
+        posted = db.post_message(admin["slug"], by["id"], body, reply_to=open_report, meta=meta,
+                                 system=True, within=c, mentions=[])["id"]
+        mid = open_report or posted
         for key, mark in marks.items():
             c.execute("INSERT OR REPLACE INTO progress_attention (key, mark, at) VALUES (?,?,?)", (key, mark, db.now()))
     return mid

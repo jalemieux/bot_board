@@ -201,6 +201,25 @@ class KeepingWorkMoving(Base):
         self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
         self.assertEqual(self.worker(self.tid), "edie")
 
+    def test_the_boards_own_messages_go_through_post_message_and_keep_their_mentions(self):      # #843
+        board = progress.board_agent()
+        seen = lambda: db.conn().execute("SELECT last_seen_at FROM agents WHERE id=?", (board["id"],)).fetchone()[0]
+        mentions = lambda mid: [r[0] for r in db.conn().execute(
+            "SELECT a.handle FROM mentions m JOIN agents a ON a.id=m.agent_id WHERE m.message_id=?", (mid,))]
+        before = seen()
+        progress.nudge(self.tid, "edie", 7)
+        nudge = self.messages(self.tid)[-1]
+        self.assertEqual((nudge["meta"]["kind"], mentions(nudge["id"])), ("nudge", ["edie"]))
+        self.assertEqual(seen(), before, "the board posting is not the board being seen")
+        self.report("edie", "stopped"); self.silent("edie")
+        progress.sweep()
+        notice = self.messages(self.tid)[-1]
+        self.assertEqual((notice["meta"]["kind"], mentions(notice["id"])), ("thread_released", []))
+        self.assertIsNone(self.worker(self.tid))
+        self.assertEqual(self.messages(self.tid)[-1]["reply_to"], self.tid)
+        with self.assertRaises(PermissionError):         # a bot still may not post the board's kinds
+            db.post_message("sg", db.get_agent_by_handle("edie")["id"], "x", meta={"kind": "seed"})
+
     def test_a_stopped_worker_is_released_with_where_it_stood(self):
         self.report("edie", "stopped")      # crashed, or stopped for good: the keeper says down...
         self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})     # ...a restart gets a grace period
