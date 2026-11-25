@@ -2915,7 +2915,10 @@ def page_onboard(request: Request) -> str:
 @app.exception_handler(PermissionError)
 async def permission_error(request: Request, exc: PermissionError):
     """A rule helper in a module (workspaces.require_human, require_manage, registry.require_writer) says no with
-    PermissionError; the answer is a 403 with its words, like every other refusal (#840)."""
+    PermissionError; the answer is a 403 with its words, like every other refusal (#840). One the operating system
+    raised (it carries an errno, and its words name a file) is not a refusal: it stays the server error it was."""
+    if exc.errno is not None:
+        raise exc
     return await http_error(request, HTTPException(403, str(exc)))
 
 

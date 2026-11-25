@@ -54,6 +54,26 @@ class RequireHuman(Base):
         r = self.client.delete('/api/fleet/hosts/box', headers=self.keeper)
         self.assertEqual(r.status_code, 200, r.text)
 
+    def test_an_operating_system_permission_error_is_not_turned_into_a_403(self):
+        import errno
+        from fastapi import APIRouter
+        from fastapi.testclient import TestClient
+        from app import main
+        router = APIRouter()
+
+        @router.get('/api/_boom_os')
+        def boom_os():
+            raise PermissionError(errno.EACCES, 'Permission denied', '/etc/secret')
+
+        @router.get('/api/_boom_rule')
+        def boom_rule():
+            raise PermissionError('only a person may')
+        main.app.include_router(router)
+        c = TestClient(main.app, raise_server_exceptions=False)
+        self.assertEqual(c.get('/api/_boom_os').status_code, 500)
+        r = c.get('/api/_boom_rule')
+        self.assertEqual((r.status_code, r.json()['error']), (403, 'only a person may'))
+
     def test_no_route_asks_for_a_human_by_hand_any_more(self):
         source = (Path(__file__).resolve().parents[1] / 'app' / 'main.py').read_text()
         self.assertNotIn('agent["kind"] != "human"', source)
