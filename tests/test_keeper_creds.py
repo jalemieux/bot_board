@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
 from app import db, main, web
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import machinespage      # noqa: E402
 
 
 def load_keeper(home, **env):
@@ -371,7 +373,7 @@ class Page(unittest.TestCase):
                 {'name': 'claude', 'kind': 'login', 'state': 'missing', 'detail': 'not logged in', 'held': 2}]})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['credentials'][1]['held'], 2)
-        page = self.client.get('/machines').text      # the alert is the script's (#887; tests/test_fleet_alerts.py)
+        page = machinespage.drawn(self.client)      # the alert is the script's (#887; tests/test_fleet_alerts.py)
         self.assertIn('<span class="chip">gh</span> <span class="chip prob">claude missing</span>', page)
 
 
@@ -412,13 +414,13 @@ class Page(unittest.TestCase):
         admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
         self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': [], 'runtime': {
             'setting': 'docker', 'state': 'ok', 'detail': '29.7.2'}}).raise_for_status()
-        self.assertIn('runtime docker 29.7.2</div>', self.client.get('/machines', headers=admin).text)
+        self.assertIn('runtime docker 29.7.2</div>', machinespage.drawn(self.client, admin))
         self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': [], 'runtime': {
             'setting': 'colima', 'state': 'missing', 'detail': "no colima on this box's PATH"}}).raise_for_status()
-        page = self.client.get('/machines', headers=admin).text
+        page = machinespage.drawn(self.client, admin)
         self.assertIn('class="by prob" title="no colima on this box&#x27;s PATH">runtime colima missing</div>', page)
         self.client.put('/api/fleet/hosts/box', headers=keeper, json={'bots': []}).raise_for_status()
-        self.assertNotIn('runtime ', self.client.get('/machines', headers=admin).text.split('id="box-box"')[1].split('</tr>')[0])
+        self.assertNotIn('runtime ', machinespage.drawn(self.client, admin).split('id="box-box"')[1].split('</tr>')[0])
 
     def test_the_board_tells_keepers_and_healthz_the_commit_it_runs(self):
         # #240: keepers update to the board's release commit; "" from source, origin's tip for them

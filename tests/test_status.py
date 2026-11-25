@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bare_board                                  # noqa: E402
 from app import db, main, routines, status
+import machinespage      # noqa: E402
 
 
 class Base(unittest.TestCase):
@@ -90,7 +91,7 @@ class Status(Base):
         page = self.client.get('/admin').text
         self.assertIn('id="admin-alerts"', page)
         self.assertNotIn('routine nightly failed', page, 'an empty shell: the script reads /api/status (#845)')
-        self.assertIn('id="box-box"', self.client.get('/machines').text)
+        self.assertIn('id="box-box"', machinespage.drawn(self.client))
         self.assertEqual(self.client.get('/a/tarzan').status_code, 200)
 
     def test_the_same_trouble_on_many_bots_is_one_item(self):

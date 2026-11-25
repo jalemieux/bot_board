@@ -1,7 +1,12 @@
+import shutil
+import sys
 import unittest
 from html.parser import HTMLParser
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app import db, versions, web
+import machinespage
 
 
 class FleetSections(HTMLParser):
@@ -41,6 +46,7 @@ def host(name, bots, reporting=True, **extra):
                 mem_total_mb=16000, mem_free_mb=12000, **extra)
 
 
+@unittest.skipUnless(shutil.which('node'), 'node is needed to run the machines script')
 class FleetPage(unittest.TestCase):
     def test_legacy_keeper_handle_with_update_renders_online_and_offline(self):
         for reporting in (True, False):
@@ -56,8 +62,9 @@ class FleetPage(unittest.TestCase):
                     self.assertTrue(any('before #238' in r['note'] for r in versions.rows(hosts)))
 
     def render(self, hosts):
-        page = web.fleet_page('board', hosts)
-        return page, FleetSections(page).sections
+        """The machines table the page's script draws from /api/fleet (#889), and the text of its open parts."""
+        html = machinespage.machines(hosts)['html']
+        return html, FleetSections('<section id="fleet-machines">' + html + '</section>').sections
 
     def test_active_bots_lead_and_counts_match_what_they_do(self):
         page, sections = self.render([
@@ -67,7 +74,8 @@ class FleetPage(unittest.TestCase):
                           bot('leaving', 'running game, stopping'), bot('old', 'stopped')]),
             host('offline', [bot('ghost'), bot('gone', 'stopped')], reporting=False),
         ])
-        self.assertIn('1 not reporting', page)
+        self.assertEqual(machinespage.machines([host('live', []), host('offline', [], reporting=False)])['count'],
+                         '2 machines · <span class="warn-text">1 not reporting</span>')
         self.assertNotIn('id="fleet-bots"', page)     # the bots are on the workspaces' Team tabs (#733)
         self.assertIn('5 up', sections['fleet-machines'])
         self.assertIn('not reporting', sections['fleet-machines'])
@@ -120,7 +128,7 @@ class FleetPage(unittest.TestCase):
 
     def test_the_secrets_script_has_the_follow_ups_of_694(self):
         # the script itself runs in a browser (the Playwright tests skip without one): check what the page carries
-        page = web.fleet_page('board', [])
+        page = web.fleet_page('board')
         self.assertIn("'Selected: copy it'", page)
         self.assertNotIn('Press Ctrl+C', page)
         self.assertIn("ta.remove(); copy.focus();", page)
@@ -139,14 +147,15 @@ class FleetPage(unittest.TestCase):
 
     def test_the_configuration_page_is_an_empty_shell_that_reads_the_api(self):
         # #861 (part of #845): the route reads no host, profile or skill for it; the page's script reads /api/fleet/secrets
-        hosts = [host('SECRETBOX', [])]
         page = web.configuration_page('board')
         for gone in ('SECRETBOX', 'SECRETPROFILE', 'SECRETSKILL', 'id="tab-machines"', 'id="tab-roles"', 'id="tab-skills"', 'fleet-machines'):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Configuration</h1>', 'data-panes="tab-settings"', 'id="secrets"', 'id="secretlist"', 'id="fleet-add-machine"',
                      "'/api/fleet/secrets'"):
             self.assertIn(kept, page)
-        self.assertIn('id="tab-machines"', web.fleet_page('board', hosts, page='machines'), 'Machines still draws its own data (#872)')
+        machines = web.fleet_page('board', page='machines')       # #889: the route reads no host for it either
+        self.assertIn('id="machines-slot"', machines)
+        self.assertNotIn('SECRETBOX', machines)
         # the Claude login card says when the token is near its year (#880), by the rule of fleet.claude_token_due
         self.assertIn("d.claude_token_due", page)       # the server decides when it is near: no 14 in the script
         self.assertNotIn("left < 14", page)
@@ -162,10 +171,10 @@ class FleetPage(unittest.TestCase):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Skills</h1>', 'data-panes="tab-skills"', 'id="skills-list"', 'id="skill-add"', "get('/api/skills')", "get('/api/profiles')"):
             self.assertIn(kept, page)
-        self.assertNotIn('SECRETSKILL', web.fleet_page('board', [], skills=[skill], page='roles'), 'Roles is a shell too (#873)')
+        self.assertNotIn('SECRETSKILL', web.fleet_page('board', skills=[skill], page='roles'), 'Roles is a shell too (#873)')
 
     def test_the_top_bar_has_no_connect_your_harness_link(self):
-        page = web.fleet_page('board', [])
+        page = web.fleet_page('board')
         self.assertNotIn('href="/onboard" class="x"', page)
         self.assertIn('id="themerow"', page, 'the phone menu keeps its theme row')
 
@@ -173,7 +182,7 @@ class FleetPage(unittest.TestCase):
         # #552: the Add a machine command carries the address the board was opened at; on localhost it cannot work, so both
         # places say so and how to change it, instead of leaving the person to find an address
         for page in (web.onboard_page('b', 'http://127.0.0.1:8080', False), web.onboard_page('b', 'http://localhost:8080', False),
-                     web.fleet_page('b', [])):
+                     web.fleet_page('b')):
             self.assertIn('listens on this machine only', page)
             self.assertIn('Reach your fleet', page)
             self.assertIn('bot_board expose', page)      # #796: the one command that does it
@@ -196,7 +205,7 @@ class FleetPage(unittest.TestCase):
         self.assertIn('&lt;machine&gt;', page)
 
     def test_add_machine_section_is_present_even_without_hosts(self):
-        page, _ = self.render([])
+        page = web.fleet_page('board')
         setup = page[page.index('id="fleet-add-machine"'):]
         self.assertIn('Before you start', setup)
         self.assertIn('Python 3', setup)

@@ -59,6 +59,7 @@ class FleetSort(unittest.TestCase):
 
     def column(self, table, i):
         # a bot's drawer row (hidden until its row is clicked) is not a row of the table's order
+        self.page.wait_for_selector(f"{table} tbody tr")      # the script draws the machines from /api/fleet (#889)
         return self.page.eval_on_selector_all(f"{table} tbody tr:not(.bot-drawer)", f"rs => rs.map(r => r.cells[{i}].innerText.trim())")
 
     def sort_by(self, table, label):
@@ -81,6 +82,7 @@ class FleetSort(unittest.TestCase):
 
     def test_columns_with_nothing_to_sort_stay_plain(self):
         self.page.wait_for_selector("#fleet-versions")      # drawn by the script from /api/status (#888)
+        self.page.wait_for_selector("#fleet-machines thead")      # and the machines from /api/fleet (#889)
         self.assertEqual(self.page.eval_on_selector_all("#fleet-versions thead th", "ts => ts.map(t => !!t.querySelector('button'))"),
                          [True, True, True, True, False])     # Note
         self.assertFalse(self.page.eval_on_selector("#fleet-machines thead th:last-child", "t => !!t.querySelector('button')"))

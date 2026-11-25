@@ -2685,10 +2685,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
         return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     if page == "roles":
         return web.roles_page(BOARD_NAME)              # an empty shell: its script reads /api/profiles and /api/fleet (#873)
-    hosts = fleet.hosts()
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(),
-                          skills=registry.list_skills(), profiles=registry.list_profiles(),
-                          page=page)
+    return web.fleet_page(BOARD_NAME, skills=registry.list_skills(), profiles=registry.list_profiles(), page=page)       # the machines table is the script's (#889)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)

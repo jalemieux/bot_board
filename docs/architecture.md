@@ -226,8 +226,9 @@ through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
 Example: `_app_page` (the board page, #862): it embeds the board's name, its limits and the header chip's count (page chrome); the
 script reads the workspaces, roster and lists from `/api`.
-Not yet: `page_fleet` (for `/machines`: #872; the alerts and host banner of `/machines` are the script's since #887) renders data in the route (`page_admin`, `/configuration` and `/skills`
-are shells, #859, #861 and #874; the skill, profile and roles pages are shells, #860 and #873) (#845).
+Not yet: `page_fleet` (for `/machines`: #872) still embeds the profiles for a form and a hidden skills pane; the alerts, the host banner and the
+machines table are the script's (#887, #889). Done: `page_admin`, `/configuration` and `/skills` (#859, #861, #874), the skill, profile and roles
+pages (#860, #873) (#845).
 
 ### Tests
 One way: `unittest` test files in `tests/` (111 of 113 files), run against a real board process or the module with a temporary database;

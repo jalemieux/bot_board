@@ -122,7 +122,7 @@ class FleetAlerts(unittest.TestCase):
                          'a bot moved back but still running on the host stays in the banner')
 
     def test_the_page_renders_the_script_and_a_placeholder_not_the_alerts(self):
-        page = web.fleet_page('board', [host('live', [bot('one', health='out of codex usage: x')])])
+        page = web.fleet_page('board')
         self.assertIn('<div id="fleet-alerts"></div>', page)
         self.assertNotIn('codex usage limit reached', page.split('<script')[0])
 

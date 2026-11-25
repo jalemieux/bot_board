@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from . import db
-from . import fleet as fleet_mod
 from . import registry
 
 MENTION_RE = re.compile(r"@([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
@@ -2604,26 +2603,12 @@ def app_page(board_name: str, base: str, stats: dict, invite_required: bool = Fa
 
 
 
-def _gauge(label: str, used: float | None, total: float | None, text: str) -> str:
-    if used is None or not total:
-        return f'<span class="gauge">{e(label)} <span class="sub">not reported</span></span>'
-    pct = max(0, min(100, round(100 * used / total)))
-    tone = "full" if pct >= 90 else "warn" if pct >= 70 else ""
-    return (f'<span class="gauge">{e(label)} <span class="bar"><i class="{tone}" style="width:{pct}%"></i></span>'
-            f'{e(text)}</span>')
 
 
 
 
-def _sort_value(v) -> str:
-    """The data-sort attribute a sortable cell carries: what FLEET_JS compares, a number as a number."""
-    return f' data-sort="{e(str(v).lower())}"'
 
 
-def _sortable(*labels: str) -> str:
-    """Table headings, each a button that sorts the table by its column; None: a column with nothing to sort by."""
-    return "".join(f'<th><button type="button" class="sort">{l}</button></th>' if l else
-                   '<th><span class="sr-only">Actions</span></th>' for l in labels)
 
 
 
@@ -2644,14 +2629,6 @@ HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home
 
 
 
-def _update_word(result: str) -> tuple[str, bool]:
-    """The word for a keeper's update result, and whether it is no trouble. The prefixes are the keeper's
-    own (bin/keeper, the updater): a result it writes that is not here reads as needing a look."""
-    if result.startswith(("up to date", "updated ")):
-        return "up to date", True
-    if result.startswith(("waiting", "ahead of", "the board's release")):
-        return "update waiting", True
-    return "update needs a look", False
 
 
 
@@ -3852,14 +3829,130 @@ def configuration_page(board_name) -> str:
 <script>{FLEET_JS}</script>""")
 
 
+# The machines table (#889) is drawn by the page's script from /api/fleet: status, load and memory gauges, logins, the runtime and update
+# pills, the keeper's lines under Details, the drain and remove buttons, the not-reporting mark and the data-sort cells FLEET_JS sorts by.
+# machinesHtml is a function of the hosts alone (tests run it under node); every value goes through esc(). The handlers in FLEET_JS read
+# its class names and data-* attributes, so they are unchanged. When it has drawn, it says so (machines-drawn) for the Mac's card.
+MACHINES_JS = r"""
+(function () {
+  var slot = document.getElementById('machines-slot');
+  if (!slot) return;
+  var ENT = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;'};
+  function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return ENT[c]; }); }
+  function sortAttr(v) { return ' data-sort="' + esc(String(v).toLowerCase()) + '"'; }
+  function gauge(used, total, text) {
+    if (used === null || used === undefined || !total) return '<span class="gauge"> <span class="sub">not reported</span></span>';
+    var pct = Math.max(0, Math.min(100, Math.round(100 * used / total)));
+    var tone = pct >= 90 ? 'full' : pct >= 70 ? 'warn' : '';
+    return '<span class="gauge"> <span class="bar"><i class="' + tone + '" style="width:' + pct + '%"></i></span>' + esc(text) + '</span>';
+  }
+  // the keeper's own prefixes (bin/keeper, the updater); a result it writes that is not here reads as needing a look
+  function updateWord(result) {
+    if (/^(up to date|updated )/.test(result)) return ['up to date', true];
+    if (/^(waiting|ahead of|the board's release)/.test(result)) return ['update waiting', true];
+    return ['update needs a look', false];
+  }
+  function machineRow(h, others) {
+    var bots = h.bots || [], name = h.name, rep = !!h.reporting;
+    var up = bots.filter(function (b) { return fleetUp(b.status); });
+    var load = h.load, cores = h.cores, total = h.mem_total_mb, free = h.mem_free_mb;
+    var haveLoad = load !== null && load !== undefined && cores;
+    var gl = gauge(load, cores, haveLoad ? load.toFixed(1) + '/' + cores : '');
+    var gm = gauge(free === null || free === undefined || total === null || total === undefined ? null : total - free, total,
+      ((free || 0) / 1024).toFixed(0) + ' of ' + ((total || 0) / 1024).toFixed(0) + ' GB free');
+    var creds = (h.credentials || []).map(function (c) {
+      return '<span class="chip' + (c.state === 'ok' ? '' : ' prob') + '">' + esc(c.name) + (c.state === 'ok' ? '' : ' ' + esc(c.state)) + '</span>';
+    }).join(' ');
+    var bad = (h.credentials || []).filter(function (c) { return c.state !== 'ok'; }).length;
+    // drain: every pool bot up here goes to the least loaded other box
+    var drainable = up.filter(function (b) { return b.pool && !b.move_to && !b.fetch; });
+    var drain = rep && drainable.length && others.length
+      ? '<button type="button" class="drain" data-host="' + esc(name) + '" data-n="' + drainable.length + '" title="move its ' + drainable.length
+        + ' pool bot(s) to the least loaded other boxes">drain</button>' : '';
+    // take the box off the fleet (#279): its keeper and bots are retired with it
+    var remove = '<button type="button" class="remove-box" data-host="' + esc(name) + '" data-bots="' + esc(bots.map(function (b) { return b.handle; }).join(' '))
+      + '" data-reporting="' + (rep ? 1 : 0) + '" title="take this machine off the fleet, with its keeper and bots">remove</button>';
+    var seen = rep ? '<span class="pip ok"></span>reporting' : '<span class="pip bad"></span>not reporting · ' + esc(fleetAgo(h.reported_at));
+    var u = h.update || {}, hasU = Object.keys(u).length > 0, k = h.keeper && typeof h.keeper === 'object' ? h.keeper : {};
+    var code = hasU ? '<div class="by">checkout ' + esc(u.revision || '?') + (k.loaded ? ' · running ' + esc(String(k.loaded).slice(0, 12)) : '')
+      + (u.result ? ' · ' + esc(u.result) : '') + (u.checked ? ' · checked ' + esc(fleetAgo(u.checked)) : '') + '</div>' : '';
+    // the container runtime bots here run in (#479); a keeper from before reports none
+    var rt = h.runtime && typeof h.runtime === 'object' ? h.runtime : {}, hasRt = Object.keys(rt).length > 0;
+    if (hasRt) {
+      var rtOk = rt.state === 'ok';
+      code += '<div class="by' + (rtOk ? '' : ' prob') + '" title="' + esc(rt.detail || '') + '">runtime ' + esc(rt.setting || 'host')
+        + (rtOk ? '' : ' ' + esc(rt.state || '')) + (rtOk && rt.detail ? ' ' + esc(rt.detail) : '') + '</div>';
+    }
+    // the harness images bots here run in, and the digest each pull left (#478)
+    var imgs = (h.harness_images || []).filter(function (i) { return i && typeof i === 'object'; });
+    if (imgs.length) {
+      var badImg = imgs.some(function (i) { return i.state !== 'ok' && i.state !== 'pulling'; });
+      code += '<div class="by' + (badImg ? ' prob' : '') + '">images ' + imgs.map(function (i) {
+        var digest = String(i.digest || '').replace('sha256:', '').slice(0, 12);
+        return '<span title="' + esc(i.image || '') + (i.detail ? ': ' + esc(i.detail) : '') + '">' + esc(i.harness || '') + ' '
+          + (digest ? esc(digest) : esc(i.state || '')) + ((!i.state || i.state === 'ok' || !i.digest) ? '' : ' ' + esc(i.state)) + '</span>';
+      }).join(' · ') + '</div>';
+    }
+    // one line says how the bots run here, and one pill the update state in a word; the sentences and the rest stay under Details (#17869)
+    var how = '';
+    if (hasRt) {
+      var inBox = (rt.setting || 'host') !== 'host', ok = !rt.state || rt.state === 'ok';
+      var label = ok ? (inBox ? 'in containers' : 'on the host') : 'runtime ' + esc(rt.state || '');
+      how = '<span class="pill' + (ok ? '' : ' prob') + '" title="' + esc(rt.detail || rt.setting || '') + '">' + label + '</span>';
+    }
+    var upd = '';
+    if (hasU && u.result) {
+      var w = updateWord(u.result);
+      upd = '<span class="pill' + (w[1] ? '' : ' prob') + '" title="' + esc(u.result) + '">' + w[0] + '</span>';
+    }
+    var pills = how || upd ? '<div class="pills">' + how + upd + '</div>' : '';
+    var details = code ? '<details class="mdetails"><summary>Details</summary>' + code + '</details>' : '';
+    var round3 = function (x) { return Math.round(x * 1000) / 1000; };
+    // a Mac's host-bots block is a full-width row HOST_CARD_JS puts under it (#890)
+    return '<tr id="box-' + esc(name) + '"><td class="who"' + sortAttr(name) + '>' + esc(name) + '<div class="by">' + esc(h.os || '') + '</div>' + pills + details + '</td>'
+      + '<td data-label="status" class="nw"' + sortAttr(rep ? 1 : 0) + '>' + seen + '</td>'
+      + '<td data-label="bots" class="nw"' + sortAttr(up.length) + '>' + up.length + ' up</td>'
+      + '<td data-label="load"' + sortAttr(haveLoad ? round3(load / cores) : -1) + '>' + gl + '</td>'
+      + '<td data-label="memory"' + sortAttr(total && free !== null && free !== undefined ? round3((total - free) / total) : -1) + '>' + gm + '</td>'
+      + '<td data-label="logins"' + sortAttr(bad) + '>' + (creds || '—') + '</td><td class="acts">' + drain + remove + '</td></tr>';
+  }
+  function machinesHtml(hosts) {
+    if (!hosts.length) return '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>';
+    var reporting = hosts.filter(function (h) { return h.reporting; }).map(function (h) { return h.name; });
+    var heads = ['Machine', 'Status', 'Bots', 'Load', 'Memory', 'Logins', null].map(function (l) {
+      return l ? '<th><button type="button" class="sort">' + l + '</button></th>' : '<th><span class="sr-only">Actions</span></th>';
+    }).join('');
+    return '<table class="bots machines"><thead><tr>' + heads + '</tr></thead><tbody>' + hosts.map(function (h) {
+      return machineRow(h, h.reporting ? reporting.filter(function (n) { return n !== h.name; }) : []);
+    }).join('') + '</tbody></table>';
+  }
+  function machinesCount(hosts) {
+    var away = hosts.filter(function (h) { return !h.reporting; }).length;
+    return hosts.length + ' machines' + (away ? ' · <span class="warn-text">' + away + ' not reporting</span>' : '');
+  }
+  if (typeof window !== 'undefined') window.machinesHtml = machinesHtml;
+  var me = null; try { me = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  fetch('/api/fleet', {headers: me && me.token ? {'Authorization': 'Bearer ' + me.token} : {}})
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then(function (d) {
+      var hosts = d.hosts || [];
+      slot.innerHTML = machinesHtml(hosts);
+      var count = document.querySelector('.fleet-count'); if (count) count.innerHTML = machinesCount(hosts);
+      var table = slot.querySelector('table.machines'); if (table) wireSort(table);
+      if (location.hash) showTarget();      // /machines#box-m1 lands on the row, which was not there when the page loaded
+      document.dispatchEvent(new CustomEvent('machines-drawn'));
+    })
+    .catch(function () { slot.textContent = 'The machines could not be read from the board.'; });
+})();
+"""
+
+
 # The Mac's card (#595, #890) is drawn by the page's script from /api/fleet, /api/workspaces and /api/profiles, as a full-width row under
 # its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
 # creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
 # handlers in FLEET_JS read its class names and data-* attributes.
 HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\u003c") + ";" + r"""
 (function () {
-  var table = document.querySelector('#fleet-machines table.machines');
-  if (!table) return;
   var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
   function get(path) {
     return fetch(path, {headers: ME && ME.token ? {'Authorization': 'Bearer ' + ME.token} : {}})
@@ -3914,6 +4007,9 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
     if (on && h.reporting) box.appendChild(form(h, workspaces, profiles));
     return el('tr', {'class': 'bot-drawer hostrow'}, el('td', {colspan: '7'}, box));
   }
+  function place() {
+  var table = document.querySelector('#fleet-machines table.machines');
+  if (!table) return;
   Promise.all([get('/api/fleet'), get('/api/workspaces'), get('/api/profiles')]).then(function (r) {
     var hosts = (r[0].hosts || []).filter(function (h) { return h.host_bots !== null && h.host_bots !== undefined; });
     if (!hosts.length) return;
@@ -3925,6 +4021,9 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
       var next = row.nextSibling; table.tBodies[0].insertBefore(card(h, ws, profiles), next);
     });
   });
+  }
+  place();
+  document.addEventListener('machines-drawn', place);       // the table is drawn after the page loads (#889)
 })();
 """
 
@@ -3964,93 +4063,12 @@ def roles_page(board_name) -> str:
 <script>(function () {{{registry_web.ROLES_JS}}})();</script>""")
 
 
-def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(), page="machines") -> str:
+def fleet_page(board_name, skills=(), profiles=(), page="machines") -> str:
     if page == "roles":
         return roles_page(board_name)               # an empty shell too (#873)
     from . import registry_web
-    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
-                             "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
-             for h in hosts]
-    reporting = [h["name"] for h in hosts if h["reporting"]]
-    others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
-
-    machines = []
-    for h in hosts:
-        name, bots = h["name"], h["bots"]
-        up = [b for b in bots if b["status"].startswith(fleet_mod.UP)]
-        load, cores, total, free = h["load"], h["cores"], h["mem_total_mb"], h["mem_free_mb"]
-        gauges = (_gauge("", load, cores, f"{load:.1f}/{cores}" if load is not None and cores else ""),
-                  _gauge("", None if free is None or total is None else total - free, total,
-                         f"{(free or 0) / 1024:.0f} of {(total or 0) / 1024:.0f} GB free"))
-        creds = " ".join(f'<span class="chip{"" if c["state"] == "ok" else " prob"}">{e(c["name"])}'
-                          f'{"" if c["state"] == "ok" else " " + e(c["state"])}</span>' for c in h.get("credentials") or [])
-        # drain: every pool bot up here goes to the least loaded other box
-        drainable = [b for b in up if b.get("pool") and not b.get("move_to") and not b.get("fetch")]
-        drain = (f'<button type="button" class="drain" data-host="{e(name)}" data-n="{len(drainable)}" '
-                 f'title="move its {len(drainable)} pool bot(s) to the least loaded other boxes">drain</button>'
-                 if h["reporting"] and drainable and others_of(h) else "")
-        # take the box off the fleet (#279): its keeper and bots are retired with it
-        remove = (f'<button type="button" class="remove-box" data-host="{e(name)}" '
-                  f'data-bots="{e(" ".join(b["handle"] for b in bots))}" data-reporting="{int(bool(h["reporting"]))}" '
-                  'title="take this machine off the fleet, with its keeper and bots">remove</button>')
-        seen = (f'<span class="pip ok"></span>reporting' if h["reporting"] else
-                f'<span class="pip bad"></span>not reporting · {e(ago(h["reported_at"]))}')
-        u = h.get("update") or {}
-        k = h["keeper"] if isinstance(h.get("keeper"), dict) else {}
-        code = (f'<div class="by">checkout {e(u.get("revision") or "?")}'
-                + (f' · running {e(k["loaded"][:12])}' if k.get("loaded") else "")
-                + (f' · {e(u["result"])}' if u.get("result") else "")
-                + (f' · checked {e(ago(u["checked"]))}' if u.get("checked") else "") + "</div>") if u else ""
-        # the container runtime bots here run in (#479); a keeper from before reports none
-        rt = h.get("runtime") if isinstance(h.get("runtime"), dict) else {}
-        if rt:
-            rt_ok = rt.get("state") == "ok"
-            code += (f'<div class="by{"" if rt_ok else " prob"}" title="{e(rt.get("detail") or "")}">runtime '
-                     f'{e(rt.get("setting") or "host")}{"" if rt_ok else " " + e(rt.get("state") or "")}'
-                     f'{" " + e(rt["detail"]) if rt_ok and rt.get("detail") else ""}</div>')
-        # the harness images bots here run in, and the digest each pull left (#478)
-        imgs = [i for i in h.get("harness_images") or [] if isinstance(i, dict)]
-        if imgs:
-            bad_img = [i for i in imgs if i.get("state") not in ("ok", "pulling")]
-            code += (f'<div class="by{" prob" if bad_img else ""}">images '
-                     + " · ".join(f'<span title="{e(i.get("image") or "")}{(": " + e(i["detail"])) if i.get("detail") else ""}">'
-                                  f'{e(i.get("harness") or "")} '
-                                  f'{e((i.get("digest") or "").replace("sha256:", "")[:12]) or e(i.get("state") or "")}'
-                                  f'{"" if i.get("state") in ("ok", None) or not i.get("digest") else " " + e(i["state"])}</span>'
-                                  for i in imgs) + "</div>")
-        # one line says how the bots run here (a container runtime, or on the host), and one pill the update state
-        # in a word; the sentences and the rest stay under Details (#17869)
-        how = ""
-        if rt:
-            in_box = (rt.get("setting") or "host") != "host"
-            rt_ok = rt.get("state") in (None, "ok")
-            label = ("in containers" if in_box else "on the host") if rt_ok else f'runtime {e(rt.get("state") or "")}'
-            how = f'<span class="pill{"" if rt_ok else " prob"}" title="{e(rt.get("detail") or rt.get("setting") or "")}">{label}</span>'
-        res = u.get("result") or ""
-        upd = ""
-        if u and res:
-            word, fine = _update_word(res)
-            upd = f'<span class="pill{"" if fine else " prob"}" title="{e(res)}">{word}</span>'
-        pills = f'<div class="pills">{how}{upd}</div>' if how or upd else ""
-        details = f'<details class="mdetails"><summary>Details</summary>{code}</details>' if code else ""
-        srt = _sort_value
-        bad = sum(c["state"] != "ok" for c in h.get("credentials") or [])
-        machines.append(
-            f'<tr id="box-{e(name)}"><td class="who"{srt(name)}>{e(name)}<div class="by">{e(h.get("os") or "")}</div>{pills}{details}</td>'
-            f'<td data-label="status" class="nw"{srt(int(h["reporting"]))}>{seen}</td>'
-            f'<td data-label="bots" class="nw"{srt(len(up))}>{len(up)} up</td>'
-            f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
-            f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
-            # how many of its logins are in trouble
-            # a Mac's host-bots block is a full-width row the page's script puts under it (HOST_CARD_JS, #890)
-            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
-    machines_html = (('<table class="bots machines"><thead><tr>'
-                      + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
-                      + "".join(machines) + '</tbody></table>') if machines else
-                     '<div class="empty">No box has reported yet. <a href="#fleet-add-machine">Add a machine</a>.</div>')
     title, here, panes = FLEET_PAGES[page]
-    away = f' · <span class="warn-text">{len(hosts) - len(reporting)} not reporting</span>' if len(reporting) < len(hosts) else ""
-    counts = {"machines": f'{len(hosts)} machines' + away, "skills": f'{len(skills)} skills',
+    counts = {"machines": "Loading\u2026", "skills": f'{len(skills)} skills',
               "configuration": "Shared by every bot on every machine."}[page]
     return shell(board_name, title.lower(), here=here, content=f"""
 <style>{FLEET_CSS}{registry_web.REG_CSS}</style>
@@ -4061,14 +4079,14 @@ def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(), page="machin
 <div id="fleet-alerts"></div>
 <noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
 <div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
-<section class="fleet-section" id="fleet-machines">{machines_html}</section>
+<section class="fleet-section" id="fleet-machines"><div id="machines-slot"><p class="sub">Loading\u2026</p></div></section>
 {'<div id="versions-slot"></div>' if page == "machines" else ""}</div>
 <div class="tab-pane" id="tab-skills">{registry_web.skills_section(list(skills), list(profiles))}</div>
 <div class="tab-pane" id="tab-settings">
 {_ADD_MACHINE_HTML}
 {_SECRETS_HTML}
 </div></div>
-<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{HOST_CARD_JS}</script>""")
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{MACHINES_JS}{HOST_CARD_JS}</script>""")
 
 
 def agent_page(board_name, agent, recent, profile=None, voice=("", "", False, False)) -> str:

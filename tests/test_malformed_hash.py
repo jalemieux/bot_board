@@ -36,15 +36,11 @@ globalThis.navigator = {};
 """
 
 
-def host(name):
-    return dict(name=name, bots=[], reporting=True, reported_at=db.now(), keeper="k", cores=8, load=0.3, mem_total_mb=16000, mem_free_mb=12000, os="Linux")
-
-
 @unittest.skipUnless(shutil.which("node"), "node is needed")
 class MalformedHash(unittest.TestCase):
     def test_the_fleet_pages_script_still_shows_its_pane_on_a_bad_hash(self):
         for page in ("machines", "roles", "skills", "configuration"):
-            html = web.fleet_page("b", [host("m")], page=page)
+            html = web.fleet_page("b", page=page)
             script = max(re.findall(r"<script[^>]*>(.*?)</script>", html, re.S), key=len)
             ids = json.dumps(sorted(set(re.findall(r'\bid="([^"]+)"', html))))
             for bad in BAD:

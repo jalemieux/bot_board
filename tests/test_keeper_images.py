@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_keeper_creds import fake, load_keeper      # noqa: E402
 from fastapi.testclient import TestClient      # noqa: E402
 from app import db, main      # noqa: E402
+import machinespage      # noqa: E402
 
 IMAGE = "minipc-2.taild87368.ts.net:3000/jac/bot_board-harness-"
 
@@ -186,7 +187,7 @@ class ImagesOnFleet(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['harness_images'][0]['digest'],
                          'sha256:0123456789abcdef0123')
-        page = self.client.get('/machines').text
+        page = machinespage.drawn(self.client)
         self.assertIn('<div class="by prob">images ', page)
         self.assertIn('claude 0123456789ab</span>', page)
         self.assertIn('pull failed: connection refused">codex missing</span>', page)

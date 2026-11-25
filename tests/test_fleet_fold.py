@@ -70,6 +70,7 @@ class FleetFold(unittest.TestCase):
 
     def open(self):
         self.page.wait_for_selector("#fleet-versions")      # the script draws it from /api/status (#888)
+        self.page.wait_for_selector("#fleet-machines table")      # and the machines from /api/fleet (#889)
         return {s: self.page.eval_on_selector(f"#{s}", "d => d.open") for s in SECTIONS}
 
     def test_needs_you_folds_from_its_heading_and_stays_folded_and_versions_starts_folded(self):

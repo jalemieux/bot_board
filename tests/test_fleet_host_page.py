@@ -28,12 +28,12 @@ def mac(bots, on=True, **extra):
 
 
 class HostBotsPage(unittest.TestCase):
-    def render(self, hosts):
-        return web.fleet_page("board", hosts, profiles=[{"name": "Mac runner", "role": "x"}])
+    def render(self):
+        return web.fleet_page("board", profiles=[{"name": "Mac runner", "role": "x"}])
 
     def test_the_server_draws_no_host_card_and_the_script_that_draws_it_is_in_the_page(self):
         # #890: the card is a row the page's script puts under its machine, from /api/fleet (tests/test_host_card_script.py runs it)
-        page = self.render([mac([], on=True), host("box", [])])
+        page = self.render()
         self.assertNotIn('class="hostbox"', page.split("<script>")[0])
         self.assertNotIn('class="hostrow"', page.split("<script>")[0])
         self.assertIn("function card(h, workspaces, profiles)", page)
@@ -61,7 +61,7 @@ class HostBotsPage(unittest.TestCase):
             self.assertLess(css.index(base), css.index("/* the Mac's card on a phone (#905)"), base + " comes before the phone rule")
 
     def test_a_page_with_no_host_bot_has_no_banner(self):
-        page = self.render([host("box", [bot("zed", runmode="native")])])
+        page = self.render()
         self.assertNotIn('class="hostbanner"', page)      # the banner itself is the script's (#887): tests/test_fleet_alerts.py
         self.assertNotIn("hostbadge", page.split("</style>")[-1])
 

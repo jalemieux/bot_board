@@ -28,16 +28,20 @@ class N { constructor(t) { this.tag = t; this.children = []; this.attrs = []; th
 const tbody = new N('tbody'); tbody.tBodies = null;
 const table = new N('table'); table.tBodies = [tbody];
 %s.forEach(id => { const tr = new N('tr'); tr.setAttribute('id', id); tbody.appendChild(tr); });
-global.document = {createElement: t => new N(t), createTextNode: t => new T(t), querySelector: s => s === '#fleet-machines table.machines' ? table : null};
+let present = %s;
+const listeners = {};
+global.document = {createElement: t => new N(t), createTextNode: t => new T(t), addEventListener: (t, f) => { listeners[t] = f; },
+  querySelector: s => s === '#fleet-machines table.machines' && present ? table : null};
 global.localStorage = {getItem: () => null};
 const DATA = %s;
 global.fetch = u => Promise.resolve({ok: true, json: () => Promise.resolve(DATA[u.split('?')[0]] || {})});
 """
+LATE = "\npresent = true; listeners['machines-drawn']();\n"
 TAIL = "\nsetTimeout(() => console.log(JSON.stringify(tbody.children.map(r => r.html()))), 20);\n"
 
 
-def run(rows, data):
-    code = DOM % (json.dumps(rows), json.dumps(data)) + web.HOST_CARD_JS + TAIL
+def run(rows, data, late=False):
+    code = DOM % (json.dumps(rows), 'false' if late else 'true', json.dumps(data)) + web.HOST_CARD_JS + (LATE if late else '') + TAIL
     r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr[-600:]
     return json.loads(r.stdout)
@@ -65,6 +69,13 @@ class HostWarningEmbed(unittest.TestCase):
 class HostCard(unittest.TestCase):
     def rows(self, hosts, rows=("box-jacs-m5", "box-box")):
         return run(list(rows), {"/api/fleet": {"hosts": hosts}, **API})
+
+    def test_the_card_waits_for_the_table_the_page_draws_after_it_loads(self):      # #889
+        data = {"/api/fleet": {"hosts": [mac()]}, **API}
+        self.assertEqual(len(run(["box-jacs-m5"], data, late=False)), 2)
+        late = run(["box-jacs-m5"], data, late=True)
+        self.assertEqual(len(late), 2, "the machines-drawn event places it")
+        self.assertIn('class="hostbox"', late[1])
 
     def test_a_mac_gets_a_full_width_row_under_its_machine_and_a_linux_box_gets_none(self):
         out = self.rows([mac(), dict(name="box", reporting=True, host_bots=None, bots=[])])
