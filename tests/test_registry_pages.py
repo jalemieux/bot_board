@@ -1,6 +1,8 @@
 """Skills and Profiles on /fleet, and the pages under /fleet/skills/ and /fleet/profiles/.
 Run with python -m unittest discover -s tests."""
+import json
 import os
+import shutil
 import tempfile
 import threading
 import unittest
@@ -14,6 +16,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from fastapi.testclient import TestClient
 from app import db, main, registry_web
 import regpages
+from test_skills_shell import run as draw_skills      # the Skills page's script run under node (#874)
 
 VOID = {"br", "img", "input", "meta", "link", "hr", "col", "wbr", "source"}
 
@@ -292,6 +295,24 @@ class RegistryPages(unittest.TestCase):
         self.assertEqual(self.client.get("/fleet/skills/nope").status_code, 200)         # the shell; the script finds out
         out = regpages._run(registry_web.SKILL_PAGE_JS, "(() => { const r = {}; showMissing(r, 'skill', {status: 404}); return r.innerHTML; })()", None)
         self.assertIn("no skill with that name", out)
+
+    def drawn(self):
+        """What the /skills page's script draws from the API: /skills itself is an empty shell (#874)."""
+        return draw_skills(json.dumps(self.client.get("/api/skills").json()["skills"]), json.dumps(self.client.get("/api/profiles").json()["profiles"]))
+
+    @unittest.skipUnless(shutil.which("node"), "node is needed to run the page's script")
+    def test_a_base_skill_gets_its_own_group_on_the_skills_page_only_when_there_is_one(self):
+        # #347, #874: the group is drawn by the page's script from /api/skills; /skills sends none of it
+        self.assertNotIn("Base skills ·", self.drawn()["list"], "no group until there is a base skill")
+        self.assertNotIn("Base skills", self.client.get("/skills").text.split("<script>")[0])
+        r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
+                            "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
+        self.assertEqual(r.status_code, 200, r.text)
+        out = self.drawn()["list"]
+        base, mine, rest, other = out.index("Base skills · every bot · 1"), out.index("house-style"), out.index("Profile skills ·"), out.index("github-lifecycle")
+        self.assertLess(base, mine)
+        self.assertLess(mine, rest)
+        self.assertLess(rest, other)
 
 
 class Markdown(unittest.TestCase):

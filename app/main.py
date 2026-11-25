@@ -1315,7 +1315,8 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes(),
+            "claude_token_due": fleet.claude_token_due()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
@@ -2517,19 +2518,14 @@ def healthz() -> dict:
 # ------------------------------------------------------------ human web
 
 def _app_page(request: Request, reader: dict | None = None) -> str:
-    """The one-page channel view. It boots from embedded data and then talks
-    to /api like any agent would; a signed-in human posts with their own token.
+    """The one-page channel view, an empty shell: its script reads everything from /api like any agent would (#862); a signed-in human posts with their own token.
     On a private board a reader nobody knows gets the page empty, behind its sign-in
     (#214), and the page fills in from /api once they have signed in."""
     private = private_page(reader)
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
-        channels=[] if private else db.list_boards(kind="channel", hide_events=True),
-        conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
-        agents=[] if private else _roster(db.list_agents()),
-        workspaces=[] if private else sorted(workspaces.active_slugs(), key=lambda s: s == db.ADMIN_WORKSPACE),   # the admin workspace is never the default
-        stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
+        stats={} if private else {"running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
         max_body=MAX_BODY,
@@ -2672,11 +2668,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     if page == "skills":
         return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     hosts = fleet.hosts()
-    try:
-        slugs = workspaces.active_slugs()
-    except Exception:
-        slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts),
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
                           claude_token=fleet.claude_token_due(), page=page)
 

@@ -906,10 +906,12 @@ font:13px var(--sans);cursor:pointer;text-align:left}
 .compose .signin b{color:var(--accent)}
 .compose .signin:hover{border-color:var(--accent);color:var(--ink)}
 .mentions{position:absolute;left:22px;bottom:calc(100% - 4px);z-index:6;background:var(--panel);border:1px solid var(--line);
-border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:420px;padding:4px;list-style:none;margin:0}
+border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:min(420px,calc(100vw - 38px));padding:4px;list-style:none;margin:0}
 aside.thread .mentions{left:16px}
 .mentions[hidden]{display:none}
 .mentions li{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:12.5px var(--mono)}
+.mentions li .prof{flex:none;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
+.mentions li .prof.human{background:var(--human-soft);color:var(--human)}
 .mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .mentions li.sel{background:var(--sel)}
 .msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
@@ -1018,17 +1020,16 @@ function pageCookie(m){
                       : 'bb_token=; Path=/; Max-Age=0';
 }
 var S = {
-  all: {channels: INIT.channels, convs: INIT.conversations}, channels: [], convs: [], agents: {},
+  all: {channels: [], convs: []}, channels: [], convs: [], agents: {},      // filled from /api by boot() below, not embedded in the page (#862)
   unread: {}, seen: load('bb.seen', {}), open: load('bb.open', {}), fold: load('bb.fold', {}),
-  cur: null, thread: null, cursor: INIT.stats.cursor,
+  cur: null, thread: null, cursor: null,       // null until the first lists arrive: they carry where the stream stands
   roots: [], newSince: 0, olderBefore: null, ctrl: null,
   view: null, umsgs: {}, umore: {}, tmsgs: null
 };
-INIT.agents.forEach(function(a){ S.agents[a.handle] = a; });
 // One workspace is in view at a time (#643). It comes from /w/<slug>/... in the URL, else the last one used here, else
 // the first. A channel outside any workspace shows in every scope. A conversation shows where a bot of it works, and
 // in every scope when it holds no bot of any workspace. S.all keeps everything, so a link to another workspace still opens.
-var SCOPE = '', WS_SLUGS = INIT.workspaces;
+var SCOPE = '', WS_SLUGS = [];
 function urlScope(){ var m = location.pathname.match(/^\/w\/([^\/]+)/); return m ? decodeURIComponent(m[1]) : ''; }
 function setScope(ws){
   if (WS_SLUGS.indexOf(ws) < 0) ws = WS_SLUGS[0] || '';
@@ -1045,7 +1046,7 @@ function applyScope(){
 }
 function P(){ return SCOPE ? '/w/' + encodeURIComponent(SCOPE) : ''; }       // the URL prefix of the scope in view
 function routePath(){ return location.pathname.replace(/^\/w\/[^\/]+/, '') || '/'; }
-setScope(urlScope() || load('bb.scope', ''));
+// the scope is chosen in boot(), once the workspaces are known: choosing it now would overwrite the saved one with ''
 
 var $ = function(sel, root){ return (root||document).querySelector(sel); };
 var app = $('#app'), rail = $('#rail'), stream = $('#stream'), head = $('#head'),
@@ -1357,9 +1358,12 @@ function hostMark(a){      // a bot that runs outside its container, as the user
   return a && a.host_by !== null && a.host_by !== undefined
     ? '<span class="hostbadge" title="runs outside a container, as the user of its Mac">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
 }
+function roleOf(a){      // the short role of an agent: its profile name, or "human" (the hover card and the @ list use one rule)
+  return a.kind === 'human' ? 'human' : a.profile || '';
+}
 function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
   return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (roleOf(a) ? '<span class="prof">' + esc(roleOf(a)) + '</span>' : '') + hostMark(a) +
     (a.claims === 'mentioned' ? '<span class="prof" title="takes a new thread only when its first message mentions it">only when mentioned</span>' : '') + '</div>' +
     (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
     (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
@@ -1427,6 +1431,7 @@ function refreshLists(){
   return Promise.all([fetch(q1).then(function(r){ return r.json(); }), fetch(q2).then(function(r){ return r.json(); })])
     .then(function(rs){
       S.all.channels = rs[0].channels; S.all.convs = rs[1].conversations; applyScope();
+      if (S.cursor === null && rs[0].cursor != null) S.cursor = rs[0].cursor;       // read with the lists, so nothing falls between them and the stream
       // Entries we have never seen before get a cursor now, then their exact count.
       var need = S.all.channels.concat(S.all.convs).filter(function(b){ return S.seen[b.slug] == null; });
       need.forEach(function(b){ S.seen[b.slug] = b.last_message_id || 0; });
@@ -2014,7 +2019,7 @@ function openSignin(msg, then, gate){
   afterSignin = then || null;
   signin.classList.toggle('gate', !!gate);
   $('#si-title').textContent = gate ? 'Sign in as\u2026' : 'Post as a human';
-  $('#si-first').hidden = !gate || INIT.channels.length > 0 || INIT.private;
+  $('#si-first').hidden = !gate || S.all.channels.length > 0 || INIT.private;
   $('#si-err').textContent = msg || '';
   $('#si-invite').hidden = $('#si-invite-l').hidden = !INIT.invite_required;
   $('#si-go').disabled = false;
@@ -2051,8 +2056,8 @@ sform.addEventListener('submit', function(ev){
   var done = function(me){
     save('bb.lastHandle', me.handle); setMe(me); closeSignin();
     $('#si-token').value = '';
-    fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){ d.agents.forEach(function(a){ S.agents[a.handle] = a; }); }).catch(function(){});
-    refreshLists().then(function(){ if (!S.cur) route(); })
+    // a private board answered nothing before this: read the workspaces, the roster and the lists now (#862)
+    boot().then(function(){ if (!S.cur) route(); })
       .catch(function(e){ console.error('Could not refresh channels after sign-in:', e); setLive(false); });
     if (afterSignin) { var f = afterSignin; afterSignin = null; f(); }
   };
@@ -2168,7 +2173,9 @@ function wireCompose(form, target){
   function renderPop(){
     pop.innerHTML = sug.map(function(h, i){
       var a = S.agents[h];
+      var role = roleOf(a);      // its sentence, the profile's role, is the tooltip
       return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
+        (role ? '<span class="prof' + (a.kind === 'human' ? ' human' : '') + '"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
         '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
     }).join('');
   }
@@ -2332,6 +2339,7 @@ async function liveLoop(){
   var fails = 0;
   for (;;) {
     try {
+      if (S.cursor === null) { await sleep(1000); continue; }       // not known until the first lists arrive (a private board before sign-in)
       var req = fetch('/api/messages?hide_events=true&since=' + S.cursor + '&wait=30&limit=200');
       if (!fails) setLive(true);            // a poll in flight is "live"; an error flips it back
       var r = await req;
@@ -2367,7 +2375,28 @@ function route(){
   if (first) openChannel(first.slug, false);
 }
 window.addEventListener('popstate', route);
-refreshLists().then(route, route);
+// What the page needs before it can draw (#862): the workspaces and the roster, read from /api
+// like any agent would. A private board answers none of it until someone has signed in, and the page then fills in as before.
+function boot(){
+  var json = function(r){ if (!r.ok) throw new Error(r.status); return r.json(); };
+  var workspaces = function(after, out){
+    return fetch('/api/workspaces?limit=100&after=' + after).then(json).then(function(d){
+      d.workspaces.forEach(function(w){ if (!w.archived) out.push(w.slug); });
+      return d.has_more && d.next_after ? workspaces(d.next_after, out) : out;
+    });
+  };
+  return Promise.all([
+    workspaces(0, []).catch(function(){ return []; }),
+    fetch('/api/agents').then(json).catch(function(){ return {agents: []}; })
+  ]).then(function(rs){
+    // alphabetical, the admin workspace last: never the default
+    WS_SLUGS = rs[0].sort(function(a, b){ return (a === 'admin') - (b === 'admin') || a.toLowerCase().localeCompare(b.toLowerCase()); });
+    rs[1].agents.forEach(function(a){ S.agents[a.handle] = a; });
+    if (WS_SLUGS.length) setScope(urlScope() || load('bb.scope', ''));       // none known (a private board before sign-in): leave the saved scope alone
+    return refreshLists();
+  });
+}
+boot().then(route, route);
 // A stored sign-in from an earlier board at this address is refused (401): forget it and ask again.
 // Any other failure (board down, network) leaves it alone.
 if (!ME) gate();
@@ -2445,15 +2474,15 @@ FIRST_RUN_REDIRECT_JS = """(function () {
 })();"""
 
 
-def app_page(board_name: str, base: str, channels: list, conversations: list, agents: list,
-             stats: dict, invite_required: bool = False, max_body: int = 16000,
+def app_page(board_name: str, base: str, stats: dict, invite_required: bool = False, max_body: int = 16000,
              max_text_attachment_bytes: int = 10 * 1024 * 1024,
              max_image_attachment_bytes: int = 10 * 1024 * 1024, private: bool = False,
-             max_file_attachment_bytes: int = 10 * 1024 * 1024, workspaces: list | None = None) -> str:
+             max_file_attachment_bytes: int = 10 * 1024 * 1024) -> str:
+    """The board page as an empty shell (#862): the board's name and limits, and the header's chip (`stats["running"]`).
+    The channels, conversations, roster and workspaces are read from /api by the page's script, like any agent would."""
     # no '<' survives in the embedded JSON, so no text from the board can close the script block
     init = json.dumps(
-        {"name": board_name, "channels": channels, "conversations": conversations,
-         "agents": agents, "stats": stats, "workspaces": workspaces or [], "invite_required": invite_required, "private": private,
+        {"name": board_name, "invite_required": invite_required, "private": private,
          "max_body": max_body, "max_text_attachment_bytes": max_text_attachment_bytes,
          "max_image_attachment_bytes": max_image_attachment_bytes, "max_file_attachment_bytes": max_file_attachment_bytes},
         ensure_ascii=False,
@@ -2656,53 +2685,6 @@ def _update_word(result: str) -> tuple[str, bool]:
     return "update needs a look", False
 
 
-def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
-    """The Mac's card (#595): the host-bots switch, its host bots, the apps and handles it reports, and, with the
-    switch on, the short form that creates a new host bot. Nothing on a box that is not a Mac."""
-    if h.get("host_bots") is None:
-        return ""
-    on, name = bool(h["host_bots"]), e(h["name"])
-    mine = [b for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
-    bots = ", ".join(f'<a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
-    found = [a for a in h.get("apps") or [] if isinstance(a, dict)]
-    napps = len(found)
-    apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in found) or "none found"
-    allowed = ", ".join(e(x) for x in h.get("host_allowed") or []) or "nobody yet"
-    form = ""
-    if on and h["reporting"]:
-        ws = "".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces) or '<option value="" disabled selected>no workspace yet</option>'
-        prof = '<option value="">none</option>' + "".join(f'<option value="{e(p["name"])}">{e(p["name"])}</option>' for p in profiles)
-        pick = "".join(f'<label class="chk"><input type="checkbox" name="app" value="{e(a["name"])}"> {e(a["name"])} {e(a.get("version", ""))}</label>'
-                       for a in h.get("apps") or [] if isinstance(a, dict) and a.get("name"))
-        form = (f'<details class="hostnew"><summary>Start a host bot</summary>'
-                f'<form class="hostform" data-host="{name}"><p class="prob">{e(HOST_WARNING)}</p>'
-                '<label class="fld"><span><b>Name</b></span><input name="handle" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._-]+"></label>'
-                f'<label class="fld"><span><b>Workspace</b></span><select name="workspace">{ws}</select></label>'
-                f'<label class="fld"><span><b>Role</b></span><select name="profile">{prof}</select></label>'
-                '<label class="fld"><span><b>Harness</b></span><select name="harness"><option>claude</option><option>codex</option></select></label>'
-                '<label class="fld"><span><b>Why it needs the host</b></span><input name="reason" required maxlength="200" placeholder="Godot captures for the effects bots"></label>'
-                f'<div class="fld"><span><b>Apps it uses</b></span>{pick or "<span class=dim>none found in /Applications</span>"}</div>'
-                '<label class="chk"><input type="checkbox" name="ack" required> I understand this bot can read everything my user can.</label>'
-                '<button type="submit" class="act needs-me">Start the host bot</button>'
-                '<p class="dim">After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.</p></form></details>')
-    state = '<span class="pip ok"></span>on' if on else "off"      # off is a normal state: no colour
-    return (f'<div class="hostbox" data-host="{name}"><b>Host bots</b> '
-            f'{state} '
-            f'<button type="button" class="act host-switch needs-me" data-host="{name}" data-on="{0 if on else 1}">'
-            f'turn {"off" if on else "on"}</button>'
-            f'<div class="by">{"bots here that run as the user: " + bots if on or mine else "off: every bot here runs in a container"}</div>'
-            f'<div class="by">allowed on this Mac: {allowed}</div>'
-            f'<details class="by apps"><summary>{napps} apps found</summary>{apps}</details>{form}</div>')
-
-
-
-
-
-
-
-
-
-
 def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
     names = (" ".join(f'<a class="chip" href="/a/{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
                       for h, b in bots))
@@ -2777,7 +2759,8 @@ def _alerts(hosts: list, claude_token: dict | None = None) -> list:
                                   e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
                                   + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "") + fix))
     if claude_token:
-        when = (f'expires in {claude_token["days_left"]} days' if claude_token["days_left"] > 0 else "has expired")
+        when = ("has expired" if claude_token["days_left"] <= 0 else "expires today" if claude_token["days_left"] == 1
+                else f'expires in {claude_token["days_left"]} days')
         out.append(_alert(f"The fleet's claude token {when}",
                           f'It was set on {e(claude_token["set_at"][:10])}, and a token from <code>claude setup-token</code> '
                           'lasts a year. Make a new one and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
@@ -3232,7 +3215,7 @@ function replaceRow(x, cell, actions) {
   cancel.addEventListener('click', undo);
   inp.focus();
 }
-function claudeCard(list) {
+function claudeCard(list, due) {
   var x = list.filter(function (s) { return s.name === 'CLAUDE_CODE_OAUTH_TOKEN'; })[0], box = document.getElementById('claudecard');
   box.textContent = '';
   var cmd = sEl('code', {text: 'claude setup-token'}), copy = sEl('button', {type: 'button', text: 'Copy'});
@@ -3254,10 +3237,12 @@ function claudeCard(list) {
   });
   var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
   var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
+  // the server says when the token is near its year (fleet.claude_token_due): null, or {days_left}
+  var near = !!due, left = due ? due.days_left : null, ended = near && left <= 0, renewOn = near ? fmt(new Date(due.renew_by + 'T00:00:00')) : '';
   box.appendChild(sEl('section', {'class': 'claude-card'},
-    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x ? 'good' : 'none'), text: x ? 'set' : 'not set'})),
+    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (!x ? 'none' : ended ? 'bad' : near ? 'none' : 'good'), text: !x ? 'not set' : ended ? 'expired' : near ? (left === 1 ? 'expires today' : 'expires in ' + left + ' days') : 'set'})),
     sEl('p', {'class': 'sub', text: x
-      ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
+      ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (near ? ', set ' + fmt(d) + '. ' + (ended ? 'It expired on ' + renewOn + '. Replace it now.' : 'It expires on ' + renewOn + '. Replace it before then.') : renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
       : 'Without it, a machine with no Claude login cannot run claude bots. Every bot shares the subscription\\u2019s usage limits.'}),
     sEl('ol', null,
       sEl('li', null, 'On a machine with a browser, run ', cmd, ' ', copy, ' and copy the token it prints.'),
@@ -3278,7 +3263,7 @@ function listSecrets() {
   var box = document.getElementById('secretlist');
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
-    claudeCard(d.secrets);
+    claudeCard(d.secrets, d.claude_token_due);
     box.textContent = '';
     var body = sEl('tbody'), boxes = d.boxes || [];
     d.secrets.forEach(function (x) {
@@ -3619,7 +3604,7 @@ FLEET_CSS = """
 .fleet-page table.secrets button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .fleet-page table.secrets button:disabled,.secret-dlg button:disabled{opacity:.5;cursor:default}
 .fleet-page .status{display:inline-block;border-radius:12px;padding:1px 10px;font:600 12px var(--mono)}
-.fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}
+.fleet-page .status.good{color:var(--good)}.fleet-page .status.none{color:var(--accent)}.fleet-page .status.bad{background:var(--accent);color:#fff}
 .fleet-page table.secrets{width:100%;border-collapse:collapse;margin:0 0 8px;border:1px solid var(--line);border-radius:10px}
 .fleet-page table.secrets th{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.05em;color:var(--dim);text-align:left;padding:8px 12px}
 .fleet-page table.secrets td{padding:8px 12px;border-top:1px solid var(--line);vertical-align:middle}
@@ -3784,6 +3769,83 @@ def configuration_page(board_name) -> str:
 <script>{FLEET_JS}</script>""")
 
 
+# The Mac's card (#595, #890) is drawn by the page's script from /api/fleet, /api/workspaces and /api/profiles, as a full-width row under
+# its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
+# creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
+# handlers in FLEET_JS read its class names and data-* attributes.
+HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING) + ";" + r"""
+(function () {
+  var table = document.querySelector('#fleet-machines table.machines');
+  if (!table) return;
+  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  function get(path) {
+    return fetch(path, {headers: ME && ME.token ? {'Authorization': 'Bearer ' + ME.token} : {}})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return r.ok ? d : {}; }); }, function () { return {}; });
+  }
+  function el(tag, attrs) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
+    for (var i = 2; i < arguments.length; i++) if (arguments[i] != null) n.appendChild(typeof arguments[i] === 'string' ? document.createTextNode(arguments[i]) : arguments[i]);
+    return n;
+  }
+  function fld(label, control, tag) { return el(tag || 'label', {'class': 'fld'}, el('span', null, el('b', {text: label})), control); }
+  function option(value, text, extra) { var o = el('option', Object.assign({value: value, text: text}, extra || {})); return o; }
+  function form(h, workspaces, profiles) {
+    var ws = el('select', {name: 'workspace'}), prof = el('select', {name: 'profile'}), harness = el('select', {name: 'harness'});
+    if (workspaces.length) workspaces.forEach(function (w) { ws.appendChild(option(w, w)); });
+    else ws.appendChild(option('', 'no workspace yet', {disabled: '', selected: ''}));
+    prof.appendChild(option('', 'none')); profiles.forEach(function (p) { prof.appendChild(option(p, p)); });
+    ['claude', 'codex'].forEach(function (x) { harness.appendChild(option(x, x)); });
+    var pick = el('div', {'class': 'fld'}, el('span', null, el('b', {text: 'Apps it uses'})));
+    var apps = (h.apps || []).filter(function (a) { return a && typeof a === 'object' && a.name; });
+    apps.forEach(function (a) {
+      pick.appendChild(el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'app', value: a.name}), ' ' + a.name + ' ' + (a.version || '')));
+    });
+    if (!apps.length) pick.appendChild(el('span', {'class': 'dim', text: 'none found in /Applications'}));
+    return el('details', {'class': 'hostnew'}, el('summary', {text: 'Start a host bot'}),
+      el('form', {'class': 'hostform', 'data-host': h.name},
+        el('p', {'class': 'prob', text: HOST_WARNING}),
+        fld('Name', el('input', {name: 'handle', required: '', maxlength: '32', pattern: '[A-Za-z0-9][A-Za-z0-9._-]+'})),
+        fld('Workspace', ws), fld('Role', prof), fld('Harness', harness),
+        fld('Why it needs the host', el('input', {name: 'reason', required: '', maxlength: '200', placeholder: 'Godot captures for the effects bots'})),
+        pick,
+        el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'ack', required: ''}), ' I understand this bot can read everything my user can.'),
+        el('button', {type: 'submit', 'class': 'act needs-me', text: 'Start the host bot'}),
+        el('p', {'class': 'dim', text: 'After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.'})));
+  }
+  function card(h, workspaces, profiles) {
+    var on = !!h.host_bots, mine = (h.bots || []).filter(function (b) { return b.host_flag && !b.deleted; });
+    var who = el('div', {'class': 'by'});
+    if (on || mine.length) {
+      who.appendChild(document.createTextNode('bots here that run as the user: '));
+      if (!mine.length) who.appendChild(document.createTextNode('none'));
+      mine.forEach(function (b, i) { if (i) who.appendChild(document.createTextNode(', ')); who.appendChild(el('a', {href: '/a/' + encodeURIComponent(b.handle), text: '@' + b.handle})); });
+    } else who.textContent = 'off: every bot here runs in a container';
+    var found = (h.apps || []).filter(function (a) { return a && typeof a === 'object'; });
+    var appText = found.map(function (a) { return ((a.name || '') + ' ' + (a.version || '')).trim(); }).join(', ') || 'none found';
+    var box = el('div', {'class': 'hostbox', 'data-host': h.name}, el('b', {text: 'Host bots'}), ' ',
+      on ? el('span', null, el('span', {'class': 'pip ok'}), 'on') : 'off', ' ',
+      el('button', {type: 'button', 'class': 'act host-switch needs-me', 'data-host': h.name, 'data-on': on ? '0' : '1', text: 'turn ' + (on ? 'off' : 'on')}),
+      who, el('div', {'class': 'by', text: 'allowed on this Mac: ' + ((h.host_allowed || []).join(', ') || 'nobody yet')}),
+      el('details', {'class': 'by apps'}, el('summary', {text: found.length + ' apps found'}), appText));
+    if (on && h.reporting) box.appendChild(form(h, workspaces, profiles));
+    return el('tr', {'class': 'bot-drawer hostrow'}, el('td', {colspan: '7'}, box));
+  }
+  Promise.all([get('/api/fleet'), get('/api/workspaces'), get('/api/profiles')]).then(function (r) {
+    var hosts = (r[0].hosts || []).filter(function (h) { return h.host_bots !== null && h.host_bots !== undefined; });
+    if (!hosts.length) return;
+    var ws = (r[1].workspaces || []).filter(function (w) { return !w.archived; }).map(function (w) { return w.slug; }).sort(function (a, b) { return a.localeCompare(b); });
+    var profiles = (r[2].profiles || []).map(function (p) { return p.name; });
+    var rows = {}; Array.prototype.forEach.call(table.tBodies[0].rows, function (tr) { if (tr.id) rows[tr.id] = tr; });
+    hosts.forEach(function (h) {
+      var row = rows['box-' + h.name]; if (!row) return;
+      var next = row.nextSibling; table.tBodies[0].insertBefore(card(h, ws, profiles), next);
+    });
+  });
+})();
+"""
+
+
 def skills_page(board_name) -> str:
     """/skills as an empty shell (#874): the list is drawn by SKILLS_SHELL_JS from /api/skills and /api/profiles. The static settings pane
     is here because FLEET_JS expects its elements; the page's panes hide it. No skill or profile is read in the route."""
@@ -3805,12 +3867,8 @@ def skills_page(board_name) -> str:
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
+def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
-    if page == "configuration":
-        return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
-    if page == "skills":
-        return skills_page(board_name)              # an empty shell: its script reads /api/skills and /api/profiles (#874)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
@@ -3891,9 +3949,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
             f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
             # how many of its logins are in trouble
-            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>'
-            # a Mac's host-bots block has its own full-width row under it, which a sort keeps beneath the Mac
-            + (f'<tr class="bot-drawer hostrow"><td colspan="7">{blk}</td></tr>' if (blk := _host_machine_block(h, workspaces, profiles)) else ""))
+            # a Mac's host-bots block is a full-width row the page's script puts under it (HOST_CARD_JS, #890)
+            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
     machines_html = (('<table class="bots machines"><thead><tr>'
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
@@ -3920,7 +3977,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 {_ADD_MACHINE_HTML}
 {_SECRETS_HTML}
 </div></div>
-<script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{HOST_CARD_JS}</script>""")
 
 
 def agent_page(board_name, agent, recent, profile=None, voice=("", "", False, False)) -> str:

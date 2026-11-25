@@ -9,7 +9,7 @@ from app import web, workspace_web  # noqa: E402
 
 class SharedSwitcher(unittest.TestCase):
     def pages(self):
-        board = web.app_page("t", "", [], [], [], {})
+        board = web.app_page("t", "", {})
         ws = workspace_web.workspaces_page("t")
         return board, ws
 

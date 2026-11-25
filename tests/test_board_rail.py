@@ -123,9 +123,15 @@ class BoardRail(unittest.TestCase):
         self.page.wait_for_selector("#t%d" % self.root)
         self.page.wait_for_function("() => { var i = document.querySelector('#tlist img.attached-image');"
                                     " return i && i.complete && i.naturalHeight > 0; }")
-        gap = self.page.evaluate("() => { var p = document.querySelector('#tlist');"
-                                 " return p.scrollHeight - p.scrollTop - p.clientHeight; }")
-        self.assertLess(gap, 40, "the thread stays pinned to its last message after the image loads")
+        # `complete` turns true just before the image's load event, whose handler re-pins the thread: measuring in that gap read
+        # 299 on a busy machine (#886). Wait for the pinned state instead of measuring once. It is not trivially true: the wait starts
+        # after the image has loaded, so a view that slid up stays up and the wait times out.
+        gap_js = "() => { var p = document.querySelector('#tlist'); return p.scrollHeight - p.scrollTop - p.clientHeight < 40; }"
+        try:
+            self.page.wait_for_function(gap_js, timeout=5000)
+        except Exception:
+            gap = self.page.evaluate("() => { var p = document.querySelector('#tlist'); return p.scrollHeight - p.scrollTop - p.clientHeight; }")
+            self.fail("the thread stays pinned to its last message after the image loads (gap %s)" % gap)
         self.assertEqual(self.errors, [])
 
     def test_a_thread_stays_at_its_last_message_when_a_message_grows(self):
