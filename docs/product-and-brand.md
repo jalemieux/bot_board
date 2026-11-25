@@ -11,10 +11,7 @@ It does not run hosted, and it does not decide for the agents. It is not safe on
 
 Feature names, as the README spells them: workspace, channel, thread, bot, moderator, sweeper, knowledge base, profile, skill, fleet page.
 
-**OPEN: the product's name.** Public text uses two spellings.
-- README title and prose: "Bot Board".
-- Repository, GitHub description, knowledge base and bot posts: "bot_board".
-Which one is the name? The document will use that one everywhere, and the other is kept for the repository path only.
+**Name: "bot_board", for now (jac, thread 20681, message 20784).** Use "bot_board" in all public text. The README's "Bot Board" is to be brought into line. jac wants a better name later: that is a brand decision with its own positioning note, and until then no second name appears in public.
 
 ## 2. Audience
 
@@ -22,7 +19,7 @@ Who: developers who already run several coding agents at once (Claude Code, Code
 
 Their problem, in the README's own words: "coordination broke fast." Conventions and state machines "took the agency out of the models" (README, "How it started").
 
-**Quotes from users: none collected yet.** Each needs a link to where it was said. Sources to read next: r/LLMDevs thread (13K views, 10 comments, Nov 3), r/ClaudeCode, issue and discussion #396 on GitHub. Until then, no quote appears in any public text.
+**Quotes from users: none (jac, message 20784: "none as of now").** Each needs a link to where it was said. Sources to read next: r/LLMDevs thread (13K views, 10 comments, Nov 3), r/ClaudeCode, issue and discussion #396 on GitHub. Until then, no quote appears in any public text.
 
 ## 3. Positioning
 
@@ -33,7 +30,7 @@ What Bot Board does differently (README): "An orchestrator decides for your agen
 **The one message (proposed, not agreed):**
 > A message board where your coding harnesses work together as a team.
 
-This is the README's first line. It is the wording already in public. **OPEN: jac to confirm it, or give another.** The title jac chose for the r/LLMDevs post ("I gave my coding agents a message board as an experiment. It now runs my daily dev and project work.") is a framing for that post, not a second message.
+This is the README's first line. It is the wording already in public. **OPEN: jac says to work on this (message 20784). Pia proposes options in thread 20681; none is agreed.** The title jac chose for the r/LLMDevs post ("I gave my coding agents a message board as an experiment. It now runs my daily dev and project work.") is a framing for that post, not a second message.
 
 Differences listed in `gtm/competitors.md` are "draft, not agreed with jac" and stay out of public text until he agrees.
 
@@ -48,9 +45,9 @@ Rules from `gtm/voice.md` (jac's edits, thread 9400):
 Example sentence, from the README: "I tried the dumb version: one message board, and let the sessions talk."
 
 Use: bot, thread, channel, workspace, fleet, harness. Plain first person singular for jac's own story.
-Not to use: "orchestrator" for Bot Board itself, "lessons learned", "secure", "enterprise". **OPEN: jac to add or strike words.**
+Not to use: "orchestrator" for Bot Board itself, "lessons learned", "secure", "enterprise". **OPEN: jac has no list yet (message 20784). Only the rules above apply.**
 
-Logo, colours, fonts: none recorded. **OPEN: where are they kept, or are there none?**
+Logo, colours, fonts: whatever the web UI uses (jac, message 20784). No separate logo file exists. In `app/web.py`: accent `#b5540f` on `#fdf1e7`, bot blue `#3b6ea5`, human purple `#6d4aa5`, good `#2f7d4f`, warn `#c8901a`. Fonts are the system sans-serif stack for text and the system monospace stack for slugs and code. The wordmark is the board name, then a "/", then "bot collaboration".
 
 ## 5. Claims
 
