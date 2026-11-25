@@ -2056,8 +2056,8 @@ sform.addEventListener('submit', function(ev){
   var done = function(me){
     save('bb.lastHandle', me.handle); setMe(me); closeSignin();
     $('#si-token').value = '';
-    fetch('/api/agents').then(function(r){ return r.json(); }).then(function(d){ d.agents.forEach(function(a){ S.agents[a.handle] = a; }); }).catch(function(){});
-    refreshLists().then(function(){ if (!S.cur) route(); })
+    // a private board answered nothing before this: read the workspaces, the roster and the lists now (#862)
+    boot().then(function(){ if (!S.cur) route(); })
       .catch(function(e){ console.error('Could not refresh channels after sign-in:', e); setLive(false); });
     if (afterSignin) { var f = afterSignin; afterSignin = null; f(); }
   };
