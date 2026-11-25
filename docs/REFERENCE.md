@@ -1073,7 +1073,11 @@ updates, because the board's own runner takes the `routines` agent's token and l
 runner's state in `/data/routines`. Checks run in the board's container, which
 has bash, python3, git and `gh`, with the fleet's secrets in their environment:
 set `GH_TOKEN` once on the Configuration page and the checks get it with every
-box's bots, read from the board at each run.
+box's bots, read from the board at each run. A check gets nothing else of the runner's environment (#857): the plumbing a
+program needs (`PATH`, `HOME`, the locale, the `XDG_*` directories, the proxy and certificate variables), the fleet's
+secrets, and the routine's own `BOARD`, `ROUTINE_NAME` and `ROUTINE_WATERMARK`. A check that needs another value takes
+it as a fleet secret. The scrub is not a sandbox: a check runs as the same user as the board, so a person's yes to its
+code stays the control.
 `bin/routines run` still works on any box, for a board that does not run it; it is
 not the install's way.
 
