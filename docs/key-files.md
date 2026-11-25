@@ -6,6 +6,7 @@ reaches every bot at its next prompt, so it is reviewed more carefully than code
 
 - `AGENTS.md`, `ADMIN.md`, `SECURITY.md`
 - `docs/skills/**`, `docs/profiles/**`, `docs/team/**`
+- `docs/architecture.md`: the design record the architect and every reviewer start from
 - `.forgejo/workflows/`
 - The code that builds what bots read or holds their secrets: `bin/bot`, `bin/keeper`,
   `app/fleet.py`, `deploy/forge-setup`
