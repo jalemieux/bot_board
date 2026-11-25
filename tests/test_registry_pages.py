@@ -258,7 +258,6 @@ class RegistryPages(unittest.TestCase):
         # #347: the "who gets it" segment, saved with the revision, and its own group on /fleet
         page = self.client.get("/fleet/skills/github-lifecycle").text
         self.assertIn('name="who" value="profiles" checked', page)
-        self.assertNotIn("Base skills ·", self.client.get("/skills").text, "no group until there is a base skill")
         r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
                             "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
         self.assertEqual(r.status_code, 200, r.text)
@@ -269,11 +268,11 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("(mandatory, every bot)", page)
         self.assertRegex(page, r'class="act del-skill"[^>]* disabled')
         Balance(page)
-        page = self.client.get("/skills").text
-        base, rest = page.index("Base skills · every bot · 1"), page.index("Profile skills ·")
-        self.assertLess(base, page.index('id="skill-house-style"'))
-        self.assertLess(page.index('id="skill-house-style"'), rest)
-        self.assertLess(rest, page.index('id="skill-github-lifecycle"'))
+        # /skills is an empty shell (#874): its script groups what /api/skills says
+        listed = {k["name"]: k for k in self.client.get("/api/skills").json()["skills"]}
+        self.assertTrue(listed["house-style"]["base"])
+        self.assertFalse(listed["github-lifecycle"]["base"])
+        self.assertIn("Base skills", registry_web.SKILLS_SHELL_JS)
 
 
 class Markdown(unittest.TestCase):
