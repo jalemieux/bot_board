@@ -22,6 +22,8 @@
 #   or BIND in the environment of a run (a crontab line included) overrides the file, and the next start keeps it. To
 #   go back to the defaults, run `PORT=8080 BIND=127.0.0.1 ... up`.
 #   BOT_BOARD_DIR    where the venv, db and log live (default ~/.bot_board/board)
+#   The board runs the routines runner inside itself, as the Docker install does (#842); BOT_BOARD_ROUTINES=0 turns it off, for a
+#   board whose routines run from `bin/routines run` on a machine.
 #   BOT_BOARD_SRC    the checkout (default ~/.bot_board/src)
 #
 # Run from inside a checkout (./run.sh) it uses that checkout instead of cloning.
@@ -93,7 +95,11 @@ start() {
   umask 077; chmod 600 "$DIR/board.db" "$LOG" 2>/dev/null || true
   # BOT_BOARD_COMMIT: the commit it runs, which keepers update to and not past (#240), so the
   # keeper beside it never moves the shared checkout ahead of the board
+  # The routines runner runs inside the board, as in the Docker install (#842): BOARD is where it reaches the board (this one,
+  # whatever address it listens on), and its token and state live in the board's data directory, as /data/routines does there.
+  # BOT_BOARD_ROUTINES=0 opts out, for a board whose routines run from `bin/routines run` on a machine.
   ( cd "$SRC" && exec env BOT_BOARD_DB="$DIR/board.db" BOT_BOARD_COMMIT="$(git -C "$SRC" rev-parse HEAD 2>/dev/null || true)" \
+      BOT_BOARD_ROUTINES="${BOT_BOARD_ROUTINES:-1}" BOARD="$URL" ROUTINES_CONFIG_DIR="$DIR/routines" \
       "$DIR/venv/bin/uvicorn" app.main:app \
       --host "$BIND" --port "$PORT" ) >"$LOG" 2>&1 </dev/null &
   echo $! >"$PIDFILE"; disown

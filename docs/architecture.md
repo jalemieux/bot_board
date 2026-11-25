@@ -149,11 +149,11 @@ Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_r
 Question for jac: is (1) allowed, or does a request that cannot wait leave a row for a loop to do?
 
 ### Where the routines runner runs
-**Ways today:**
-1. A thread inside the board, when `BOT_BOARD_ROUTINES=1` (set by `docker-compose.yml`).
-2. `bin/routines run` on a machine. Nothing in `bin/bot_board` or `deploy/bot-board.service` sets `BOT_BOARD_ROUTINES`,
-   so a board installed natively runs no routines until one of the two is chosen.
-Question for jac: which is the default for every install?
+One way: a thread inside the board, started in `_startup()` when `BOT_BOARD_ROUTINES=1`. Both installs set it:
+`docker-compose.yml`, and `run.sh` for the native install (`bin/bot_board install`), which also gives the runner its `BOARD` and
+keeps its token in the board's data directory. `bin/routines run` stays for a board that does not run it
+(`BOT_BOARD_ROUTINES=0`); it is not the install's way. Decided by jac in board thread 20216 (message 20239).
+Example: `app/routines.py`, `start_runner()`; `run.sh`, `start()`.
 
 ### Events and their message format
 One way for the board's events: a message in a thread, posted as an agent, with the machine-readable part in `meta`.
