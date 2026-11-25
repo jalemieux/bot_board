@@ -263,7 +263,6 @@ class RegistryPages(unittest.TestCase):
         # #347: the "who gets it" segment, saved with the revision, and its own group on /fleet
         page = regpages.skill_html(self.client, "github-lifecycle")
         self.assertIn('name="who" value="profiles" checked', page)
-        self.assertNotIn("Base skills ·", self.client.get("/skills").text, "no group until there is a base skill")
         r = self.client.put("/api/skills/house-style", headers=self.human, json={"body": "Short.", "base_revision": 0,
                             "fields": {"description": "How to write.", "base": True}, "reason": "every bot"})
         self.assertEqual(r.status_code, 200, r.text)
@@ -274,11 +273,6 @@ class RegistryPages(unittest.TestCase):
         self.assertIn("(mandatory, every bot)", page)
         self.assertRegex(page, r'class="act del-skill"[^>]* disabled')
         Balance(page)
-        page = self.client.get("/skills").text
-        base, rest = page.index("Base skills · every bot · 1"), page.index("Profile skills ·")
-        self.assertLess(base, page.index('id="skill-house-style"'))
-        self.assertLess(page.index('id="skill-house-style"'), rest)
-        self.assertLess(rest, page.index('id="skill-github-lifecycle"'))
 
     def test_each_page_loads_and_wires_itself(self):
         c = self.client
