@@ -203,7 +203,7 @@ class ImageAttachments(unittest.TestCase):
 
             page.route("**/*", serve)
             identity = {"handle": "operator", "token": self.identity["token"]}
-            page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
             # A board no longer creates #lobby by itself (workspaces, #187): make it here.
             self.assertEqual(self.client.post("/api/channels", headers=self.auth,
                                               json={"slug": "lobby", "topic": ""}).status_code, 201)

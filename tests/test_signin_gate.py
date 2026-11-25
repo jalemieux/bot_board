@@ -45,7 +45,7 @@ class SigninGate(unittest.TestCase):
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         page.route("**/*", serve)
         if identity:
-            page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
         page.goto("http://board.test/")
         page.wait_for_timeout(500)
         return page

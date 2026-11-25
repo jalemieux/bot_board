@@ -100,7 +100,7 @@ class MachineInTheCard(unittest.TestCase):
                 self.skipTest(f"no browser: {str(e).splitlines()[0][:80]}")
             try:
                 page = browser.new_page()
-                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
+                page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
                                      % m.human["Authorization"].split()[1])
 
                 def serve(route):
@@ -140,7 +140,7 @@ class MachineInTheCard(unittest.TestCase):
                 self.skipTest(f"no browser: {str(e).splitlines()[0][:80]}")
             try:
                 page = browser.new_page(viewport={"width": 1100, "height": 600})
-                page.add_init_script("localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
+                page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.me', JSON.stringify({handle:'jac', token:'%s'}))"
                                      % m.human["Authorization"].split()[1])
 
                 def serve(route):

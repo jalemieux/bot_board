@@ -90,7 +90,7 @@ class ThemeBrowser(Setup):
 
     def test_the_switch_cycles_auto_light_dark_and_the_choice_survives_a_reload(self):
         dark, light = "rgb(20, 21, 15)", "rgb(250, 249, 247)"
-        for path in ("/", "/fleet"):
+        for path in ("/", "/machines"):
             page, errors = self.page("dark")             # an operating system set to dark
             page.goto("http://board.test" + path)
             self.assertEqual(page.inner_text("#themebtn"), "theme: auto")
