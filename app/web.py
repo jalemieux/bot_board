@@ -3232,7 +3232,7 @@ function replaceRow(x, cell, actions) {
   cancel.addEventListener('click', undo);
   inp.focus();
 }
-function claudeCard(list) {
+function claudeCard(list, due) {
   var x = list.filter(function (s) { return s.name === 'CLAUDE_CODE_OAUTH_TOKEN'; })[0], box = document.getElementById('claudecard');
   box.textContent = '';
   var cmd = sEl('code', {text: 'claude setup-token'}), copy = sEl('button', {type: 'button', text: 'Copy'});
@@ -3254,8 +3254,8 @@ function claudeCard(list) {
   });
   var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
   var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
-  // the same rule as fleet.claude_token_due: two weeks before a year from when it was set here
-  var left = renew ? Math.round((renew.getTime() - Date.now()) / 86400000) : null, near = left !== null && left < 14;
+  // the server says when the token is near its year (fleet.claude_token_due): null, or {days_left}
+  var near = !!due, left = due ? due.days_left : null;
   box.appendChild(sEl('section', {'class': 'claude-card'},
     sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x && !near ? 'good' : 'none'), text: !x ? 'not set' : near ? (left > 0 ? 'expires in ' + left + ' days' : 'expired') : 'set'})),
     sEl('p', {'class': 'sub', text: x
@@ -3280,7 +3280,7 @@ function listSecrets() {
   var box = document.getElementById('secretlist');
   if (!ME) { box.textContent = 'Sign in on the board page to see and set them.'; return; }
   secretCall('GET').then(function (d) {
-    claudeCard(d.secrets);
+    claudeCard(d.secrets, d.claude_token_due);
     box.textContent = '';
     var body = sEl('tbody'), boxes = d.boxes || [];
     d.secrets.forEach(function (x) {
@@ -3784,6 +3784,27 @@ def configuration_page(board_name) -> str:
 {_SECRETS_HTML}
 </div></div>
 <script>{FLEET_JS}</script>""")
+
+
+def skills_page(board_name) -> str:
+    """/skills as an empty shell (#874): the list is drawn by SKILLS_SHELL_JS from /api/skills and /api/profiles. The static settings pane
+    is here because FLEET_JS expects its elements; the page's panes hide it. No skill or profile is read in the route."""
+    from . import registry_web
+    return shell(board_name, "skills", here="/skills", content=f"""
+<style>{FLEET_CSS}{registry_web.REG_CSS}</style>
+<div class="fleet-page" data-page="skills" data-panes="tab-skills">
+<div class="fleet-head"><h1>Skills</h1></div>
+<p class="sub fleet-count" id="skills-count">Loading\u2026</p>
+<noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
+<div class="tab-pane" id="tab-skills">
+<section class="fleet-section reg" id="fleet-skills"><div class="sec-head"><h2 id="skills-h">Skills</h2>{registry_web.ADD_SKILL_PANEL}</div>
+<p class="sub">Fleet-wide, and the board is their only home. A bot gets the skills of its profile when its session starts, and a base skill whatever its profile; an edit reaches every bot on it at its next prompt, which tells it to read the skill again.</p>
+<div id="skills-list" class="sub">Loading\u2026</div></section></div>
+<div class="tab-pane" id="tab-settings">
+{_ADD_MACHINE_HTML}
+{_SECRETS_HTML}
+</div></div>
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),

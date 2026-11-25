@@ -1315,7 +1315,8 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes(),
+            "claude_token_due": fleet.claude_token_due()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
@@ -2669,6 +2670,8 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     page = request.url.path.strip("/")
     if page == "configuration":
         return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
+    if page == "skills":
+        return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()

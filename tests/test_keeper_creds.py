@@ -392,11 +392,13 @@ class Page(unittest.TestCase):
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
         self.assertNotIn("claude token", self.client.get('/machines', headers=admin).text.split('Configuration: shared secrets')[0])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
+        self.assertIsNone(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due'])
         self.assertEqual(self.client.get('/configuration', headers=admin).text, web.configuration_page(main.BOARD_NAME), "the route picks the shell once (#880)")
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
                       ((datetime.now(timezone.utc) - timedelta(days=355)).isoformat(),))
         page = self.client.get('/machines', headers=admin).text
+        self.assertEqual(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']['days_left'], 10)
         self.assertIn("The fleet's claude token expires in 10 days", page)
         self.assertIn("The fleet's claude token expires in 10 days", str(self.client.get('/api/status').json()['attention']))
 
