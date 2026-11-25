@@ -240,3 +240,23 @@ def recent_activity(full_name: str, since: str, timeout: float | None = None) ->
         if isinstance(p, dict) and _after(p.get("updated_at"), since) and isinstance(p.get("number"), int):
             reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
     return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews}
+
+
+def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None) -> list[dict]:
+    """The open pull requests of a repository that carry the label `thread:<id>` (#931): [{number, title}]. Issues are left out on
+    purpose: follow-up issues carry the thread label too. The label
+    is the one owner of the mapping from work to a board thread; the board keeps no table. Read only, with the read token when there is
+    one. The path is built here: the repository passes the name check and the label is made from an integer, so nothing a caller
+    holds reaches the URL. Raises ForgeError when the forge cannot be asked: the caller decides what that means (completion goes
+    on, with a warning)."""
+    if not isinstance(thread_id, int) or isinstance(thread_id, bool) or thread_id < 1:
+        raise ForgeError("a thread id is a positive number")
+    q = urllib.parse.urlencode({"state": "open", "type": "pulls", "labels": "thread:%d" % thread_id, "limit": 50})
+    status, data = _call("GET", _repo_path(full_name, "/issues?" + q), read=True, timeout=timeout or 5)
+    if status != 200 or not isinstance(data, list):
+        raise ForgeError(f"the forge answered {status} when asked for the open pull requests of thread {thread_id}")
+    out = []
+    for i in data:
+        if isinstance(i, dict) and isinstance(i.get("number"), int):
+            out.append({"number": i["number"], "title": str(i.get("title") or "")})
+    return out

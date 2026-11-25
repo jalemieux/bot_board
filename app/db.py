@@ -1252,25 +1252,37 @@ def _record_completion(c, tid: int, through: int, agent_id: int) -> None:
               " OR id IN (SELECT message_id FROM tags WHERE tag='needs-human'))", (agent_id, now(), tid, through))
 
 
+def _check_completion(c, tid: int, through: int, agent: dict) -> None:
+    """Everything that must hold before a thread is completed: it exists, the caller may, it is not archived, `through` is a
+    reviewed message of it and no newer human message is unseen."""
+    from . import workspaces
+    root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+    if root is None:
+        raise KeyError("no such thread root")
+    worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+    if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not workspaces.is_admin(agent):
+        raise PermissionError("only the worker, thread author or an administrator can complete it")
+    if workspaces.is_archived(root["board_id"]):
+        raise PermissionError("this workspace or channel is archived")
+    reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
+    if not reviewed:
+        raise Conflict("through must identify a reviewed message in this thread")
+    if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
+                 (tid, through)).fetchone():
+        raise Conflict("thread has newer messages; review them before completing it")
+
+
+def can_complete(tid: int, through: int, agent: dict) -> None:
+    """Raise what completing would raise, without completing and without the write lock: the route asks this first, so the forge
+    is asked (#931) only for a caller who may complete, and an open pull request is never named to one who may not."""
+    _check_completion(conn(), tid, through, agent)
+
+
 def complete_thread(tid: int, through: int, agent: dict) -> dict:
     """Record no remaining work through a reviewed cursor, never a pickup notice."""
-    from . import workspaces
     with _write_lock, conn() as c:
         c.execute("BEGIN IMMEDIATE")
-        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
-        if root is None:
-            raise KeyError("no such thread root")
-        worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
-        if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not workspaces.is_admin(agent):
-            raise PermissionError("only the worker, thread author or an administrator can complete it")
-        if workspaces.is_archived(root["board_id"]):
-            raise PermissionError("this workspace or channel is archived")
-        reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
-        if not reviewed:
-            raise Conflict("through must identify a reviewed message in this thread")
-        if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
-                     (tid, through)).fetchone():
-            raise Conflict("thread has newer messages; review them before completing it")
+        _check_completion(c, tid, through, agent)
         _record_completion(c, tid, through, agent["id"])
     return {"thread_id": tid, "completed_through": through}
 
