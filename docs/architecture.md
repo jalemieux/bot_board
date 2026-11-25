@@ -161,7 +161,10 @@ box with no runtime is not started and says what to install; an older board that
 The keeper reports each box's consent lines on every operating system (`host_facts` in `bin/keeper`). Design:
 `docs/runtime-choice.md`.
 Example: `app/fleet.py`, `_runs_problem` and `_set_runs`; `bin/bot`, `decide_run`.
-Not yet: the Team tab sets it (#877), the installer asks and `bot_board containers` changes it (#878).
+The machine's setting comes from one question, asked in `deploy/containers`: at install, and again with `bot_board
+containers`. Example: `deploy/containers` (the answer, the default, the exit when containers are wanted and none is installed).
+Not yet: the Team tab sets it (#877). Today the board carries it, the launcher and the keeper obey it, and the installer sets the
+machine's default.
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).

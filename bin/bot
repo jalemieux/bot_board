@@ -118,7 +118,14 @@ set -euo pipefail
 if [ "${1:-}" = install ]; then
   shift
   _nobot=${BOT_BOARD_NO_DEFAULT_BOT:-}; _args=()
-  for _a in "$@"; do if [ "$_a" = --no-bot ]; then _nobot=1; else _args+=("$_a"); fi; done
+  for _a in "$@"; do
+    case $_a in
+      --no-bot) _nobot=1 ;;
+      --containers) export BOT_BOARD_CONTAINERS=1 ;;
+      --no-containers) export BOT_BOARD_CONTAINERS=0 ;;
+      *) _args+=("$_a") ;;
+    esac
+  done
   set -- ${_args[@]+"${_args[@]}"}
   _fresh=1; for _h in "$HOME"/.config/bot_board/bots/*/harness; do [ -s "$_h" ] && _fresh=; done
   for _c in git python3; do command -v "$_c" >/dev/null || { echo "bot: $_c is required" >&2; exit 1; }; done
@@ -193,25 +200,11 @@ if [ "${1:-}" = install ]; then
     _set KEEPER_DEFAULT_BOT "$_harness"
     [ -z "${BOT_HANDLE:-}" ] || _set KEEPER_DEFAULT_HANDLE "$BOT_HANDLE"
   fi
-  # Put the bots in containers when this box can run them (#652). Only on a first install, and never
-  # over a BOT_RUNTIME the box already has (set or deliberately removed). A Mac keeps claude on the
-  # host: its login is in the Keychain, which a container cannot read. The board on loopback is reached as the host (a Mac) or on the host network.
+  # Where the bots run (#878): detect Docker or Podman, say what was found, ask "Run bots in containers?" (or take the default
+  # with no terminal), write BOT_RUNTIME for yes. Only on a first install, and never over a BOT_RUNTIME the box already has
+  # (set or deliberately removed). No runtime and a yes: the install says how to get one and stops, nothing written (#878).
   if [ -n "$_fresh" ] && ! grep -qs '^BOT_RUNTIME=' "$_cfg" && [ -z "${BOT_RUNTIME:-}" ]; then
-    _rt=; for _c in docker podman; do command -v "$_c" >/dev/null && "$_c" info >/dev/null 2>&1 && { _rt=$_c; break; }; done
-    if [ -z "$_rt" ]; then
-      _info "no container runtime found: the bots run on this machine, with your user's access. Install Docker, then add BOT_RUNTIME=docker to $_cfg and run bot_board restart bots to move them into containers"
-    elif [ "$(uname -s)" = Darwin ] && [ "$_harness" = claude ]; then
-      _info "$_rt is here, but Claude Code's login is in the macOS Keychain, which a container cannot read: the bots run on this machine. To use containers, run claude setup-token, set CLAUDE_CODE_OAUTH_TOKEN on $_board/configuration, add BOT_RUNTIME=$_rt to $_cfg, and run bot_board restart bots"
-    else
-      _set BOT_RUNTIME "$_rt"
-      case $_board in
-        http://127.*|http://localhost*|http://\[::1\]*)
-          # container_run reaches a loopback board by itself: as the host on a Mac, on the host network on Linux (#673)
-          if [ "$(uname -s)" = Darwin ]; then _net="they can also reach every port this Mac listens on"
-          else _net="they share this machine's network, so they can reach any service on 127.0.0.1"; fi ;;
-      esac
-      _info "$_rt found: the bots run in containers. They cannot read the rest of this machine's files${_net:+, but $_net}. To run them on the machine instead, remove BOT_RUNTIME from $_cfg"
-    fi
+    BOT_CONFIG=$_cfg BOT_HARNESS=$_harness BOARD=$_board BOT_BOARD_QUIET=$_quiet bash "$SRC/deploy/containers" install || exit $?
   fi
   # exit 75: this machine has no systemd user manager, so no service was made; the keeper said what to do. The board part worked, so the
   # install is not a failure, and there is no default bot to wait for (#549).
@@ -1204,7 +1197,7 @@ print((r if r in ("container","host") else "-") + " " + ((h.get("box") or "-") i
       log "run: $HANDLE runs outside a container, as $(id -un) on $(hostname -s); the board and $BOT_HOST_CONSENT list it" ;;
     container)
       if [ -z "${BOT_RUNTIME:-}" ]; then
-        echo "set to run in a container, but this box has no container runtime: install Docker or Podman and set BOT_RUNTIME in $CFG/config, then restart the bots" >"$STATE/health"
+        echo "set to run in a container, but this box has no container runtime: install Docker or Podman, run bot_board containers, then restart the bots" >"$STATE/health"
         log "run: $HANDLE is set to run in a container and this box has none: it is not started until one is installed"
         while [ ! -e "$STATE/stop" ]; do sleep 5; done
         return 0

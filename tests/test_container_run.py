@@ -535,6 +535,7 @@ class ContainerRun(unittest.TestCase):
         time.sleep(1)
         self.assertEqual((L.prompts(), self.container_runs()), ([], []), "it did not start")
         self.assertIn("Docker or Podman", L.read("health"))
+        self.assertIn("bot_board containers", L.read("health"), "the command that changes the machine's setting (#925)")
 
     def test_runs_container_on_a_machine_with_a_runtime_runs_in_the_container(self):
         board, L = self.host_bot(board_says=False, consent=False)

@@ -39,7 +39,8 @@ def key_of(text: str, href: str) -> str:
 
 
 def _token_when(due: dict) -> str:
-    return f"expires in {due['days_left']} days" if due["days_left"] > 0 else "has expired"
+    left = due["days_left"]      # the same words as the Machines page and the Claude card (#880)
+    return "has expired" if left <= 0 else "expires today" if left == 1 else f"expires in {left} days"
 
 
 def _item(text: str, href: str, where: str) -> dict:

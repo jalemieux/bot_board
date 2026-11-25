@@ -404,7 +404,7 @@ class Page(unittest.TestCase):
                 c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
                           ((datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),))
             self.assertEqual(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']['days_left'], left)
-            self.assertIn("The fleet's claude token " + words, self.client.get('/machines', headers=admin).text)
+            self.assertIn("The fleet's claude token " + words, str(self.client.get('/api/status').json()['attention']))      # the page's script words it itself (#887)
 
     def test_the_runtime_a_box_reports_shows_on_its_machine_row(self):
         # #479: the keeper's runtime check reaches /fleet; a problem is marked, a keeper from before shows nothing

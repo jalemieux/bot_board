@@ -52,6 +52,9 @@ class HostBotsPage(unittest.TestCase):
         summary = [line for line in phone.splitlines() if ".hostnew summary" in line][0]
         self.assertIn("display:list-item", summary, "list-item keeps the disclosure triangle")
         self.assertNotIn("display:flex", summary, "flex removes the triangle (sage, #905)")
+        self.assertIn("font-size:16px", summary, "the two summaries are the size of the buttons and fields beside them (#914)")
+        for base in (".fleet-page .hostnew summary{cursor:pointer", ".fleet-page .mdetails summary,.fleet-page .hostbox .apps summary{cursor:pointer"):
+            self.assertLess(css.index(base), css.index("/* the Mac's card on a phone (#905)"), base + " comes before the phone rule")
         self.assertIn("font-size:16px", phone)
         self.assertIn("@media (max-width:760px)", phone)
         for base in (".fleet-page .hostform{display:grid", ".fleet-page .hostbox .by{margin-top:3px}", ".fleet-page .hostform .chk{display:block"):
