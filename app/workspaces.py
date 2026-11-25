@@ -174,6 +174,13 @@ def is_admin(agent):
     return bool(agent and agent['kind'] == 'human')
 
 
+def require_human(agent, message: str, unless: bool = False) -> None:
+    """Say no unless the agent is a human (is_admin), or `unless` holds, with `message` as the reason. The one place
+    a route asks "a human?"; a route lets the PermissionError become a 403 (#840). Who may is unchanged."""
+    if not (is_admin(agent) or unless):
+        raise PermissionError(message)
+
+
 def is_admin_bot(agent) -> bool:
     """A bot of the admin workspace: the only kind that reads and writes other workspaces."""
     if not agent or agent["kind"] in db.UNSCOPED_KINDS or not agent.get("workspace_id"):

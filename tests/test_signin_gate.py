@@ -13,6 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
 from app import db, main
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 
 
 class SigninGate(unittest.TestCase):
@@ -45,7 +47,7 @@ class SigninGate(unittest.TestCase):
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         page.route("**/*", serve)
         if identity:
-            page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps(identity)) + ")")
+            page.add_init_script(bare_board.signed_in(identity))
         page.goto("http://board.test/")
         page.wait_for_timeout(500)
         return page

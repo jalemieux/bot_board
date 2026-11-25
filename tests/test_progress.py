@@ -276,6 +276,39 @@ class KeepingWorkMoving(Base):
         return self.client.post("/api/messages", headers=self.bot, json={
             "channel": "sg", "reply_to": self.tid, "body": "merge it?", "meta": {"needs": needs, "ask": "merge it?", **meta}}).json()
 
+    def hours_ago(self, h):
+        from datetime import datetime, timedelta, timezone
+        at = (datetime.now(timezone.utc) - timedelta(hours=h)).isoformat(timespec="seconds")
+        db.conn().execute("UPDATE messages SET created_at=? WHERE thread_id=?", (at, self.tid)); db.conn().commit()
+
+    def test_an_idle_worker_is_nudged_after_an_hour_a_busy_or_unreported_one_after_six(self):      # #850
+        quiet = {"released": [], "nudged": [], "attention": None}
+        self.hours_ago(2)
+        self.assertEqual(progress.sweep(), quiet, "in a run (working): six hours")
+        self.report("edie", "waiting")
+        self.hours_ago(0.5)
+        self.assertEqual(progress.sweep(), quiet, "idle, but only half an hour")
+        self.hours_ago(2)
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+        self.assertEqual(self.messages(self.tid)[-1]["meta"], {"kind": "nudge", "to": "edie"})
+        self.assertEqual(progress.sweep(), quiet, "one nudge")
+        self.hours_ago(30)      # the nudge too is old now: nobody answered, so a person is told
+        self.assertTrue(progress.sweep()["attention"])
+        self.assertEqual(self.worker(self.tid), "edie")
+
+    def test_a_worker_no_box_reports_is_not_idle(self):      # #850, #500
+        db.conn().execute("DELETE FROM fleet_hosts"); db.conn().commit()
+        self.hours_ago(2)
+        self.assertEqual(progress.sweep()["nudged"], [])
+        self.hours_ago(7)
+        self.assertEqual(progress.sweep()["nudged"], [self.tid])
+
+    def test_an_idle_worker_with_an_open_ask_to_a_human_is_left_alone(self):      # #850
+        self.report("edie", "waiting")
+        self.ask()
+        self.hours_ago(2)
+        self.assertEqual(progress.sweep(), {"released": [], "nudged": [], "attention": None})
+
     def test_a_thread_waiting_on_a_human_is_neither_nudged_nor_freed_until_they_answer(self):
         quiet = {"released": [], "nudged": [], "attention": None}
         self.ask()
