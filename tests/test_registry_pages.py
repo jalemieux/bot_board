@@ -86,7 +86,9 @@ class RegistryPages(unittest.TestCase):
             self.assertLess(page.index(f'id="{first}"'), page.index(f'id="{then}"'))
         # skills: the seeded ones (github-lifecycle, forgejo-lifecycle, board-guide, board-review, board-care, voice-reply, publish-to-github) and ours,
         # with kind, revision and who uses it
-        self.assertIn("Skills · 11", page)
+        # counted from the shipped directory, so a new skill does not break this test
+        shipped = sum(1 for d in (ROOT / "docs" / "skills").iterdir() if (d / "SKILL.md").is_file())
+        self.assertIn(f"Skills · {shipped + 1}", page)
         self.assertIn('href="/fleet/skills/github-lifecycle"', page)
         self.assertIn('href="/fleet/skills/release-notes"', page)
         self.assertIn("Notes &lt;for&gt; a tag.", page)
