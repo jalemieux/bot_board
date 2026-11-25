@@ -70,9 +70,10 @@ standby bot to claim. A check written by a bot runs only after a human approved 
 board's machine pulls the newest tag with an image and swaps the container. Keepers update to the commit the board
 runs (`COMMIT` in `app/main.py`), not to the branch tip.
 
-**A workspace's repository.** Creating a workspace, the Team tab's button, or the first machine's report calls
-`forge.ensure_repository`, which creates or adopts `fleet/<slug>` and then ensures the routine that offers the
-repository's issues.
+**A workspace's repository.** Creating a workspace or the Team tab's button calls `forge.ensure_repository`, which
+creates or adopts `fleet/<slug>` and then ensures the routine that offers the repository's issues. The first machine's
+report cannot wait for the forge: it leaves one row (`forge.want_first_repository`), and a loop of the board
+(`forge.start_wanted`, `forge.make_wanted`) calls `ensure_repository` for it on its next pass.
 
 ## Patterns
 
@@ -141,12 +142,12 @@ Not yet: 26 inline checks in `app/main.py` and `hook_secret` (#840).
 One way for the board's own work: a loop in a daemon thread started in `_startup()`, whose pass catches every
 exception, prints it and goes on, then sleeps an interval from an environment variable. Work for a machine is done by
 the keeper, not by the board.
-Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_runner()`.
+Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_runner()`; `app/forge.py`,
+`start_wanted()` and `make_wanted()` (the first repository, #841).
 One way for work that starts from a request and cannot wait: the request leaves a row, and a loop in the board does it
 later. A route may wait for work, off the event loop, with `asyncio.to_thread(...)` (the database, the forge); that is
 not background work.
 Not: a thread a route starts and forgets.
-Not yet: the keeper's first repository, `_first_repository` in `app/main.py` (#841).
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).

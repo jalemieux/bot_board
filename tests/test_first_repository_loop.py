@@ -71,6 +71,16 @@ class FirstRepositoryLoop(unittest.TestCase):
             forge.make_wanted()
             self.assertEqual(len(called), 1)
 
+    def test_a_row_written_during_the_pass_is_not_lost(self):
+        def slow(slug, actor, timeout=None):
+            with db._write_lock:     # another report arrives while the forge is being asked
+                db.conn().execute("UPDATE registry_meta SET value='later' WHERE key=?", (forge.WANTED,)); db.conn().commit()
+            return {"repository": "fleet/general", "reason": ""}
+        forge.want_first_repository()
+        with mock.patch.object(forge, "ensure_repository", slow):
+            forge.make_wanted()
+        self.assertTrue(self.wanted(), "the newer row waits for the next pass")
+
     def test_an_error_in_the_pass_is_caught_and_the_row_still_clears(self):
         with mock.patch.object(forge, "ensure_repository", side_effect=RuntimeError("boom")):
             forge.want_first_repository()

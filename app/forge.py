@@ -160,7 +160,8 @@ def make_wanted() -> str | None:
     """One pass: when the first repository is wanted, ask `ensure_repository` for it, once, and clear the row. The actor is the
     workspace's own owner, as the board has it, never a handle a keeper's report names: ensure_repository decides permission from
     the actor it is given. A failure is said and not retried: the Team tab offers Create repository. Safe to run twice."""
-    if not db.conn().execute("SELECT 1 FROM registry_meta WHERE key=?", (WANTED,)).fetchone():
+    row = db.conn().execute("SELECT value FROM registry_meta WHERE key=?", (WANTED,)).fetchone()
+    if not row:
         return None
     out = None
     try:
@@ -175,7 +176,7 @@ def make_wanted() -> str | None:
         print(f"bot_board: no repository for {workspaces.FIRST_RUN_WORKSPACE}: {exc}", flush=True)
     with db._write_lock:
         c = db.conn()
-        c.execute("DELETE FROM registry_meta WHERE key=?", (WANTED,))
+        c.execute("DELETE FROM registry_meta WHERE key=? AND value=?", (WANTED, row["value"]))      # a row written during the pass stays
         c.commit()
     return out
 
