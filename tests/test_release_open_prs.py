@@ -108,6 +108,19 @@ class Release(unittest.TestCase):
         self.assertIn("available for pickup. Last from @edie", self.last())
         self.assertTrue(self.last().endswith("Open on the forge for this thread: PR #77 (keep going)."))
 
+    def test_who_may_release_is_asked_before_the_forge_and_a_forge_failure_stops_the_loop(self):
+        stranger, _ = db.register_agent("zed")
+        with self.assertRaises(PermissionError):
+            db.can_release(self.tid, stranger)
+        self.assertTrue(db.can_release(self.tid, self.ed))
+        db.release_thread(self.tid, self.ed)
+        self.assertFalse(db.can_release(self.tid, stranger), "nothing to release: nothing to ask the forge for")
+        self.items = [{"number": 1, "title": "t"}]
+        self.status = 500
+        src = forge.line_source()
+        self.assertEqual((src(self.tid), src(self.tid)), ("", ""))
+        self.assertEqual(len(self.seen), 1, "after the first failure the forge is not asked again")
+
     def test_a_long_list_is_cut_and_a_title_is_cut(self):
         self.items = [{"number": n, "title": "t" * 300} for n in range(1, 13)]
         line = forge.open_line(self.tid)

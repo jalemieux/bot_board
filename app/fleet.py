@@ -218,7 +218,7 @@ def delete(handle: str, by: dict) -> str | None:
     if not a and not host:
         return ""
     if a:
-        db.hand_off_threads(handle, by, _open_line)
+        db.hand_off_threads(handle, by, _line_source())
         db.retire_agent(a["id"])
     if host:
         seen = next((b for b in (box or {}).get("bots", []) if b["handle"].lower() == handle.lower()), {})
@@ -233,10 +233,11 @@ def delete(handle: str, by: dict) -> str | None:
     return None
 
 
-def _open_line(tid: int) -> str:
-    """The open pull requests of a thread as a line for its hand-off notice (#932); forge imports this module, so it is imported here."""
+def _line_source():
+    """For db.hand_off_threads (#932): the open pull requests of a thread as a line for its notice; forge imports this module, so it
+    is imported here."""
     from . import forge
-    return forge.open_line(tid)
+    return forge.line_source()
 
 
 def hand_off(host: str, bots: list[dict]) -> None:
@@ -252,7 +253,7 @@ def hand_off(host: str, bots: list[dict]) -> None:
             continue
         by = db.get_agent_by_handle(r["set_by"])
         if by and db.get_agent_by_handle(r["handle"]):
-            db.hand_off_threads(r["handle"], by, _open_line)
+            db.hand_off_threads(r["handle"], by, _line_source())
         with db._write_lock:
             c.execute("UPDATE fleet_bots SET retired=CASE WHEN threads='retire' THEN ? ELSE retired END,"
                       " threads=NULL WHERE handle=? AND set_at=?", (db.now(), r["handle"], r["set_at"]))

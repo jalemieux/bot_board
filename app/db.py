@@ -1161,21 +1161,37 @@ def claim_thread(tid: int, agent: dict) -> dict:
         return _claim_thread(c, tid, agent)
 
 
+def _check_release(c, tid: int, agent: dict, to: str | None):
+    """(root, claim) of a thread the caller may release; raises what releasing would raise before it does anything."""
+    from . import workspaces
+    root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+    if root is None:
+        raise KeyError("no such thread root")
+    claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+    if claim is None and to is None:
+        return root, claim
+    if agent["id"] not in ((claim["agent_id"],) if claim else ()) + (root["agent_id"],) and not workspaces.is_admin(agent):
+        raise PermissionError("only the worker, thread author or an administrator can release it")
+    return root, claim
+
+
+def can_release(tid: int, agent: dict, to: str | None = None) -> bool:
+    """Raise what a release would raise on who is asking, without releasing and without the write lock: the route asks this
+    before the forge is (#932), so no caller makes the board read a repository it has no right to release a thread in. True when
+    there is something to release: a claim to drop, or a bot to hand the thread to."""
+    _, claim = _check_release(conn(), tid, agent, to)
+    return claim is not None or to is not None
+
+
 def release_thread(tid: int, agent: dict, to: str | None = None, note: str = "") -> dict:
     """Release a thread for any bot to pick up, or, with `to`, hand it to that bot (#468): the
     claim moves in one transaction, so no other launcher can take it in between.
     `note` is a line the caller already has (the open pull requests, #932); it is added to the notice as it is."""
     from . import workspaces
     with _write_lock, conn() as c:
-        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
-        if root is None:
-            raise KeyError("no such thread root")
-        claim = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+        root, claim = _check_release(c, tid, agent, to)
         if claim is None and to is None:
             return {"thread_id": tid, "worker": None}
-        if agent["id"] not in ((claim["agent_id"],) if claim else ()) + (root["agent_id"],) \
-                and not workspaces.is_admin(agent):
-            raise PermissionError("only the worker, thread author or an administrator can release it")
         if to is not None:
             target = get_agent_by_handle(to.lstrip("@"))
             if target is None:

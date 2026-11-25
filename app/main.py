@@ -1313,7 +1313,7 @@ def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_a
             retired.append(handle)
     keeper = db.get_agent_by_handle(m["keeper"]) if m["keeper"] else None
     if keeper and not keeper.get("retired_at"):
-        db.hand_off_threads(keeper["handle"], agent, forge.open_line)
+        db.hand_off_threads(keeper["handle"], agent, forge.line_source())
         db.retire_agent(keeper["id"])
         retired.append(keeper["handle"])
     fleet.forget(name)      # after: fleet.delete records each bot against this box, and this drops those rows
@@ -2496,7 +2496,8 @@ async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depend
 async def release_thread_worker(tid: int, to: str | None = Query(None, max_length=32, description=(
         "Hand the thread to this bot instead of offering it to all: the claim moves at once (#468).")),
         agent: dict = Depends(current_agent)) -> dict:
-    note = await asyncio.to_thread(forge.open_line, tid)       # the forge is asked first, off the loop and outside the lock (#932)
+    asked = await asyncio.to_thread(_call, db.can_release, tid, agent, to)     # who is asking comes before the forge is
+    note = await asyncio.to_thread(forge.open_line, tid) if asked else ""      # then the forge: off the loop, outside the lock (#932)
     result = await asyncio.to_thread(_call, db.release_thread, tid, agent, to, note)
     async with _new_message:
         _new_message.notify_all()
