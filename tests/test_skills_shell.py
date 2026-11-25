@@ -1,5 +1,6 @@
 """#874: the Skills page's script draws the list from /api/skills and /api/profiles, with every value as text. It runs under node against a
 small stand-in document. Skipped without node. Run with python -m unittest discover -s tests."""
+import json
 import shutil
 import subprocess
 import sys
@@ -17,18 +18,17 @@ class N { constructor(t) { this.tag = t; this.children = []; this.attrs = {}; th
 const els = {'skills-list': new N('div'), 'skills-count': new N('p'), 'skills-h': new N('h2')};
 global.document = {createElement: t => new N(t), createTextNode: t => { const n = new N('#t'); n._t = t; return n; },
   getElementById: i => els[i] || null, querySelector: s => s.includes('data-page=skills') ? new N('div') : null};
-global.localStorage = {getItem: () => null}; global.location = {hash: ''};
+global.localStorage = {getItem: () => null}; global.location = {hash: %s};
 const SKILLS = %s, PROFILES = %s;
 global.fetch = u => Promise.resolve({ok: SKILLS !== null, json: () => Promise.resolve(SKILLS === null ? {detail: 'refused'} : (u.includes('skills') ? {skills: SKILLS} : {profiles: PROFILES}))});
 """
 SCRIPT_TAIL = "\nsetTimeout(() => { console.log(JSON.stringify({count: els['skills-count'].textContent, head: els['skills-h'].textContent, list: els['skills-list'].textContent, hrefs: (function w(n) { return [].concat(n.attrs.href ? [n.attrs.href] : [], ...n.children.map(w)); })(els['skills-list'])})); }, 20);\n"
 
 
-def run(skills, profiles):
-    code = HARNESS % (skills, profiles) + registry_web.SKILLS_SHELL_JS + SCRIPT_TAIL
+def run(skills, profiles, hash=""):
+    code = HARNESS % (json.dumps(hash), skills, profiles) + registry_web.SKILLS_SHELL_JS + SCRIPT_TAIL
     r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr[-500:]
-    import json
     return json.loads(r.stdout)
 
 
@@ -47,6 +47,15 @@ class SkillsShell(unittest.TestCase):
         self.assertIn("2 bots", out["list"], "the bots of the profiles that use it")
         self.assertIn("/fleet/skills/art#history", out["hrefs"])
         self.assertIn("/fleet/profiles/dev", out["hrefs"])
+
+    def test_a_malformed_hash_is_no_target_and_ends_nothing(self):          # #892
+        for hash in ("#%E0%A4%A", "#%", "#%zz"):
+            out = run(self.SKILLS, self.PROFILES, hash)                      # run() fails on an uncaught error
+            self.assertEqual(out["head"], "Skills \u00b7 2", hash)
+            self.assertIn("Profile skills \u00b7 1", out["list"], hash)
+
+    def test_a_good_hash_still_scrolls_to_its_row(self):
+        self.assertEqual(run(self.SKILLS, self.PROFILES, "#base-skills")["head"], "Skills \u00b7 2")
 
     def test_a_description_is_text_not_markup(self):
         self.assertIn("<b>x</b> a", run(self.SKILLS, self.PROFILES)["list"])

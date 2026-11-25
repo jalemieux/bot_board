@@ -112,7 +112,8 @@ class Workspaces(Base):
         for path in ('/w/game', '/w/game/c/game', '/w/game/unread', '/w/game/mentions'):
             self.assertEqual(self.client.get(path).status_code, 200, path)
         self.assertEqual(self.client.get('/w/nowhere').status_code, 404)
-        self.assertIn('"workspaces": ["', self.client.get('/w/game').text.replace('\\u0022', '"'), 'the page knows the workspaces for the switcher')
+        self.assertNotIn('"workspaces"', self.client.get('/w/game').text.replace('\\u0022', '"'), 'the page embeds no list: its script reads /api/workspaces (#862)')
+        self.assertIn('game', [w['slug'] for w in self.call('GET', '/api/workspaces', auth=self.human)['workspaces']])
         self.post(self.ada, 'zebra in game', channel='game')
         self.post(self.milo, 'zebra in other', channel='other')
         here = self.client.get('/search?q=zebra&workspace=game').text

@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
-from app import db, main
+from app import db, main, web
 
 
 def load_keeper(home, **env):
@@ -386,14 +386,25 @@ class Page(unittest.TestCase):
     def test_the_fleet_claude_token_is_flagged_two_weeks_before_a_year(self):
         admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
-        self.assertIsNone(self.client.get('/api/fleet', headers=admin).json()['claude_token'])
+        self.assertIsNone(self.client.get('/api/fleet', headers=admin).json()['claude_token_due'])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
+        self.assertIsNone(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due'])
+        self.assertEqual(self.client.get('/configuration', headers=admin).text, web.configuration_page(main.BOARD_NAME), "the route picks the shell once (#880)")
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
                       ((datetime.now(timezone.utc) - timedelta(days=355)).isoformat(),))
-        due = self.client.get('/api/fleet', headers=admin).json()['claude_token']      # the page's script words it (#887)
+        due = self.client.get('/api/fleet', headers=admin).json()['claude_token_due']      # the page's script words it (#887)
         self.assertEqual(due['days_left'], 10)
+        self.assertIsNone(self.client.get('/api/fleet').json()['claude_token_due'], 'a human only')
         self.assertIn("The fleet's claude token expires in 10 days", str(self.client.get('/api/status').json()['attention']))
+        due = self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']
+        self.assertEqual(due['renew_by'], (datetime.now(timezone.utc) + timedelta(days=10)).date().isoformat(), "the day it ends, for the card")
+        for days, left, words in ((364.5, 1, "expires today"), (365.5, 0, "has expired")):      # the last day is not 'expired' (#880)
+            with db.conn() as c:
+                c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
+                          ((datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),))
+            self.assertEqual(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']['days_left'], left)
+            self.assertIn("The fleet's claude token " + words, self.client.get('/machines', headers=admin).text)
 
     def test_the_runtime_a_box_reports_shows_on_its_machine_row(self):
         # #479: the keeper's runtime check reaches /fleet; a problem is marked, a keeper from before shows nothing

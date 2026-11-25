@@ -72,7 +72,7 @@ function setMe(me){ saved.me = me; }
 function closeSignin(){}
 function $(selector){ return input; }
 function fetch(){ return Promise.resolve({json: () => Promise.resolve({agents: []})}); }
-function refreshLists(){
+function boot(){          // what a sign-in runs now: the workspaces, the roster and the lists (#862)
   refreshed++;
   return failed ? Promise.reject(new Error('offline')) : Promise.resolve();
 }

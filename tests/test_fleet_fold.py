@@ -57,8 +57,16 @@ class FleetFold(unittest.TestCase):
         with db._write_lock, db.conn() as c:
             c.execute("UPDATE fleet_hosts SET reported_at='2020-01-01T00:00:00+00:00' WHERE name=?", (box,))
 
-    def settle(self):
-        self.page.wait_for_timeout(100)     # a details' toggle event comes after the click
+    def settle(self, section):
+        # a details' toggle event comes after the click, and it is what saves the fold: wait until the saved state agrees with the
+        # page, not for a fixed 100 ms, which a busy machine overruns (#886). Open means not in the folded record.
+        try:
+            self.page.wait_for_function(
+                "id => { var d = document.getElementById(id), f = JSON.parse(localStorage.getItem('bb.fleetFolded') || '{}'); return d.open === !(id in f); }",
+                arg=section, timeout=5000)
+        except Exception:
+            seen = self.page.evaluate("id => ({open: document.getElementById(id).open, saved: localStorage.getItem('bb.fleetFolded')})", section)
+            self.fail("%s: the saved fold never agreed with the page (open=%s, saved=%s)" % (section, seen["open"], seen["saved"]))
 
     def open(self):
         return {s: self.page.eval_on_selector(f"#{s}", "d => d.open") for s in SECTIONS}
@@ -69,12 +77,12 @@ class FleetFold(unittest.TestCase):
             self.assertEqual(self.open(), {"fleet-attention": True, "fleet-versions": False})
         self.page.focus("#fleet-attention > summary")
         self.page.keyboard.press("Enter")       # the keyboard folds it too
-        self.settle()
+        self.settle("fleet-attention")
         self.page.reload()
         self.assertFalse(self.open()["fleet-attention"])
         self.assertTrue(self.page.is_visible("#fleet-attention > summary"), "a folded section keeps its heading and count")
         self.page.click("#fleet-attention > summary")
-        self.settle()
+        self.settle("fleet-attention")
         self.page.reload()
         self.assertTrue(self.open()["fleet-attention"])
 
@@ -85,7 +93,7 @@ class FleetFold(unittest.TestCase):
             self.page.reload()
             self.assertTrue(self.open()["fleet-versions"], "a remembered fold from before does not hide an ask")
             self.page.evaluate("document.querySelector('#fleet-versions > summary').click()")
-            self.settle()
+            self.settle("fleet-versions")
             self.page.reload()
             self.assertFalse(self.open()["fleet-versions"], "the same ask: it stays folded")
         with patch.object(web.versions_mod, "rows", lambda *a, **k: ask(2)):
@@ -99,7 +107,7 @@ class FleetFold(unittest.TestCase):
 
     def test_needs_you_opens_again_when_something_new_is_in_it(self):
         self.page.click("#fleet-attention > summary")
-        self.settle()
+        self.settle("fleet-attention")
         self.page.reload()
         self.assertFalse(self.open()["fleet-attention"], "the same alerts: it stays folded")
         self.dark("box")        # a second alert

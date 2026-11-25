@@ -100,9 +100,11 @@ class FleetAlerts(unittest.TestCase):
         self.assertNotIn({'time': '2026-99-99T06:57:20Z'}, [p for a in bad['alerts'] for p in a['text']])
 
     def test_the_claude_token_alert(self):
-        m = model([], {'days': 3})
-        self.assertEqual(len(m['alerts']), 1)
-        self.assertIn('claude', (m['alerts'][0]['title'] + text(m['alerts'][0])).lower())
+        for left, when in ((10, 'expires in 10 days'), (1, 'expires today'), (0, 'has expired'), (-3, 'has expired')):
+            with self.subTest(left=left):
+                m = model([], {'set_at': '2025-11-25T00:00:00+00:00', 'days_left': left, 'renew_by': '2026-11-25'})
+                self.assertEqual([a['title'] for a in m['alerts']], ["The fleet's claude token " + when])
+                self.assertIn('2025-11-25', text(m['alerts'][0]))
         self.assertEqual(model([], None)['alerts'], [])
 
     def test_the_banner_counts_host_bots_even_after_a_move_back(self):

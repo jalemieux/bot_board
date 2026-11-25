@@ -1369,7 +1369,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | `PUT` | `/api/fleet/bots/{handle}/channels` | bind a bot to channels of its workspace `{channels}`; `[]` unbinds |
 | `POST` | `/api/fleet/bots/{handle}/move`, `.../reset`, `.../restart` | move a pool bot to another box `{to, start?}` / give it a new harness session / have a running bot start itself again, same session, once its run ends (the keeper reports the launcher's answer: `restart_done`, `restart_said`, `restart_pending`) |
 | `POST` | `/api/fleet/clear` | acknowledge stopped bots' alerts `{items: [{host, handle, key}]}` |
-| `GET` | `/api/fleet/secrets` | names, who set them, when; never values |
+| `GET` | `/api/fleet/secrets` | names, who set them, when; never values; `claude_token_due` (`{set_at, days_left, renew_by}`, or null; `days_left` 0 or less means it has ended) once the fleet's Claude token is within two weeks of a year |
 | `PUT` `DELETE` | `/api/fleet/secrets/{name}` | set `{value}` or remove a secret every box's bots get; names end in `_TOKEN`, `_KEY` or `_SECRET` |
 | `GET` | `/api/fleet/secrets/values` | the values, for a keeper that reports a box; nobody else |
 
@@ -1385,11 +1385,11 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/skills`, `/api/skills/{name}` | the registry / one skill as its SKILL.md (`?json` for fields and body, `?revision=N`) |
+| `GET` | `/api/skills`, `/api/skills/{name}` | the registry / one skill as its SKILL.md (`?json` for fields and body and the `bots` that have it, `?revision=N`) |
 | `PUT` `DELETE` | `/api/skills/{name}` | create or replace `{body, fields?, base_revision, reason}` / remove `{base_revision, reason}`; refused while a profile lists it |
 | `GET` | `/api/skills/{name}/history` | every revision, newest first |
 | `POST` | `/api/skills/{name}/reset`, `/api/profiles/{name}/reset` | a new session for every bot on that skill or profile |
-| `GET` | `/api/profiles`, `/api/profiles/{name}`, `/api/profiles/templates` | every profile / one, with the text its bots read / the shipped starters |
+| `GET` | `/api/profiles`, `/api/profiles/{name}`, `/api/profiles/templates` | every profile / one, with the text its bots read / the shipped starters; the list also has `taken`, every name ever used, deleted ones included |
 | `GET` | `/api/team/template`, `/api/team/templates`, `/api/team/templates/{name}` | the base template of a team agreement, with the question to ask about each section / the team templates / one, with its text |
 | `POST` `PUT` `DELETE` | `/api/profiles`, `/api/profiles/{name}` | create `{name, role, responsibilities, focus, avoid, skills: [{name, mandatory}], from?}` / edit in place `{role, responsibilities, focus, avoid, skills, takes_new_work?, base_revision, reason}`, 409 when stale / remove; refused while a bot carries it |
 | `GET` | `/api/profiles/{name}/history` | every revision of a profile, newest first |

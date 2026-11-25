@@ -1034,9 +1034,11 @@ def fleet_clear(body: FleetClearIn, agent: dict = Depends(current_agent)) -> dic
 def fleet_hosts(agent: dict | None = Depends(optional_agent)) -> dict:
     """Every box a keeper has reported, with its load and its bots. What a box says about its secrets (a hash of the set it
     holds, the names its environment also holds) goes to a human only (#557)."""
-    hosts = fleet.hosts(private=bool(agent and agent["kind"] == "human"))
-    # claude_token: the fleet's claude token once it is two weeks from a year old ({set_at, days_left}), else null: the fleet pages say so (#887)
-    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER, "claude_token": fleet.claude_token_due()}
+    human = bool(agent and agent["kind"] == "human")
+    hosts = fleet.hosts(private=human)
+    # claude_token_due: the fleet's claude token once it is two weeks from a year old ({set_at, days_left, renew_by}), else null; a
+    # human only, like the secrets' state: the Machines page's script words the alert from it (#887)
+    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER, "claude_token_due": fleet.claude_token_due() if human else None}
 
 
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
@@ -1316,7 +1318,8 @@ def _secrets_admin(agent: dict) -> None:
 def fleet_secrets(agent: dict = Depends(current_agent)) -> dict:
     """The fleet's secrets, without their values."""
     _secrets_admin(agent)
-    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes()}
+    return {"secrets": fleet.secrets(), "plain_name": fleet.PLAIN_SECRET, "version": fleet.secrets_version(), "boxes": fleet.secret_boxes(),
+            "claude_token_due": fleet.claude_token_due()}
 
 
 @app.put("/api/fleet/secrets/{name}", tags=["fleet"])
@@ -1476,7 +1479,7 @@ def skill_get(name: str, request: Request, revision: int | None = Query(None, ge
     body and revision instead; `?revision=N` an older revision."""
     skill = _call(registry.skill_revision, name, revision) if revision else _call(registry.get_skill, name)
     if "json" in request.query_params:
-        return {"skill": skill}
+        return {"skill": skill, "bots": registry.bots_of_skill(skill["name"])}
     if skill.get("deleted"):
         raise HTTPException(404, f"revision {revision} of {name} is its deletion")
     return PlainTextResponse(registry.skill_text(skill), headers={"X-Skill-Revision": str(skill["revision"])})
@@ -1520,7 +1523,7 @@ def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_a
 
 @app.get("/api/profiles", tags=["profiles"])
 def profiles_list(_: dict | None = Depends(optional_agent)) -> dict:
-    return {"profiles": registry.list_profiles()}
+    return {"profiles": registry.list_profiles(), "taken": registry.taken_names()}
 
 
 @app.post("/api/profiles/{name}/reset", tags=["profiles"])
@@ -2518,19 +2521,14 @@ def healthz() -> dict:
 # ------------------------------------------------------------ human web
 
 def _app_page(request: Request, reader: dict | None = None) -> str:
-    """The one-page channel view. It boots from embedded data and then talks
-    to /api like any agent would; a signed-in human posts with their own token.
+    """The one-page channel view, an empty shell: its script reads everything from /api like any agent would (#862); a signed-in human posts with their own token.
     On a private board a reader nobody knows gets the page empty, behind its sign-in
     (#214), and the page fills in from /api once they have signed in."""
     private = private_page(reader)
     return web.app_page(
         BOARD_NAME,
         base=str(request.base_url).rstrip("/"),
-        channels=[] if private else db.list_boards(kind="channel", hide_events=True),
-        conversations=[] if private else db.list_boards(kind="conversation", hide_events=True),
-        agents=[] if private else _roster(db.list_agents()),
-        workspaces=[] if private else sorted(workspaces.active_slugs(), key=lambda s: s == db.ADMIN_WORKSPACE),   # the admin workspace is never the default
-        stats={"cursor": db.cursor()} if private else {**db.stats(), "running": fleet.running()},
+        stats={} if private else {"running": fleet.running()},
         invite_required=bool(INVITE_CODE),
         private=private,
         max_body=MAX_BODY,
@@ -2673,51 +2671,31 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     if page == "skills":
         return web.skills_page(BOARD_NAME)            # an empty shell: its script reads /api/skills and /api/profiles (#874)
     hosts = fleet.hosts()
-    try:
-        slugs = workspaces.active_slugs()
-    except Exception:
-        slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts),
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
                           page=page)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_skill(name: str, _: dict | None = Depends(page_gate)) -> HTMLResponse:
-    """A skill's page: editor, preview, what a bot gets, who uses it, history, delete."""
+def page_skill(name: str, _: dict | None = Depends(page_gate)) -> str:
+    """A skill's page: editor, preview, what a bot gets, who uses it, history, delete. An empty shell; its script reads /api/skills."""
     from .registry_web import skill_page
-    try:
-        skill = registry.get_skill(name)
-    except (KeyError, ValueError):
-        return HTMLResponse(web.not_found(BOARD_NAME, f"no skill named {name}"), 404)
-    return HTMLResponse(skill_page(BOARD_NAME, skill, registry.skill_history(name), registry.list_profiles()))
+    return skill_page(BOARD_NAME)
 
 
 @app.get("/fleet/profiles/new", response_class=HTMLResponse, include_in_schema=False)
-def page_profile_new(request: Request, _: dict | None = Depends(page_gate)) -> str:
-    """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone)."""
+def page_profile_new(_: dict | None = Depends(page_gate)) -> str:
+    """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone). An empty shell."""
     from .registry_web import profile_new_page
-    start = (request.query_params.get("from") or "").strip().lower() or None
-    return profile_new_page(BOARD_NAME, registry.templates(), registry.list_profiles(), registry.list_skills(), start)
+    return profile_new_page(BOARD_NAME)
 
 
 @app.get("/fleet/profiles/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_profile(name: str, request: Request, _: dict | None = Depends(page_gate)) -> HTMLResponse:
+def page_profile(name: str, _: dict | None = Depends(page_gate)) -> str:
     """A profile's page: what it says and its skills, in an edit form; the bots that carry it; the text a bot reads;
-    history and lineage."""
+    history and lineage. An empty shell; its script reads /api/profiles."""
     from .registry_web import profile_page
-    try:
-        profile = registry.get_profile(name)
-    except KeyError:
-        return HTMLResponse(web.not_found(BOARD_NAME, f"no profile named {name}"), 404)
-    bots = []
-    for h in fleet.hosts():
-        for b in h["bots"]:
-            if (b.get("profile") or "").lower() == profile["name"].lower():
-                bots.append({**b, "host": h["name"], "state": fleet.bot_state(b, h["reporting"])})
-    bots.sort(key=lambda b: b["handle"].lower())
-    return HTMLResponse(profile_page(BOARD_NAME, profile, bots, registry.profile_history(profile["name"]),
-                                     registry.list_skills(), str(request.base_url)))
+    return profile_page(BOARD_NAME)
 
 
 @app.get('/workspaces', response_class=HTMLResponse, include_in_schema=False)
