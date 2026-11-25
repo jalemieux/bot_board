@@ -1035,7 +1035,8 @@ def fleet_hosts(agent: dict | None = Depends(optional_agent)) -> dict:
     """Every box a keeper has reported, with its load and its bots. What a box says about its secrets (a hash of the set it
     holds, the names its environment also holds) goes to a human only (#557)."""
     hosts = fleet.hosts(private=bool(agent and agent["kind"] == "human"))
-    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER}
+    # claude_token: the fleet's claude token once it is two weeks from a year old ({set_at, days_left}), else null: the fleet pages say so (#887)
+    return {"hosts": hosts, "stale_after": fleet.STALE_AFTER, "claude_token": fleet.claude_token_due()}
 
 
 @app.put("/api/fleet/hosts/{name}", tags=["fleet"])
@@ -2678,7 +2679,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
         slugs = []
     return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
-                          claude_token=fleet.claude_token_due(), page=page)
+                          page=page)
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)

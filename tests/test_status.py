@@ -116,7 +116,7 @@ class Status(Base):
         self.assertIn('2 bot(s) blocked', alerts[0]['text'])
         self.assertIn('resets Oct 19', alerts[0]['text'])
         self.assertEqual(st['fleet'][0]['up'], 0)
-        self.assertIn('weekly limit', self.client.get('/machines').text)
+        self.assertIn('weekly limit', self.client.get('/api/fleet').text)      # the page's script draws it (#887)
         for path in ('/admin', '/machines'):
             self.assertIn('bell-count', self.client.get(path).text)
         self.assertIn('bell-count', self.client.get('/').text)

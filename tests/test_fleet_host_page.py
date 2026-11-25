@@ -31,12 +31,6 @@ class HostBotsPage(unittest.TestCase):
     def render(self, hosts):
         return web.fleet_page("board", hosts, workspaces=("ogen_game",), profiles=[{"name": "Mac runner", "role": "x"}])
 
-    def test_the_banner_says_what_a_host_bot_is(self):
-        page = self.render([mac([bot("mira", **MIRA), bot("edie", runmode="native")]), host("box", [bot("zed", runmode="native")])])
-        self.assertIn('class="hostbanner"', page)
-        self.assertIn("1 bot runs outside a container", page)
-        self.assertIn("Godot captures", page)
-
     def test_the_switch_and_the_form_are_on_a_mac_only(self):
         page = self.render([mac([], on=True), host("box", [])])
         self.assertEqual(page.count('class="hostbox"'), 1, "the Linux box has no host-bots block")
@@ -49,14 +43,9 @@ class HostBotsPage(unittest.TestCase):
         self.assertIn('data-on="1"', off)
         self.assertNotIn('class="hostform"', off, "no form while the switch is off")
 
-    def test_a_bot_moved_back_but_still_running_on_the_host_is_still_in_the_banner(self):
-        gone = dict(want="running", pool=True, runmode="host", host_flag=False, on_host=False)
-        page = self.render([mac([bot("mira", **gone)])])
-        self.assertIn('class="hostbanner"', page)
-
     def test_a_page_with_no_host_bot_has_no_banner(self):
         page = self.render([host("box", [bot("zed", runmode="native")])])
-        self.assertNotIn('class="hostbanner"', page)
+        self.assertNotIn('class="hostbanner"', page)      # the banner itself is the script's (#887): tests/test_fleet_alerts.py
         self.assertNotIn("hostbadge", page.split("</style>")[-1])
 
     @unittest.skipUnless(shutil.which("node"), "node is needed to check the script")

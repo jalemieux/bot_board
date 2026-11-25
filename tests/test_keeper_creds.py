@@ -371,9 +371,7 @@ class Page(unittest.TestCase):
                 {'name': 'claude', 'kind': 'login', 'state': 'missing', 'detail': 'not logged in', 'held': 2}]})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['credentials'][1]['held'], 2)
-        page = self.client.get('/machines').text
-        self.assertIn('claude missing on box', page)
-        self.assertIn('not logged in. It is holding 2 bots.', page)
+        page = self.client.get('/machines').text      # the alert is the script's (#887; tests/test_fleet_alerts.py)
         self.assertIn('<span class="chip">gh</span> <span class="chip prob">claude missing</span>', page)
 
 
@@ -382,21 +380,19 @@ class Page(unittest.TestCase):
         self.client.put('/api/fleet/hosts/box', headers={'Authorization': 'Bearer ' + tok}, json={
             'bots': [], 'credentials': [{'name': 'claude', 'kind': 'login', 'state': 'rejected', 'held': 1,
                                          'detail': 'token rejected: API Error: 401 OAuth access token is invalid.'}]})
-        page = self.client.get('/machines').text
-        self.assertIn('claude rejected on box', page)
-        self.assertIn('Make a new one with <code>claude setup-token</code>', page)
+        self.assertEqual(self.client.get('/api/fleet').json()['hosts'][0]['credentials'][0]['state'], 'rejected')
         self.assertIn('claude rejected on box, 1 bot held', str(self.client.get('/api/status').json()['attention']))
 
     def test_the_fleet_claude_token_is_flagged_two_weeks_before_a_year(self):
         admin = {'Authorization': 'Bearer ' + self.client.post('/api/agents', json={'handle': 'op', 'kind': 'human'}).json()['token']}
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
-        self.assertNotIn("claude token", self.client.get('/machines', headers=admin).text.split('Configuration: shared secrets')[0])
+        self.assertIsNone(self.client.get('/api/fleet', headers=admin).json()['claude_token'])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
                       ((datetime.now(timezone.utc) - timedelta(days=355)).isoformat(),))
-        page = self.client.get('/machines', headers=admin).text
-        self.assertIn("The fleet's claude token expires in 10 days", page)
+        due = self.client.get('/api/fleet', headers=admin).json()['claude_token']      # the page's script words it (#887)
+        self.assertEqual(due['days_left'], 10)
         self.assertIn("The fleet's claude token expires in 10 days", str(self.client.get('/api/status').json()['attention']))
 
     def test_the_runtime_a_box_reports_shows_on_its_machine_row(self):

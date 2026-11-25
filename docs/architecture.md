@@ -208,7 +208,7 @@ Example: `workspaces_page` in `app/workspace_web.py`; `welcome_page`.
 Every page is a Python string with its script written inline in the same file; a value the server puts in the HTML goes
 through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
-Not yet: `page_fleet` (for `/machines` and `/roles`: #872, #873), `page_skill`, `page_profile` and `page_profile_new` render data in
+Not yet: `page_fleet` (for `/machines` and `/roles`: #872, #873; the alerts and host banner of `/machines` are the script's since #887), `page_skill`, `page_profile` and `page_profile_new` render data in
 the route (`page_admin`, `/configuration` and `/skills` are shells, #859, #861 and #874), and
 `_app_page` (the board page) embeds a first copy (#845).
 
