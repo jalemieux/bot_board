@@ -77,6 +77,13 @@ class SecretList(unittest.TestCase):
         db.conn().commit()
         self.assertIsNone(fleet.secret_boxes()[0]["received"])
 
+    def test_which_bots_may_run_unconfined_on_a_box_is_not_in_the_default_host_list(self):
+        # #927: host_allowed is a box's consent lines (bin/bot reads them before a host bot starts): for a human, not for every reader
+        self.assertIn("host_allowed", fleet.PRIVATE_REPORT)
+        self.report("mac", host_allowed=["mira"])
+        self.assertNotIn("host_allowed", fleet.hosts()[0])
+        self.assertEqual(fleet.hosts(private=True)[0]["host_allowed"], ["mira"])
+
 
 if __name__ == "__main__":
     unittest.main()

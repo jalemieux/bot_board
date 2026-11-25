@@ -673,7 +673,8 @@ function dialog(title, nodes, buttons) {
 function hostBlock(b, ctx) {
   var box = (ctx.allHosts || []).filter(function (x) { return x.name === b._host; })[0] || {}, silent = !box.reporting, url = '/api/fleet/bots/' + encodeURIComponent(b.handle) + '/host';
   var lc = function (x) { return String(x).toLowerCase(); };
-  var listed = silent || (box.host_allowed || []).map(lc).indexOf(lc(b.handle)) >= 0;
+  var hidden = !silent && !Array.isArray(box.host_allowed);       // the list is for signed-in humans (#927): without it, whether the Mac listed the bot is unknown, not no
+  var listed = silent || hidden || box.host_allowed.map(lc).indexOf(lc(b.handle)) >= 0;
   var found = {}; (box.apps || []).forEach(function (a) { if (a && a.name) found[lc(a.name)] = a.version || ''; });
   var runs = b.on_host && b.runmode === 'host' ? 'on its Mac, outside a container' : b.on_host ? 'in a container now, and on its Mac from its next start'
     : 'in a container (its Mac\'s host switch is off, or it moved)';
@@ -681,6 +682,7 @@ function hostBlock(b, ctx) {
   d.appendChild(h('div', {'class': 'd-facts'}, h('span', null, 'runs ', h('b', {text: runs})),
     h('span', null, 'set by ', h('b', {text: b.host_by || '?'}), b.host_at ? ' ' + ago(b.host_at) : ''),
     silent ? h('span', {'class': 'warn'}, 'its Mac is not reporting, so whether it is listed and which apps it has are not known')
+           : hidden ? h('span', {'class': 'dim'}, 'whether the Mac listed it is shown to signed-in humans')
            : listed ? h('span', null, 'listed in the Mac\'s host-bots-allowed file ', h('b', {text: 'yes'})) : null));
   if (!listed) d.insertBefore(h('p', {'class': 'warn'}, 'Waiting for you: add the line ', h('b', {text: b.handle}), ' to ~/.config/bot_board/host-bots-allowed on the Mac.'), d.firstChild.nextSibling);
   d.appendChild(h('p', {'class': 'sub clamp'}, h('b', {text: 'Why it needs the host: '}), b.host_reason || ''));
