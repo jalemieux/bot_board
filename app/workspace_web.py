@@ -67,7 +67,7 @@ WS_CSS = """
 .dlg .form{display:flex;flex-wrap:wrap;gap:8px 16px}.dlg .form label{display:flex;gap:6px;align-items:center}
 .dlg .warn{color:var(--accent);font-weight:600}
 .dlg fieldset.runs{border:1px solid var(--line);border-radius:8px;margin:10px 0;padding:8px 12px}.dlg fieldset.runs legend{font:600 12px var(--mono);color:var(--dim);padding:0 4px}
-.dlg .runs-gate ul.req{margin:8px 0;padding-left:18px;font-size:13px}.dlg .runs-gate .warn{font-weight:600}.dlg .runs-part .form{margin:4px 0 8px}
+.dlg .runs-gate ul.req{margin:8px 0;padding-left:18px;font-size:13px}.dlg .runs-gate .warn{font-weight:600}.dlg .runs-part .form{margin:4px 0 8px}.dlg .runs-part .form.apps{max-height:150px;overflow:auto}
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
 .ws .sr-only,.dlg .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .ws .roles h2 button{margin-left:auto;font:12px var(--mono)}
@@ -686,7 +686,7 @@ function runsPart(o) {
   var fieldset = h('fieldset', {'class': 'runs'}, h('legend', {text: 'Runs'}),
     pick('container', 'In a container', 'Walled off from the machine. The default.'),
     pick('host', 'On this machine', 'Outside a container: it can read the user\'s files, tokens and screen.'));
-  var appsBox = h('div', {'class': 'form', role: 'group', 'aria-label': 'apps it uses'});
+  var appsBox = h('div', {'class': 'form apps', role: 'group', 'aria-label': 'apps it uses'});
   var fields = h('div', null, h('label', null, 'Why it needs the machine ', count, why), h('p', {'class': 'sub', text: 'The apps it uses'}), appsBox);
   var note = h('p', {'class': 'sub', hidden: ''}), block = h('p', {'class': 'warn', hidden: ''});
   var hostPart = h('div', null, gate, fields);
@@ -722,7 +722,8 @@ function runsPart(o) {
     if (!none && choice === 'container' && /^Darwin/.test(box.os || '') && o.harness && o.harness() === 'claude')
       texts.push('A claude bot in a container on a Mac needs the fleet secret CLAUDE_CODE_OAUTH_TOKEN: a container cannot read the Keychain login. Set it on the Configuration page.');
     note.hidden = !texts.length; note.textContent = texts.join(' ');
-    var why_ = ready() || none ? '' : choice !== 'host' ? '' : !box.reporting ? name + ' is not reporting.' : box.host_bots !== true ? 'Host bots are off on ' + name + '.' : 'Say why it needs the machine.';
+    // the state lines above say what blocks it; this one says only what is missing from the form
+    var why_ = !none && choice === 'host' && gateOk() && !why.value.trim() ? 'Say why it needs the machine.' : '';
     block.hidden = !why_; block.textContent = why_ ? 'Waiting: ' + why_ : '';
     if (o.onchange) o.onchange();
   }

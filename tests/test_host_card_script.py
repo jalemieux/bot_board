@@ -70,6 +70,7 @@ class HostCard(unittest.TestCase):
         card = self.rows([mac(host_allowed=[], os="Linux 6.8", apps=[])])[1]
         self.assertIn("allowed on this machine: nobody yet", card)
         self.assertIn("none reported by this machine", card)
+        self.assertNotIn("apps found", card, "no fold for a list the machine does not read")
         self.assertNotIn("this Mac", card)
         self.assertNotIn("the Mac", card)
         self.assertNotIn("/Applications", card)

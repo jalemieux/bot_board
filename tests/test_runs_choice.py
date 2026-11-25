@@ -64,7 +64,7 @@ class RunsChoice(unittest.TestCase):
     def test_host_bots_off_says_who_turns_them_on_and_start_waits(self):
         out = run(BOXES + "const p = mk('off'); choose(p, 'host'); out.push(text(p), p.ready(), p.values());")
         self.assertIn("Host bots are off on minipc-1. A human turns them on, on the Machines page.", out[0])
-        self.assertIn("Waiting: Host bots are off on minipc-1.", out[0])
+        self.assertNotIn("Waiting:", out[0], "the state line says it once")
         self.assertFalse(out[1])
 
     def test_a_machine_that_is_not_reporting_says_its_switch_and_apps_are_not_known(self):
@@ -92,6 +92,14 @@ class RunsChoice(unittest.TestCase):
         self.assertNotIn("/Applications", out[0])
         self.assertNotIn("Mac", out[0])
         self.assertIn("none found in /Applications", out[1], "a Mac keeps its own words")
+
+    def test_start_waits_for_a_reason_and_says_so_only_then(self):
+        out = run(BOXES + """const p = mk('on'); choose(p, 'host'); out.push(text(p).includes('Waiting: Say why it needs the machine.'));
+          const w = p.node.all('input').find(i => i.attrs.type === 'text'); w.value = 'x'; w.fire('input'); out.push(text(p).includes('Waiting:'));""")
+        self.assertEqual(out, [True, False])
+
+    def test_a_long_list_of_apps_scrolls_in_its_own_box(self):
+        self.assertIn(".dlg .runs-part .form.apps{max-height:150px;overflow:auto}", workspace_web.WS_CSS)
 
     def test_a_reason_is_capped_at_200_characters_in_the_field(self):
         out = run(BOXES + "const p = mk('on'); out.push(p.node.all('input').find(i => i.attrs.type === 'text').attrs.maxlength);")

@@ -3894,7 +3894,7 @@ HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\
       on ? el('span', null, el('span', {'class': 'pip ok'}), 'on') : 'off', ' ',
       el('button', {type: 'button', 'class': 'act host-switch needs-me', 'data-host': h.name, 'data-on': on ? '0' : '1', text: 'turn ' + (on ? 'off' : 'on')}),
       who, el('div', {'class': 'by', text: 'allowed on this machine: ' + (Array.isArray(h.host_allowed) ? (h.host_allowed.join(', ') || 'nobody yet') : 'shown to signed-in humans')}),
-      el('details', {'class': 'by apps'}, el('summary', {text: found.length + ' apps found'}), appText));
+      found.length ? el('details', {'class': 'by apps'}, el('summary', {text: found.length + ' apps found'}), appText) : null);
     if (on && h.reporting) box.appendChild(form(h, workspaces, profiles));
     return el('tr', {'class': 'bot-drawer hostrow'}, el('td', {colspan: '7'}, box));
   }
