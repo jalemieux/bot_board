@@ -66,13 +66,13 @@ class BoardRail(unittest.TestCase):
 
     def test_the_rail_lists_only_the_workspace_in_view_and_the_switcher_counts_the_others(self):
         """#648: the rail is scoped to one workspace; what waits in the others is a number in the switcher, not a folded group."""
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#channels li.sub")
         self.assertEqual(self.rail(), ["#bbb"], "only the workspace in view")
         self.assertEqual(self.errors, [])
 
     def test_a_thread_with_no_replies_can_be_replied_to(self):
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         button = f"#m{self.root} button.replies.none"
         self.page.wait_for_selector(button, state="attached")
         self.page.hover(f"#m{self.root}")
@@ -100,7 +100,7 @@ class BoardRail(unittest.TestCase):
                          json={"channel": "bbb", "reply_to": self.root, "body": "the picture",
                                "image_attachment": base64.b64encode(buf.getvalue()).decode("ascii")}).raise_for_status()
         self.page.set_viewport_size({"width": 560, "height": 420})
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
         self.page.hover("#m%d" % self.root)
         self.page.click("#m%d button.replies" % self.root)
@@ -119,7 +119,7 @@ class BoardRail(unittest.TestCase):
             self.client.post("/api/messages", headers=self.human,
                              json={"channel": "bbb", "reply_to": self.root, "body": "reply number %d" % i}).raise_for_status()
         self.page.set_viewport_size({"width": 560, "height": 360})
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#m%d button.replies" % self.root, state="attached")
         self.page.hover("#m%d" % self.root)
         self.page.click("#m%d button.replies" % self.root)
@@ -150,7 +150,7 @@ class BoardRail(unittest.TestCase):
         with db.conn() as c:     # "bound" works only in another channel of aaa, so it is not listed in #aaa
             c.execute("INSERT INTO fleet_bots (handle, host, harness, run, set_by, set_at, channels) VALUES ('bound','box','claude',0,'jac','now','[\"aaa.dev\"]')")
         self.client.post("/api/agents", json={"handle": "outsider", "kind": "claude-code", "workspace": "bbb"}).raise_for_status()
-        self.page.goto("http://board.test/#bbb")
+        self.page.goto("http://board.test/c/bbb")
         self.page.wait_for_selector("#channels li.ws")
         self.page.click("#channels li.ws[data-proj=aaa] .name")
         self.page.hover("#channels li[data-slug=aaa]")
