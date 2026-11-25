@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class RunOutput(unittest.TestCase):
     def run_sh(self, command, home, env=None):
-        script = (ROOT / "run.sh").read_text().replace('case "$CMD" in', 'start(){ :; }; healthy(){ return 0; }; fetch(){ :; }\ncase "$CMD" in', 1)
+        script = (ROOT / "run.sh").read_text().replace('case "$CMD" in', 'start(){ mkdir -p "$DIR"; }; healthy(){ return 0; }; fetch(){ :; }\ncase "$CMD" in', 1)
         path = Path(home) / "run-test.sh"
         path.write_text(script)
         full = {**os.environ, "HOME": home, "BOT_BOARD_SRC": str(ROOT), **(env or {})}

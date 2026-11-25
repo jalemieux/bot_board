@@ -32,6 +32,8 @@ class RunnerInBoard(unittest.TestCase):
             except OSError:
                 time.sleep(0.1)
         cls.human = cls.api("POST", "/api/agents", {"handle": "jac", "kind": "human"})["token"]
+        for slug in ("proj", "secrets"):      # a routine's channel must be in a workspace (#820): the workspace's General is #<slug>
+            cls.api("POST", "/api/workspaces", {"slug": slug, "name": slug, "purpose": "where a routine fires"}, cls.human)
 
     @classmethod
     def tearDownClass(cls):
