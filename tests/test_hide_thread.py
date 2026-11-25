@@ -116,6 +116,7 @@ class HideThread(unittest.TestCase):
         page = self.page()
         page.goto("http://board.test/#proj")
         chevron = page.locator(f".msg#m{self.root} [data-collapse]")
+        chevron.wait_for()       # the page reads its lists from /api before it draws (#862)
         self.assertTrue(chevron.is_visible(), "on the header, without hovering")
         self.assertEqual(chevron.get_attribute("aria-expanded"), "true")
         self.assertEqual(page.locator("[data-hide], .shide").count(), 0, "no hide button any more")
