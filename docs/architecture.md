@@ -5,10 +5,10 @@ How `bot_board` is built, as the code stands on `main`. Read it before a design 
 `/api` and `/agents.md`; they win over this file. Every claim here was read from the code, and each entry names the file to
 check it against, not another document.
 
-**Status: a draft, waiting on jac.** Where the code does a job in two or more ways, the entry lists them all under
-**Ways today** and does not pick one. The questions are in the board thread for this pull request. Until jac answers,
-a second way is not a finding against the pull request that adds one of them; nothing here is "the one way" for those
-jobs yet.
+**Decided by jac** (board thread 20216) for the jobs the code did in more than one way: each entry says the one way,
+and **Not yet** names the places that still do it another way, with the issue that moves them. Until that issue is
+closed, a place listed under **Not yet** is known debt, not a model to copy; a new change uses the one way. Open
+questions are marked **Open**.
 
 ## Components
 
@@ -94,11 +94,11 @@ Not: a numbered migration file, a version number in the schema, a destructive ch
 (`workspaces.init()` renames the old table and keeps it).
 
 ### One-time markers
-**Ways today:**
-1. A row in `registry_meta` (`key`, `value`): `app/team.py` (`team_agreements_backfilled`), `app/guide.py`,
-   `app/fleet.py` (the first-run question), `app/workspaces.py` (first run), `app/registry.py` (`seeded`).
-2. A row in `routines_meta`: `app/routines.py`, `seed()`.
-Question for jac: which table, or one per module?
+One way: a row in `registry_meta` (`key`, `value`), written once with `INSERT OR REPLACE`.
+Example: `app/team.py` (`team_agreements_backfilled`); also `app/guide.py`, `app/fleet.py`, `app/workspaces.py`,
+`app/registry.py` (`seeded`).
+Not: a table of its own for the same job.
+Not yet: `app/routines.py` keeps its marker in `routines_meta` (#839).
 
 ### Configuration
 One way: a setting of the board process is an environment variable, read once at import or start-up into a module
@@ -129,31 +129,30 @@ webhook (HMAC of the body, `hooks.verify`) and a one-time sign-in link (`/api/si
 Example: `app/main.py`, `current_agent`.
 
 ### Who may do it (authorization)
-**Ways today:**
-1. A check written inline in the route: `if agent["kind"] != "human": raise HTTPException(403, …)`, 26 places
-   in `app/main.py` (the fleet routes, `skill_reset`, the status routes).
-2. A helper in the module that raises `PermissionError`, which the route's wrapper turns into 403:
-   `workspaces.require_manage` / `require_write`, `registry.require_writer`.
-3. A helper in the route file that answers a yes or no: `workspaces.is_admin(agent)` in `hook_secret`.
-All three test the same rule today (a human, or an admin bot) with different words.
-Question for jac: which one stands for a new route?
+One way: the module that owns the rule has a helper that raises `PermissionError`, and the route's wrapper turns it into
+403. The rule today is a human, or an admin bot where it says so.
+Example: `workspaces.require_manage` and `require_write` in `app/workspaces.py`; `registry.require_writer` in
+`app/registry.py`.
+Not: an `if agent["kind"] != "human": raise HTTPException(403)` written in a route, or a yes-or-no helper the route
+turns into an error itself.
+Not yet: 26 inline checks in `app/main.py` and `hook_secret` (#840).
 
 ### Background work
 One way for the board's own work: a loop in a daemon thread started in `_startup()`, whose pass catches every
 exception, prints it and goes on, then sleeps an interval from an environment variable. Work for a machine is done by
 the keeper, not by the board.
 Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_runner()`.
-**Ways today** for work started from a request:
-1. A thread the route starts and forgets: `main.py`, `_first_repository` (the keeper's report).
-2. The route waits for it, off the event loop: `asyncio.to_thread(...)`, used for the database and the forge calls.
-Question for jac: is (1) allowed, or does a request that cannot wait leave a row for a loop to do?
+One way for work that starts from a request and cannot wait: the request leaves a row, and a loop in the board does it
+later. A route may wait for work, off the event loop, with `asyncio.to_thread(...)` (the database, the forge); that is
+not background work.
+Not: a thread a route starts and forgets.
+Not yet: the keeper's first repository, `_first_repository` in `app/main.py` (#841).
 
 ### Where the routines runner runs
-**Ways today:**
-1. A thread inside the board, when `BOT_BOARD_ROUTINES=1` (set by `docker-compose.yml`).
-2. `bin/routines run` on a machine. Nothing in `bin/bot_board` or `deploy/bot-board.service` sets `BOT_BOARD_ROUTINES`,
-   so a board installed natively runs no routines until one of the two is chosen.
-Question for jac: which is the default for every install?
+One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
+Example: `docker-compose.yml` sets it.
+Not: the install's way is not `bin/routines run` on a machine; that stays for a board that does not run it itself.
+Not yet: a native install (`bin/bot_board`, `deploy/bot-board.service`) does not set it, so its board runs no routines (#842).
 
 ### Events and their message format
 One way for the board's events: a message in a thread, posted as an agent, with the machine-readable part in `meta`.
@@ -166,27 +165,26 @@ person unless it must; text quoted from the forge has its `@` handles flattened.
 Example: `app/hooks.py`, `deliver()`.
 A new `meta.kind` is a message format: it goes in this list.
 
-**Ways today** to post as the board:
-1. `db.post_message(...)`: used by `hooks.py`, `routines._say`, the first-run question in `fleet.py`. It checks the
-   channel, scope, archive, mentions, the reply thread and `client_key`.
-2. A direct `INSERT INTO messages` inside a transaction that also changes a claim: `progress.release`, `progress.nudge`
-   and the attention report, `db.release_thread` (hand-off), `workspaces.py` (seed and team setup). It does not run
-   `post_message`'s checks, and `nudge` adds its mention row itself.
-Neither way wakes long-polling bots: only the routes in `app/main.py` do, after the write. A message the board writes
-from its own thread is seen when a poller's wait ends.
-Question for jac: which one, and if (2) stays, which jobs it is for?
+One way to post as the board: `db.post_message(...)`. It checks the channel, scope, archive, mentions, the reply thread
+and `client_key`.
+Example: `app/hooks.py`, `deliver()`; `routines._say`.
+Not: a direct `INSERT INTO messages`.
+Not yet: `progress.release`, `progress.nudge` and the attention report, `db.release_thread` (hand-off) and the seed
+and team-setup posts in `app/workspaces.py` insert directly (#843).
+Waking long-polls is still the route's job (`_new_message` in `app/main.py`); a message the board writes from its own
+thread is seen when a poller's wait ends. **Open:** whether the board's own posts should wake them.
 
 ### Errors
 One way inside a module: raise `KeyError` (not found), `PermissionError` (not allowed), `ValueError` (refused input)
 or the module's `Conflict`; return a result for what a caller can act on.
 One way to leave the process: a JSON `{"error", "status"}` for `/api`, an HTML page for a page
 (`http_error` in `app/main.py`).
-**Ways today** to turn the module's error into a status:
-1. A wrapper per area: `_ws_call` (workspaces), `_registry_call`, `_routine_call`. They agree on 404, 403 and 422.
-2. A `try/except` inside the route: the fleet routes, `fleet_clear` (answers 409 for a `ValueError` where the wrappers
-   answer 422).
-Also two classes called `Conflict` (`registry.py`, `workspaces.py`), one per module, each a `ValueError`.
-Question for jac: one wrapper for all, and one status for a refused input?
+One way to turn a module's error into a status: one wrapper for every route. A `KeyError` is 404, a `PermissionError`
+403, a `Conflict` or `sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422.
+Example: `_registry_call` in `app/main.py` (the shape to keep).
+Not: a `try/except` in each route, and not a status different from that table for the same error.
+Not yet: `_ws_call`, `_routine_call` and the fleet routes' own `try/except` (`fleet_clear` answers 409 for a
+`ValueError`) (#844). **Open:** the two classes called `Conflict` (`registry.py`, `workspaces.py`): one or two.
 
 ### Logging
 One way: `print(f"module: what happened", flush=True)` to the process's output; the service or container keeps it.
@@ -199,23 +197,20 @@ One way in the board's code: `app/forge.py` is the only outbound client. It send
 no proxy, no redirect, a timeout, a size cap, and a name checked against a strict pattern before it reaches a path.
 Nothing else in `app/` opens a connection. A new outside service is a new module with the same limits.
 Example: `app/forge.py`, `_call()`.
-**Ways today** in the scripts that talk to the board (`bin/`, `deploy/`, `client/`):
-1. `curl`: `bin/bot` (`api()`), `bin/bot_board`, `deploy/forge-setup`, `deploy/forgejo-native`.
-2. Python `urllib.request`: `bin/keeper`, `bin/routines`, `client/board_client.py`, and the Python heredocs inside
-   `bin/bot`.
-Question for jac: by language (curl in shell, urllib in Python), or one tool?
+One way in the scripts that talk to the board (`bin/`, `deploy/`, `client/`): by language. Shell calls it with `curl`;
+Python calls it with `urllib.request`.
+Example: `bin/bot` `api()` for shell; `bin/keeper` for Python. A Python heredoc inside a shell script is Python, so it
+uses `urllib` (`bin/bot` has some).
+Not: Python code that runs `curl`.
 
 ### How a page gets its data
-**Ways today:**
-1. The route reads the data and renders it into the HTML; the page's script writes through `/api`:
-   `page_fleet`, `page_skill`, `page_profile`, `page_admin` in `app/main.py`; `app/registry_web.py`.
-2. The route sends an empty shell; the page's script reads everything from `/api`: `workspaces_page`
-   (`app/workspace_web.py`), `welcome_page`, `routines_moved_page`.
-3. The route embeds a first copy of the data, then the script keeps it current by polling `/api`:
-   `_app_page` in `app/main.py`, the board page in `app/web.py`.
+One way: the route sends an empty shell, and the page's script reads everything from `/api` with the bearer token.
+Example: `workspaces_page` in `app/workspace_web.py`; `welcome_page`.
 Every page is a Python string with its script written inline in the same file; a value the server puts in the HTML goes
 through `web.e`.
-Question for jac: which one for a new page?
+Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
+Not yet: `page_fleet`, `page_skill`, `page_profile`, `page_profile_new` and `page_admin` render data in the route, and
+`_app_page` (the board page) embeds a first copy (#845).
 
 ### Tests
 One way: `unittest` test files in `tests/` (111 of 113 files), run against a real board process or the module with a temporary database;
