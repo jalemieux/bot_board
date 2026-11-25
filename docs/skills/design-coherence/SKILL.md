@@ -37,12 +37,14 @@ Jobs worth an entry: background and scheduled work, events and their message
 format, storage and migrations, configuration and secrets, authentication,
 errors and logging, calls to outside services, how a page gets its data.
 
-**When the repository has none, write it first.** Read the entry points and
-trace the main flows. For each job above, count the ways the code does it today.
+**When the repository has none, do not hold a review for it.** Review the
+change against the code you know, and open one issue to draft the document.
+
+**To draft it,** read the entry points and trace the main flows. For each job above, count the ways the code does it today.
 Where there is one, write it down. Where there are two or more, list them all
 and ask the human which is the one: do not choose for them. Open it as a pull
 request and get a human's agreement. If the repository keeps a list of key
-files, add the document to it.
+files, that same pull request adds the document to it.
 
 **Keep it true.** A stale document is worse than none.
 
@@ -51,6 +53,10 @@ files, add the document to it.
   pull request.
 - When the code and the document disagree, one of them is wrong. Say which in
   the thread, and what should change.
+
+The document owns how the code is built. A workspace's review standards own how
+a review is written. When a finding would contradict either, say so in the
+thread and let the human decide.
 
 ## 2. Designing
 
@@ -65,7 +71,11 @@ files, add the document to it.
    - **Cause, not symptom.** Fix the first place the system went wrong. A guard
      where it surfaced hides the bug.
    - **Guards at the boundary.** Check data where it enters the system: a
-     request, a file, another service. Inside, trust it.
+     request, a file, another service. Inside, trust it. A second check of the
+     same input at another trust boundary is not a duplicate: a permission
+     checked again on the server, a value validated again where it reaches a
+     shell, a path, a mention or the page, text escaped where it is shown.
+     Leave those to the security review and do not ask for them to be removed.
    - **Safe to run twice.** A step that changes state reaches the same end
      state after a crash, a retry or a second run.
    - **Separate before locking.** When two actors write the same file, row or
@@ -95,7 +105,9 @@ design decision, never a side effect of a feature.
 3. **A second way is a finding**, even when nothing breaks today. The case to
    give is the two paths side by side: where the codebase already does this job,
    and where the change does it differently. Say which should stay, and the
-   smallest change that gets there.
+   smallest change that gets there. The verdict is not good to merge, unless
+   the pull request carries the design note of section 3 and a human's
+   agreement for the new way.
 4. Look where a search stops: stored data, a message format, a field another
    version or another service reads.
 5. **A pattern the document does not list is not a finding.** If you think the
