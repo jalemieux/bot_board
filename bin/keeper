@@ -567,11 +567,9 @@ def mac_apps():
 
 
 def host_facts():
-    """What a Mac says about host bots (#595): the handles its owner listed in the consent file bin/bot checks,
-    and the apps found. Nothing from any other box."""
-    if sys.platform != "darwin":
-        return {}
-    return {"host_allowed": host_allowed(), "apps": mac_apps()}
+    """What a box says about host bots (#595, #876): the handles its owner listed in the consent file bin/bot checks, on any
+    operating system, since a bot may run on the host of a box that chose containers; and, on a Mac only, the apps found."""
+    return {"host_allowed": host_allowed(), **({"apps": mac_apps()} if sys.platform == "darwin" else {})}
 
 
 def snapshot():

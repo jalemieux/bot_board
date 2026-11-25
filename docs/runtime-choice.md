@@ -16,7 +16,7 @@ Where a bot runs is decided in two places that do not talk to each other.
 2. **One exception exists, and it is narrow.** A host bot (#595) runs outside the container. It must be a new bot, on a Mac,
    on a machine whose host-bots switch a human turned on (`fleet_host_bots`), with a reason and a list of apps, and the
    machine must also list the handle in `~/.config/bot_board/host-bots-allowed`. The board says it (`/api/me` answers
-   `host_bot`); the launcher (`decide_host` in `bin/bot`) waits for the local line. An existing bot is "not converted"
+   `host_bot`); the launcher (`decide_host`, now `decide_run`, in `bin/bot`) waits for the local line. An existing bot is "not converted"
    (`_host_bot_problem` in `app/fleet.py`).
 
 So the user cannot say "I do not want containers" at the one moment it matters, and cannot change their mind for one bot
@@ -51,7 +51,7 @@ A bot has `runs`: `container` or `host`. Unset means the machine's default.
   `PUT /api/fleet/bots/{handle}`. The six host columns of #595 (`onhost`, `host_box`, `host_reason`, `host_by`, `host_at`,
   `host_apps`) are its seed: `onhost = 1` becomes `runs = host`, and the reason and apps stay recorded.
 - **How the bot learns it.** `GET /api/me` answers `runs` and the box it is for, where it now answers `host_bot`. The
-  launcher's `decide_host` becomes `decide_run` and reads it.
+  launcher's `decide_host` became `decide_run` (#876) and reads it.
 - **A machine with no runtime.** Every bot runs on the machine and `runs` has nothing to choose. `container` is refused
   with the install step. No gate applies, because the user chose no containers.
 - **A machine with a runtime.** `container` is the default. `host` needs the gates below.
