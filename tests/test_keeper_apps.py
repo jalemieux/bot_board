@@ -56,6 +56,17 @@ class MacFacts(unittest.TestCase):
         consent.write_text("Mira\n\n  gwen  \n")
         self.assertEqual(self.keeper.host_allowed(), ["gwen", "mira"])
 
+    def test_a_box_that_is_not_a_mac_reports_the_handles_it_listed_and_no_apps(self):
+        # #876: a bot may run on the host of any box that chose containers, so every box reports its consent lines; only a Mac has apps
+        consent = Path(self.tmp.name) / "host-bots-allowed"
+        consent.write_text("Mira\n")
+        self.keeper.HOST_CONSENT = str(consent)
+        from unittest import mock
+        with mock.patch.object(self.keeper.sys, "platform", "linux"):
+            self.assertEqual(self.keeper.host_facts(), {"host_allowed": ["mira"]})
+        with mock.patch.object(self.keeper.sys, "platform", "darwin"), mock.patch.object(self.keeper, "mac_apps", lambda: [{"name": "Godot", "version": "4"}]):
+            self.assertEqual(self.keeper.host_facts(), {"host_allowed": ["mira"], "apps": [{"name": "Godot", "version": "4"}]})
+
 
 if __name__ == "__main__":
     unittest.main()

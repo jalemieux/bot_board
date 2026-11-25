@@ -155,10 +155,13 @@ One way: a bot has `runs`, `container` or `host`, in `fleet_bots`; unset means i
 is `fleet._runs_problem`: any operating system, a new bot or an existing one; `container` needs a container runtime on the
 box; `host` on a box that chose containers needs the box's host-bots switch and a one-line reason with the apps, and the
 machine's own consent line besides; a box with no runtime has nothing to gate. `GET /api/me` answers it, and `host_bot`
-too while an older launcher reads that. Design: `docs/runtime-choice.md`.
-Example: `app/fleet.py`, `_runs_problem` and `_set_runs`.
-Not yet: the launcher and the keeper obey `runs` (#876), the Team tab sets it (#877), the installer asks and `bot_board
-containers` changes it (#878). Today only the board carries it.
+too while an older launcher reads that. The launcher obeys it at every start (`decide_run` in `bin/bot`): `host` on a box
+that chose containers waits for the box's own line in `host-bots-allowed` and says so in its health line; `container` on a
+box with no runtime is not started and says what to install; an older board that answers no `runs` leaves the box's default.
+The keeper reports each box's consent lines on every operating system (`host_facts` in `bin/keeper`). Design:
+`docs/runtime-choice.md`.
+Example: `app/fleet.py`, `_runs_problem` and `_set_runs`; `bin/bot`, `decide_run`.
+Not yet: the Team tab sets it (#877), the installer asks and `bot_board containers` changes it (#878).
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).

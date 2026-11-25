@@ -458,7 +458,7 @@ class ContainerRun(unittest.TestCase):
     def test_a_host_bot_waits_until_the_owner_lists_its_handle_in_the_consent_file(self):
         board, L = self.host_bot(consent=False)
         L.start()
-        L.wait_for(lambda: "waiting for the Mac" in L.read("health"), "the waiting health line")
+        L.wait_for(lambda: "waiting for consent" in L.read("health"), "the waiting health line")
         time.sleep(1)
         self.assertEqual((L.prompts(), self.container_runs()), ([], []), "nothing ran while it waits")
         (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n")
@@ -467,7 +467,7 @@ class ContainerRun(unittest.TestCase):
         (Path(L.tmp.name) / ".config" / "bot_board" / "host-bots-allowed").write_text("someone-else\n  %s \n" % L.name)   # spaces around it are fine
         L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn once the bot is listed", timeout=30)
         self.assertEqual(L.read("runmode"), "host")
-        self.assertNotIn("waiting for the Mac", L.read("health"))
+        self.assertNotIn("waiting for consent", L.read("health"))
 
     def test_a_host_codex_bot_does_not_inherit_the_bypass_flag_a_box_set_for_its_containers(self):
         board, L = self.host_bot(harness="codex")
@@ -493,12 +493,80 @@ class ContainerRun(unittest.TestCase):
         self.assertTrue(self.container_runs(), "the board never said so: it runs in its container")
         self.assertEqual(L.read("runmode"), "container")
 
-    def test_a_host_bot_on_a_box_that_is_not_a_mac_stays_in_its_container(self):
-        board, L = self.host_bot(mac=False)
+    # ---- where a bot runs (#876): `runs` from /api/me, on any operating system ---------------------
+    def test_a_host_bot_on_a_box_that_is_not_a_mac_runs_on_the_host_when_the_board_and_its_owner_agree(self):
+        board, L = self.host_bot(mac=False)       # the Mac-only rule is gone: Linux, board says host and its switch is on, the owner listed it
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertEqual(self.container_runs(), [], "no container: the harness ran on the host")
+        self.assertEqual(L.read("runmode"), "host")
+
+    def test_a_host_bot_on_linux_waits_for_the_owners_line_like_one_on_a_mac(self):
+        board, L = self.host_bot(mac=False, consent=False)
+        L.start()
+        L.wait_for(lambda: "waiting for consent" in L.read("health"), "the waiting health line")
+        time.sleep(1)
+        self.assertEqual((L.prompts(), self.container_runs()), ([], []), "nothing ran while it waits")
+
+    def test_runs_host_with_the_machines_switch_off_runs_in_its_container(self):
+        board, L = self.host_bot(board_says=False)       # no host_bot record: the switch is off or the bot is on another box
+        board.runs = "host"
         L.start()
         L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
         self.assertTrue(self.container_runs())
         self.assertEqual(L.read("runmode"), "container")
+        self.assertIn("switch is off", L.log())
+
+    def test_runs_host_on_a_machine_with_no_runtime_runs_on_the_machine_without_consent(self):
+        board, L = self.host_bot(consent=False)
+        board.runs = "host"
+        L.env.pop("BOT_RUNTIME")                      # the user chose no containers
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertEqual(L.read("runmode"), "native")
+        self.assertIn("no container runtime", L.log())
+
+    def test_runs_container_on_a_machine_with_no_runtime_is_not_started_and_says_what_to_install(self):
+        board, L = self.host_bot(board_says=False)
+        board.runs = "container"
+        L.env.pop("BOT_RUNTIME")
+        L.start()
+        L.wait_for(lambda: "no container runtime" in L.read("health"), "the health line")
+        time.sleep(1)
+        self.assertEqual((L.prompts(), self.container_runs()), ([], []), "it did not start")
+        self.assertIn("Docker or Podman", L.read("health"))
+
+    def test_runs_container_on_a_machine_with_a_runtime_runs_in_the_container(self):
+        board, L = self.host_bot(board_says=False, consent=False)
+        board.runs = "container"
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertTrue(self.container_runs())
+        self.assertEqual(L.read("runmode"), "container")
+
+    def test_an_older_board_that_says_no_runs_leaves_the_machine_default_and_the_host_record_still_works(self):
+        board, L = self.host_bot(board_says=False, consent=False)
+        board.no_runs_key = True
+        L.start()
+        L.wait_for(lambda: len(L.prompts()) >= 1, "the first turn")
+        self.assertEqual(L.read("runmode"), "container", "no `runs` and no host record: the machine's default")
+        board2, L2 = self.host_bot()                  # an older board with only host_bot still puts the bot on its host
+        board2.no_runs_key = True
+        L2.start()
+        L2.wait_for(lambda: len(L2.prompts()) >= 1, "the first turn")
+        self.assertEqual(L2.read("runmode"), "host")
+
+    def test_a_claude_bot_set_to_a_container_on_a_mac_says_it_needs_the_fleet_token_and_a_linux_one_does_not(self):
+        board, L = self.host_bot(board_says=False, consent=False, mac=True)
+        board.runs = "container"
+        L.start()
+        L.wait_for(lambda: "CLAUDE_CODE_OAUTH_TOKEN" in L.read("health"), "the health line")
+        self.assertIn("Keychain", L.read("health"))
+        board2, L2 = self.host_bot(board_says=False, consent=False, mac=False)
+        board2.runs = "container"
+        L2.start()
+        L2.wait_for(lambda: len(L2.prompts()) >= 1, "the first turn")
+        self.assertFalse((L2.state / "health").exists() and "Keychain" in L2.read("health"), "not on Linux")
 
     def test_bot_mode_needs_a_checkout_dir(self):
         r = self.run_sub(["claude", "--handle", "tbot", "--", "--version"], self.sub_env())
