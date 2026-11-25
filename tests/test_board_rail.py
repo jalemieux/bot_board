@@ -58,6 +58,28 @@ class BoardRail(unittest.TestCase):
     def rail(self):
         return self.page.eval_on_selector_all("#channels li.sub", "ls => ls.map(l => l.querySelector('.name').title)")
 
+    def test_direct_messages_and_conversations_show_only_while_they_hold_something(self):
+        """#866, #869: a section shows only while it holds something, with its count: a person's own conversation under Direct
+        messages, a conversation of two others under Conversations."""
+        self.page.goto("http://board.test/c/bbb")
+        self.page.wait_for_selector("#channels li.sub")
+        for sel in ("#dmh", "#dms", "#cvh", "#convs"):
+            self.assertFalse(self.page.is_visible(sel), sel + " is hidden while the board has no conversation")
+        tokens = {}
+        for handle in ("ann", "bob"):
+            tokens[handle] = self.client.post("/api/agents", json={"handle": handle, "kind": "claude-code", "workspace": "bbb"}).json()["token"]
+        self.client.post("/api/conversations", headers=self.human, json={"participants": ["ann"], "topic": "us two"}).raise_for_status()
+        self.client.post("/api/conversations", headers={"Authorization": "Bearer " + tokens["ann"]},
+                         json={"participants": ["bob"], "topic": "the two of them"}).raise_for_status()
+        self.page.goto("http://board.test/c/bbb")
+        self.page.wait_for_selector("#dmh:not([hidden])")
+        self.assertEqual(self.page.text_content("#dmh").strip(), "Direct messages 1")
+        self.assertEqual(self.page.locator("#dms li").count(), 1)
+        self.page.wait_for_selector("#cvh:not([hidden])")
+        self.assertEqual(self.page.text_content("#cvh").strip(), "Conversations 1")
+        self.assertEqual(self.page.locator("#convs li").count(), 1)
+        self.assertEqual(self.errors, [])
+
     def test_the_rail_lists_only_the_workspace_in_view_and_the_switcher_counts_the_others(self):
         """#648: the rail is scoped to one workspace; what waits in the others is a number in the switcher, not a folded group."""
         self.page.goto("http://board.test/c/bbb")
