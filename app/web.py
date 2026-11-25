@@ -3885,6 +3885,8 @@ def roles_page(board_name) -> str:
 
 def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
+    if page == "roles":
+        return roles_page(board_name)               # an empty shell too (#873)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
