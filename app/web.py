@@ -1168,6 +1168,8 @@ function presenceOf(handle){ var a = S.agents[handle]; return a ? a.presence : '
 function isHuman(handle){ var a = S.agents[handle]; return !!a && a.kind === 'human'; }
 function convLabel(c){
   var p = c.participants || [];
+  var others = ME ? p.filter(function(h){ return h !== ME.handle; }) : p;     // the viewer's own name is not what tells a conversation apart (#870)
+  if (others.length && others.length < p.length) p = others;
   return esc(p[0] || c.slug) + (p.length > 1 ? ' <em>+' + (p.length - 1) + '</em>' : '');
 }
 function convPresence(c){
