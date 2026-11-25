@@ -3781,7 +3781,7 @@ def configuration_page(board_name) -> str:
 # its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
 # creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
 # handlers in FLEET_JS read its class names and data-* attributes.
-HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING) + ";" + r"""
+HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\u003c") + ";" + r"""
 (function () {
   var table = document.querySelector('#fleet-machines table.machines');
   if (!table) return;

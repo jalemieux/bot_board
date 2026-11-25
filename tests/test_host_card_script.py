@@ -52,6 +52,15 @@ def mac(on=True, reporting=True, **extra):
 API = {"/api/workspaces": {"workspaces": [{"slug": "ogen_game"}, {"slug": "old", "archived": True}]}, "/api/profiles": {"profiles": [{"name": "Mac runner"}]}}
 
 
+class HostWarningEmbed(unittest.TestCase):
+    def test_the_embedded_warning_has_no_angle_bracket_and_reads_back_as_the_text(self):      # #903
+        line = web.HOST_CARD_JS.split("\n", 1)[0]
+        self.assertTrue(line.startswith("var HOST_WARNING = ") and line.endswith(";"))
+        embedded = line[len("var HOST_WARNING = "):-1]
+        self.assertNotIn("<", embedded, "a </script> in the text could not end the page's script")
+        self.assertEqual(json.loads(embedded), web.HOST_WARNING)
+
+
 @unittest.skipUnless(shutil.which("node"), "node is needed")
 class HostCard(unittest.TestCase):
     def rows(self, hosts, rows=("box-jacs-m5", "box-box")):
