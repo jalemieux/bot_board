@@ -4,8 +4,8 @@
 # image costs time, not failures.
 FROM python:3.12-bookworm
 
-# bin/bot formats `bot ps` with `column` (bsdextrautils), which the Python image lacks.
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends bsdextrautils \
+# bin/bot formats `bot ps` with `column` (bsdextrautils), which the Python image lacks; the page-script tests run under node.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends bsdextrautils nodejs \
  && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt httpx playwright \

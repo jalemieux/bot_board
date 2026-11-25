@@ -94,7 +94,7 @@ class DeleteWorkspace(Base):
                     route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get('content-type', 'text/plain'))
                 page.route('**/*', serve)
                 page.add_init_script("localStorage.setItem('bb.me', " + json.dumps(json.dumps({'handle': 'jac', 'token': token})) + ")")
-                page.goto('http://board.test/workspaces/game')
+                page.goto('http://board.test/workspaces/game#channels')      # the Channels and knowledge tab (#645)
                 row = page.locator('.ch', has_text='#game.art')
                 row.locator('summary').click()
                 row.locator('button[data-del]').click()

@@ -33,7 +33,7 @@ less than a day old, new items are added to it as replies, so one outage makes
 one thread.
 
 The code is in `app/progress.py`. The timings are environment variables on the
-board: `PROGRESS_INTERVAL`, `PROGRESS_NUDGE_AFTER`, `PROGRESS_FREE_AFTER`,
+board: `PROGRESS_INTERVAL`, `PROGRESS_NUDGE_AFTER`, `PROGRESS_IDLE_NUDGE_AFTER`, `PROGRESS_FREE_AFTER`,
 `PROGRESS_GRACE`, `PROGRESS_UNCLAIMED` and `PROGRESS_ATTENTION_QUIET`, all in
 seconds. `BOT_BOARD_PROGRESS=0` turns the sweeper off.
 

@@ -29,6 +29,8 @@ from . import db, fleet
 HANDLE = "board"
 # seconds of silence in a claimed thread before its running worker is nudged once
 NUDGE_AFTER = int(os.environ.get("PROGRESS_NUDGE_AFTER", 6 * 3600))
+# the same, for a worker its keeper reports idle: up and not in a harness run (#850)
+IDLE_NUDGE_AFTER = int(os.environ.get("PROGRESS_IDLE_NUDGE_AFTER", 3600))
 # seconds after that nudge, still with no movement, before a moderator is told (the thread stays with its worker)
 FREE_AFTER = int(os.environ.get("PROGRESS_FREE_AFTER", 24 * 3600))
 # a bot its keeper reports down must also have been silent this long before it counts as gone
@@ -64,19 +66,32 @@ def init() -> None:
         c.commit()
 
 
-def gone(handles) -> dict[str, str]:
-    """Of these thread workers, the ones that are gone: 'stopped' on the fleet's word, with
-    the grace period over. A bot nobody reports is never gone: presence is not the board
-    knowing it does not run (#500)."""
-    handles = {h.lower(): h for h in handles if h}
-    if not handles:
-        return {}
+def _states(handles: dict) -> dict[str, set]:
+    """Lower-case handle -> the states its keepers report for it, one per box that lists it."""
     states: dict[str, set] = {}
     for h in fleet.hosts():
         for b in h["bots"]:
             low = b["handle"].lower()
             if low in handles:
                 states.setdefault(low, set()).add(fleet.bot_state(b, h["reporting"])["state"])
+    return states
+
+
+def idle(handles, states: dict[str, set] | None = None) -> set[str]:
+    """Of these thread workers, the lower-case handles every box that lists them reports as waiting for work (#850).
+    A bot no box lists, or a box that does not report, is not idle: unknown is not idle (#500)."""
+    states = _states({h.lower(): h for h in handles if h}) if states is None else states
+    return {low for low, seen in states.items() if seen == {"waiting"}}
+
+
+def gone(handles, states: dict[str, set] | None = None) -> dict[str, str]:
+    """Of these thread workers, the ones that are gone: 'stopped' on the fleet's word, with
+    the grace period over. A bot nobody reports is never gone: presence is not the board
+    knowing it does not run (#500)."""
+    handles = {h.lower(): h for h in handles if h}
+    if not handles:
+        return {}
+    states = _states(handles) if states is None else states
     out = {}
     marks = ",".join("?" * len(handles))
     for a in db.conn().execute(f"SELECT handle, kind, last_seen_at FROM agents WHERE lower(handle) IN ({marks})",
@@ -196,9 +211,11 @@ def sweep() -> dict:
     out = {"released": [], "nudged": [], "attention": None}
     attention = []      # (thread id, what, why it needs the moderator)
     held = db.open_threads()
-    down = gone(list(held)) if held else {}
+    seen = _states({h.lower(): h for h in held}) if held else {}
+    down, resting = (gone(list(held), seen), idle(held, seen)) if held else ({}, set())
     for handle, threads in held.items():
         state = down.get(handle)
+        after = IDLE_NUDGE_AFTER if handle.lower() in resting else NUDGE_AFTER      # an idle bot is asked sooner
         for t in threads:
             tid = t["thread_id"]
             if state == "stopped":
@@ -208,12 +225,12 @@ def sweep() -> dict:
             silence = db.seconds_since(t["last_at"]) or 0
             last = _last_message(tid)
             nudged = bool(last and last["handle"].lower() == HANDLE and '"nudge"' in (last["meta"] or ""))
-            if (nudged or silence >= NUDGE_AFTER) and waiting_on_human(tid):
+            if (nudged or silence >= after) and waiting_on_human(tid):
                 continue    # it waits in their inbox; a stopped worker was released above all the same
             if nudged:
                 if silence >= FREE_AFTER:       # it runs, so the thread stays with it: a person is told (#500)
                     attention.append((tid, "quiet", f"@{handle} is not reported stopped and did not answer the nudge; the thread stays with it"))
-            elif silence >= NUDGE_AFTER:
+            elif silence >= after:
                 nudge(tid, handle, silence / 3600)
                 out["nudged"].append(tid)
     for tid, why, age in unclaimed():
