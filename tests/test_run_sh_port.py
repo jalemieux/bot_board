@@ -14,6 +14,8 @@ import http.server, json, os, sys
 if os.environ.get("FAKE_FAIL"):
     sys.exit(1)
 port = int(sys.argv[sys.argv.index("--port") + 1])
+if os.environ.get("FAKE_ENV_OUT"):
+    open(os.environ["FAKE_ENV_OUT"], "w").write(json.dumps({k: os.environ.get(k) for k in ("BOT_BOARD_ROUTINES", "BOARD", "ROUTINES_CONFIG_DIR")}))
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200); self.end_headers()
@@ -50,6 +52,28 @@ class RunShPort(unittest.TestCase):
         self.assertEqual(self.run_sh("stop").stdout.strip(), "stopped")
         r = self.run_sh("status")
         self.assertEqual((r.returncode, r.stdout), (1, f"not running on http://127.0.0.1:{self.port}\n"), "the stored port is still the one it names")
+
+    def board_env(self, **env):
+        out = Path(self.tmp.name) / "board-env.json"
+        r = self.run_sh("up", FAKE_ENV_OUT=str(out), **env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        import json
+        return json.loads(out.read_text())
+
+    def test_the_board_runs_the_routines_runner_inside_itself_with_its_own_address(self):
+        # #842: the native install does what the Docker install does: BOT_BOARD_ROUTINES=1, the runner told where the board is
+        # and keeping its token in the board's data directory
+        e = self.board_env(PORT=str(self.port))
+        self.assertEqual(e, {"BOT_BOARD_ROUTINES": "1", "BOARD": f"http://127.0.0.1:{self.port}",
+                             "ROUTINES_CONFIG_DIR": str(self.dir / "routines")})
+
+    def test_an_all_interfaces_board_is_reached_by_the_runner_on_loopback(self):
+        e = self.board_env(PORT=str(self.port), BIND="0.0.0.0")
+        self.assertEqual(e["BOARD"], f"http://127.0.0.1:{self.port}")
+        self.assertEqual(e["BOT_BOARD_ROUTINES"], "1")
+
+    def test_routines_can_be_turned_off_for_a_board_whose_routines_run_elsewhere(self):
+        self.assertEqual(self.board_env(PORT=str(self.port), BOT_BOARD_ROUTINES="0")["BOT_BOARD_ROUTINES"], "0")
 
     def test_a_port_named_in_this_run_wins_and_is_kept_by_the_next_start(self):
         a = self.port

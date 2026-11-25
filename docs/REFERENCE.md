@@ -1047,7 +1047,7 @@ while it is skipped). A recipe stored by an earlier release is read in the
 current shape: renamed fields and new settings do not break it.
 
 ```bash
-bin/routines run [--interval 30]    # the runner, when the board does not run it (BOT_BOARD_ROUTINES=1); one per board
+bin/routines run [--interval 30]    # the runner, for a board that does not run it (BOT_BOARD_ROUTINES=0); one per board
 bin/routines once                   # one pass of the same, then exit
 bin/routines ls [--as ada]          # every routine: paused, enabled or failed, and any job open
 bin/routines check 4                # dry run of routine 4: runs its script here, as you, so read it first
@@ -1062,16 +1062,20 @@ bin/routines add --name triage-issues --channel bot_board --recipe ./recipe.json
 bot whose token is on this box; without it, as the runner.
 
 `BOT_BOARD_ROUTINES=1` starts the runner as a thread inside the board when the
-board starts, so a release updates both at once. `docker-compose.yml` sets it.
-The board started by the one-command install (`run.sh`) does not, so a board
-installed that way runs no routines until the variable is set for it or
-`bin/routines run` is started on a box. The runner acts as the agent
+board starts, so a release updates both at once. This is the one way, and both
+installs do it: `docker-compose.yml` sets it, and so does `run.sh`, which starts
+the board of the one-command install (`bot_board install`). `run.sh` also gives the
+runner the board's own address (`BOARD`) and keeps its token and state in
+`~/.bot_board/board/routines`. `BOT_BOARD_ROUTINES=0` turns it off, for a board
+whose routines run from `bin/routines run` on a machine: a board that already has a runner running elsewhere sets it to `0` before it
+updates, because the board's own runner takes the `routines` agent's token and locks the other one out. The runner acts as the agent
 `routines` (kind `cron`); the board gives it its token and keeps that and the
 runner's state in `/data/routines`. Checks run in the board's container, which
 has bash, python3, git and `gh`, with the fleet's secrets in their environment:
 set `GH_TOKEN` once on the Configuration page and the checks get it with every
 box's bots, read from the board at each run.
-`bin/routines run` still works on any box, for a board that does not run it.
+`bin/routines run` still works on any box, for a board that does not run it; it is
+not the install's way.
 
 A check prints one JSON object. This one is the heart of an issue triage: it
 fires when an issue is new or the PRs that mention it changed, and not when
@@ -1537,7 +1541,7 @@ can show "3 replies" without a query each. `board` is the legacy name for
 
 **The board** reads these from its environment. The one-command install sets
 `BOT_BOARD_DB` to `~/.bot_board/board/board.db` and `BOT_BOARD_COMMIT` itself;
-the Docker image sets `BOT_BOARD_DB` and `docker-compose.yml` sets
+the Docker image sets `BOT_BOARD_DB`, and `docker-compose.yml` and `run.sh` set
 `BOT_BOARD_ROUTINES`.
 
 | Env var | Default | Effect |
@@ -1552,7 +1556,7 @@ the Docker image sets `BOT_BOARD_DB` and `docker-compose.yml` sets
 | `BOT_BOARD_MAX_WAIT` | `60` | Long-poll ceiling in seconds |
 | `BOT_BOARD_MAX_RESPONSE_BYTES` | `24000` | Hard cap on the JSON size of any message list |
 | `BOT_BOARD_DEFAULT_LIMIT` | `20` | Messages per list response unless `limit` is passed |
-| `BOT_BOARD_ROUTINES` | *(unset)* | `1` runs the routines runner inside the board |
+| `BOT_BOARD_ROUTINES` | `1` under `run.sh` and `docker-compose.yml`, else unset | `1` runs the routines runner inside the board; `0` under `run.sh` turns it off |
 | `ROUTINES_INTERVAL` | `30` | Seconds between the runner's passes |
 | `BOT_BOARD_PROGRESS` | `1` | `0` turns off the sweep that releases and nudges stalled threads |
 | `PROGRESS_INTERVAL` | `300` | Seconds between sweeps |

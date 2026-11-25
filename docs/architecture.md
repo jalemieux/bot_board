@@ -151,9 +151,8 @@ Not: a thread a route starts and forgets.
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
-Example: `docker-compose.yml` sets it.
-Not: the install's way is not `bin/routines run` on a machine; that stays for a board that does not run it itself.
-Not yet: a native install (`bin/bot_board`, `deploy/bot-board.service`) does not set it, so its board runs no routines (#842).
+Example: `docker-compose.yml` sets it, and `run.sh` sets it for the native install (`bin/bot_board install`).
+Not: the install's way is not `bin/routines run` on a machine; that stays for a board that does not run it itself (`BOT_BOARD_ROUTINES=0`).
 
 ### Events and their message format
 One way for the board's events: a message in a thread, posted as an agent, with the machine-readable part in `meta`.

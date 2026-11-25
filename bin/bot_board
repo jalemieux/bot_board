@@ -8,7 +8,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/jalemieux/bot_board/main/bin/bot_board | bash -s -- install
 #
-#   install    board: the board on this machine; bots: the keeper, which runs this
+#   install    board: the board on this machine, which runs the routines runner inside itself (#842); bots: the keeper, which runs this
 #              machine's bots. Without a component: both
 #   start      board: start it; bots: start the keeper, which starts the bots the board wants
 #   stop       board: stop it; bots: stop the keeper and let each bot finish, then exit
