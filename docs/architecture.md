@@ -115,6 +115,8 @@ value (last four characters only), fetched in full only by a keeper with its own
 `~/.config/bot_board/fleet.env` for bots. The board reads two of its values itself (`FORGEJO_TOKEN`,
 `FORGEJO_READ_TOKEN`) through `fleet.forge_token`, called only by `app/forge.py`. A secret is never put on a command
 line (`SECURITY.md`): it goes by the environment, standard input or a file descriptor.
+A routine's check gets the fleet's secrets and an allowlist of the runner's environment, not the rest of it (`CHECK_ENV` in
+`bin/routines`); that is a scrub, not a sandbox, since a check runs as the board's user.
 Example: `app/fleet.py` (`secrets()`, `secret_values()`, `forge_token()`).
 Other credentials kept apart on purpose, each its own table or file: an agent's token (hash only, `agents`), the
 Forgejo webhook secret (`hooks`, never handed to bots), the routines runner's token file (`ROUTINES_CONFIG_DIR`).

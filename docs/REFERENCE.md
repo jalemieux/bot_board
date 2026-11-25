@@ -1073,7 +1073,14 @@ updates, because the board's own runner takes the `routines` agent's token and l
 runner's state in `/data/routines`. Checks run in the board's container, which
 has bash, python3, git and `gh`, with the fleet's secrets in their environment:
 set `GH_TOKEN` once on the Configuration page and the checks get it with every
-box's bots, read from the board at each run.
+box's bots, read from the board at each run. A check gets only part of the runner's own environment (#857), the names in `CHECK_ENV` in `bin/routines`: what a
+program needs to run (`PATH`, `HOME`, `USER`, `LOGNAME`, the locale and `TZ`, `TMPDIR`, `TERM`, the `XDG_*` directories), the
+proxy and certificate variables, `ROUTINE_NOW` (the tests' clock), and the forge and GitHub values the shipped checks read
+(`FORGEJO_TOKEN`, `FORGEJO_READ_TOKEN`, `FORGEJO_URL`, `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`). So a runner that
+is not the board, which has no fleet secrets, still hands those on. On top of that come the fleet's secrets, which win, and the
+routine's own `BOARD`, `ROUTINE_NAME` and `ROUTINE_WATERMARK`. Everything else the runner holds, such as the board's database
+path, an invite code or what a person exported, is left out. A check that needs another value takes it as a fleet secret. The
+scrub is not a sandbox: a check runs as the same user as the board, so a person's yes to its code stays the control.
 `bin/routines run` still works on any box, for a board that does not run it; it is
 not the install's way.
 
