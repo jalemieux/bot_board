@@ -19,6 +19,7 @@ whole board.
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import os
 import re
@@ -28,6 +29,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 from . import storage
+from .errors import Conflict
 
 DB_PATH = os.environ.get("BOT_BOARD_DB", "/data/bot_board.db")
 
@@ -687,12 +689,20 @@ def post_message(
     workspace_id: int | None = None,
     client_key: str | None = None,
     file_attachment: tuple[bytes, str] | None = None,
+    system: bool = False,
+    within=None,
+    mentions: list[str] | None = None,
 ) -> dict:
     """`workspace_id`: the poster's scope (db.scope). A bot may post only in its own
     workspace's channels and its conversations; a channel it names that does not
     exist is created in its workspace. Unscoped posters create unattached channels.
     `client_key`: a message this poster already sent with that key is returned as it
-    is, with replayed=True, and nothing is posted (#243)."""
+    is, with replayed=True, and nothing is posted (#243).
+    The board posts its own messages here too (#843). `system=True` is the board speaking: it may post the kinds a bot
+    may not (seed, team_setup), in any channel or conversation, and it takes no thread, reopens none and does not
+    count as seen. `within` is the caller's connection, when the caller already holds `_write_lock` and the message
+    must land in the same transaction as a change of its own (a claim released, a thread handed on): nothing is
+    committed here. `mentions` names who the message mentions when the board knows better than the text does."""
     if client_key:
         known = _keyed(agent_id, client_key)
         if known:
@@ -702,6 +712,8 @@ def post_message(
         # the moderator is unscoped but still belongs to admin: what it creates lands there, not on no workspace
         home = conn().execute("SELECT workspace_id FROM agents WHERE id=?", (agent_id,)).fetchone()
         board = ensure_board(board_slug, created_by=agent_id, workspace_id=workspace_id or (home["workspace_id"] if home else None))
+    elif system:
+        pass
     elif board["kind"] == "conversation" and not is_member(board["id"], agent_id):
         raise PermissionError(f"you are not a participant in conversation {board_slug}")
     elif not in_scope(board, workspace_id):
@@ -715,21 +727,22 @@ def post_message(
             raise KeyError(f"reply_to message {reply_to} does not exist")
         parent_thread = parent["thread_id"] or parent["id"]
 
-    handles = {m.lower() for m in MENTION_RE.findall(body)}
+    handles = {m.lower() for m in (MENTION_RE.findall(body) if mentions is None else mentions)}
     tag_set = {t.strip().lstrip("#").lower() for t in (tags or []) if t.strip()}
 
-    c = conn()
-    with _write_lock, c:
+    c = within or conn()
+    with (contextlib.nullcontext() if within else _write_lock), (contextlib.nullcontext() if within else c):
         from . import workspaces
         if client_key and _keyed(agent_id, client_key):     # the same retry, twice at once
             return {**_keyed(agent_id, client_key), "replayed": True}
         if workspaces.is_archived(board['id']):
             raise PermissionError('This workspace or channel is archived; its history remains readable.')
         meta = dict(meta or {})
-        if meta.get('kind') in ('context_update', 'seed', 'team_setup'):
+        if not system and meta.get('kind') in ('context_update', 'seed', 'team_setup'):
             raise PermissionError(f"{meta['kind']} events are posted by the board itself")
-        meta.pop("thread_reopened", None)
-        if parent_thread and meta.get("kind") != "thread_released" and not meta.get("done"):
+        if not system:
+            meta.pop("thread_reopened", None)
+        if parent_thread and not system and meta.get("kind") != "thread_released" and not meta.get("done"):
             reopened = c.execute(
                 "DELETE FROM thread_completions WHERE thread_id=? AND thread_id IN "
                 "(SELECT id FROM messages WHERE board_id=?)", (parent_thread, board["id"]),
@@ -762,7 +775,7 @@ def post_message(
         for h in handles:
             c.execute(
                 "INSERT OR IGNORE INTO mentions (message_id, agent_id)"
-                " SELECT ?, id FROM agents WHERE handle=?",
+                " SELECT ?, id FROM agents WHERE lower(handle)=?",
                 (mid, h),
             )
         for t in tag_set:
@@ -772,14 +785,16 @@ def post_message(
                       ((datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds"),))
             c.execute("INSERT OR REPLACE INTO message_keys (agent_id, key, message_id, created_at) VALUES (?,?,?,?)",
                       (agent_id, client_key, mid, now()))
-        if parent_thread and meta.get("done") is True and not meta.get("needs") and c.execute(
+        if parent_thread and not system and meta.get("done") is True and not meta.get("needs") and c.execute(
                 "SELECT 1 FROM thread_workers WHERE thread_id=? AND agent_id=?", (parent_thread, agent_id)).fetchone():
             _record_completion(c, parent_thread, mid, agent_id)    # the worker says it is finished; an ask for a human keeps it open
         refused = None
-        if parent_thread and not meta.get("done"):      # a bot that says it is finished is not taking the thread
+        if parent_thread and not system and not meta.get("done"):      # a bot that says it is finished is not taking the thread
             refused = _claim_on_reply(c, parent_thread, mid, agent_id)
-        c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
-        c.commit()
+        if not system:
+            c.execute("UPDATE agents SET last_seen_at=? WHERE id=?", (now(), agent_id))
+        if not within:
+            c.commit()
     msg = get_message(mid)
     if refused:
         msg["claim_refused"] = refused        # for the poster's warnings (#741); the API takes it out of the message
@@ -1053,9 +1068,9 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
     if root is None:
         raise KeyError("no such thread")
     if root["thread_id"] != tid:
-        raise ValueError("claim the thread root, not a reply")
+        raise Conflict("claim the thread root, not a reply")
     if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
-        raise ValueError("thread is completed; a new ordinary reply reopens it")
+        raise Conflict("thread is completed; a new ordinary reply reopens it")
     if agent["kind"] in ("human", "keeper", "cron"):
         raise PermissionError("only bots can be thread workers")
     if agent.get("interactive"):
@@ -1111,10 +1126,10 @@ def _claim_thread(c: sqlite3.Connection, tid: int, agent: dict, named: bool = Fa
         " ON CONFLICT(thread_id) DO NOTHING", (tid, agent["id"], now()),
     )
     if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
-        raise ValueError("thread is completed; a new ordinary reply reopens it")
+        raise Conflict("thread is completed; a new ordinary reply reopens it")
     worker = thread_worker(tid)
     if worker["worker"].lower() != agent["handle"].lower():
-        raise ValueError(f"thread already has worker @{worker['worker']}")
+        raise Conflict(f"thread already has worker @{worker['worker']}")
     return worker
 
 
@@ -1168,24 +1183,17 @@ def release_thread(tid: int, agent: dict, to: str | None = None) -> dict:
                 raise PermissionError("this workspace or channel is archived")
             c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
             worker = _claim_thread(c, tid, target, named=True)      # its checks: refused, nothing changes
-            c.execute(
-                "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (root["board_id"], agent["id"], f"Thread handed to @{target['handle']} by @{agent['handle']}.",
-                 tid, tid, json.dumps({"kind": "thread_handed", "to": target["handle"]}), now()),
-            )
+            post_message(get_board_by_id(root["board_id"])["slug"], agent["id"],
+                         f"Thread handed to @{target['handle']} by @{agent['handle']}.", reply_to=tid,
+                         meta={"kind": "thread_handed", "to": target["handle"]}, system=True, within=c, mentions=[])
             return worker
         if workspaces.is_archived(root["board_id"]):
             raise PermissionError("this workspace or channel is archived")
         c.execute("DELETE FROM thread_workers WHERE thread_id=?", (tid,))
         if c.execute("SELECT 1 FROM thread_completions WHERE thread_id=?", (tid,)).fetchone():
             return {"thread_id": tid, "worker": None}
-        c.execute(
-            "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
-            " VALUES (?,?,?,?,?,?,?)",
-            (root["board_id"], agent["id"], "Thread worker released; available for pickup.",
-             tid, tid, json.dumps({"kind": "thread_released"}), now()),
-        )
+        post_message(get_board_by_id(root["board_id"])["slug"], agent["id"], "Thread worker released; available for pickup.",
+                     reply_to=tid, meta={"kind": "thread_released"}, system=True, within=c, mentions=[])
     return {"thread_id": tid, "worker": None}
 
 
@@ -1223,13 +1231,9 @@ def hand_off_threads(handle: str, by: dict) -> int:
             if not c.execute("DELETE FROM thread_workers WHERE thread_id=? AND agent_id=?",
                              (root["id"], bot["id"])).rowcount:
                 continue
-            c.execute(
-                "INSERT INTO messages (board_id,agent_id,body,reply_to,thread_id,meta,created_at)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (root["board_id"], by["id"],
-                 f"Thread worker released by @{by['handle']} when stopping @{bot['handle']}; available for pickup.",
-                 root["id"], root["id"], json.dumps({"kind": "thread_released"}), now()),
-            )
+            post_message(get_board_by_id(root["board_id"])["slug"], by["id"],
+                         f"Thread worker released by @{by['handle']} when stopping @{bot['handle']}; available for pickup.",
+                         reply_to=root["id"], meta={"kind": "thread_released"}, system=True, within=c, mentions=[])
         n += 1
     return n
 
@@ -1263,10 +1267,10 @@ def complete_thread(tid: int, through: int, agent: dict) -> dict:
             raise PermissionError("this workspace or channel is archived")
         reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
         if not reviewed:
-            raise ValueError("through must identify a reviewed message in this thread")
+            raise Conflict("through must identify a reviewed message in this thread")
         if c.execute("SELECT 1 FROM messages m WHERE thread_id=? AND id>? AND " + HUMAN_MESSAGE,
                      (tid, through)).fetchone():
-            raise ValueError("thread has newer messages; review them before completing it")
+            raise Conflict("thread has newer messages; review them before completing it")
         _record_completion(c, tid, through, agent["id"])
     return {"thread_id": tid, "completed_through": through}
 

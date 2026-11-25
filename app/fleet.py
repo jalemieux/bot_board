@@ -14,6 +14,7 @@ import urllib.parse
 from datetime import datetime, timezone
 
 from . import db
+from .errors import Conflict
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fleet_hosts (
@@ -1185,15 +1186,15 @@ def clear_alerts(items: list[dict], by: str):
             host, handle = item["host"].lower(), item["handle"].lower()
             box = boxes.get(host)
             if not box or not box["reporting"]:
-                raise ValueError("box state is unknown; wait for a fresh report")
+                raise Conflict("box state is unknown; wait for a fresh report")
             bot = next((b for b in box["bots"] if b["handle"].lower() == handle), None)
             if not bot or not bot.get("clear_key") or bot["clear_key"] != item["key"]:
-                raise ValueError("worker state or alert changed; refresh before clearing")
+                raise Conflict("worker state or alert changed; refresh before clearing")
             for other in boxes.values():
                 for copy in other["bots"]:
                     if other["name"].lower() != host and copy["handle"].lower() == handle and copy["status"] != "moved":
                         if not other["reporting"] or copy["status"] != "stopped":
-                            raise ValueError("worker is live or unknown on another box")
+                            raise Conflict("worker is live or unknown on another box")
             checked.append((host, handle, bot))
         # One atomic group: a changed/live member prevents clearing any member.
         for host, handle, bot in checked:

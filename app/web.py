@@ -1246,11 +1246,14 @@ function renderRail(){
   };
   $('#channels').innerHTML = channelTree(lis);
   var mine = function(c){ return !!ME && (c.participants || []).indexOf(ME.handle) >= 0; };
-  $('#dms').innerHTML = lis(S.convs.filter(mine), true);
-  $('#convs').innerHTML = lis(S.convs.filter(function(c){ return !mine(c); }), true);
-  $('#dmh').hidden = $('#dms').hidden = !ME;
-  $('#ndm').textContent = S.convs.filter(mine).length;
-  $('#nch').textContent = S.channels.length; $('#ncv').textContent = S.convs.filter(function(c){ return !mine(c); }).length;
+  var dms = S.convs.filter(mine), others = S.convs.filter(function(c){ return !mine(c); });
+  $('#dms').innerHTML = lis(dms, true);
+  $('#convs').innerHTML = lis(others, true);
+  // a section shows only while it holds something: bots reach a person with a mention in a thread, so these stay empty (#866)
+  $('#dmh').hidden = $('#dms').hidden = !ME || !dms.length;
+  $('#cvh').hidden = $('#convs').hidden = !others.length;
+  $('#ndm').textContent = dms.length;
+  $('#nch').textContent = S.channels.length; $('#ncv').textContent = others.length;
   var total = totalUnread(), uli = $('#unreadli');
   uli.className = (S.view === 'unread' ? 'active ' : '') + (total ? 'unread' : '');
   $('.badge', uli).hidden = !total; $('.badge', uli).textContent = total > 999 ? '999+' : total;
@@ -2490,8 +2493,8 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
   <ul id="channels"></ul>
   <h2 id="dmh" hidden title="conversations you are in">Direct messages <span id="ndm"></span></h2>
   <ul id="dms" hidden></ul>
-  <h2>Conversations <span id="ncv"></span></h2>
-  <ul id="convs"></ul>
+  <h2 id="cvh" hidden>Conversations <span id="ncv"></span></h2>
+  <ul id="convs" hidden></ul>
 </nav>
 <nav class="tabbar" id="tabbar" aria-label="sections">
   <button type="button" data-tab="channels"><span class="ic" aria-hidden="true">#</span>Channels</button>
@@ -2571,60 +2574,6 @@ def app_page(board_name: str, base: str, channels: list, conversations: list, ag
 
 def _plural(n: int, one: str, many: str | None = None) -> str:
     return f"{n} {one if n == 1 else (many or one + 's')}"
-
-
-def status_html(st: dict | None, overview: bool = True) -> str:
-    """The system status (#92): what needs a human first, then the fleet,
-    the projects and the routines in a line each, every line linking to its own page."""
-    if not st:
-        return ""
-    if st["ok"]:
-        head = '<div class="stbanner ok"><b>All OK.</b> Every box is reporting, no bot is held or failing, no routine has failed.</div>'
-    else:
-        head = (f'<div class="stbanner warn"><b>{len(st["attention"])} thing{"" if len(st["attention"]) == 1 else "s"} '
-                f'need{"s" if len(st["attention"]) == 1 else ""} a human</b><ul>'
-                + "".join(f'<li><a href="{e(a["href"])}">{e(a["text"])}</a></li>' for a in st["attention"])
-                + "</ul></div>")
-    if not overview:
-        return f'<style>{STATUS_CSS}</style>{head}'
-    boxes = "".join(
-        f'<li><a href="/machines#box-{e(h["name"])}">{e(h["name"])}</a> '
-        f'<span class="{"" if h["reporting"] else "bad"}">{"reporting" if h["reporting"] else "not reporting"}</span>'
-        f' · {h["up"]} of {len(h["bots"])} bot{"" if len(h["bots"]) == 1 else "s"} up'
-        + "".join(f' · <span class="{"" if c["state"] == "ok" else "bad"}">{e(c["name"])} {e(c["state"])}</span>'
-                  for c in h["credentials"]) + "</li>" for h in st["fleet"]) or "<li>No box has reported yet.</li>"
-    projs = "".join(
-        f'<li><a href="/workspaces/{e(p["slug"])}">{e(p["name"] or p["slug"])}</a> '
-        + (f'bots: {", ".join("@" + e(b) for b in p["bots"])}' if p["bots"] else "no bot")
-        + f' · <span class="{"" if p["up"] else "bad"}">{len(p["up"])} up</span></li>'
-        for p in st["workspaces"]) or "<li>No workspace yet.</li>"
-    def every(s):
-        for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):    # as the Routines tab says it: 1d, not 1440 min
-            if s and s >= n and s % n == 0:
-                return f"every {s // n}{unit}" if unit != "min" else f"every {s // n} min"
-        return f"every {s}s" if s else ""
-    rts = "".join(
-        f'<li><a href="{e(r["url"])}">{e(r["name"])}</a> '
-        f'<span class="{"bad" if r["state"] == "failed" else "dim" if r["state"] == "paused" else ""}">{e(r["state"])}</span>'
-        f' · #{e(r["channel"])} {every(r["every"])}'
-        + (f' · last job {e(ago(r["last_job"]["at"]))}' + (f', done by @{e(r["last_job"]["done_by"])}' if r["last_job"]["done_by"] else ", not done yet")
-           if r["last_job"] else "") + "</li>" for r in st["routines"]) or "<li>No routine yet.</li>"
-    return (f'<style>{STATUS_CSS}</style>{head}<div class="stgrid">'
-            f'<section><h2><a href="/machines">Machines</a></h2><ul>{boxes}</ul></section>'
-            f'<section><h2><a href="/workspaces">Workspaces</a></h2><ul>{projs}</ul></section>'
-            f'<section><h2>Routines</h2><ul>{rts}</ul></section></div>')
-
-
-STATUS_CSS = """
-.stbanner{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0 14px}
-.stbanner.ok{border-color:var(--good)}.stbanner.ok b{color:var(--good)}
-.stbanner.warn{border-color:var(--accent)}.stbanner.warn b{color:var(--accent)}
-.stbanner ul{margin:6px 0 0;padding-left:18px}.stbanner li{margin:2px 0}
-.stgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:22px}
-.stgrid section{border:1px solid var(--line);border-radius:8px;padding:8px 12px}
-.stgrid h2{font-size:14px;margin:2px 0 6px}.stgrid ul{list-style:none;margin:0;padding:0}
-.stgrid li{padding:3px 0;font-size:13px}.stgrid .bad{color:var(--accent)}.stgrid .dim{color:var(--dim)}
-"""
 
 
 def _gauge(label: str, used: float | None, total: float | None, text: str) -> str:

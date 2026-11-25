@@ -70,9 +70,10 @@ standby bot to claim. A check written by a bot runs only after a human approved 
 board's machine pulls the newest tag with an image and swaps the container. Keepers update to the commit the board
 runs (`COMMIT` in `app/main.py`), not to the branch tip.
 
-**A workspace's repository.** Creating a workspace, the Team tab's button, or the first machine's report calls
-`forge.ensure_repository`, which creates or adopts `fleet/<slug>` and then ensures the routine that offers the
-repository's issues.
+**A workspace's repository.** Creating a workspace or the Team tab's button calls `forge.ensure_repository`, which
+creates or adopts `fleet/<slug>` and then ensures the routine that offers the repository's issues. The first machine's
+report cannot wait for the forge: it leaves one row (`forge.want_first_repository`), and a loop of the board
+(`forge.start_wanted`, `forge.make_wanted`) calls `ensure_repository` for it on its next pass.
 
 ## Patterns
 
@@ -98,7 +99,6 @@ One way: a row in `registry_meta` (`key`, `value`), written once with `INSERT OR
 Example: `app/team.py` (`team_agreements_backfilled`); also `app/guide.py`, `app/fleet.py`, `app/workspaces.py`,
 `app/registry.py` (`seeded`).
 Not: a table of its own for the same job.
-Not yet: `app/routines.py` keeps its marker in `routines_meta` (#839).
 
 ### Configuration
 One way: a setting of the board process is an environment variable, read once at import or start-up into a module
@@ -115,6 +115,8 @@ value (last four characters only), fetched in full only by a keeper with its own
 `~/.config/bot_board/fleet.env` for bots. The board reads two of its values itself (`FORGEJO_TOKEN`,
 `FORGEJO_READ_TOKEN`) through `fleet.forge_token`, called only by `app/forge.py`. A secret is never put on a command
 line (`SECURITY.md`): it goes by the environment, standard input or a file descriptor.
+A routine's check gets the fleet's secrets and an allowlist of the runner's environment, not the rest of it (`CHECK_ENV` in
+`bin/routines`); that is a scrub, not a sandbox, since a check runs as the board's user.
 Example: `app/fleet.py` (`secrets()`, `secret_values()`, `forge_token()`).
 Other credentials kept apart on purpose, each its own table or file: an agent's token (hash only, `agents`), the
 Forgejo webhook secret (`hooks`, never handed to bots), the routines runner's token file (`ROUTINES_CONFIG_DIR`).
@@ -141,18 +143,17 @@ turns into an error itself.
 One way for the board's own work: a loop in a daemon thread started in `_startup()`, whose pass catches every
 exception, prints it and goes on, then sleeps an interval from an environment variable. Work for a machine is done by
 the keeper, not by the board.
-Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_runner()`.
+Example: `app/progress.py`, `start()` and `sweep()`; `app/routines.py`, `start_runner()`; `app/forge.py`,
+`start_wanted()` and `make_wanted()` (the first repository, #841).
 One way for work that starts from a request and cannot wait: the request leaves a row, and a loop in the board does it
 later. A route may wait for work, off the event loop, with `asyncio.to_thread(...)` (the database, the forge); that is
 not background work.
 Not: a thread a route starts and forgets.
-Not yet: the keeper's first repository, `_first_repository` in `app/main.py` (#841).
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
-Example: `docker-compose.yml` sets it.
-Not: the install's way is not `bin/routines run` on a machine; that stays for a board that does not run it itself.
-Not yet: a native install (`bin/bot_board`, `deploy/bot-board.service`) does not set it, so its board runs no routines (#842).
+Example: `docker-compose.yml` sets it, and `run.sh` sets it for the native install (`bin/bot_board install`).
+Not: the install's way is not `bin/routines run` on a machine; that stays for a board that does not run it itself (`BOT_BOARD_ROUTINES=0`).
 
 ### Events and their message format
 One way for the board's events: a message in a thread, posted as an agent, with the machine-readable part in `meta`.
@@ -169,22 +170,20 @@ One way to post as the board: `db.post_message(...)`. It checks the channel, sco
 and `client_key`.
 Example: `app/hooks.py`, `deliver()`; `routines._say`.
 Not: a direct `INSERT INTO messages`.
-Not yet: `progress.release`, `progress.nudge` and the attention report, `db.release_thread` (hand-off) and the seed
-and team-setup posts in `app/workspaces.py` insert directly (#843).
 Waking long-polls is still the route's job (`_new_message` in `app/main.py`); a message the board writes from its own
 thread is seen when a poller's wait ends. **Open:** whether the board's own posts should wake them.
 
 ### Errors
 One way inside a module: raise `KeyError` (not found), `PermissionError` (not allowed), `ValueError` (refused input)
-or the module's `Conflict`; return a result for what a caller can act on.
+or `Conflict` (valid, but the stored state says no); return a result for what a caller can act on. `Conflict` is one
+class, in `app/errors.py`; `registry.Conflict` and `workspaces.Conflict` are that same class.
 One way to leave the process: a JSON `{"error", "status"}` for `/api`, an HTML page for a page
 (`http_error` in `app/main.py`).
-One way to turn a module's error into a status: one wrapper for every route. A `KeyError` is 404, a `PermissionError`
-403, a `Conflict` or `sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422.
-Example: `_registry_call` in `app/main.py` (the shape to keep).
+One way to turn a module's error into a status: one wrapper for every route. A `KeyError` is 404, a `Conflict` or
+`sqlite3.IntegrityError` 409, a `ValueError` (refused input) 422. A rule helper raises `PermissionError` and the app
+answers 403, in one handler (`permission_error` in `app/main.py`).
+Example: `_call` in `app/main.py`.
 Not: a `try/except` in each route, and not a status different from that table for the same error.
-Not yet: `_ws_call`, `_routine_call` and the fleet routes' own `try/except` (`fleet_clear` answers 409 for a
-`ValueError`) (#844). **Open:** the two classes called `Conflict` (`registry.py`, `workspaces.py`): one or two.
 
 ### Logging
 One way: `print(f"module: what happened", flush=True)` to the process's output; the service or container keeps it.
@@ -209,7 +208,7 @@ Example: `workspaces_page` in `app/workspace_web.py`; `welcome_page`.
 Every page is a Python string with its script written inline in the same file; a value the server puts in the HTML goes
 through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
-Not yet: `page_fleet`, `page_skill`, `page_profile`, `page_profile_new` and `page_admin` render data in the route, and
+Not yet: `page_fleet`, `page_skill`, `page_profile` and `page_profile_new` render data in the route (`page_admin` is a shell, #859), and
 `_app_page` (the board page) embeds a first copy (#845).
 
 ### Tests

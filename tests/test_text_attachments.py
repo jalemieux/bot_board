@@ -1,7 +1,6 @@
 """Text attachments stay out of feeds and are saved atomically with their message."""
 import os
 import shutil
-import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -116,8 +115,9 @@ class TextAttachments(unittest.TestCase):
         db.conn().execute("""CREATE TRIGGER fail_attachment BEFORE INSERT ON text_attachments
                              BEGIN SELECT RAISE(ABORT, 'attachment write failed'); END""")
         db.conn().commit()
-        with self.assertRaisesRegex(sqlite3.IntegrityError, "attachment write failed"):
-            self.post(text_attachment="Not saved either")
+        refused = self.post(text_attachment="Not saved either")     # an IntegrityError is a 409 on every route (#844)
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn("attachment write failed", refused.text)
         self.assertEqual(db.cursor(), before)
         self.assertEqual(self.post(body="Next successful message").status_code, 201)
         self.assertEqual(db.conn().execute("SELECT COUNT(*) FROM text_attachments").fetchone()[0], 0)
