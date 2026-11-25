@@ -401,6 +401,14 @@ class Page(unittest.TestCase):
         self.assertEqual(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']['days_left'], 10)
         self.assertIn("The fleet's claude token expires in 10 days", page)
         self.assertIn("The fleet's claude token expires in 10 days", str(self.client.get('/api/status').json()['attention']))
+        due = self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']
+        self.assertEqual(due['renew_by'], (datetime.now(timezone.utc) + timedelta(days=10)).date().isoformat(), "the day it ends, for the card")
+        for days, left, words in ((364.5, 1, "expires today"), (365.5, 0, "has expired")):      # the last day is not 'expired' (#880)
+            with db.conn() as c:
+                c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
+                          ((datetime.now(timezone.utc) - timedelta(days=days)).isoformat(),))
+            self.assertEqual(self.client.get('/api/fleet/secrets', headers=admin).json()['claude_token_due']['days_left'], left)
+            self.assertIn("The fleet's claude token " + words, self.client.get('/machines', headers=admin).text)
 
     def test_the_runtime_a_box_reports_shows_on_its_machine_row(self):
         # #479: the keeper's runtime check reaches /fleet; a problem is marked, a keeper from before shows nothing

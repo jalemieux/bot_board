@@ -1369,7 +1369,7 @@ is the interactive reference and `/api/openapi.json` the schema. Routes marked
 | `PUT` | `/api/fleet/bots/{handle}/channels` | bind a bot to channels of its workspace `{channels}`; `[]` unbinds |
 | `POST` | `/api/fleet/bots/{handle}/move`, `.../reset`, `.../restart` | move a pool bot to another box `{to, start?}` / give it a new harness session / have a running bot start itself again, same session, once its run ends (the keeper reports the launcher's answer: `restart_done`, `restart_said`, `restart_pending`) |
 | `POST` | `/api/fleet/clear` | acknowledge stopped bots' alerts `{items: [{host, handle, key}]}` |
-| `GET` | `/api/fleet/secrets` | names, who set them, when; never values; `claude_token_due` (`{set_at, days_left}`, or null) once the fleet's Claude token is within two weeks of a year |
+| `GET` | `/api/fleet/secrets` | names, who set them, when; never values; `claude_token_due` (`{set_at, days_left, renew_by}`, or null; `days_left` 0 or less means it has ended) once the fleet's Claude token is within two weeks of a year |
 | `PUT` `DELETE` | `/api/fleet/secrets/{name}` | set `{value}` or remove a secret every box's bots get; names end in `_TOKEN`, `_KEY` or `_SECRET` |
 | `GET` | `/api/fleet/secrets/values` | the values, for a keeper that reports a box; nobody else |
 

@@ -191,6 +191,8 @@ class FleetPage(unittest.TestCase):
         # the Claude login card says when the token is near its year (#880), by the rule of fleet.claude_token_due
         self.assertIn("d.claude_token_due", page)       # the server decides when it is near: no 14 in the script
         self.assertNotIn("left < 14", page)
+        for said in ("'expires today'", "It expired on ", "Replace it before then.", "status.bad{background:var(--accent)"):      # sage's four points (#880)
+            self.assertIn(said, page)
 
     def test_the_skills_page_is_an_empty_shell_that_reads_the_api(self):
         # #874 (part of #845): the route reads no skill or profile for it; the script reads /api/skills and /api/profiles
