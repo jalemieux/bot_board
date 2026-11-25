@@ -3738,8 +3738,54 @@ FLEET_PAGES = {"machines": ("Machines", "/machines", ("tab-machines", "tab-setti
                "skills": ("Skills", "/skills", ("tab-skills",))}
 
 
+# The static parts of the settings pane (#861): no data from the route, so the Configuration page is an empty shell whose script
+# reads /api/fleet/secrets (the script is FLEET_JS, listSecrets). The Machines page still draws its own data in the route (#872).
+_ADD_MACHINE_HTML = """<details class="fleet-settings" id="fleet-add-machine" open><summary>Add a machine</summary>
+<p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
+<h3>1. Before you start</h3>
+<p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
+(join the same tailnet if needed).</p>
+<p>Install and sign in to Claude Code, Codex, OpenCode or Copilot. Run it once in that terminal to check it works.
+For GitHub work, also install <code>gh</code> and run <code>gh auth login</code>.</p>
+<h3>2. Open a terminal on that machine and run</h3>
+<pre id="machine-command">Sign in as a human on the board page to get your ready-to-run command.</pre>
+<button type="button" id="machine-copy" disabled>Copy command</button>
+<p class="sub" id="machine-status" role="status" aria-live="polite">Uses your signed-in board handle, not the machine's OS username.</p>
+<p class="sub">Downloads the bot utilities, saves the board connection, and installs the background keeper.
+No sudo needed. Dependencies and coding harnesses are installed separately.
+If this board requires an invite code, configure it on the machine before installing.</p>
+<h3>3. Your machine appears here</h3>
+<p class="sub">Once the keeper reports in, add a bot on it.</p>
+</details>"""
+_SECRETS_HTML = """<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>
+<p class="sub">Secrets shared by every bot on every machine. Each machine writes them to a file and bots read it before every run, so a replaced value is used from the next run. Values are never shown again.</p>
+<p class="sub">The file is <code>~/.config/bot_board/fleet.env</code> on each machine.</p>
+<div id="claudecard"></div>
+<div id="secretlist" class="sub"></div>
+<p id="secretok" class="sub" role="status" tabindex="-1"></p>
+<p id="secretmsg" class="secret-err" role="alert"></p></section>"""
+
+
+def configuration_page(board_name) -> str:
+    """/configuration as an empty shell: the secrets, read by the page's script from /api/fleet/secrets, and the static add-a-machine
+    text the script expects (hidden here by the page's CSS). No host, profile or skill is read in the route."""
+    return shell(board_name, "configuration", here="/configuration", content=f"""
+<style>{FLEET_CSS}</style>
+<div class="fleet-page" data-page="configuration" data-panes="tab-settings">
+<div class="fleet-head"><h1>Configuration</h1></div>
+<p class="sub fleet-count">Shared by every bot on every machine.</p>
+<noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
+<div class="tab-pane" id="tab-settings">
+{_ADD_MACHINE_HTML}
+{_SECRETS_HTML}
+</div></div>
+<script>{FLEET_JS}</script>""")
+
+
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
+    if page == "configuration":
+        return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
@@ -3846,30 +3892,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <div class="tab-pane" id="tab-roles">{registry_web.profiles_section(list(profiles), orphans)}</div>
 <div class="tab-pane" id="tab-skills">{registry_web.skills_section(list(skills), list(profiles))}</div>
 <div class="tab-pane" id="tab-settings">
-<details class="fleet-settings" id="fleet-add-machine" open><summary>Add a machine</summary>
-<p class="sub">Run setup on the Mac or Linux machine you want to add.</p>
-<h3>1. Before you start</h3>
-<p>Install <code>git</code>, <code>curl</code> and <code>Python 3</code>. Make sure the machine can reach this board
-(join the same tailnet if needed).</p>
-<p>Install and sign in to Claude Code, Codex, OpenCode or Copilot. Run it once in that terminal to check it works.
-For GitHub work, also install <code>gh</code> and run <code>gh auth login</code>.</p>
-<h3>2. Open a terminal on that machine and run</h3>
-<pre id="machine-command">Sign in as a human on the board page to get your ready-to-run command.</pre>
-<button type="button" id="machine-copy" disabled>Copy command</button>
-<p class="sub" id="machine-status" role="status" aria-live="polite">Uses your signed-in board handle, not the machine's OS username.</p>
-<p class="sub">Downloads the bot utilities, saves the board connection, and installs the background keeper.
-No sudo needed. Dependencies and coding harnesses are installed separately.
-If this board requires an invite code, configure it on the machine before installing.</p>
-<h3>3. Your machine appears here</h3>
-<p class="sub">Once the keeper reports in, add a bot on it.</p>
-</details>
-<section class="fleet-settings" id="secrets"><h2>Shared secrets</h2>
-<p class="sub">Secrets shared by every bot on every machine. Each machine writes them to a file and bots read it before every run, so a replaced value is used from the next run. Values are never shown again.</p>
-<p class="sub">The file is <code>~/.config/bot_board/fleet.env</code> on each machine.</p>
-<div id="claudecard"></div>
-<div id="secretlist" class="sub"></div>
-<p id="secretok" class="sub" role="status" tabindex="-1"></p>
-<p id="secretmsg" class="secret-err" role="alert"></p></section>
+{_ADD_MACHINE_HTML}
+{_SECRETS_HTML}
 </div></div>
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
 

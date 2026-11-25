@@ -2667,6 +2667,8 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     """The board-wide pages (#644): one page each, drawn from the same data as the old Fleet page."""
     from . import status
     page = request.url.path.strip("/")
+    if page == "configuration":
+        return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()
