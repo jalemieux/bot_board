@@ -60,9 +60,13 @@ class FleetFold(unittest.TestCase):
     def settle(self, section):
         # a details' toggle event comes after the click, and it is what saves the fold: wait until the saved state agrees with the
         # page, not for a fixed 100 ms, which a busy machine overruns (#886). Open means not in the folded record.
-        self.page.wait_for_function(
-            "id => { var d = document.getElementById(id), f = JSON.parse(localStorage.getItem('bb.fleetFolded') || '{}'); return d.open === !(id in f); }",
-            arg=section)
+        try:
+            self.page.wait_for_function(
+                "id => { var d = document.getElementById(id), f = JSON.parse(localStorage.getItem('bb.fleetFolded') || '{}'); return d.open === !(id in f); }",
+                arg=section, timeout=5000)
+        except Exception:
+            seen = self.page.evaluate("id => ({open: document.getElementById(id).open, saved: localStorage.getItem('bb.fleetFolded')})", section)
+            self.fail("%s: the saved fold never agreed with the page (open=%s, saved=%s)" % (section, seen["open"], seen["saved"]))
 
     def open(self):
         return {s: self.page.eval_on_selector(f"#{s}", "d => d.open") for s in SECTIONS}
