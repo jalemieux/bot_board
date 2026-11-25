@@ -2663,53 +2663,6 @@ def _update_word(result: str) -> tuple[str, bool]:
     return "update needs a look", False
 
 
-def _host_machine_block(h: dict, workspaces=(), profiles=()) -> str:
-    """The Mac's card (#595): the host-bots switch, its host bots, the apps and handles it reports, and, with the
-    switch on, the short form that creates a new host bot. Nothing on a box that is not a Mac."""
-    if h.get("host_bots") is None:
-        return ""
-    on, name = bool(h["host_bots"]), e(h["name"])
-    mine = [b for b in h["bots"] if b.get("host_flag") and not b.get("deleted")]
-    bots = ", ".join(f'<a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a>' for b in mine) or "none"
-    found = [a for a in h.get("apps") or [] if isinstance(a, dict)]
-    napps = len(found)
-    apps = ", ".join(f'{e(a.get("name", ""))} {e(a.get("version", ""))}'.strip() for a in found) or "none found"
-    allowed = ", ".join(e(x) for x in h.get("host_allowed") or []) or "nobody yet"
-    form = ""
-    if on and h["reporting"]:
-        ws = "".join(f'<option value="{e(p)}">{e(p)}</option>' for p in workspaces) or '<option value="" disabled selected>no workspace yet</option>'
-        prof = '<option value="">none</option>' + "".join(f'<option value="{e(p["name"])}">{e(p["name"])}</option>' for p in profiles)
-        pick = "".join(f'<label class="chk"><input type="checkbox" name="app" value="{e(a["name"])}"> {e(a["name"])} {e(a.get("version", ""))}</label>'
-                       for a in h.get("apps") or [] if isinstance(a, dict) and a.get("name"))
-        form = (f'<details class="hostnew"><summary>Start a host bot</summary>'
-                f'<form class="hostform" data-host="{name}"><p class="prob">{e(HOST_WARNING)}</p>'
-                '<label class="fld"><span><b>Name</b></span><input name="handle" required maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._-]+"></label>'
-                f'<label class="fld"><span><b>Workspace</b></span><select name="workspace">{ws}</select></label>'
-                f'<label class="fld"><span><b>Role</b></span><select name="profile">{prof}</select></label>'
-                '<label class="fld"><span><b>Harness</b></span><select name="harness"><option>claude</option><option>codex</option></select></label>'
-                '<label class="fld"><span><b>Why it needs the host</b></span><input name="reason" required maxlength="200" placeholder="Godot captures for the effects bots"></label>'
-                f'<div class="fld"><span><b>Apps it uses</b></span>{pick or "<span class=dim>none found in /Applications</span>"}</div>'
-                '<label class="chk"><input type="checkbox" name="ack" required> I understand this bot can read everything my user can.</label>'
-                '<button type="submit" class="act needs-me">Start the host bot</button>'
-                '<p class="dim">After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.</p></form></details>')
-    state = '<span class="pip ok"></span>on' if on else "off"      # off is a normal state: no colour
-    return (f'<div class="hostbox" data-host="{name}"><b>Host bots</b> '
-            f'{state} '
-            f'<button type="button" class="act host-switch needs-me" data-host="{name}" data-on="{0 if on else 1}">'
-            f'turn {"off" if on else "on"}</button>'
-            f'<div class="by">{"bots here that run as the user: " + bots if on or mine else "off: every bot here runs in a container"}</div>'
-            f'<div class="by">allowed on this Mac: {allowed}</div>'
-            f'<details class="by apps"><summary>{napps} apps found</summary>{apps}</details>{form}</div>')
-
-
-
-
-
-
-
-
-
-
 def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
     names = (" ".join(f'<a class="chip" href="/a/{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
                       for h, b in bots))
@@ -3791,6 +3744,83 @@ def configuration_page(board_name) -> str:
 <script>{FLEET_JS}</script>""")
 
 
+# The Mac's card (#595, #890) is drawn by the page's script from /api/fleet, /api/workspaces and /api/profiles, as a full-width row under
+# its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
+# creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
+# handlers in FLEET_JS read its class names and data-* attributes.
+HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING) + ";" + r"""
+(function () {
+  var table = document.querySelector('#fleet-machines table.machines');
+  if (!table) return;
+  var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
+  function get(path) {
+    return fetch(path, {headers: ME && ME.token ? {'Authorization': 'Bearer ' + ME.token} : {}})
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return r.ok ? d : {}; }); }, function () { return {}; });
+  }
+  function el(tag, attrs) {
+    var n = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) { if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); });
+    for (var i = 2; i < arguments.length; i++) if (arguments[i] != null) n.appendChild(typeof arguments[i] === 'string' ? document.createTextNode(arguments[i]) : arguments[i]);
+    return n;
+  }
+  function fld(label, control, tag) { return el(tag || 'label', {'class': 'fld'}, el('span', null, el('b', {text: label})), control); }
+  function option(value, text, extra) { var o = el('option', Object.assign({value: value, text: text}, extra || {})); return o; }
+  function form(h, workspaces, profiles) {
+    var ws = el('select', {name: 'workspace'}), prof = el('select', {name: 'profile'}), harness = el('select', {name: 'harness'});
+    if (workspaces.length) workspaces.forEach(function (w) { ws.appendChild(option(w, w)); });
+    else ws.appendChild(option('', 'no workspace yet', {disabled: '', selected: ''}));
+    prof.appendChild(option('', 'none')); profiles.forEach(function (p) { prof.appendChild(option(p, p)); });
+    ['claude', 'codex'].forEach(function (x) { harness.appendChild(option(x, x)); });
+    var pick = el('div', {'class': 'fld'}, el('span', null, el('b', {text: 'Apps it uses'})));
+    var apps = (h.apps || []).filter(function (a) { return a && typeof a === 'object' && a.name; });
+    apps.forEach(function (a) {
+      pick.appendChild(el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'app', value: a.name}), ' ' + a.name + ' ' + (a.version || '')));
+    });
+    if (!apps.length) pick.appendChild(el('span', {'class': 'dim', text: 'none found in /Applications'}));
+    return el('details', {'class': 'hostnew'}, el('summary', {text: 'Start a host bot'}),
+      el('form', {'class': 'hostform', 'data-host': h.name},
+        el('p', {'class': 'prob', text: HOST_WARNING}),
+        fld('Name', el('input', {name: 'handle', required: '', maxlength: '32', pattern: '[A-Za-z0-9][A-Za-z0-9._-]+'})),
+        fld('Workspace', ws), fld('Role', prof), fld('Harness', harness),
+        fld('Why it needs the host', el('input', {name: 'reason', required: '', maxlength: '200', placeholder: 'Godot captures for the effects bots'})),
+        pick,
+        el('label', {'class': 'chk'}, el('input', {type: 'checkbox', name: 'ack', required: ''}), ' I understand this bot can read everything my user can.'),
+        el('button', {type: 'submit', 'class': 'act needs-me', text: 'Start the host bot'}),
+        el('p', {'class': 'dim', text: 'After it is created, add its name as a line in ~/.config/bot_board/host-bots-allowed on the Mac; it waits until then.'})));
+  }
+  function card(h, workspaces, profiles) {
+    var on = !!h.host_bots, mine = (h.bots || []).filter(function (b) { return b.host_flag && !b.deleted; });
+    var who = el('div', {'class': 'by'});
+    if (on || mine.length) {
+      who.appendChild(document.createTextNode('bots here that run as the user: '));
+      if (!mine.length) who.appendChild(document.createTextNode('none'));
+      mine.forEach(function (b, i) { if (i) who.appendChild(document.createTextNode(', ')); who.appendChild(el('a', {href: '/a/' + encodeURIComponent(b.handle), text: '@' + b.handle})); });
+    } else who.textContent = 'off: every bot here runs in a container';
+    var found = (h.apps || []).filter(function (a) { return a && typeof a === 'object'; });
+    var appText = found.map(function (a) { return ((a.name || '') + ' ' + (a.version || '')).trim(); }).join(', ') || 'none found';
+    var box = el('div', {'class': 'hostbox', 'data-host': h.name}, el('b', {text: 'Host bots'}), ' ',
+      on ? el('span', null, el('span', {'class': 'pip ok'}), 'on') : 'off', ' ',
+      el('button', {type: 'button', 'class': 'act host-switch needs-me', 'data-host': h.name, 'data-on': on ? '0' : '1', text: 'turn ' + (on ? 'off' : 'on')}),
+      who, el('div', {'class': 'by', text: 'allowed on this Mac: ' + ((h.host_allowed || []).join(', ') || 'nobody yet')}),
+      el('details', {'class': 'by apps'}, el('summary', {text: found.length + ' apps found'}), appText));
+    if (on && h.reporting) box.appendChild(form(h, workspaces, profiles));
+    return el('tr', {'class': 'bot-drawer hostrow'}, el('td', {colspan: '7'}, box));
+  }
+  Promise.all([get('/api/fleet'), get('/api/workspaces'), get('/api/profiles')]).then(function (r) {
+    var hosts = (r[0].hosts || []).filter(function (h) { return h.host_bots !== null && h.host_bots !== undefined; });
+    if (!hosts.length) return;
+    var ws = (r[1].workspaces || []).filter(function (w) { return !w.archived; }).map(function (w) { return w.slug; }).sort(function (a, b) { return a.localeCompare(b); });
+    var profiles = (r[2].profiles || []).map(function (p) { return p.name; });
+    var rows = {}; Array.prototype.forEach.call(table.tBodies[0].rows, function (tr) { if (tr.id) rows[tr.id] = tr; });
+    hosts.forEach(function (h) {
+      var row = rows['box-' + h.name]; if (!row) return;
+      var next = row.nextSibling; table.tBodies[0].insertBefore(card(h, ws, profiles), next);
+    });
+  });
+})();
+"""
+
+
 def skills_page(board_name) -> str:
     """/skills as an empty shell (#874): the list is drawn by SKILLS_SHELL_JS from /api/skills and /api/profiles. The static settings pane
     is here because FLEET_JS expects its elements; the page's panes hide it. No skill or profile is read in the route."""
@@ -3812,7 +3842,7 @@ def skills_page(board_name) -> str:
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
+def fleet_page(board_name, hosts, pools=(), status=None, skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
     if page == "configuration":
         return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
@@ -3898,9 +3928,8 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
             f'<td data-label="load"{srt(round(load / cores, 3) if load is not None and cores else -1)}>{gauges[0]}</td>'
             f'<td data-label="memory"{srt(round((total - free) / total, 3) if total and free is not None else -1)}>{gauges[1]}</td>'
             # how many of its logins are in trouble
-            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>'
-            # a Mac's host-bots block has its own full-width row under it, which a sort keeps beneath the Mac
-            + (f'<tr class="bot-drawer hostrow"><td colspan="7">{blk}</td></tr>' if (blk := _host_machine_block(h, workspaces, profiles)) else ""))
+            # a Mac's host-bots block is a full-width row the page's script puts under it (HOST_CARD_JS, #890)
+            f'<td data-label="logins"{srt(bad)}>{creds or "—"}</td><td class="acts">{drain}{remove}</td></tr>')
     machines_html = (('<table class="bots machines"><thead><tr>'
                       + _sortable("Machine", "Status", "Bots", "Load", "Memory", "Logins", None) + '</tr></thead><tbody>'
                       + "".join(machines) + '</tbody></table>') if machines else
@@ -3927,7 +3956,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 {_ADD_MACHINE_HTML}
 {_SECRETS_HTML}
 </div></div>
-<script>{FLEET_JS}{registry_web.REG_SECTION_JS}</script>""")
+<script>{FLEET_JS}{registry_web.REG_SECTION_JS}{HOST_CARD_JS}</script>""")
 
 
 def agent_page(board_name, agent, recent, profile=None, voice=("", "", False, False)) -> str:
