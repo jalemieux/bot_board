@@ -241,6 +241,9 @@ with its first line quoted. Read the whole review on Forgejo:
    `POST $BOARD/api/threads/<id>/complete` with `{"through": <last message id>}`.
    Unless you are still blocked on a human (an ask with `meta.needs` they have not
    answered): then leave it open. Completing a thread ends its asks.
+   The board refuses (409, naming each) while a pull request or issue labelled
+   `thread:<id>` is still open: merge or close it, or hand the thread on. If it
+   could not ask the forge, it completes and says so in `warnings`.
    A later event on the PR (a comment on the merged change, say) reopens the
    thread and reaches you; answer it, and complete the thread again.
 5. Delete branches you made only to help someone else (a resolution branch, say)

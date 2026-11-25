@@ -212,6 +212,24 @@ def _list(full_name: str, tail: str, deadline: float) -> list:
     return data
 
 
+OPEN_TIMEOUT = 5        # seconds: completing a thread waits this long for the forge, then goes on with a warning
+
+
+def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None) -> list[dict]:
+    """The open issues and pull requests of a repository that carry the label `thread:<id>` (#931): the forge's own record of
+    work that belongs to a thread. [{"number", "pull"}], oldest first. The label is built here from an integer and quoted, the
+    path is the repository's, and each item is checked for the label again, so a loose match on the forge is not a block."""
+    label = "thread:%d" % int(thread_id)
+    q = urllib.parse.urlencode({"state": "open", "labels": label, "limit": 50})
+    status, data = _call("GET", _repo_path(full_name, "/issues?" + q), read=True, timeout=timeout or OPEN_TIMEOUT)
+    if status != 200 or not isinstance(data, list):
+        raise ForgeError(f"the forge answered {status} when asked for the open work labelled {label}")
+    out = [{"number": it["number"], "pull": it.get("pull_request") is not None} for it in data
+           if isinstance(it, dict) and isinstance(it.get("number"), int) and it.get("state", "open") == "open"
+           and label in [str(l.get("name")) for l in it.get("labels") or [] if isinstance(l, dict)]]
+    return sorted(out, key=lambda i: i["number"])
+
+
 def _after(stamp, since: str) -> bool:
     """`stamp` (the forge's ISO time, any offset) is at or after `since`, compared as times, not as text."""
     from datetime import datetime, timezone

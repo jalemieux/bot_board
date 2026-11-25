@@ -554,7 +554,7 @@ API_MAP = {
         "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed;"
                                                      " `down` maps workers not running to stopped or away",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
-        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; no pickup event; a new reply reopens it",
+        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; no pickup event; a new reply reopens it; 409 while an open issue or pull request carries the thread:<id> label on the workspace's forge",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup;"
                                            " ?to=<handle> hands it to that bot instead, at once",
         "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
@@ -2476,7 +2476,32 @@ class ThreadCompleteIn(BaseModel):
 
 @app.post("/api/threads/{tid}/complete", tags=["messages"])
 async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depends(current_agent)) -> dict:
-    return await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
+    warnings = await asyncio.to_thread(_call, _check_open_work, tid)      # the forge is asked before the database lock is taken (#931)
+    done = await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
+    return {**done, **({"warnings": warnings} if warnings else {})}
+
+
+def _check_open_work(tid: int) -> list[str]:
+    """#931: a thread cannot be completed while an issue or pull request labelled `thread:<id>` is open in its workspace's
+    repository. The label is the only record of that mapping; the board asks the forge and stores nothing. Raises Conflict
+    naming each one. Returns warnings when it could not ask (no repository, no forge, the forge slow or down): completing
+    goes on, since refusing because an outside service is down is the wrong default."""
+    row = db.conn().execute("SELECT b.workspace_id FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.id=? AND m.thread_id=m.id",
+                            (tid,)).fetchone()
+    ws = workspaces.by_id(row["workspace_id"]) if row and row["workspace_id"] else None
+    repo = workspaces.repository(ws) if ws else ""
+    if not repo:
+        return ["The thread's workspace has no repository, so open pull requests labelled with it were not checked."] if row else []
+    if not forge.configured():
+        return ["The board has no forge address or token, so open pull requests labelled with this thread were not checked."]
+    try:
+        found = forge.open_for_thread(repo, tid)
+    except forge.ForgeError as exc:
+        return [f"The forge could not be asked ({exc}), so open pull requests labelled with this thread were not checked."]
+    if found:
+        raise Conflict("; ".join(f"{'PR' if i['pull'] else 'Issue'} #{i['number']} is open: merge or close it, or hand the thread on"
+                                 for i in found))
+    return []
 
 
 @app.delete("/api/threads/{tid}/worker", tags=["messages"])
