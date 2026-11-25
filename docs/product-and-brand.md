@@ -1,7 +1,7 @@
 # Product and brand
 
 Status: DRAFT for jac's agreement. Drafted by bot pia, board thread 20681, 2026-11-25.
-Nothing here is agreed until jac says so. Items marked **OPEN** need jac's answer. Claims marked **not confirmed** wait for the architect's answer (asked in thread 20681).
+Nothing here is agreed until jac says so. Items marked **OPEN** need jac's answer. Section 5 claims were confirmed by the architect on 2026-11-25 (thread 20681).
 
 ## 1. Product
 
@@ -54,51 +54,64 @@ Logo, colours, fonts: none recorded. **OPEN: where are they kept, or are there n
 
 ## 5. Claims
 
-Each claim below is the README's wording. Proof is the README section or doc. All are **not confirmed** by the architect until the thread says so.
+Each claim uses the wording the architect confirmed. Confirmed: 2026-11-25, thread 20681 (message 20712, checked against `bin/bot`, `app/db.py`, `app/progress.py`, `app/hooks.py`).
 
 ### Runs on your own machines
-Say: "The bots run on as many machines as you have, with the harnesses and subscriptions you already pay for."
+Say: "The bots run on your own machines, with the harness logins you already pay for."
 Proof: README intro; `docs/REFERENCE.md`.
-Confirmed: not confirmed.
-Not: "hosted", "cloud", "secure".
+Confirmed: 2026-11-25, thread 20681. True with a limit.
+Not: "hosted", "cloud", "secure". Every bot of a fleet shares one subscription's usage limits. A Mac bot in a container needs the token from `claude setup-token`. Say "as many machines as you have" only for the one-command join of another machine.
 
-### Idle bots spend no tokens
-Say: "Idle bots spend no tokens."
-Proof: README intro; section "Bot": a bot "wakes up only when a message is for it".
-Confirmed: not confirmed.
+### Idle bots wait without running the harness
+Say: "Idle bots wait without running the harness."
+Proof: README, "Bot".
+Confirmed: 2026-11-25, thread 20681. True with a limit.
+Not: "idle bots spend no tokens". The board's nudge is a message, so a quiet worker's turn costs tokens. Every wake reads the guide.
 
 ### One owner per thread
-Say: "Claims are atomic, so two bots never take the same task."
+Say: "Two bots never take the same thread."
 Proof: README, "Thread".
-Confirmed: not confirmed.
-Not: any wording that implies a bot never fails; the sweeper exists because bots stop.
+Confirmed: 2026-11-25, thread 20681. True.
+Not: "task". Nothing stops two bots from working one forge issue if they ignore its labels. Do not imply a bot never fails: the board frees the thread of a stopped bot.
 
 ### Work keeps moving
-Say: "The board nudges quiet bots and hands a stopped bot's work to another."
+Say: "The board nudges a quiet bot once, and frees a stopped bot's thread for another bot to pick up."
 Proof: README, "Moderator"; `docs/moderator-and-sweeper.md`.
-Confirmed: not confirmed.
+Confirmed: 2026-11-25, thread 20681. True with a limit.
+Not: "hands work to another bot" (it is picked up, not assigned) and "takes a running bot's thread away". The release needs the bot's keeper to report it stopped.
 
 ### Forge events wake the owner
-Say: "Reviews and merges on your Forgejo wake the bot that owns the pull request."
+Say: "On Forgejo, reviews and merges wake the bot that owns the pull request."
 Proof: README intro; `docs/board-and-forge.md`.
-Confirmed: not confirmed.
-Not: GitHub, until the architect says it holds there.
+Confirmed: 2026-11-25, thread 20681. True with a limit.
+Not: GitHub. The pull request needs its `thread:<id>` label, and a human must set the webhook as a system webhook with its secret.
 
 ### Several harnesses
-Say: "Claude Code, Codex, Copilot and OpenCode."
-Proof: README intro.
-Confirmed: not confirmed. Ask which harnesses are fully supported and which are limited.
+Say: "Claude Code, Codex, Copilot and OpenCode are supported."
+Proof: `bin/bot` and its tests.
+Confirmed: 2026-11-25, thread 20681. True with a limit.
+Not: "the fleet runs all four". The architect has seen no Copilot use in this repo's work.
 
 ### Built by its own fleet
-Say: "This repo is built by its own fleet."
+Say: "This repo is built by its own fleet, with me deciding what." (jac, first person)
 Proof: the repository's pull request history.
-Confirmed: not confirmed.
+Confirmed: 2026-11-25, thread 20681. True with a limit: a human decides what to build and merges some pull requests.
 
 ### Warning (always paired with install instructions)
 Say: "Keep the board on 127.0.0.1 or on your tailnet, never on the open internet."
 Proof: `SECURITY.md`.
 
-No numbers (stars, commits, views) appear in public text unless fetched the same day and linked.
+Not to claim: "secure". No numbers (stars, commits, views) in public text unless fetched the same day and linked.
+
+### Uses the product supports, not yet claims
+Confirmed as true in the code on 2026-11-25 (thread 20681). Each becomes a claim when jac wants it said, with wording agreed first.
+- Routines: a check runs on a timer with no tokens and posts work only when it finds some. A human approves a check a bot wrote.
+- Several workspaces on one board, each with its own channels, bots, knowledge base and team agreement.
+- A shared knowledge base and a registry of skills and profiles, delivered to bots at their next prompt.
+- A human's inbox: a blocked bot sets `meta.needs` and the question waits for the person.
+- One page to run the fleet: machines, bots, shared secrets, start, stop, move a bot, hand off its threads.
+- Installs: native on one machine, or the board and Forgejo in Docker, with bots optionally in containers.
+- Attachments in a message, and `scripts/replay`, which turns a thread into a vertical video.
 
 ## 6. Channels
 
