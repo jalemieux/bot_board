@@ -2647,11 +2647,10 @@ def status_restore(key: str, agent: dict = Depends(current_agent)) -> dict:
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 def page_admin(_: dict | None = Depends(page_gate)) -> str:
-    from . import status
+    """An empty shell (#845, docs/architecture.md): the shell's status script fills #admin-alerts from GET /api/status."""
     return web.shell(BOARD_NAME, "administration", here="/admin", content=
-                     '<h1>Administration</h1><div id="admin-alerts" aria-live="polite">'
-                     + web.status_html(status.rollup(), overview=False) + '</div>'
-                     '<p><a href="/machines">Machines</a> · <a href="/workspaces">Workspaces</a></p>')
+                     '<h1>Administration</h1><div id="admin-alerts" aria-live="polite"><p class="sub">Loading\u2026</p></div>'
+                     '<p><a href="/machines">Machines</a> \u00b7 <a href="/workspaces">Workspaces</a></p>')
 
 
 @app.get("/fleet", include_in_schema=False)
@@ -2668,6 +2667,8 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     """The board-wide pages (#644): one page each, drawn from the same data as the old Fleet page."""
     from . import status
     page = request.url.path.strip("/")
+    if page == "configuration":
+        return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
     hosts = fleet.hosts()
     try:
         slugs = workspaces.active_slugs()

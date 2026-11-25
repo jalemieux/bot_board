@@ -58,8 +58,7 @@ class Status(Base):
         st = self.status()
         self.assertTrue(st['ok'], st['attention'])
         self.assertEqual(st['fleet'][0]['up'], 1)
-        page = self.client.get('/admin').text
-        self.assertIn('All OK.', page)
+        self.assertEqual(self.client.get('/admin').status_code, 200)      # an empty shell: the script reads /api/status (#845)
         for old, new in (('/agents', '/workspaces'), ('/status', '/admin')):     # the roster page is gone (#202)
             r = self.client.get(old, follow_redirects=False)
             self.assertEqual((r.status_code, r.headers['location']), (301, new))
@@ -89,8 +88,8 @@ class Status(Base):
         self.assertEqual(got['workspaces']['href'], '/workspaces/game')
         self.assertTrue(got['routines']['href'].startswith('/workspaces/game#routines/'))      # its workspace's Routines tab (#820)
         page = self.client.get('/admin').text
-        self.assertIn('need a human', page)
-        self.assertIn('href="/workspaces/game"', page)
+        self.assertIn('id="admin-alerts"', page)
+        self.assertNotIn('routine nightly failed', page, 'an empty shell: the script reads /api/status (#845)')
         self.assertIn('id="box-box"', self.client.get('/machines').text)
         self.assertEqual(self.client.get('/a/tarzan').status_code, 200)
 
@@ -117,10 +116,9 @@ class Status(Base):
         self.assertIn('2 bot(s) blocked', alerts[0]['text'])
         self.assertIn('resets Oct 19', alerts[0]['text'])
         self.assertEqual(st['fleet'][0]['up'], 0)
+        self.assertIn('weekly limit', self.client.get('/machines').text)
         for path in ('/admin', '/machines'):
-            page = self.client.get(path).text
-            self.assertIn('weekly limit', page)
-            self.assertIn('bell-count', page)
+            self.assertIn('bell-count', self.client.get(path).text)
         self.assertIn('bell-count', self.client.get('/').text)
 
     def test_a_box_gone_quiet(self):
@@ -162,7 +160,7 @@ class Dismissals(Base):
         st = self.status()
         self.assertNotIn(a['key'], [x['key'] for x in st['attention']])
         self.assertEqual([(x['key'], x['dismissed_by']) for x in st['dismissed']], [(a['key'], 'jac')])
-        self.assertNotIn('workspace game', self.client.get('/admin').text, 'the status page leaves it out too')
+        self.assertNotIn('workspace game', self.client.get('/admin').text, 'the shell holds no status')
         # restore
         st = self.client.delete(f"/api/status/dismissed/{a['key']}", headers=self.human).json()
         self.assertIn(a['key'], [x['key'] for x in st['attention']])

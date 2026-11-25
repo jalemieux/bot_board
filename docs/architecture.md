@@ -99,7 +99,6 @@ One way: a row in `registry_meta` (`key`, `value`), written once with `INSERT OR
 Example: `app/team.py` (`team_agreements_backfilled`); also `app/guide.py`, `app/fleet.py`, `app/workspaces.py`,
 `app/registry.py` (`seeded`).
 Not: a table of its own for the same job.
-Not yet: `app/routines.py` keeps its marker in `routines_meta` (#839).
 
 ### Configuration
 One way: a setting of the board process is an environment variable, read once at import or start-up into a module
@@ -116,6 +115,8 @@ value (last four characters only), fetched in full only by a keeper with its own
 `~/.config/bot_board/fleet.env` for bots. The board reads two of its values itself (`FORGEJO_TOKEN`,
 `FORGEJO_READ_TOKEN`) through `fleet.forge_token`, called only by `app/forge.py`. A secret is never put on a command
 line (`SECURITY.md`): it goes by the environment, standard input or a file descriptor.
+A routine's check gets the fleet's secrets and an allowlist of the runner's environment, not the rest of it (`CHECK_ENV` in
+`bin/routines`); that is a scrub, not a sandbox, since a check runs as the board's user.
 Example: `app/fleet.py` (`secrets()`, `secret_values()`, `forge_token()`).
 Other credentials kept apart on purpose, each its own table or file: an agent's token (hash only, `agents`), the
 Forgejo webhook secret (`hooks`, never handed to bots), the routines runner's token file (`ROUTINES_CONFIG_DIR`).
@@ -130,13 +131,13 @@ webhook (HMAC of the body, `hooks.verify`) and a one-time sign-in link (`/api/si
 Example: `app/main.py`, `current_agent`.
 
 ### Who may do it (authorization)
-One way: the module that owns the rule has a helper that raises `PermissionError`, and the route's wrapper turns it into
-403. The rule today is a human, or an admin bot where it says so.
-Example: `workspaces.require_manage` and `require_write` in `app/workspaces.py`; `registry.require_writer` in
-`app/registry.py`.
+One way: the module that owns the rule has a helper that raises `PermissionError`, and the app answers 403 with its words
+(one handler in `app/main.py`; an error the operating system raised, which carries an `errno`, is not a refusal and stays a
+server error). The rule today is a human, or an admin bot where it says so.
+Example: `workspaces.require_human` (a human, with an optional exception), `require_manage` and `require_write` in
+`app/workspaces.py`; `registry.require_writer` in `app/registry.py`.
 Not: an `if agent["kind"] != "human": raise HTTPException(403)` written in a route, or a yes-or-no helper the route
 turns into an error itself.
-Not yet: 26 inline checks in `app/main.py` and `hook_secret` (#840).
 
 ### Background work
 One way for the board's own work: a loop in a daemon thread started in `_startup()`, whose pass catches every
@@ -207,7 +208,8 @@ Example: `workspaces_page` in `app/workspace_web.py`; `welcome_page`.
 Every page is a Python string with its script written inline in the same file; a value the server puts in the HTML goes
 through `web.e`.
 Not: a route that reads the data and renders it into the HTML, or embeds a first copy for the script.
-Not yet: `page_fleet`, `page_skill`, `page_profile`, `page_profile_new` and `page_admin` render data in the route, and
+Not yet: `page_fleet` (for `/machines`, `/roles` and `/skills`: #872, #873, #874), `page_skill`, `page_profile` and `page_profile_new` render data in
+the route (`page_admin` and `/configuration` are shells, #859 and #861), and
 `_app_page` (the board page) embeds a first copy (#845).
 
 ### Tests
