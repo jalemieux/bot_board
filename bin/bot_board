@@ -14,6 +14,11 @@
 #   stop       board: stop it; bots: stop the keeper and let each bot finish, then exit
 #   restart    both: start again on the code in the checkout; a busy bot finishes first
 #   status     is each one running
+#   containers ask "Run bots in containers?" again and write the answer as install does: yes sets BOT_RUNTIME in the bots' config, no
+#              removes it. A running bot keeps its way until it restarts. install takes --containers and --no-containers (or
+#              BOT_BOARD_CONTAINERS=1|0) to answer it without a terminal; with none, the default is taken: yes when Docker or
+#              Podman works (and not for a claude bot on a Mac), else no. A yes with no runtime installed prints how to get one and
+#              stops (#878)
 #   expose <address>  make the board on this machine reachable at that address (a Tailscale address is best; 0.0.0.0 needs
 #              --all-interfaces, a public IPv4 address needs --public), and point this machine's keeper at it, so other machines can be added to it (#796)
 #   update     pull the checkout (checked; rolled back if it fails), then restart the
@@ -82,18 +87,24 @@ if [ "$CMD" = expose ]; then       # expose <address> [--all-interfaces]: an add
   done
   set --
 fi
+CONTAINERS=""
 for a in "$@"; do
-  case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; --forge) FORGE=1 ;; *) usage ;; esac
+  case $a in board|bots|all) WHAT=$a ;; --purge) PURGE=1 ;; --forge) FORGE=1 ;;
+    --containers) CONTAINERS=1 ;; --no-containers) CONTAINERS=0 ;; *) usage ;; esac
 done
+[ -z "$CONTAINERS" ] || [ "$CMD" = install ] || die "--containers and --no-containers go with install; to change it later: bot_board containers"
+[ -z "$CONTAINERS" ] || export BOT_BOARD_CONTAINERS=$CONTAINERS
 [ -z "$FORGE" ] || [ "$CMD" = install ] || die "--forge goes with install"
 [ -z "$FORGE" ] || [ -z "$WHAT" ] || [ "$WHAT" = all ] || die "--forge installs the board, Forgejo and the bots together"
 case $CMD in
   install) WHAT=${WHAT:-all} ;;
   uninstall) [ -n "$WHAT" ] || die "uninstall what? board, bots or all" ;;
-  start|stop|restart|status|update|expose) ;;
+  start|stop|restart|status|update|expose|containers) ;;
   *) usage ;;
 esac
 [ -x "$BOT" ] || [ "$CMD" = install ] || die "no checkout at $SRC: install first"
+# the same question as install, later (#878). It needs no component: with a yes and no runtime it says how to get one, and stops.
+[ "$CMD" != containers ] || exec bash "$SRC/deploy/containers" ask
 if [ "$CMD" = install ] && [ -z "${BOT_BOARD_FROM_SRC:-}" ]; then
   # Install brings the checkout here and current, then goes on from its own bot_board:
   # piped from curl the first time it clones it; on a machine that has one (a keeper too
@@ -207,8 +218,7 @@ forge_install() {
     # an earlier install wrote BOT_RUNTIME (it found Docker, #652) and uninstall without --purge keeps it (#813)
     grep -qs '^BOT_RUNTIME=' "$CFG_FILE" && die "this machine is set to run its bots in containers (the line BOT_RUNTIME in $CFG_FILE, left by an earlier install).
   This install runs Forgejo and the bots on the machine itself, with your user's access, and it will not change that setting for you.
-  To go on and run the bots as you, delete that line and run the install again:
-    { grep -v '^BOT_RUNTIME=' \"$CFG_FILE\" || true; } > \"$CFG_FILE.new\" && mv \"$CFG_FILE.new\" \"$CFG_FILE\"
+  To go on and run the bots as you, change the setting first: run  bot_board containers  and answer no, then run the install again.
   Or remove everything first with: bot_board uninstall all --purge"
     note "native install ($([ "$(uname -s)" = Darwin ] && echo "a Mac, Forgejo from Homebrew" || { [ "${FORGE_NATIVE:-}" = 1 ] && echo "FORGE_NATIVE=1" || echo "no Docker found"; })): the bots will run as you, with your user's access, not in containers"
   fi

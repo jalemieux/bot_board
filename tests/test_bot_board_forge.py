@@ -52,7 +52,7 @@ echo "docker $*" >> "$FAKE_LOG"
 exit 0
 '''
 FAKE_BOT = r'''#!/bin/sh
-echo "bot $* BOARD=$BOARD" >> "$FAKE_LOG"
+echo "bot $* BOARD=$BOARD CONTAINERS=${BOT_BOARD_CONTAINERS:-}" >> "$FAKE_LOG"
 '''
 FAKE_RUN = r'''#!/bin/sh
 echo "run.sh $*" >> "$FAKE_LOG"
@@ -194,16 +194,8 @@ class ForgeInstall(unittest.TestCase):
         r = self.native()
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("set to run its bots in containers", r.stderr)
-        self.assertIn("{ grep -v '^BOT_RUNTIME=' ", r.stderr, "the one command that fixes it is in the message")
-        # the printed command, run as printed, deletes the line, also when it is the only one in the file
-        fix = [ln.strip() for ln in r.stderr.splitlines() if ln.strip().startswith("{ grep -v")][0]
-        for content in ('BOT_RUNTIME="docker"\n', 'KEEPER_DEFAULT_BOT="claude"\nBOT_RUNTIME="docker"\nX="1"\n'):
-            self.cfg.write_text(content)
-            done = subprocess.run(["bash", "-c", fix], capture_output=True, text=True)
-            self.assertEqual(done.returncode, 0, done.stderr)
-            self.assertNotIn("BOT_RUNTIME", self.cfg.read_text())
-        self.assertEqual(self.cfg.read_text(), 'KEEPER_DEFAULT_BOT="claude"\nX="1"\n', "the other settings stay")
-        self.cfg.write_text('BOT_RUNTIME="docker"\n')
+        self.assertIn("bot_board containers", r.stderr, "the command that changes the setting is named (#878)")
+        self.assertEqual(self.cfg.read_text(), 'BOT_RUNTIME="docker"\n', "the install changed nothing")
         self.assertIn("bot_board uninstall all --purge", r.stderr)
         self.assertNotIn("keeps using Docker", r.stderr)
         self.assertEqual(self.calls(), [], "nothing was started")
@@ -281,6 +273,23 @@ class ForgeInstall(unittest.TestCase):
                            capture_output=True, text=True, timeout=60)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("needs FORGEJO_TOKEN", r.stderr)
+
+    def test_the_containers_switches_reach_the_installer_as_the_environment_and_the_command_asks_again(self):     # #878
+        script(self.src / "run.sh", FAKE_RUN)
+        script(self.src / "deploy" / "containers", '#!/bin/sh\necho "containers $1 TTY=${BOT_TTY:-}" >> "$FAKE_LOG"\n')
+        for flag, value in (("--containers", "1"), ("--no-containers", "0")):
+            self.log.write_text("")
+            r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "install", "bots", flag], env=self.env,
+                               capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn(f"CONTAINERS={value}", "\n".join(c for c in self.calls() if c.startswith("bot install")), flag)
+        self.log.write_text("")
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "containers"], env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([c.split(" TTY")[0] for c in self.calls()], ["containers ask"])
+        r = subprocess.run(["bash", str(self.src / "bin" / "bot_board"), "status", "--containers"], env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("go with install", r.stderr)
 
     def test_no_docker_on_the_path_is_enough_to_go_native(self):
         script(self.src / "run.sh", FAKE_RUN)

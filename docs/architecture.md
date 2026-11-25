@@ -157,8 +157,10 @@ box; `host` on a box that chose containers needs the box's host-bots switch and 
 machine's own consent line besides; a box with no runtime has nothing to gate. `GET /api/me` answers it, and `host_bot`
 too while an older launcher reads that. Design: `docs/runtime-choice.md`.
 Example: `app/fleet.py`, `_runs_problem` and `_set_runs`.
-Not yet: the launcher and the keeper obey `runs` (#876), the Team tab sets it (#877), the installer asks and `bot_board
-containers` changes it (#878). Today only the board carries it.
+The machine's setting comes from one question, asked in `deploy/containers`: at install, and again with `bot_board
+containers`. Example: `deploy/containers` (the answer, the default, the exit when containers are wanted and none is installed).
+Not yet: the launcher and the keeper obey `runs` (#876), the Team tab sets it (#877). Today the board carries it, and the
+installer sets the machine's default.
 
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
