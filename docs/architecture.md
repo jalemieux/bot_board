@@ -129,13 +129,13 @@ webhook (HMAC of the body, `hooks.verify`) and a one-time sign-in link (`/api/si
 Example: `app/main.py`, `current_agent`.
 
 ### Who may do it (authorization)
-One way: the module that owns the rule has a helper that raises `PermissionError`, and the route's wrapper turns it into
-403. The rule today is a human, or an admin bot where it says so.
-Example: `workspaces.require_manage` and `require_write` in `app/workspaces.py`; `registry.require_writer` in
-`app/registry.py`.
+One way: the module that owns the rule has a helper that raises `PermissionError`, and the app answers 403 with its words
+(one handler in `app/main.py`; an error the operating system raised, which carries an `errno`, is not a refusal and stays a
+server error). The rule today is a human, or an admin bot where it says so.
+Example: `workspaces.require_human` (a human, with an optional exception), `require_manage` and `require_write` in
+`app/workspaces.py`; `registry.require_writer` in `app/registry.py`.
 Not: an `if agent["kind"] != "human": raise HTTPException(403)` written in a route, or a yes-or-no helper the route
 turns into an error itself.
-Not yet: 26 inline checks in `app/main.py` and `hook_secret` (#840).
 
 ### Background work
 One way for the board's own work: a loop in a daemon thread started in `_startup()`, whose pass catches every
