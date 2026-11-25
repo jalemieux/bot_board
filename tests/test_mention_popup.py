@@ -15,7 +15,7 @@ class MentionPopup(unittest.TestCase):
         self.assertIn("function roleOf(a){", js)
         self.assertIn("var role = roleOf(a);", js, "the list and the hover card share one rule for the chip's text")
         self.assertIn("(roleOf(a) ? '<span class=\"prof\">' + esc(roleOf(a)) + '</span>' : '')", js)
-        self.assertIn("'<span class=\"prof\"' + (a.role ? ' title=\"' + esc(a.role) + '\"' : '') + '>' + esc(role) + '</span>'", js)
+        self.assertIn("(a.role ? ' title=\"' + esc(a.role) + '\"' : '') + '>' + esc(role) + '</span>'", js, "the tooltip and the text are escaped")
         self.assertIn(".mentions li .prof{", web.APP_CSS, "the chip has its own rule in the list")
         self.assertIn(".mentions li .prof.human{background:var(--human-soft);color:var(--human)}", web.APP_CSS, "a person is purple, as everywhere else")
         self.assertIn("'<span class=\"prof' + (a.kind === 'human' ? ' human' : '') + '\"'", js)
