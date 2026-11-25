@@ -29,6 +29,8 @@ class Install(unittest.TestCase):
             src = home / "src"
             (src / ".git").mkdir(parents=True)
             (src / "bin").mkdir()
+            (src / "deploy").mkdir()
+            (src / "deploy/containers").write_text((ROOT / "deploy/containers").read_text())      # the question where the bots run (#878)
             (src / "bin/keeper").write_text("import sys\nsys.stdout.write(%r)\n" % "".join("\t".join(r) + "\n" for r in rows))
             (src / "bin/bot").write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n'
                                          + (f'echo "# default bot: {note}" >> "$BOT_CONFIG"\n' if note else "")
@@ -55,6 +57,8 @@ class Install(unittest.TestCase):
                                                 "BOT_BOARD_DIR": str(home), "BOARD": BOARD, "BOT_INSTALL_WAIT": "1",
                                                 "PATH": str(home / "commands") + os.pathsep + os.environ["PATH"],
                                                 "BOT_TTY": str(home / ("tty" if tty is not None else "none")),
+                                                # one tty file answers both questions in a test: the containers one is answered by its switch (#878)
+                                                **({"BOT_BOARD_CONTAINERS": "0"} if tty is not None else {}),
                                                 **(env or {})})
             self.assertEqual(r.returncode, 0, r.stderr)
             self.log = (home / "keeper.log").read_text() if (home / "keeper.log").exists() else ""      # the quiet install's notes (#766)
@@ -95,7 +99,7 @@ class Install(unittest.TestCase):
         r, config = self.install(self.CLAUDE_OK, env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Linux"})
         self.assertIn('BOT_RUNTIME="docker"', config)
         self.assertNotIn("BOT_CONTAINER", config)     # the runner reads the board at each run (#673)
-        self.assertIn("docker found: the bots run in containers", r.stderr)
+        self.assertIn("the bots run in containers (docker)", r.stderr)
         self.assertIn("they share this machine's network, so they can reach any service on 127.0.0.1", r.stderr)
         r, config = self.install([("codex", "ok", "")], env={"BOARD": "http://127.0.0.1:8080"}, commands={**up, "uname": "echo Darwin"})
         self.assertNotIn("BOT_CONTAINER", config)
@@ -111,7 +115,7 @@ class Install(unittest.TestCase):
         self.assertEqual(r.stdout.splitlines(), ["keeper", "install"])
         self.assertEqual(r.stderr, "", "nothing informative on the screen")
         self.assertEqual(self.log_mode, "0o600", "the log is owner-only")
-        for line in ("no terminal to ask on: starting a default bot with claude", "docker found: the bots run in containers", "started @ada (claude) in workspace admin"):
+        for line in ("no terminal to ask on: starting a default bot with claude", "the bots run in containers (docker)", "started @ada (claude) in workspace admin"):
             self.assertIn(line, self.log)
         self.assertIn('KEEPER_DEFAULT_BOT="claude"', config)
         # what a person must do still prints: a harness that is not logged in
@@ -134,7 +138,7 @@ class Install(unittest.TestCase):
     def test_no_working_runtime_says_the_bots_run_on_the_machine(self):
         r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 1"})   # installed, engine down
         self.assertNotIn("BOT_RUNTIME", config)
-        self.assertIn("no container runtime found: the bots run on this machine", r.stderr)
+        self.assertIn("the bots run on this machine, with your user's access", r.stderr)
 
     def test_claude_on_a_mac_stays_on_the_host_for_its_keychain_login(self):
         r, config = self.install(self.CLAUDE_OK, commands={"docker": "exit 0", "uname": "echo Darwin"})
