@@ -34,7 +34,7 @@ jobs:
           git log --oneline -1
       # bin/bot formats `bot ps` with `column` (bsdextrautils), which the Python image lacks.
       - run: command -v column >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends bsdextrautils >/dev/null; }
-      - run: command -v node && node --version || echo 'NODE-836: node is not installed'
+      - run: 'command -v node && node --version || echo NODE-836 node is not installed'
       - run: pip install -q -r requirements.txt httpx playwright
       # the image has the browser's system packages; a newer Playwright still fetches its own browser
       - run: if [ -e /etc/bot_board-tests ]; then python -m playwright install chromium; else python -m playwright install --with-deps chromium; fi
