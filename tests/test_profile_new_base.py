@@ -52,6 +52,7 @@ class NewProfileBaseSkills(unittest.TestCase):
 
     def test_base_skill_is_fixed_and_not_sent(self):
         self.page.goto("http://board.test/fleet/profiles/new")
+        self.page.wait_for_selector("#starters")         # the page's script fills the shell from /api (#860)
         base = self.page.locator('input[name=skill][value="house-style"]')
         self.assertTrue(base.is_checked() and base.is_disabled())
         self.page.click('#starters button[data-key=""]')            # a blank starter unticks the rest, not base
@@ -71,6 +72,7 @@ class NewProfileBaseSkills(unittest.TestCase):
         self.client.post("/api/profiles", headers=self.human, json={"name": "lister", "role": "Lists it.", "skills": [
             {"name": "house-style"}, {"name": "github-lifecycle", "mandatory": True}]}).raise_for_status()
         self.page.goto("http://board.test/fleet/profiles/lister")
+        self.page.wait_for_selector("#profile-edit")
         self.assertEqual(self.page.locator('#profile-edit input[name=skill][value="house-style"]').count(), 0)
         self.page.fill("#profile-edit input[name=role]", "Lists it, edited.")
         self.page.fill("#profile-edit input[name=reason]", "a new role")

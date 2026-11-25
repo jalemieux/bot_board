@@ -1476,7 +1476,7 @@ def skill_get(name: str, request: Request, revision: int | None = Query(None, ge
     body and revision instead; `?revision=N` an older revision."""
     skill = _call(registry.skill_revision, name, revision) if revision else _call(registry.get_skill, name)
     if "json" in request.query_params:
-        return {"skill": skill}
+        return {"skill": skill, "bots": registry.bots_of_skill(skill["name"])}
     if skill.get("deleted"):
         raise HTTPException(404, f"revision {revision} of {name} is its deletion")
     return PlainTextResponse(registry.skill_text(skill), headers={"X-Skill-Revision": str(skill["revision"])})
@@ -1520,7 +1520,7 @@ def skill_delete(name: str, body: SkillDeleteIn, agent: dict = Depends(current_a
 
 @app.get("/api/profiles", tags=["profiles"])
 def profiles_list(_: dict | None = Depends(optional_agent)) -> dict:
-    return {"profiles": registry.list_profiles()}
+    return {"profiles": registry.list_profiles(), "taken": registry.taken_names()}
 
 
 @app.post("/api/profiles/{name}/reset", tags=["profiles"])
@@ -2674,41 +2674,25 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
 
 
 @app.get("/fleet/skills/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_skill(name: str, _: dict | None = Depends(page_gate)) -> HTMLResponse:
-    """A skill's page: editor, preview, what a bot gets, who uses it, history, delete."""
+def page_skill(name: str, _: dict | None = Depends(page_gate)) -> str:
+    """A skill's page: editor, preview, what a bot gets, who uses it, history, delete. An empty shell; its script reads /api/skills."""
     from .registry_web import skill_page
-    try:
-        skill = registry.get_skill(name)
-    except (KeyError, ValueError):
-        return HTMLResponse(web.not_found(BOARD_NAME, f"no skill named {name}"), 404)
-    return HTMLResponse(skill_page(BOARD_NAME, skill, registry.skill_history(name), registry.list_profiles()))
+    return skill_page(BOARD_NAME)
 
 
 @app.get("/fleet/profiles/new", response_class=HTMLResponse, include_in_schema=False)
-def page_profile_new(request: Request, _: dict | None = Depends(page_gate)) -> str:
-    """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone)."""
+def page_profile_new(_: dict | None = Depends(page_gate)) -> str:
+    """Create a profile: from a template, a blank, or an existing profile (?from=<name>, which is Clone). An empty shell."""
     from .registry_web import profile_new_page
-    start = (request.query_params.get("from") or "").strip().lower() or None
-    return profile_new_page(BOARD_NAME, registry.templates(), registry.list_profiles(), registry.list_skills(), start)
+    return profile_new_page(BOARD_NAME)
 
 
 @app.get("/fleet/profiles/{name}", response_class=HTMLResponse, include_in_schema=False)
-def page_profile(name: str, request: Request, _: dict | None = Depends(page_gate)) -> HTMLResponse:
+def page_profile(name: str, _: dict | None = Depends(page_gate)) -> str:
     """A profile's page: what it says and its skills, in an edit form; the bots that carry it; the text a bot reads;
-    history and lineage."""
+    history and lineage. An empty shell; its script reads /api/profiles."""
     from .registry_web import profile_page
-    try:
-        profile = registry.get_profile(name)
-    except KeyError:
-        return HTMLResponse(web.not_found(BOARD_NAME, f"no profile named {name}"), 404)
-    bots = []
-    for h in fleet.hosts():
-        for b in h["bots"]:
-            if (b.get("profile") or "").lower() == profile["name"].lower():
-                bots.append({**b, "host": h["name"], "state": fleet.bot_state(b, h["reporting"])})
-    bots.sort(key=lambda b: b["handle"].lower())
-    return HTMLResponse(profile_page(BOARD_NAME, profile, bots, registry.profile_history(profile["name"]),
-                                     registry.list_skills(), str(request.base_url)))
+    return profile_page(BOARD_NAME)
 
 
 @app.get('/workspaces', response_class=HTMLResponse, include_in_schema=False)

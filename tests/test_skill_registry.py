@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
 from app import db, main, registry
+sys.path.insert(0, str(ROOT / "tests"))
+import regpages
 
 SKILL = """---
 name: release-notes
@@ -142,9 +144,9 @@ class Registry(unittest.TestCase):
         lister = self.client.get("/api/profiles/lister", headers=self.bot).json()["profile"]
         self.assertEqual([s["name"] for s in lister["base_skills"]], ["house-style"])     # listed or not, it is base
         self.assertIn('id="base-skills">Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">',
-                      self.client.get("/fleet/profiles/developer").text)
+                      regpages.profile_html(self.client, "developer"))
         # listed by the profile too, it is still shown as base, and not as one of the profile's own (#396)
-        page = self.client.get("/fleet/profiles/lister").text
+        page = regpages.profile_html(self.client, "lister")
         self.assertIn('id="base-skills">Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">', page)
         self.assertNotIn('name="skill" value="house-style"', page)
         self.assertIn("Skills · 1", page)
@@ -152,20 +154,21 @@ class Registry(unittest.TestCase):
     def test_the_create_form_shows_base_skills_ticked_and_fixed(self):
         # #396: ticked, disabled and noted on the form; the form's script never sends them
         self.make_base()
-        page = self.client.get("/fleet/profiles/new").text
+        shell = self.client.get("/fleet/profiles/new").text
+        page = regpages.new_profile_html(self.client)
         self.assertIn('name="skill" value="house-style" aria-label="include house-style" checked disabled>', page)
         self.assertIn('name="mandatory" value="house-style" aria-label="house-style mandatory" checked disabled>', page)
         self.assertIn("base: every bot has it. How to write.", page)
         self.assertLess(page.index('value="house-style"'), page.index('value="github-lifecycle"'))
         self.assertRegex(page, r'name="skill" value="github-lifecycle" aria-label="include github-lifecycle">')
-        self.assertIn("input[name=skill]:checked:not(:disabled)", page)
+        self.assertIn("input[name=skill]:checked:not(:disabled)", shell)       # the script, in the shell
         # what the form posts, without the base skill: the page lists it under base skills
         self.client.post("/api/profiles", headers=self.human, json={
             "name": "newbie", "role": "New.", "skills": [{"name": "github-lifecycle", "mandatory": True}]}).raise_for_status()
         self.assertEqual(self.client.get("/api/profiles/newbie", headers=self.bot).json()["profile"]["skills"],
                          [{"name": "github-lifecycle", "mandatory": True}])
         self.assertIn('Base skills, every bot has them: <a class="chip" href="/fleet/skills/house-style">',
-                      self.client.get("/fleet/profiles/newbie").text)
+                      regpages.profile_html(self.client, "newbie"))
 
     def test_an_edit_keeps_base_unless_it_says_false_and_history_shows_when(self):
         self.make_base()
