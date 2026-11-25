@@ -2476,22 +2476,24 @@ class ThreadCompleteIn(BaseModel):
 
 @app.post("/api/threads/{tid}/complete", tags=["messages"])
 async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depends(current_agent)) -> dict:
-    warnings = await asyncio.to_thread(_call, _check_open_work, tid)      # the forge is asked before the database lock is taken (#931)
+    warnings = await asyncio.to_thread(_call, _check_open_work, tid, agent)      # the forge is asked before the database lock is taken (#931)
     done = await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
     return {**done, **({"warnings": warnings} if warnings else {})}
 
 
-def _check_open_work(tid: int) -> list[str]:
+def _check_open_work(tid: int, agent: dict) -> list[str]:
     """#931: a thread cannot be completed while a pull request labelled `thread:<id>` is open in its workspace's
     repository. The label is the only record of that mapping; the board asks the forge and stores nothing. Raises Conflict
-    naming each one. Returns warnings when it could not ask (no repository, no forge, the forge slow or down): completing
-    goes on, since refusing because an outside service is down is the wrong default."""
+    naming each one. Returns warnings when it could not ask (no forge set, the forge slow or down; no repository has nothing to ask): completing
+    goes on, since refusing because an outside service is down is the wrong default. Who may complete is asked first: a caller
+    who may not is never told which pull requests are open."""
+    db.check_may_complete(db.conn(), tid, agent)
     row = db.conn().execute("SELECT b.workspace_id FROM messages m JOIN boards b ON b.id=m.board_id WHERE m.id=? AND m.thread_id=m.id",
                             (tid,)).fetchone()
     ws = workspaces.by_id(row["workspace_id"]) if row and row["workspace_id"] else None
     repo = workspaces.repository(ws) if ws else ""
     if not repo:
-        return ["The thread's workspace has no repository, so open pull requests labelled with this thread were not checked."] if row else []
+        return []        # nothing to ask: a workspace with no repository has no labelled pull requests to find
     if not forge.configured():
         return ["The board has no forge address or token, so open pull requests labelled with this thread were not checked."]
     try:

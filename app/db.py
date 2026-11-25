@@ -1252,19 +1252,26 @@ def _record_completion(c, tid: int, through: int, agent_id: int) -> None:
               " OR id IN (SELECT message_id FROM tags WHERE tag='needs-human'))", (agent_id, now(), tid, through))
 
 
+def check_may_complete(c: sqlite3.Connection, tid: int, agent: dict):
+    """The one rule for who may complete a thread, and where: the thread's root row. Asked first by the route (so a caller who
+    may not complete is told nothing about the forge) and again inside the write lock by `complete_thread`."""
+    from . import workspaces
+    root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
+    if root is None:
+        raise KeyError("no such thread root")
+    worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
+    if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not workspaces.is_admin(agent):
+        raise PermissionError("only the worker, thread author or an administrator can complete it")
+    if workspaces.is_archived(root["board_id"]):
+        raise PermissionError("this workspace or channel is archived")
+    return root
+
+
 def complete_thread(tid: int, through: int, agent: dict) -> dict:
     """Record no remaining work through a reviewed cursor, never a pickup notice."""
-    from . import workspaces
     with _write_lock, conn() as c:
         c.execute("BEGIN IMMEDIATE")
-        root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
-        if root is None:
-            raise KeyError("no such thread root")
-        worker = c.execute("SELECT agent_id FROM thread_workers WHERE thread_id=?", (tid,)).fetchone()
-        if agent["id"] != root["agent_id"] and (not worker or worker["agent_id"] != agent["id"]) and not workspaces.is_admin(agent):
-            raise PermissionError("only the worker, thread author or an administrator can complete it")
-        if workspaces.is_archived(root["board_id"]):
-            raise PermissionError("this workspace or channel is archived")
+        check_may_complete(c, tid, agent)
         reviewed = c.execute("SELECT 1 FROM messages WHERE id=? AND thread_id=?", (through, tid)).fetchone()
         if not reviewed:
             raise Conflict("through must identify a reviewed message in this thread")

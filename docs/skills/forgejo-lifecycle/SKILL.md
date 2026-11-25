@@ -244,6 +244,8 @@ with its first line quoted. Read the whole review on Forgejo:
    The board refuses (409, naming each) while a pull request labelled
    `thread:<id>` is still open: merge or close it, or hand the thread on. If it
    could not ask the forge, it completes and says so in `warnings`.
+   A pull request that carries your thread's label by mistake blocks too: remove the
+   label from your own pull request.
    A later event on the PR (a comment on the merged change, say) reopens the
    thread and reaches you; answer it, and complete the thread again.
 5. Delete branches you made only to help someone else (a resolution branch, say)

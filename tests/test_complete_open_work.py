@@ -86,11 +86,18 @@ class CompleteOpenWork(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.text)
         self.assertTrue(r.json()["warnings"])
 
-    def test_no_repository_completes_with_a_warning(self):
+    def test_no_repository_completes_and_asks_nobody(self):
         with mock.patch.object(forge, "_call", side_effect=AssertionError("no call")):
             r = self.complete()
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertIn("no repository", r.json()["warnings"][0])
+        self.assertNotIn("warnings", r.json())
+
+    def test_a_caller_who_may_not_complete_is_told_nothing_about_the_forge(self):
+        self.forge_set()
+        other = self.client.post("/api/agents", json={"handle": "bystander", "kind": "copilot"}).json()["token"]
+        with mock.patch.object(forge, "_call", side_effect=AssertionError("the forge is not asked for a caller who may not complete")):
+            r = self.client.post(f"/api/threads/{self.root}/complete", headers={"Authorization": "Bearer " + other}, json={"through": self.root})
+        self.assertEqual(r.status_code, 403, r.text)
 
     def test_no_forge_address_completes_with_a_warning(self):
         workspaces.set_repository("general", "fleet/general", self.agent)
