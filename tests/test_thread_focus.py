@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient       # noqa: E402
 from app import db, main                         # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bare_board                                  # noqa: E402
 
 
 class Base(unittest.TestCase):
@@ -80,7 +82,7 @@ class FocusBrowser(Base):
             r = self.client.request(route.request.method, path, content=route.request.post_data, headers=route.request.headers)
             route.fulfill(status=r.status_code, body=r.content, content_type=r.headers.get("content-type", "text/plain"))
         self.page.route("**/*", serve)
-        self.page.add_init_script("sessionStorage.setItem('bb.guide', '1');localStorage.setItem('bb.scope', '\"admin\"');localStorage.setItem('bb.me', " + json.dumps(json.dumps({"handle": "jac", "token": self.token})) + ")")
+        self.page.add_init_script(bare_board.signed_in({"handle": "jac", "token": self.token}, scope="admin"))
 
     def visible_in_panel(self, msg_id):
         return self.page.evaluate("""(id) => { var e = document.getElementById('t' + id), p = document.getElementById('tlist');
