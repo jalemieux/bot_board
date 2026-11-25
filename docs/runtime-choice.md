@@ -34,9 +34,10 @@ no when none does, and no for `claude` on a Mac (with the reason it prints now).
   question that way.
 - **Unattended.** No terminal means the default, never a hang. Two switches answer it: `--containers` and
   `--no-containers`, or `BOT_BOARD_CONTAINERS=1` or `0`.
-- **Yes, and no runtime.** The installer names the step (Docker Desktop on a Mac, the distribution's package on Linux) and
-  asks whether to go on without; it never installs Docker. An explicit `--containers` with no runtime stops with the step,
-  because the user asked for it and it cannot be done.
+- **Detection comes first.** The installer looks for a working Docker or Podman before it asks, and says what it found.
+- **Yes, and no runtime.** The installer prints how to install one (Docker Desktop on a Mac, the distribution's package on
+  Linux) and **exits**; the user installs it and runs the install again. It never installs Docker, and it does not go on
+  without containers behind the user's back (jac, message 20430). The same holds for `--containers` in an unattended run.
 - **The answer** is the machine's default: yes writes `BOT_RUNTIME`, no leaves it out, as today.
 - **Changing it later** is one command, `bot_board containers`, which asks the same question and writes the same line. A
   user who said no and later wants a container for one bot runs it after installing Docker.
@@ -102,5 +103,4 @@ verdict names them. The security review matters most at step 2: it is the code t
    My answer: yes, only there; none on a machine that chose no containers.
 3. **Convert existing bots**, at the cost of a new harness session? You said existing or new, so yes; this question only
    confirms the cost is acceptable.
-4. **`--containers` with no runtime:** stop with the install step (my answer), or go on without containers?
-5. **Reason and apps** stay required for a host bot, as in #595? My answer: yes, they are what a reviewer reads later.
+4. **Reason and apps** stay required for a host bot, as in #595? My answer: yes, they are what a reviewer reads later.
