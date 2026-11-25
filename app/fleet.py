@@ -88,7 +88,10 @@ MOVE_COLUMNS = ("move_to", "fetch")
 # box with the switch on. It runs outside a container only while it is on host_box and that box's switch is on:
 # a move to another box or the switch off puts it back in a container at its next start.
 HOST_COLUMNS = ("onhost", "host_box", "host_reason", "host_by", "host_at", "host_apps")
-EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "restart", "deleted", "claims") + HOST_COLUMNS
+# runs: where the bot runs (#875, docs/runtime-choice.md): `container` or `host`; NULL means its machine's default. The
+# host columns above record why and for which box, and stay filled while the launcher still reads `host_bot` (step 2).
+RUNS = ("container", "host")
+EXTRA_COLUMNS = MOVE_COLUMNS + ("kill", "threads", "retired", "reset", "restart", "deleted", "claims", "runs") + HOST_COLUMNS
 THREADS = ("keep", "handoff", "retire")
 # claims: how a bot takes new threads (#622). open: any new thread that mentions nobody, as before. mentioned: only a
 # thread whose first message mentions it. A new bot gets it from its profile's "takes new work by default" (#627);
@@ -152,6 +155,8 @@ def init() -> None:
                 c.execute(f"ALTER TABLE fleet_bots ADD COLUMN {col} TEXT")
         if fresh_claims:     # the bots that exist keep taking new threads as they did, whatever their profile says (#622)
             c.execute("UPDATE fleet_bots SET claims='open'")
+        # a host bot of #595 is a bot that runs on the host: its reason and apps stay recorded, and it says so in `runs` (#875)
+        c.execute("UPDATE fleet_bots SET runs='host' WHERE runs IS NULL AND onhost IS NOT NULL AND onhost NOT IN ('', '0')")
         c.commit()
 
 
@@ -428,7 +433,8 @@ def _channels_problem(workspace: str | None, profile: str | None, channels: list
 def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: bool = False,
          workspace: str | None = None, threads: str | None = None, profile: str | None = None,
          channels: list[str] | None = None, voice: str | None = None, personality: str | None = None,
-         host_reason: str | None = None, host_apps: list[str] | None = None, claims: str | None = None) -> str | None:
+         host_reason: str | None = None, host_apps: list[str] | None = None, claims: str | None = None,
+         runs: str | None = None) -> str | None:
     """Record that a human wants this bot running, or stopped, on this box. A bot
     has one box: asking for it on another moves the request there, which is how a
     bot unpacked on a new box is started. kill: stop it now, without waiting for the
@@ -440,9 +446,10 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
     channels and voice, and its next prompt carries the new guide and skills. channels: the channels of its
     workspace it claims new threads in; never required (#627), and changed any
     time with set_channels. voice, personality: how it writes and who it is, changed any time
-    with set_voice; None leaves them as they are. host_reason, host_apps: the bot is a host bot (#595), run outside a
-    container as the operator; refused unless it is a new bot, run is true, the box reported macOS and its host
-    switch is on. claims: open or mentioned (#622): whether it takes new threads that mention nobody; a new bot is
+    with set_voice; None leaves them as they are. runs: where the bot runs (#875), container or host; unset leaves it
+    as it is. host_reason, host_apps: why a bot runs on the host and which apps it uses; a host_reason with no runs means
+    runs host, as an older client sends it. The rule is `_runs_problem`: any operating system, a new bot or an existing
+    one (docs/runtime-choice.md). claims: open or mentioned (#622): whether it takes new threads that mention nobody; a new bot is
     given its profile's default, an existing one keeps its mode. Returns None, or why not."""
     if claims is not None and claims not in CLAIMS:
         return f"claims: one of {', '.join(CLAIMS)}"
@@ -460,8 +467,10 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         return f"no box named {host} has reported"
     find = lambda h: next((b for b in h["bots"] if b["handle"].lower() == handle.lower()), None)
     here = find(boxes[host.lower()])
-    if host_reason is not None:
-        why = _host_bot_problem(handle, boxes, host, run, here, host_reason, host_apps)
+    if runs is None and host_reason is not None:
+        runs = "host"
+    if runs is not None:
+        why = _runs_problem(boxes[host.lower()], host, runs, host_reason, host_apps)
         if why:
             return why
     harness = harness or (here or {}).get("harness")
@@ -504,9 +513,8 @@ def want(handle: str, host: str, run: bool, harness: str | None, by: str, kill: 
         if why:
             return why
         _set_want(c, handle, host, harness, run, by, now, kill, workspace, threads, profile, channels, voice, personality, claims)
-        if host_reason is not None:
-            c.execute("UPDATE fleet_bots SET onhost='1', host_box=?, host_reason=?, host_by=?, host_at=?, host_apps=? WHERE handle=?",
-                      (host.lower(), host_reason.strip(), by, now, json.dumps(host_apps or []), handle))
+        if runs is not None:
+            _set_runs(c, handle, host, runs, host_reason, host_apps, by, now, _runtime_setting(boxes[host.lower()]))
         c.commit()
     if workspace and known and not known.get("workspace_id"):
         workspaces.assign_bot(handle, workspace)
@@ -517,53 +525,91 @@ def _is_mac(box: dict) -> bool:
     return str(box.get("os") or "").startswith("Darwin")
 
 
-def _host_bot_problem(handle: str, boxes: dict, host: str, run: bool, here: dict | None,
-                      reason: str, apps: list[str] | None) -> str | None:
-    """Why this bot cannot be a host bot, or None. Only a new bot (never registered, never reported, no
-    request of its own), only a box that reports macOS now with the host switch on, and a reason."""
-    c = db.conn()
-    if not run:
-        return "a host bot is created running: ask for run true"
-    if c.execute("SELECT 1 FROM fleet_bots WHERE handle=?", (handle,)).fetchone() or db.get_agent_by_handle(handle) \
-            or any(b["handle"].lower() == handle.lower() for h in boxes.values() for b in h["bots"]):
-        return f"{handle} already exists: a host bot is a new bot, an existing one is not converted"
-    box = boxes[host.lower()]
-    if not _is_mac(box):
-        return f"{host} is not a Mac: host bots run only on macOS"
-    if not box["reporting"]:
-        return f"{host} is not reporting: a host bot is started on a box that is up"
-    if not host_bots_on(host):
-        return f"host bots are off on {host}: a human turns them on there first"
-    if not 1 <= len((reason or "").strip()) <= 200:
-        return "say in one line (up to 200 characters) why the bot needs the host"
+def _runtime_setting(box: dict) -> str | None:
+    """What the box's keeper says its bots run in (its BOT_RUNTIME, #479): `host` is no container runtime, so every bot
+    runs on the machine; anything else is a container tool. None: it did not say (a keeper from before)."""
+    runtime = box.get("runtime")
+    return str(runtime.get("setting") or "") or None if isinstance(runtime, dict) else None
+
+
+def _runs_problem(box: dict, host: str, runs: str, reason: str | None, apps: list[str] | None) -> str | None:
+    """Why this bot cannot be set to run this way on this box, or None (#875, docs/runtime-choice.md). Any operating system,
+    and a new bot or an existing one. `container` needs a container runtime on the box. `host` on a box with no runtime needs
+    nothing: every bot runs on it. `host` on a box that chose containers leaves the isolation the user asked for, so it needs
+    the box up, its host-bots switch on, a one-line reason and the apps. The box's own consent line is the launcher's to check."""
+    if runs not in RUNS:
+        return f"runs: one of {', '.join(RUNS)}"
+    setting = _runtime_setting(box)
     if apps is not None and (len(apps) > 20 or any(not isinstance(a, str) or not 1 <= len(a) <= 64 for a in apps)):
         return "apps: up to 20 names of up to 64 characters"
+    if reason is not None and not 1 <= len(reason.strip()) <= 200:
+        return "say in one line (up to 200 characters) why the bot needs the host"
+    if runs == "container":
+        if setting == "host":
+            return (f"{host} has no container runtime, so its bots run on the machine. Install Docker (Docker Desktop on a Mac, "
+                    f"your distribution's package on Linux) and run the bot_board install again there, then ask again")
+        return None
+    if setting == "host":
+        return None           # a machine the user set up without containers: nothing to leave, nothing to gate
+    if not box["reporting"]:
+        return f"{host} is not reporting: set a bot to run on the host while the machine is up"
+    if not host_bots_on(host):
+        return f"host bots are off on {host}: a human turns them on there first"
+    if reason is None:
+        return "say in one line (up to 200 characters) why the bot needs the host"
     return None
 
 
-def host_bots_on(host: str) -> bool:
-    """The box's switch is on and its latest report says macOS: a box whose name a Linux keeper took over later
-    has no host bots, whatever the switch says."""
-    c = db.conn()
-    r = c.execute("SELECT on_ FROM fleet_host_bots WHERE host=?", (host,)).fetchone()
-    if not (r and r["on_"]):
-        return False
-    row = c.execute("SELECT report FROM fleet_hosts WHERE name=?", (host,)).fetchone()
+def _set_runs(c, handle: str, host: str, runs: str, reason: str | None, apps: list[str] | None, by: str, now: str,
+              setting: str | None) -> None:
+    """Write the setting. The host columns of #595 stay the record of why, and `onhost` stays set while the launcher still reads
+    `host_bot` (step 2), but only on a box that chose containers: on a box with no runtime every bot is on the host already."""
+    on_host = runs == "host" and setting != "host"
+    c.execute("UPDATE fleet_bots SET runs=?, onhost=? WHERE handle=?", (runs, "1" if on_host else None, handle))
+    if runs == "host" and reason is not None:
+        c.execute("UPDATE fleet_bots SET host_box=?, host_reason=?, host_by=?, host_at=?, host_apps=? WHERE handle=?",
+                  (host.lower(), reason.strip(), by, now, json.dumps(apps or []), handle))
+    elif on_host:
+        c.execute("UPDATE fleet_bots SET host_box=COALESCE(host_box, ?) WHERE handle=?", (host.lower(), handle))
+
+
+def known_bot(handle: str) -> bool:
+    """Whether the board already has this bot: a request for it, or a box that reports it. A bot it does not have is new."""
+    low = handle.lower()
+    return bool(db.conn().execute("SELECT 1 FROM fleet_bots WHERE handle=?", (handle,)).fetchone()) \
+        or any(b["handle"].lower() == low for h in hosts() for b in h["bots"])
+
+
+def runs_default(host: str) -> str:
+    """Where a bot with no `runs` setting runs on this box: on the host when the box has no container runtime, else in a
+    container (the machine's setting is the bot's default, docs/runtime-choice.md)."""
+    row = db.conn().execute("SELECT report FROM fleet_hosts WHERE name=?", (host.lower(),)).fetchone()
     try:
-        return bool(row) and _is_mac(json.loads(row["report"]))
+        return "host" if row and _runtime_setting(json.loads(row["report"])) == "host" else "container"
     except ValueError:
-        return False
+        return "container"
+
+
+def runs_of(handle: str) -> str | None:
+    """The bot's `runs` setting, or None: the machine's default."""
+    r = db.conn().execute("SELECT runs FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+    return r["runs"] if r and r["runs"] in RUNS else None
+
+
+def host_bots_on(host: str) -> bool:
+    """The box's host-bots switch is on (#595). Any operating system (#875): a box that chose containers and still wants a bot
+    on its host has the switch on, and the launcher checks the box's own consent line besides."""
+    r = db.conn().execute("SELECT on_ FROM fleet_host_bots WHERE host=?", (host,)).fetchone()
+    return bool(r and r["on_"])
 
 
 def set_host_bots(host: str, on: bool, by: str) -> str | None:
-    """The box's host-bots switch (#595). Only a box that reported macOS has one. Turning it off puts every
+    """The box's host-bots switch (#595), on any box that has reported (#875). Turning it off puts every
     host bot back in a container at its next start; the bots keep their flag, so turning it on again
     brings them back to the host."""
     box = next((h for h in hosts() if h["name"].lower() == host.lower()), None)
     if box is None:
         return f"no box named {host} has reported"
-    if not _is_mac(box):
-        return f"{host} is not a Mac: host bots run only on macOS"
     with db._write_lock, db.conn() as c:
         c.execute("INSERT INTO fleet_host_bots (host, on_, set_by, set_at) VALUES (?,?,?,?)"
                   " ON CONFLICT(host) DO UPDATE SET on_=excluded.on_, set_by=excluded.set_by, set_at=excluded.set_at",
@@ -576,6 +622,7 @@ def _host_fields(w: dict, box: str, switch: bool) -> dict:
     flagged, on the box it was made for, and that box's switch is on) and what was recorded about it."""
     flagged = bool(w.get("onhost"))
     return {"on_host": flagged and (w.get("host_box") or "").lower() == box.lower() and switch,
+            "runs": w.get("runs") if w.get("runs") in RUNS else None,
             "host_flag": flagged, "host_reason": w.get("host_reason") or "", "host_by": w.get("host_by") or "",
             "host_at": w.get("host_at") or "", "host_apps": w["host_apps"] if isinstance(w.get("host_apps"), list)
             else json.loads(w["host_apps"]) if w.get("host_apps") else []}
@@ -590,8 +637,8 @@ def set_host_details(handle: str, reason: str | None, apps: list[str] | None) ->
         return "apps: up to 20 names of up to 64 characters"
     c = db.conn()
     with db._write_lock:
-        r = c.execute("SELECT onhost FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
-        if not (r and r["onhost"]):
+        r = c.execute("SELECT onhost, runs FROM fleet_bots WHERE handle=?", (handle,)).fetchone()
+        if not (r and (r["onhost"] or r["runs"] == "host")):
             return f"{handle} is not a host bot"
         if reason is not None:
             c.execute("UPDATE fleet_bots SET host_reason=? WHERE handle=?", (reason.strip(), handle))
@@ -606,7 +653,8 @@ def clear_host(handle: str) -> str | None:
     Its conversation is kept as the harness allows; nothing here stops it."""
     c = db.conn()
     with db._write_lock:
-        n = c.execute("UPDATE fleet_bots SET onhost=NULL WHERE handle=? AND onhost IS NOT NULL", (handle,)).rowcount
+        n = c.execute("UPDATE fleet_bots SET onhost=NULL, runs='container' WHERE handle=? AND (onhost IS NOT NULL OR runs='host')",
+                      (handle,)).rowcount
         c.commit()
     return None if n else f"{handle} is not a host bot"
 
@@ -1270,7 +1318,7 @@ def hosts(private: bool = False) -> list[dict]:
         # (absent when nobody asked), and a bot asked for but not seen yet is listed too.
         observed = {b["handle"].lower() for b in h["bots"]}
         on = host_bots_on(r["name"])
-        h["host_bots"] = on if _is_mac(h) else None      # None: this box has no such switch
+        h["host_bots"] = on if _is_mac(h) else None      # the Machines page shows the switch for a Mac only, until the Team tab sets `runs` (#877)
         asked = {w["handle"].lower(): w for w in wanted(r["name"])}
         for b in h["bots"]:
             w = asked.pop(b["handle"].lower(), None)

@@ -150,6 +150,16 @@ later. A route may wait for work, off the event loop, with `asyncio.to_thread(..
 not background work.
 Not: a thread a route starts and forgets.
 
+### Where a bot runs
+One way: a bot has `runs`, `container` or `host`, in `fleet_bots`; unset means its machine's setting (`BOT_RUNTIME`). The rule
+is `fleet._runs_problem`: any operating system, a new bot or an existing one; `container` needs a container runtime on the
+box; `host` on a box that chose containers needs the box's host-bots switch and a one-line reason with the apps, and the
+machine's own consent line besides; a box with no runtime has nothing to gate. `GET /api/me` answers it, and `host_bot`
+too while an older launcher reads that. Design: `docs/runtime-choice.md`.
+Example: `app/fleet.py`, `_runs_problem` and `_set_runs`.
+Not yet: the launcher and the keeper obey `runs` (#876), the Team tab sets it (#877), the installer asks and `bot_board
+containers` changes it (#878). Today only the board carries it.
+
 ### Where the routines runner runs
 One way: a thread inside the board (`BOT_BOARD_ROUTINES=1`, `routines.start_runner`).
 Example: `docker-compose.yml` sets it, and `run.sh` sets it for the native install (`bin/bot_board install`).
