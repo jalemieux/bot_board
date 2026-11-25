@@ -3623,6 +3623,14 @@ FLEET_CSS = """
 .fleet-page table.secrets td.secret-acts{text-align:left;padding-top:6px}.fleet-page table.secrets td.secret-acts button{margin:0 8px 0 0;min-height:44px}
 .fleet-page table.secrets input{min-height:44px;font-size:16px}
 }
+/* the Mac's card on a phone (#905): 44px for what a person taps, 16px in a field, as specific as the rules above and after them */
+@media (max-width:760px){
+.fleet-page .hostbox button.act,.fleet-page .hostform button.act{min-height:44px;padding:0 14px;font-size:16px}
+.fleet-page .hostform input:not([type=checkbox]),.fleet-page .hostform select{min-height:44px;font-size:16px}
+.fleet-page .hostform .chk{display:flex;align-items:center;gap:10px;min-height:44px;font-size:16px}
+.fleet-page .hostform input[type=checkbox]{width:22px;height:22px;flex:none}
+.fleet-page .hostnew summary,.fleet-page .hostbox .apps summary{min-height:44px;display:flex;align-items:center}
+}
 .fleet-page .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .addbot-cta,body.out .fleet-page .voice-edit{display:none}
 .fleet-page .d-voice{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
