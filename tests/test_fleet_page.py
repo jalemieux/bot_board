@@ -178,6 +178,18 @@ class FleetPage(unittest.TestCase):
         self.assertIn("sEl('td', {'data-label': 'New secret'}, name, hint)", page)
         self.assertIn('<p id="secretok" class="sub" role="status" tabindex="-1">', page)
 
+    def test_the_configuration_page_is_an_empty_shell_that_reads_the_api(self):
+        # #861 (part of #845): the route reads no host, profile or skill for it; the page's script reads /api/fleet/secrets
+        hosts = [host('SECRETBOX', [])]
+        page = web.fleet_page('board', hosts, profiles=[{"name": "SECRETPROFILE", "role": "x"}], skills=[{"name": "SECRETSKILL"}], page='configuration')
+        self.assertEqual(page, web.configuration_page('board'))
+        for gone in ('SECRETBOX', 'SECRETPROFILE', 'SECRETSKILL', 'id="tab-machines"', 'id="tab-roles"', 'id="tab-skills"', 'fleet-machines'):
+            self.assertNotIn(gone, page)
+        for kept in ('<h1>Configuration</h1>', 'data-panes="tab-settings"', 'id="secrets"', 'id="secretlist"', 'id="fleet-add-machine"',
+                     "'/api/fleet/secrets'"):
+            self.assertIn(kept, page)
+        self.assertIn('id="tab-machines"', web.fleet_page('board', hosts, page='machines'), 'Machines still draws its own data (#872)')
+
     def test_the_top_bar_has_no_connect_your_harness_link(self):
         page = web.fleet_page('board', [])
         self.assertNotIn('href="/onboard" class="x"', page)
