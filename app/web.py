@@ -906,10 +906,12 @@ font:13px var(--sans);cursor:pointer;text-align:left}
 .compose .signin b{color:var(--accent)}
 .compose .signin:hover{border-color:var(--accent);color:var(--ink)}
 .mentions{position:absolute;left:22px;bottom:calc(100% - 4px);z-index:6;background:var(--panel);border:1px solid var(--line);
-border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:420px;padding:4px;list-style:none;margin:0}
+border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.12);min-width:280px;max-width:min(420px,calc(100vw - 38px));padding:4px;list-style:none;margin:0}
 aside.thread .mentions{left:16px}
 .mentions[hidden]{display:none}
 .mentions li{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:12.5px var(--mono)}
+.mentions li .prof{flex:none;padding:0 6px;border-radius:8px;background:var(--bot-soft);color:var(--bot);font:600 11px var(--sans)}
+.mentions li .prof.human{background:var(--human-soft);color:var(--human)}
 .mentions li .d{color:var(--dim);font:11px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .mentions li.sel{background:var(--sel)}
 .msg .head .hk{background:var(--accent);color:#fff;border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;align-self:center}
@@ -1357,9 +1359,12 @@ function hostMark(a){      // a bot that runs outside its container, as the user
   return a && a.host_by !== null && a.host_by !== undefined
     ? '<span class="hostbadge" title="runs outside a container, as the user of its Mac">host · as ' + esc(a.host_by || 'the operator') + '</span>' : '';
 }
+function roleOf(a){      // the short role of an agent: its profile name, or "human" (the hover card and the @ list use one rule)
+  return a.kind === 'human' ? 'human' : a.profile || '';
+}
 function crewRow(a){      // one agent in the card: presence, handle, profile (or "human"), machine and activity, role
   return '<div class="bot"><span class="dot ' + esc(a.presence || 'away') + '" title="' + esc(a.presence || 'away') + '"></span>' +
-    '<div><span class="who">@' + esc(a.handle) + '</span>' + (a.kind === 'human' ? '<span class="prof">human</span>' : a.profile ? '<span class="prof">' + esc(a.profile) + '</span>' : '') + hostMark(a) +
+    '<div><span class="who">@' + esc(a.handle) + '</span>' + (roleOf(a) ? '<span class="prof">' + esc(roleOf(a)) + '</span>' : '') + hostMark(a) +
     (a.claims === 'mentioned' ? '<span class="prof" title="takes a new thread only when its first message mentions it">only when mentioned</span>' : '') + '</div>' +
     (a.machine ? '<div class="mach">on ' + esc(a.machine) + (a.activity ? ' · ' + esc(a.activity) : '') + '</div>' : '') +
     (a.role ? '<div class="role" title="' + esc(a.role) + '">' + esc(a.role) + '</div>' : '') + '</div>';
@@ -2168,7 +2173,9 @@ function wireCompose(form, target){
   function renderPop(){
     pop.innerHTML = sug.map(function(h, i){
       var a = S.agents[h];
+      var role = roleOf(a);      // its sentence, the profile's role, is the tooltip
       return '<li class="' + (i === sel ? 'sel' : '') + '" data-h="' + esc(h) + '"><span class="dot ' + presenceOf(h) + '"></span>@' + esc(h) +
+        (role ? '<span class="prof' + (a.kind === 'human' ? ' human' : '') + '"' + (a.role ? ' title="' + esc(a.role) + '"' : '') + '>' + esc(role) + '</span>' : '') +
         '<span class="d" title="' + esc(a.description || '') + '">' + esc(a.description || '') + '</span></li>';
     }).join('');
   }
