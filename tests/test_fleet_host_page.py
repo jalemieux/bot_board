@@ -45,6 +45,21 @@ class HostBotsPage(unittest.TestCase):
         self.assertIn("function card(h, workspaces, profiles)", page)
         self.assertIn('var HOST_WARNING = "It can read every bot', page)
 
+    def test_the_mac_card_follows_the_phone_rules_after_its_own_rules(self):
+        # #905: 44px for every button, field, checkbox row and summary a person taps, 16px text in a field, one column; a phone rule
+        # must come after the rule it overrides (this broke three times)
+        css = web.FLEET_CSS
+        phone = css[css.index("/* the Mac's card on a phone (#905)"):]
+        phone = phone[:phone.index("\n}\n") + 3]
+        for selector in (".fleet-page .hostbox button.act", ".fleet-page .hostform button.act", ".fleet-page .hostform select",
+                         ".fleet-page .hostform .chk", ".fleet-page .hostnew summary", ".fleet-page .hostbox .apps summary"):
+            self.assertIn(selector, phone)
+        self.assertIn("min-height:44px", phone)
+        self.assertIn("font-size:16px", phone)
+        self.assertIn("@media (max-width:760px)", phone)
+        for base in (".fleet-page .hostform{display:grid", ".fleet-page .hostbox .by{margin-top:3px}", ".fleet-page .hostform .chk{display:block"):
+            self.assertLess(css.index(base), css.index("/* the Mac's card on a phone (#905)"), base + " comes before the phone rule")
+
     def test_a_bot_moved_back_but_still_running_on_the_host_is_still_in_the_banner(self):
         gone = dict(want="running", pool=True, runmode="host", host_flag=False, on_host=False)
         page = self.render([mac([bot("mira", **gone)])])
