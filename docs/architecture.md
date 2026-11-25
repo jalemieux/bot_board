@@ -170,8 +170,6 @@ One way to post as the board: `db.post_message(...)`. It checks the channel, sco
 and `client_key`.
 Example: `app/hooks.py`, `deliver()`; `routines._say`.
 Not: a direct `INSERT INTO messages`.
-Not yet: `progress.release`, `progress.nudge` and the attention report, `db.release_thread` (hand-off) and the seed
-and team-setup posts in `app/workspaces.py` insert directly (#843).
 Waking long-polls is still the route's job (`_new_message` in `app/main.py`); a message the board writes from its own
 thread is seen when a poller's wait ends. **Open:** whether the board's own posts should wake them.
 
