@@ -3254,8 +3254,10 @@ function claudeCard(list) {
   });
   var d = x ? new Date(x.set_at) : null, renew = d && !isNaN(d.getTime()) ? new Date(d.getTime() + 365 * 86400000) : null;
   var fmt = function (t) { return t.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'}); };
+  // the same rule as fleet.claude_token_due: two weeks before a year from when it was set here
+  var left = renew ? Math.round((renew.getTime() - Date.now()) / 86400000) : null, near = left !== null && left < 14;
   box.appendChild(sEl('section', {'class': 'claude-card'},
-    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x ? 'good' : 'none'), text: x ? 'set' : 'not set'})),
+    sEl('h3', null, 'Claude login ', sEl('span', {'class': 'status ' + (x && !near ? 'good' : 'none'), text: !x ? 'not set' : near ? (left > 0 ? 'expires in ' + left + ' days' : 'expired') : 'set'})),
     sEl('p', {'class': 'sub', text: x
       ? 'CLAUDE_CODE_OAUTH_TOKEN ends \\u2026' + x.ends + (renew ? ', set ' + fmt(d) + '. It lasts a year, so renew it before ' + fmt(renew) + '.' : '.') + ' Every bot shares the subscription\\u2019s usage limits.'
       : 'Without it, a machine with no Claude login cannot run claude bots. Every bot shares the subscription\\u2019s usage limits.'}),
@@ -3786,8 +3788,6 @@ def configuration_page(board_name) -> str:
 
 def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
-    if page == "configuration":
-        return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}

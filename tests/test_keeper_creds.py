@@ -15,7 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient
-from app import db, main
+from app import db, main, web
 
 
 def load_keeper(home, **env):
@@ -392,6 +392,7 @@ class Page(unittest.TestCase):
         self.client.put('/api/fleet/secrets/CLAUDE_CODE_OAUTH_TOKEN', headers=admin, json={'value': 'sk-ant-oat01-x'}).raise_for_status()
         self.assertNotIn("claude token", self.client.get('/machines', headers=admin).text.split('Configuration: shared secrets')[0])
         self.assertNotIn("claude token", str(self.client.get('/api/status').json()['attention']))
+        self.assertEqual(self.client.get('/configuration', headers=admin).text, web.configuration_page(main.BOARD_NAME), "the route picks the shell once (#880)")
         with db.conn() as c:
             c.execute("UPDATE fleet_secrets SET set_at=? WHERE name='CLAUDE_CODE_OAUTH_TOKEN'",
                       ((datetime.now(timezone.utc) - timedelta(days=355)).isoformat(),))

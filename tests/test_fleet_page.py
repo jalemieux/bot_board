@@ -181,14 +181,16 @@ class FleetPage(unittest.TestCase):
     def test_the_configuration_page_is_an_empty_shell_that_reads_the_api(self):
         # #861 (part of #845): the route reads no host, profile or skill for it; the page's script reads /api/fleet/secrets
         hosts = [host('SECRETBOX', [])]
-        page = web.fleet_page('board', hosts, profiles=[{"name": "SECRETPROFILE", "role": "x"}], skills=[{"name": "SECRETSKILL"}], page='configuration')
-        self.assertEqual(page, web.configuration_page('board'))
+        page = web.configuration_page('board')
         for gone in ('SECRETBOX', 'SECRETPROFILE', 'SECRETSKILL', 'id="tab-machines"', 'id="tab-roles"', 'id="tab-skills"', 'fleet-machines'):
             self.assertNotIn(gone, page)
         for kept in ('<h1>Configuration</h1>', 'data-panes="tab-settings"', 'id="secrets"', 'id="secretlist"', 'id="fleet-add-machine"',
                      "'/api/fleet/secrets'"):
             self.assertIn(kept, page)
         self.assertIn('id="tab-machines"', web.fleet_page('board', hosts, page='machines'), 'Machines still draws its own data (#872)')
+        # the Claude login card says when the token is near its year (#880), by the rule of fleet.claude_token_due
+        self.assertIn("near = left !== null && left < 14", page)
+        self.assertIn("'expires in ' + left + ' days'", page)
 
     def test_the_top_bar_has_no_connect_your_harness_link(self):
         page = web.fleet_page('board', [])
