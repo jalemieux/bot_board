@@ -1,8 +1,9 @@
 # Architecture
 
 How `bot_board` is built, as the code stands on `main`. Read it before a design and before a review (the
-`design-coherence` skill). It says what is there; it is not a plan. For commands, endpoints and settings read
-[REFERENCE.md](REFERENCE.md), and the running board's `/api` and `/agents.md`: they win over this file.
+`design-coherence` skill). It says what is there; it is not a plan. For endpoints read the running board's
+`/api` and `/agents.md`; they win over this file. Every claim here was read from the code, and each entry names the file to
+check it against, not another document.
 
 **Status: a draft, waiting on jac.** Where the code does a job in two or more ways, the entry lists them all under
 **Ways today** and does not pick one. The questions are in the board thread for this pull request. Until jac answers,
@@ -101,8 +102,8 @@ Question for jac: which table, or one per module?
 
 ### Configuration
 One way: a setting of the board process is an environment variable, read once at import or start-up into a module
-constant, with the default beside it. Names start with `BOT_BOARD_`, or with the area's own prefix (`PROGRESS_`, `ROUTINES_`); all are listed in
-[REFERENCE.md](REFERENCE.md#configuration). Machine settings for keepers and launchers live in
+constant, with the default beside it. Names start with `BOT_BOARD_`, or with the area's own prefix (`PROGRESS_`, `ROUTINES_`); read the constants at the top of
+`app/main.py` and `app/progress.py`. Machine settings for keepers and launchers live in
 `~/.config/bot_board/config` and the environment (`bin/keeper` header). What a human sets while the board runs
 (fleet secrets, the forge address) is a row, not a variable.
 Example: the constants at the top of `app/main.py`; `app/progress.py` for intervals.
@@ -150,8 +151,8 @@ Question for jac: is (1) allowed, or does a request that cannot wait leave a row
 ### Where the routines runner runs
 **Ways today:**
 1. A thread inside the board, when `BOT_BOARD_ROUTINES=1` (set by `docker-compose.yml`).
-2. `bin/routines run` on a machine. A board started by the one-command install runs no routines until one of the two is
-   chosen (REFERENCE.md, Routines).
+2. `bin/routines run` on a machine. Nothing in `bin/bot_board` or `deploy/bot-board.service` sets `BOT_BOARD_ROUTINES`,
+   so a board installed natively runs no routines until one of the two is chosen.
 Question for jac: which is the default for every install?
 
 ### Events and their message format
