@@ -1,6 +1,9 @@
 """#239: the Versions section on /fleet compares what runs with what should, and the bell lists
 what only a person can fix. Run with python -m unittest discover -s tests."""
+import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -9,7 +12,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient     # noqa: E402
-from app import db, main, status, versions, web     # noqa: E402
+from app import db, main, status, versions     # noqa: E402
+
+FAKE = """
+class N { constructor(t, text) { this.tag = t; this.attrs = {}; this.kids = []; this._t = text; }
+  setAttribute(k, v) { this.attrs[k] = v; } appendChild(c) { this.kids.push(c); return c; }
+  set textContent(v) { this._t = String(v); this.kids = []; }
+  get textContent() { return this._t !== undefined ? this._t : this.kids.map(k => k.textContent).join(''); } }
+globalThis.document = {createElement: t => new N(t), createTextNode: t => new N('#text', t)};
+"""
 
 LOADED = "a" * 40
 
@@ -75,12 +86,48 @@ class Rows(unittest.TestCase):
         self.assertEqual(len(versions.attention(rows)), 1)
 
     def test_section_lists_stale_bots_and_counts_the_rest(self):
+        """#888: the Versions section is drawn by the page's script from /api/status `versions`; run here under node."""
+        if not shutil.which("node"):
+            self.skipTest("node is needed")
         rows = versions.rows([host("box", [bot("ann"), bot("bob", behind=True)])])
-        html = web._versions_section(rows)
-        self.assertIn('id="fleet-versions"', html)
-        self.assertIn("1 of 2 running bot(s) on the current launcher and session", html)
-        self.assertIn(">bob</a>", html)
-        self.assertNotIn(">ann</a>", html)
+        rows.append({"what": "routine", "name": "<img src=x onerror=alert(1)>", "running": "v1", "wanted": "v2", "current": False,
+                     "note": "<b>old</b>", "href": "/r/x", "bell": False})
+        got = self.draw(rows)
+        self.assertEqual(got["title"], "Versions \u00b7 1 needs you")
+        self.assertTrue(got["open"], "a person must act: served open")
+        self.assertEqual(got["sub"], "1 of 2 running bot(s) on the current launcher and session.")
+        names = [r[1] for r in got["rows"]]
+        self.assertIn("bob", names)
+        self.assertNotIn("ann", names, "a current bot is counted, not listed")
+        evil = [r for r in got["rows"] if r[1].startswith("<img")][0]
+        self.assertEqual(evil[4], "<b>old</b>", "what the board says stays text")
+        self.assertEqual(got["tags"].count("img"), 0)
+        self.assertEqual(evil[0], "routine")
+        self.assertEqual(got["sorts"][got["rows"].index(evil)][:4], ["routine", evil[1].lower(), "v1", "v2"], "cells carry data-sort")
+        self.assertIn("/r/x", got["hrefs"])
+        self.assertEqual(got["wired"], ["sort", "fold"])
+        self.assertEqual(self.draw([])["title"], "Versions \u00b7 current")
+
+    def draw(self, rows):
+        from app import web
+        js = web.FLEET_JS
+        fn = js[js.index("function sEl("):js.index("function secretWhen")] + js[js.index("function drawVersions("):js.index("if (document.getElementById('versions-slot'))")]
+        code = FAKE + fn + """
+const slot = new N('div'); const wired = [];
+document.getElementById = id => id === 'versions-slot' ? slot : null;
+function wireSort() { wired.push('sort'); } function wireFold() { wired.push('fold'); }
+drawVersions(%s);
+const d = slot.kids[0], tags = [];
+(function walk(n) { tags.push(n.tag); n.kids.forEach(walk); })(slot);
+const table = d.kids.find(k => k.tag === 'table'), sub = d.kids.find(k => k.tag === 'p');
+const tbody = table.kids[1];
+console.log(JSON.stringify({title: d.kids[0].textContent, open: d.open, sub: sub ? sub.textContent : '', tags,
+  rows: tbody.kids.map(tr => tr.kids.map(c => c.textContent)), sorts: tbody.kids.map(tr => tr.kids.map(c => c.attrs['data-sort'] || '')),
+  hrefs: (function f(n) { return [].concat(n.attrs.href || [], ...n.kids.map(f)); })(tbody), wired}));
+""" % json.dumps(rows)
+        r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr[-600:])
+        return json.loads(r.stdout)
 
 
 class Board(unittest.TestCase):
@@ -104,7 +151,8 @@ class Board(unittest.TestCase):
         self.assertEqual(r.json()['min_protocol'], versions.MIN_PROTOCOL)
         texts = [a['text'] for a in status.rollup()['attention']]
         self.assertTrue(any('predates self-update' in t for t in texts), texts)
-        self.assertIn('id="fleet-versions"', self.client.get('/machines').text)
+        self.assertIn('id="versions-slot"', self.client.get('/machines').text)
+        self.assertTrue(self.client.get('/api/status').json()['versions'], 'the page script reads these')
 
 
 if __name__ == "__main__":

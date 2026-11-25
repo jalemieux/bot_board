@@ -80,6 +80,7 @@ class FleetSort(unittest.TestCase):
         self.assertNotEqual(default, self.column(t, 0))
 
     def test_columns_with_nothing_to_sort_stay_plain(self):
+        self.page.wait_for_selector("#fleet-versions")      # drawn by the script from /api/status (#888)
         self.assertEqual(self.page.eval_on_selector_all("#fleet-versions thead th", "ts => ts.map(t => !!t.querySelector('button'))"),
                          [True, True, True, True, False])     # Note
         self.assertFalse(self.page.eval_on_selector("#fleet-machines thead th:last-child", "t => !!t.querySelector('button')"))

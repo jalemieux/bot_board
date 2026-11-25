@@ -32,7 +32,7 @@ globalThis.location = {hash: '', replace: noop, href: '', reload: noop};
 const store = {getItem: () => null, setItem: noop, removeItem: noop};
 globalThis.localStorage = store; globalThis.sessionStorage = store;
 globalThis.setInterval = noop; globalThis.setTimeout = noop;
-globalThis.fetch = () => new Promise(noop);
+globalThis.fetch = u => { (globalThis.FETCHED = globalThis.FETCHED || []).push(String(u)); return new Promise(noop); };
 globalThis.navigator = {};
 """
 
@@ -53,6 +53,7 @@ class FleetPageScript(unittest.TestCase):
                 script = max(scripts, key=len)
                 ids = json.dumps(sorted(set(re.findall(r'\bid="([^"]+)"', html))))
                 code = f"const IDS = new Set({ids});\n" + STUBS + "\n" + script + "\nif (!globalThis.TOGGLED) throw new Error('showTarget never ran');\n"
+                code += "if (%s !== (globalThis.FETCHED || []).includes('/api/status')) throw new Error('Versions are read from /api/status on the Machines page only (#888): ' + globalThis.FETCHED);\n" % json.dumps(path == "/machines").lower()
                 r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=30)
                 self.assertEqual(r.returncode, 0, f"{path}: {r.stderr[-600:]}")
         if hasattr(db._local, "conn"):

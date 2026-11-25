@@ -1,7 +1,7 @@
 import unittest
 from html.parser import HTMLParser
 
-from app import db, web
+from app import db, versions, web
 
 
 class FleetSections(HTMLParser):
@@ -45,15 +45,15 @@ class FleetPage(unittest.TestCase):
     def test_legacy_keeper_handle_with_update_renders_online_and_offline(self):
         for reporting in (True, False):
             with self.subTest(reporting=reporting):
-                page, sections = self.render([host(
-                    'legacy', [], reporting=reporting,
-                    update={'revision': 'v1.0.124', 'result': 'up to date'})])
+                hosts = [host('legacy', [], reporting=reporting, update={'revision': 'v1.0.124', 'result': 'up to date'})]
+                page, sections = self.render(hosts)
                 self.assertIn('checkout v1.0.124', page)      # under Details, folded until opened
                 self.assertIn('<summary>Details</summary>', page)
                 self.assertIn('up to date', sections['fleet-machines'])
                 self.assertNotIn('checkout v1.0.124', sections['fleet-machines'])
                 if reporting:
-                    self.assertIn('before #238', page)
+                    # the Versions section is drawn by the page's script from /api/status (#888); its rows say it
+                    self.assertTrue(any('before #238' in r['note'] for r in versions.rows(hosts)))
 
     def test_health_timestamps_are_localizable_and_diagnostics_stay_escaped(self):
         health = 'out of codex usage since 2026-10-17T06:57:20Z: <script>bad</script>'

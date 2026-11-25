@@ -13,7 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from fastapi.testclient import TestClient       # noqa: E402
-from app import db, main, web                    # noqa: E402
+from app import db, main, versions               # noqa: E402
 
 SECTIONS = ("fleet-attention", "fleet-versions")
 
@@ -61,10 +61,11 @@ class FleetFold(unittest.TestCase):
         self.page.wait_for_timeout(100)     # a details' toggle event comes after the click
 
     def open(self):
+        self.page.wait_for_selector("#fleet-versions")      # the script draws it from /api/status (#888)
         return {s: self.page.eval_on_selector(f"#{s}", "d => d.open") for s in SECTIONS}
 
     def test_needs_you_folds_from_its_heading_and_stays_folded_and_versions_starts_folded(self):
-        with patch.object(web.versions_mod, "rows", lambda *a, **k: []):
+        with patch.object(versions, "rows", lambda *a, **k: []):
             self.page.reload()
             self.assertEqual(self.open(), {"fleet-attention": True, "fleet-versions": False})
         self.page.focus("#fleet-attention > summary")
@@ -81,18 +82,18 @@ class FleetFold(unittest.TestCase):
     def test_versions_opens_when_a_person_must_act_and_stays_folded_until_the_ask_changes(self):
         ask = lambda n: [{"what": "routine", "name": f"r{i}", "running": "recipe v1", "wanted": "recipe v2", "current": False,
                           "note": "an older recipe: a new version needs a human's yes", "href": "", "bell": False} for i in range(n)]
-        with patch.object(web.versions_mod, "rows", lambda *a, **k: ask(1)):
+        with patch.object(versions, "rows", lambda *a, **k: ask(1)):
             self.page.reload()
             self.assertTrue(self.open()["fleet-versions"], "a remembered fold from before does not hide an ask")
             self.page.evaluate("document.querySelector('#fleet-versions > summary').click()")
             self.settle()
             self.page.reload()
             self.assertFalse(self.open()["fleet-versions"], "the same ask: it stays folded")
-        with patch.object(web.versions_mod, "rows", lambda *a, **k: ask(2)):
+        with patch.object(versions, "rows", lambda *a, **k: ask(2)):
             self.page.reload()
             self.assertTrue(self.open()["fleet-versions"], "a new ask opens it")
         keeper = {"what": "keeper", "name": "box", "running": "a", "wanted": "b", "current": False, "note": "stuck", "href": "", "bell": True}
-        with patch.object(web.versions_mod, "rows", lambda *a, **k: [keeper]):
+        with patch.object(versions, "rows", lambda *a, **k: [keeper]):
             self.page.reload()
             self.assertTrue(self.open()["fleet-versions"], "a keeper only a person can fix counts too")
             self.assertIn("1 needs you", self.page.inner_text("#fleet-versions > summary").lower())

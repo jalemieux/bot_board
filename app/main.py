@@ -2665,7 +2665,6 @@ def page_fleet_gone(_: dict | None = Depends(page_gate)) -> RedirectResponse:
 @app.get("/skills", response_class=HTMLResponse, include_in_schema=False)
 def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
     """The board-wide pages (#644): one page each, drawn from the same data as the old Fleet page."""
-    from . import status
     page = request.url.path.strip("/")
     if page == "configuration":
         return web.configuration_page(BOARD_NAME)      # an empty shell: its script reads /api/fleet/secrets (#861)
@@ -2676,7 +2675,7 @@ def page_fleet(request: Request, _: dict | None = Depends(page_gate)) -> str:
         slugs = workspaces.active_slugs()
     except Exception:
         slugs = []
-    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), status=status.rollup(hosts), workspaces=slugs,
+    return web.fleet_page(BOARD_NAME, hosts, fleet.pools(), workspaces=slugs,
                           skills=registry.list_skills(), profiles=registry.list_profiles(),
                           claude_token=fleet.claude_token_due(), page=page)
 

@@ -21,7 +21,6 @@ from urllib.parse import quote
 from . import db
 from . import fleet as fleet_mod
 from . import registry
-from . import versions as versions_mod
 
 MENTION_RE = re.compile(r"@([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
 TAGISH_RE = re.compile(r"(?<![\w/])#([a-z0-9][a-z0-9._-]{1,31})", re.IGNORECASE)
@@ -3344,7 +3343,7 @@ function sortTable(table, col, dir) {
     if (i === col) th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending'); else th.removeAttribute('aria-sort');
   });
 }
-document.querySelectorAll('.fleet-page table').forEach(function (table) {
+function wireSort(table) {
   var key = table.parentElement.closest('[id]'); key = key && key.id;
   var kept = loadSorts()[key];
   if (kept) sortTable(table, kept[0], kept[1]);
@@ -3357,7 +3356,8 @@ document.querySelectorAll('.fleet-page table').forEach(function (table) {
       try { localStorage.setItem('bb.fleetSort', JSON.stringify(all)); } catch (err) {}
     });
   });
-});
+}
+document.querySelectorAll('.fleet-page table').forEach(wireSort);
 // Each section folds from its heading (#281), and stays folded in this browser. Needs you
 // folds only until something new is in it: an alert is never hidden.
 function loadFolded() { try { return JSON.parse(localStorage.getItem('bb.fleetFolded')) || {}; } catch (err) { return {}; } }
@@ -3368,22 +3368,62 @@ function alertsNow() {
     var c = a.querySelector('.chips'); return a.querySelector('h3').textContent + (c ? ' ' + c.textContent : '');
   });
 }
-(function () {
+function wireFold(d) {
   var folded = loadFolded();
-  document.querySelectorAll('details.fleet-section').forEach(function (d) {
-    var was = folded[d.id];
-    if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
-    // Versions is served open when a person must act; folding it holds until its title changes
-    if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
-    if (was) d.open = false;
-    d.addEventListener('toggle', function () {
-      var f = loadFolded();
-      if (d.open) delete f[d.id];
-      else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : {title: d.querySelector('summary').textContent};
-      saveFolded(f);
-    });
+  var was = folded[d.id];
+  if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
+  // Versions is served open when a person must act; folding it holds until its title changes
+  if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
+  if (was) d.open = false;
+  d.addEventListener('toggle', function () {
+    var f = loadFolded();
+    if (d.open) delete f[d.id];
+    else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : {title: d.querySelector('summary').textContent};
+    saveFolded(f);
   });
-})();
+}
+document.querySelectorAll('details.fleet-section').forEach(wireFold);
+// The Versions section (#888): what runs across the fleet against what should (#239), drawn from /api/status
+// `versions` with DOM calls, so nothing the board says is read as HTML. It folds and sorts like the sections the route draws.
+function drawVersions(rows) {
+  var shown = rows.filter(function (r) { return ['board', 'keeper', 'routine'].indexOf(r.what) >= 0 || !r.current; });
+  var bots = {}, stale = {};
+  rows.forEach(function (r) {
+    if (r.what === 'launcher' || r.what === 'session') { bots[r.name] = 1; if (!r.current) stale[r.name] = 1; }
+  });
+  var nBots = Object.keys(bots).length, nStale = Object.keys(stale).length;
+  var behind = shown.filter(function (r) { return !r.current; }).length;
+  var ask = shown.filter(function (r) { return r.bell || (r.what === 'routine' && !r.current); }).length;
+  var title = ask ? 'Versions \u00b7 ' + ask + ' need' + (ask === 1 ? 's' : '') + ' you'
+    : behind ? 'Versions \u00b7 ' + behind + ' behind' : 'Versions \u00b7 current';
+  var sortCell = function (tag, attrs, v, kids) { attrs['data-sort'] = String(v == null ? '' : v).toLowerCase(); return sEl.apply(null, [tag, attrs].concat(kids)); };
+  var body = sEl('tbody', null);
+  shown.forEach(function (r) {
+    var who = r.href ? sEl('a', {href: r.href, text: r.name}) : r.name;
+    body.appendChild(sEl('tr', {'class': r.current ? '' : 'warn'},
+      sortCell('td', {}, r.what, [r.what]), sortCell('td', {'class': 'who'}, r.name, [who]),
+      sortCell('td', {'class': 'nw'}, r.running, [r.running]), sortCell('td', {'class': 'nw dim'}, r.wanted, [r.wanted]),
+      sEl('td', null, r.note ? r.note : 'current')));
+  });
+  var head = sEl('tr', null);
+  ['What', 'Name', 'Running', 'Wanted'].forEach(function (l) { head.appendChild(sEl('th', null, sEl('button', {type: 'button', 'class': 'sort', text: l}))); });
+  head.appendChild(sEl('th', {text: 'Note'}));
+  var d = sEl('details', {'class': 'fleet-section', id: 'fleet-versions'}, sEl('summary', null, sEl('h2', {text: title})));
+  d.open = ask > 0;
+  if (nBots) d.appendChild(sEl('p', {'class': 'sub', text: (nBots - nStale) + ' of ' + nBots + ' running bot(s) on the current launcher and session.'}));
+  var table = sEl('table', {'class': 'bots versions'}, sEl('thead', null, head), body);
+  d.appendChild(table);
+  var slot = document.getElementById('versions-slot');
+  slot.textContent = '';
+  slot.appendChild(d);
+  wireSort(table); wireFold(d);
+}
+if (document.getElementById('versions-slot')) {
+  fetch('/api/status', {headers: ME ? {'Authorization': 'Bearer ' + ME.token} : {}})
+    .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+    .then(function (d) { drawVersions(d.versions || []); })
+    .catch(function () { document.getElementById('versions-slot').textContent = 'Versions could not be read from the board.'; });
+}
 // The filters above the bot lists; kept through the page's own reloads.
 var botFilter = 'running';
 try { botFilter = localStorage.getItem('bb.fleetFilter') || 'running'; } catch (err) {}
@@ -3709,31 +3749,6 @@ body.out .fleet-page .acts,body.out .fleet-page .abtns,body.out .fleet-page .add
 """
 
 
-def _versions_section(rows: list) -> str:
-    """What runs against what should (#239): the board, each keeper and routine, and the bots
-    whose launcher or session is not current; the current bots are counted, not listed."""
-    shown = [r for r in rows if r["what"] in ("board", "keeper", "routine") or not r["current"]]
-    bots = {r["name"] for r in rows if r["what"] in ("launcher", "session")}
-    stale = {r["name"] for r in rows if r["what"] in ("launcher", "session") and not r["current"]}
-    body = ""
-    for r in shown:
-        name = f'<a href="{e(r["href"])}">{e(r["name"])}</a>' if r["href"] else e(r["name"])
-        srt = _sort_value
-        body += (f'<tr class="{"" if r["current"] else "warn"}"><td{srt(r["what"])}>{e(r["what"])}</td>'
-                 f'<td class="who"{srt(r["name"])}>{name}</td>'
-                 f'<td class="nw"{srt(r["running"])}>{e(r["running"])}</td><td class="nw dim"{srt(r["wanted"])}>{e(r["wanted"])}</td>'
-                 f'<td>{e(r["note"]) if r["note"] else "current"}</td></tr>')
-    summary = (f'<p class="sub">{len(bots) - len(stale)} of {len(bots)} running bot(s) on the current launcher and session.</p>'
-               if bots else "")
-    behind = sum(not r["current"] for r in shown)
-    # most catch up on their own; a bell row (#239) or an older routine recipe waits for a person
-    ask = sum(r["bell"] or (r["what"] == "routine" and not r["current"]) for r in shown)
-    title = (f'Versions · {ask} need{"s" * (ask == 1)} you' if ask else f'Versions · {behind} behind' if behind else "Versions · current")
-    return _fleet_section("fleet-versions", title, summary +
-                          f'<table class="bots versions"><thead><tr>{_sortable("What", "Name", "Running", "Wanted")}'
-                          f'<th>Note</th></tr></thead><tbody>{body}</tbody></table>', is_open=bool(ask))
-
-
 def _fleet_section(id_: str, title: str, body: str, is_open: bool = True) -> str:
     """A /fleet section that folds from its heading (#281); FLEET_JS remembers which are folded."""
     return (f'<details class="fleet-section" id="{id_}"{" open" if is_open else ""}><summary><h2>{title}</h2></summary>'
@@ -3812,7 +3827,7 @@ def skills_page(board_name) -> str:
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
-def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(), profiles=(),
+def fleet_page(board_name, hosts, pools=(), workspaces=(), skills=(), profiles=(),
                claude_token=None, page="machines") -> str:
     if page == "configuration":
         return configuration_page(board_name)       # an empty shell: nothing below is read for it (#861)
@@ -3827,7 +3842,6 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
     # bots with no profile, gathered on the Profiles table's last row so they are not forgotten
     orphans = sorted({b["handle"] for h in hosts for b in h["bots"] if not b.get("profile") and not b.get("retired")}, key=str.lower)
     alerts = _alerts(hosts, claude_token)
-    versions_html = _versions_section((status or {}).get("versions") or versions_mod.rows(hosts))
 
     attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
     machines = []
@@ -3920,7 +3934,7 @@ def fleet_page(board_name, hosts, pools=(), status=None, workspaces=(), skills=(
 <noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
 <div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
 <section class="fleet-section" id="fleet-machines">{machines_html}</section>
-{versions_html}</div>
+{'<div id="versions-slot"></div>' if page == "machines" else ""}</div>
 <div class="tab-pane" id="tab-roles">{registry_web.profiles_section(list(profiles), orphans)}</div>
 <div class="tab-pane" id="tab-skills">{registry_web.skills_section(list(skills), list(profiles))}</div>
 <div class="tab-pane" id="tab-settings">
