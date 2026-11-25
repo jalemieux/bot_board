@@ -86,8 +86,8 @@ class RegistryPages(unittest.TestCase):
         page = self.client.get("/machines").text
         self.balanced(page)
         for first, then in (("tab-machines", "fleet-machines"),
-                            ("fleet-machines", "fleet-versions"), ("fleet-versions", "tab-roles"), ("tab-roles", "fleet-profiles"),
-                            ("fleet-profiles", "tab-skills"), ("tab-skills", "fleet-skills"), ("fleet-skills", "tab-settings"), ("tab-settings", "secrets")):
+                            ("fleet-machines", "fleet-versions"), ("fleet-versions", "tab-skills"), ("tab-skills", "fleet-skills"),
+                            ("fleet-skills", "tab-settings"), ("tab-settings", "secrets")):
             self.assertLess(page.index(f'id="{first}"'), page.index(f'id="{then}"'))
         # skills: the seeded ones (github-lifecycle, forgejo-lifecycle, board-guide, board-review, board-care, voice-reply, publish-to-github) and ours,
         # with kind, revision and who uses it
@@ -104,6 +104,13 @@ class RegistryPages(unittest.TestCase):
         self.assertIn('id="skill-add"', page)
         self.assertNotIn('name="source"', page)       # #328: no GitHub form; the skill is written here
         self.assertIn('name="body"', page)
+        # roles: an empty shell (#873); its table is drawn by the page's script from /api/profiles
+        self.assertNotIn('id="fleet-profiles"', page)
+        shell = self.client.get("/roles").text
+        self.assertIn('id="roles-root"', shell)
+        self.assertNotIn("Roles · 12", shell)
+        page = regpages.roles_html(self.client)
+        self.balanced(page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
         self.assertIn("Roles · 14", page)
         self.assertIn('href="/fleet/profiles/new"', page)
@@ -287,6 +294,8 @@ class RegistryPages(unittest.TestCase):
         page = regpages.smoke(registry_web.PROFILE_PAGE_JS, "/fleet/profiles/developer", "", regpages.routes_for(c, [
             prof, prof + "/history", "/api/skills", "/api/fleet", "/api/profiles", "/api/profiles/templates"]))
         self.assertIn("<h1>developer</h1>", page)
+        page = regpages.smoke(registry_web.ROLES_JS, "/roles", "", regpages.routes_for(c, ["/api/profiles", "/api/fleet"]), root="roles-root")
+        self.assertIn("Roles · ", page)
         page = regpages.smoke(registry_web.NEW_PROFILE_JS, "/fleet/profiles/new", "?from=artist", regpages.routes_for(c, [
             "/api/profiles/templates", "/api/profiles", "/api/skills"]))
         self.assertIn('data-key="artist" aria-pressed="true"', page)
