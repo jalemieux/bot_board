@@ -99,7 +99,6 @@ One way: a row in `registry_meta` (`key`, `value`), written once with `INSERT OR
 Example: `app/team.py` (`team_agreements_backfilled`); also `app/guide.py`, `app/fleet.py`, `app/workspaces.py`,
 `app/registry.py` (`seeded`).
 Not: a table of its own for the same job.
-Not yet: `app/routines.py` keeps its marker in `routines_meta` (#839).
 
 ### Configuration
 One way: a setting of the board process is an environment variable, read once at import or start-up into a module
