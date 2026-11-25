@@ -2602,8 +2602,6 @@ def app_page(board_name: str, base: str, stats: dict, invite_required: bool = Fa
 <script>{COPY_JS}</script>"""
 
 
-def _plural(n: int, one: str, many: str | None = None) -> str:
-    return f"{n} {one if n == 1 else (many or one + 's')}"
 
 
 def _gauge(label: str, used: float | None, total: float | None, text: str) -> str:
@@ -2615,22 +2613,6 @@ def _gauge(label: str, used: float | None, total: float | None, text: str) -> st
             f'{e(text)}</span>')
 
 
-def _fleet_detail(text: str) -> str:
-    """Escape diagnostics while exposing embedded timestamps to browser localization."""
-    pattern = r'\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})'
-    parts, end = [], 0
-    for match in re.finditer(pattern, text):
-        parts.append(e(text[end:match.start()]))
-        stamp = match.group()
-        try:
-            datetime.fromisoformat(stamp.replace('Z', '+00:00'))
-        except ValueError:
-            parts.append(e(stamp))
-        else:
-            parts.append(f'<time data-local-time datetime="{e(stamp)}">{e(ago(stamp))}</time>')
-        end = match.end()
-    parts.append(e(text[end:]))
-    return ''.join(parts)
 
 
 def _sort_value(v) -> str:
@@ -2660,18 +2642,6 @@ HOST_WARNING = ("It can read every bot's token in ~/.config/bot_board, your home
 
 
 
-def _host_banner(hosts: list) -> str:
-    """At the top of /fleet while any host bot exists (#595): which, where, and why."""
-    items = [(b, h["name"]) for h in hosts for b in h["bots"]
-             if (b.get("host_flag") or b.get("runmode") == "host") and not b.get("deleted")]
-    if not items:
-        return ""
-    lis = "".join(f'<li><a href="/a/{e(b["handle"])}">@{e(b["handle"])}</a> on {e(box)} · '
-                  f'{e(b.get("host_reason") or "moved back; leaves the host at its next restart")}</li>' for b, box in items)
-    n = len(items)
-    return (f'<section class="hostbanner" role="status" aria-label="host bots"><b>{n} bot{"s" if n != 1 else ""} '
-            f'run{"s" if n == 1 else ""} outside a container, as the user of {"its" if n == 1 else "their"} Mac</b>'
-            f'<ul>{lis}</ul></section>')
 
 
 def _update_word(result: str) -> tuple[str, bool]:
@@ -2684,97 +2654,169 @@ def _update_word(result: str) -> tuple[str, bool]:
     return "update needs a look", False
 
 
-def _alert(title: str, text: str, bots: list = (), buttons: str = "") -> str:
-    names = (" ".join(f'<a class="chip" href="/a/{e(b["handle"])}">@{e(b["handle"])} <span>{e(h)}</span></a>'
-                      for h, b in bots))
-    return (f'<div class="fleet-alert"><div class="atext"><h3>{title}</h3><p>{text}</p>'
-            + (f'<div class="chips">{names}</div>' if names else "") + '</div>'
-            + (f'<div class="abtns">{buttons}</div>' if buttons else "") + '</div>')
 
 
-# A machine with no claude login can take the fleet's (#283) instead of a login of its own.
-CLAUDE_TOKEN_HINT = (' Or log every machine in at once: run <code>claude setup-token</code> on a machine with a browser, '
-                     'and set the token it prints as <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
-                     '<a href="/configuration#secrets">Configuration: shared secrets</a>.')
 
 
-def _alerts(hosts: list, claude_token: dict | None = None) -> list:
-    """What needs a human, each said once, in plain words, with the button that deals with it."""
-    groups = {}
-    for h in hosts:
-        if not h["reporting"]:
-            continue
-        no_login = {c["name"] for c in h.get("credentials") or [] if c["state"] != "ok"}
-        for b in h["bots"]:
-            st = b["state"]
-            if st["state"] == "needs login" and not b.get("problem") and b.get("harness") in no_login:
-                continue
-            problem = b.get("problem") or ""
-            limited = st["state"] in ("out of usage", "at capacity")
-            if not (problem or limited or st["state"] == "needs login" or (st["state"] == "failing" and not st["can_work"])):
-                continue
-            # the same trouble on many bots, on many boxes, is one alert
-            reason = problem or (st["reason"].split(":")[0] if limited else st["reason"])
-            groups.setdefault((st["state"] if not problem else "problem", b.get("harness") or "", reason), []).append((h["name"], b))
-    out = []
-    for (kind, harness, reason), bots in groups.items():
-        n = len(bots)
-        boxes = sorted({h for h, _ in bots})
-        clear = [{"host": h, "handle": b["handle"], "key": b["clear_key"]} for h, b in bots if b.get("clear_key")]
-        dismiss = (f'<button type="button" class="clear-alert" data-items="{e(json.dumps(clear))}">Dismiss</button>'
-                   if len(clear) == n else "")
-        redo = lambda label, run, cls="": (f'<button type="button" class="redo{cls}" data-items="'
-                                           + e(json.dumps([{"handle": b["handle"], "host": h, "run": run} for h, b in bots]))
-                                           + f'">{label}</button>')
-        stopped = all(not b["status"].startswith(fleet_mod.UP) for _, b in bots)
-        if kind in ("out of usage", "at capacity"):
-            title = f"{e(harness)} usage limit reached" if kind == "out of usage" else f"{e(harness)} is at capacity"
-            text = (f'{_fleet_detail(bots[0][1]["state"]["reason"].rstrip("."))}. Nothing to do: '
-                    f'{"they carry on" if n > 1 else "it carries on"} by itself once the limit resets.')
-            out.append(_alert(title, text, bots, "" if stopped else redo("Stop them" if n > 1 else "Stop it", 0)))
-        elif kind == "needs login":
-            text = (f'{_fleet_detail(reason)}. On {e(", ".join(boxes))}, open a terminal, run <code>{e(harness)}</code> '
-                    'and sign in; the bots carry on by themselves.' + (CLAUDE_TOKEN_HINT if harness == "claude" else ""))
-            out.append(_alert(f"{e(harness)} needs a login on {e(', '.join(boxes))}", text, bots))
-        else:
-            asked_start = any(b.get("want") == "running" for _, b in bots)
-            title = f"{'Could not start' if asked_start and stopped else 'Trouble with'} {_plural(n, 'bot')}"
-            buttons = (redo("Try again", 1) + redo("Leave stopped", 0, " quiet")) if asked_start and stopped else dismiss
-            out.append(_alert(title, _fleet_detail(reason), bots, buttons))
-    for h in hosts:
-        if not h["reporting"]:
-            out.append(_alert(f'{e(h["name"])} stopped reporting',
-                              f'Last heard {e(ago(h["reported_at"]))}. Its bots may still run, but the board cannot see or '
-                              f'control them. On {e(h["name"])}, run <code>~/.bot_board/src/bin/bot install</code> to restart '
-                              f'its keeper.'))
-            continue
-        for c in h.get("credentials") or []:
-            if c["state"] != "ok":
-                fix = ""
-                if c["name"] == "claude":
-                    fix = (' Make a new one with <code>claude setup-token</code> and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> '
-                           'under <a href="/configuration#secrets">Configuration: shared secrets</a>.' if c["state"] == "rejected" else CLAUDE_TOKEN_HINT)
-                out.append(_alert(f'{e(c["name"])} {e(c["state"])} on {e(h["name"])}',
-                                  e((c.get("detail") or "Check this login on the machine").rstrip(".") + ".")
-                                  + (f' It is holding {_plural(c["held"], "bot")}.' if c.get("held") else "") + fix))
-    if claude_token:
-        when = ("has expired" if claude_token["days_left"] <= 0 else "expires today" if claude_token["days_left"] == 1
-                else f'expires in {claude_token["days_left"]} days')
-        out.append(_alert(f"The fleet's claude token {when}",
-                          f'It was set on {e(claude_token["set_at"][:10])}, and a token from <code>claude setup-token</code> '
-                          'lasts a year. Make a new one and replace <code>CLAUDE_CODE_OAUTH_TOKEN</code> under '
-                          '<a href="/configuration#secrets">Configuration: shared secrets</a>; every machine picks it up within minutes.'))
-    return out
 
 
-FLEET_JS = """
-document.querySelectorAll('time[data-local-time]').forEach(function (el) {
-  var date = new Date(el.dateTime);
-  if (!isNaN(date.getTime())) el.textContent = date.toLocaleString([], {
-    year: 'numeric', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+FLEET_ALERTS_JS = r'''
+// The alerts and the host banner of the fleet pages (#887): built here from /api/fleet, with no data from the route. The model is a
+// pure function of the hosts and the claude token (testable under node); the render below builds DOM and sets every API value as text.
+function fleetUp(status) { status = String(status || ''); return status.indexOf('waiting') === 0 || status.indexOf('running') === 0; }
+function fleetAgo(ts) {
+  if (!ts) return 'never';
+  var then = new Date(ts); if (isNaN(then.getTime())) return String(ts);
+  var secs = (Date.now() - then.getTime()) / 1000;
+  if (secs < 60) return Math.floor(secs) + 's ago';
+  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+  if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+  return Math.floor(secs / 86400) + 'd ago';
+}
+function fleetPlural(n, one, many) { return n + ' ' + (n === 1 ? one : (many || one + 's')); }
+// a diagnostic with timestamps in it: the text, with each valid ISO time as {time: iso}, which the browser localizes
+function fleetDetail(text) {
+  var re = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g, parts = [], end = 0, m;
+  text = String(text || '');
+  while ((m = re.exec(text))) {
+    if (isNaN(new Date(m[0]).getTime())) continue;      // 2026-99-99: not a time, left as text
+    if (m.index > end) parts.push(text.slice(end, m.index));
+    parts.push({time: m[0]}); end = m.index + m[0].length;
+  }
+  if (end < text.length) parts.push(text.slice(end));
+  return parts;
+}
+var FLEET_CLAUDE_LINK = {href: '/configuration#secrets', text: 'Configuration: shared secrets'};
+var FLEET_CLAUDE_HINT = [' Or log every machine in at once: run ', {code: 'claude setup-token'}, ' on a machine with a browser, and set the token it prints as ',
+  {code: 'CLAUDE_CODE_OAUTH_TOKEN'}, ' under ', FLEET_CLAUDE_LINK, '.'];
+function fleetAlertsModel(hosts, claudeToken) {
+  var groups = {}, order = [], alerts = [], banner = null;
+  hosts.forEach(function (h) {
+    if (!h.reporting) return;
+    var noLogin = {}; (h.credentials || []).forEach(function (c) { if (c.state !== 'ok') noLogin[c.name] = true; });
+    (h.bots || []).forEach(function (b) {
+      var st = b.state || {}, problem = b.problem || '';
+      if (st.state === 'needs login' && !problem && noLogin[b.harness]) return;
+      var limited = st.state === 'out of usage' || st.state === 'at capacity';
+      if (!(problem || limited || st.state === 'needs login' || (st.state === 'failing' && !st.can_work))) return;
+      // the same trouble on many bots, on many boxes, is one alert
+      var reason = problem || (limited ? String(st.reason || '').split(':')[0] : st.reason || '');
+      var key = JSON.stringify([problem ? 'problem' : st.state, b.harness || '', reason]);
+      if (!groups[key]) { groups[key] = {kind: problem ? 'problem' : st.state, harness: b.harness || '', reason: reason, bots: []}; order.push(key); }
+      groups[key].bots.push({host: h.name, bot: b});
+    });
   });
-});
+  order.forEach(function (key) {
+    var g = groups[key], n = g.bots.length, bots = g.bots, harness = g.harness;
+    var boxes = bots.map(function (x) { return x.host; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort();
+    var clear = bots.filter(function (x) { return x.bot.clear_key; }).map(function (x) { return {host: x.host, handle: x.bot.handle, key: x.bot.clear_key}; });
+    var dismiss = clear.length === n ? [{cls: 'clear-alert', label: 'Dismiss', items: clear}] : [];
+    var redo = function (label, run, cls) { return {cls: 'redo' + (cls || ''), label: label, items: bots.map(function (x) { return {handle: x.bot.handle, host: x.host, run: run}; })}; };
+    var stopped = bots.every(function (x) { return !fleetUp(x.bot.status); });
+    var chips = bots.map(function (x) { return {handle: x.bot.handle, host: x.host}; });
+    if (g.kind === 'out of usage' || g.kind === 'at capacity') {
+      alerts.push({title: harness + (g.kind === 'out of usage' ? ' usage limit reached' : ' is at capacity'),
+        text: fleetDetail(String(bots[0].bot.state.reason || '').replace(/\.+$/, '')).concat(['. Nothing to do: ' + (n > 1 ? 'they carry on' : 'it carries on') + ' by itself once the limit resets.']),
+        bots: chips, buttons: stopped ? [] : [redo(n > 1 ? 'Stop them' : 'Stop it', 0)]});
+    } else if (g.kind === 'needs login') {
+      alerts.push({title: harness + ' needs a login on ' + boxes.join(', '),
+        text: fleetDetail(g.reason).concat(['. On ' + boxes.join(', ') + ', open a terminal, run ', {code: harness}, ' and sign in; the bots carry on by themselves.']).concat(harness === 'claude' ? FLEET_CLAUDE_HINT : []),
+        bots: chips, buttons: []});
+    } else {
+      var askedStart = bots.some(function (x) { return x.bot.want === 'running'; });
+      alerts.push({title: (askedStart && stopped ? 'Could not start ' : 'Trouble with ') + fleetPlural(n, 'bot'), text: fleetDetail(g.reason), bots: chips,
+        buttons: askedStart && stopped ? [redo('Try again', 1), redo('Leave stopped', 0, ' quiet')] : dismiss});
+    }
+  });
+  hosts.forEach(function (h) {
+    if (!h.reporting) {
+      alerts.push({title: h.name + ' stopped reporting', bots: [], buttons: [],
+        text: ['Last heard ' + fleetAgo(h.reported_at) + '. Its bots may still run, but the board cannot see or control them. On ' + h.name + ', run ',
+               {code: '~/.bot_board/src/bin/bot install'}, ' to restart its keeper.']});
+      return;
+    }
+    (h.credentials || []).forEach(function (c) {
+      if (c.state === 'ok') return;
+      var fix = [];
+      if (c.name === 'claude') fix = c.state === 'rejected'
+        ? [' Make a new one with ', {code: 'claude setup-token'}, ' and replace ', {code: 'CLAUDE_CODE_OAUTH_TOKEN'}, ' under ', {href: FLEET_CLAUDE_LINK.href, text: FLEET_CLAUDE_LINK.text}, '.']
+        : FLEET_CLAUDE_HINT;
+      alerts.push({title: c.name + ' ' + c.state + ' on ' + h.name, bots: [], buttons: [],
+        text: [String(c.detail || 'Check this login on the machine').replace(/\.+$/, '') + '.' + (c.held ? ' It is holding ' + fleetPlural(c.held, 'bot') + '.' : '')].concat(fix)});
+    });
+  });
+  if (claudeToken) {
+    alerts.push({title: "The fleet's claude token " + (claudeToken.days_left <= 0 ? 'has expired' : claudeToken.days_left === 1 ? 'expires today' : 'expires in ' + claudeToken.days_left + ' days'), bots: [], buttons: [],
+      text: ['It was set on ' + String(claudeToken.set_at).slice(0, 10) + ', and a token from ', {code: 'claude setup-token'}, ' lasts a year. Make a new one and replace ',
+             {code: 'CLAUDE_CODE_OAUTH_TOKEN'}, ' under ', FLEET_CLAUDE_LINK, '; every machine picks it up within minutes.']});
+  }
+  var host = [];
+  hosts.forEach(function (h) {
+    (h.bots || []).forEach(function (b) {
+      if ((b.host_flag || b.runmode === 'host') && !b.deleted) host.push({handle: b.handle, box: h.name, reason: b.host_reason || 'moved back; leaves the host at its next restart'});
+    });
+  });
+  if (host.length) banner = {n: host.length, items: host};
+  return {alerts: alerts, banner: banner};
+}
+function fleetNode(tag, attrs) {
+  var el = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+  var add = function (c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) return c.forEach(add);
+    el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  };
+  for (var i = 2; i < arguments.length; i++) add(arguments[i]);
+  return el;
+}
+function fleetParts(parts) {
+  return parts.map(function (p) {
+    if (typeof p === 'string') return document.createTextNode(p);
+    if (p.code !== undefined) return fleetNode('code', {}, p.code);
+    if (p.href) return fleetNode('a', {href: p.href}, p.text);
+    return fleetNode('time', {'data-local-time': '', datetime: p.time}, p.time);
+  });
+}
+function renderFleetAlerts(root, model) {
+  root.textContent = '';
+  if (model.banner) {
+    var n = model.banner.n;
+    root.appendChild(fleetNode('section', {'class': 'hostbanner', role: 'status', 'aria-label': 'host bots'},
+      fleetNode('b', {}, n + ' bot' + (n !== 1 ? 's' : '') + ' run' + (n === 1 ? 's' : '') + ' outside a container, as the user of ' + (n === 1 ? 'its' : 'their') + ' Mac'),
+      fleetNode('ul', {}, model.banner.items.map(function (x) {
+        return fleetNode('li', {}, fleetNode('a', {href: '/a/' + encodeURIComponent(x.handle)}, '@' + x.handle), ' on ' + x.box + ' · ' + x.reason);
+      }))));
+  }
+  if (!model.alerts.length) return;
+  var body = model.alerts.map(function (a) {
+    return fleetNode('div', {'class': 'fleet-alert'},
+      fleetNode('div', {'class': 'atext'}, fleetNode('h3', {}, a.title), fleetNode('p', {}, fleetParts(a.text)),
+        a.bots.length ? fleetNode('div', {'class': 'chips'}, a.bots.map(function (b) {
+          return fleetNode('a', {'class': 'chip', href: '/a/' + encodeURIComponent(b.handle)}, '@' + b.handle + ' ', fleetNode('span', {}, b.host));
+        })) : null),
+      a.buttons.length ? fleetNode('div', {'class': 'abtns'}, a.buttons.map(function (b) {
+        return fleetNode('button', {type: 'button', 'class': b.cls, 'data-items': JSON.stringify(b.items)}, b.label);
+      })) : null);
+  });
+  var det = fleetNode('details', {'class': 'fleet-section', id: 'fleet-attention', open: ''}, fleetNode('summary', {}, fleetNode('h2', {}, 'Needs you · ' + model.alerts.length)));
+  body.forEach(function (n) { det.appendChild(n); });
+  root.appendChild(det);
+}
+'''
+
+
+FLEET_JS = FLEET_ALERTS_JS + """
+function localizeTimes() {
+  document.querySelectorAll('time[data-local-time]').forEach(function (el) {
+    var date = new Date(el.dateTime);
+    if (!isNaN(date.getTime())) el.textContent = date.toLocaleString([], {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+    });
+  });
+}
+localizeTimes();
 // The same identity the board page keeps in this browser: {handle, token}.
 var ME = null; try { ME = JSON.parse(localStorage.getItem('bb.me')); } catch (err) {}
 if (document.getElementById('who')) document.getElementById('who').textContent = ME ? 'Signed in as @' + ME.handle + '.'
@@ -3346,21 +3388,25 @@ function alertsNow() {
     var c = a.querySelector('.chips'); return a.querySelector('h3').textContent + (c ? ' ' + c.textContent : '');
   });
 }
-function wireFold(d) {
+function initFolds() {      // run once for the sections in the page and again for the alerts the script adds (#887)
   var folded = loadFolded();
-  var was = folded[d.id];
-  if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
-  // Versions is served open when a person must act; folding it holds until its title changes
-  if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
-  if (was) d.open = false;
-  d.addEventListener('toggle', function () {
-    var f = loadFolded();
-    if (d.open) delete f[d.id];
-    else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : {title: d.querySelector('summary').textContent};
-    saveFolded(f);
+  document.querySelectorAll('details.fleet-section').forEach(function (d) {
+    if (d.dataset.foldInit) return;
+    d.dataset.foldInit = '1';
+    var was = folded[d.id];
+    if (d.id === 'fleet-attention' && was && alertsNow().some(function (t) { return (was.alerts || []).indexOf(t) < 0; })) was = null;
+    // Versions is served open when a person must act; folding it holds until its title changes
+    if (d.id === 'fleet-versions' && d.open && was && was.title !== d.querySelector('summary').textContent) was = null;
+    if (was) d.open = false;
+    d.addEventListener('toggle', function () {
+      var f = loadFolded();
+      if (d.open) delete f[d.id];
+      else f[d.id] = d.id === 'fleet-attention' ? {alerts: alertsNow()} : {title: d.querySelector('summary').textContent};
+      saveFolded(f);
+    });
   });
 }
-document.querySelectorAll('details.fleet-section').forEach(wireFold);
+initFolds();
 // The Versions section (#888): what runs across the fleet against what should (#239), drawn from /api/status
 // `versions` with DOM calls, so nothing the board says is read as HTML. It folds and sorts like the sections the route draws.
 function drawVersions(rows) {
@@ -3394,7 +3440,7 @@ function drawVersions(rows) {
   var slot = document.getElementById('versions-slot');
   slot.textContent = '';
   slot.appendChild(d);
-  wireSort(table); wireFold(d);
+  wireSort(table); initFolds();
 }
 if (document.getElementById('versions-slot')) {
   fetch('/api/status', {headers: ME ? {'Authorization': 'Bearer ' + ME.token} : {}})
@@ -3402,6 +3448,17 @@ if (document.getElementById('versions-slot')) {
     .then(function (d) { drawVersions(d.versions || []); })
     .catch(function () { document.getElementById('versions-slot').textContent = 'Versions could not be read from the board.'; });
 }
+// The alerts and the host banner come from /api/fleet (#887), not from the route.
+(function () {
+  var root = document.getElementById('fleet-alerts'); if (!root) return;
+  fetch('/api/fleet', {headers: ME ? {'Authorization': 'Bearer ' + ME.token} : {}})
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      renderFleetAlerts(root, fleetAlertsModel(d.hosts || [], d.claude_token_due || null));
+      initFolds(); localizeTimes();
+    }).catch(function () {});
+})();
 // The filters above the bot lists; kept through the page's own reloads.
 var botFilter = 'running';
 try { botFilter = localStorage.getItem('bb.fleetFilter') || 'running'; } catch (err) {}
@@ -3796,7 +3853,7 @@ def configuration_page(board_name) -> str:
 # its machine's row: the host-bots switch, its host bots, the apps and handles it reports, and, with the switch on, the short form that
 # creates a host bot. Nothing on a box that is not a Mac (host_bots is null there). Every value goes in as text. The click and submit
 # handlers in FLEET_JS read its class names and data-* attributes.
-HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING) + ";" + r"""
+HOST_CARD_JS = "var HOST_WARNING = " + json.dumps(HOST_WARNING).replace("<", "\\u003c") + ";" + r"""
 (function () {
   var table = document.querySelector('#fleet-machines table.machines');
   if (!table) return;
@@ -3890,8 +3947,7 @@ def skills_page(board_name) -> str:
 <script>{FLEET_JS}{registry_web.REG_SECTION_JS}{registry_web.SKILLS_SHELL_JS}</script>""")
 
 
-def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(),
-               claude_token=None, page="machines") -> str:
+def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(), page="machines") -> str:
     from . import registry_web
     hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
                              "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
@@ -3900,9 +3956,7 @@ def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(),
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
     # bots with no profile, gathered on the Profiles table's last row so they are not forgotten
     orphans = sorted({b["handle"] for h in hosts for b in h["bots"] if not b.get("profile") and not b.get("retired")}, key=str.lower)
-    alerts = _alerts(hosts, claude_token)
 
-    attention = _fleet_section("fleet-attention", f"Needs you · {len(alerts)}", "".join(alerts)) if alerts else ""
     machines = []
     for h in hosts:
         name, bots = h["name"], h["bots"]
@@ -3987,8 +4041,7 @@ def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(),
 <div class="fleet-head"><h1>{title}</h1></div>
 <p class="sub fleet-count">{counts}</p>
 <datalist id="profiles-data">{"".join(f'<option value="{e(p["name"])}"></option>' for p in profiles)}</datalist>
-{_host_banner(hosts)}
-{attention}
+<div id="fleet-alerts"></div>
 <noscript><style>.fleet-page .tab-pane{{display:block}}</style></noscript>
 <div class="tab-pane" id="tab-machines"><p class="right-link needs-me"><a class="act" href="#fleet-add-machine">+ Add a machine</a></p>
 <section class="fleet-section" id="fleet-machines">{machines_html}</section>

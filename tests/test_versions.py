@@ -115,7 +115,7 @@ class Rows(unittest.TestCase):
         code = FAKE + fn + """
 const slot = new N('div'); const wired = [];
 document.getElementById = id => id === 'versions-slot' ? slot : null;
-function wireSort() { wired.push('sort'); } function wireFold() { wired.push('fold'); }
+function wireSort() { wired.push('sort'); } function initFolds() { wired.push('fold'); }
 drawVersions(%s);
 const d = slot.kids[0], tags = [];
 (function walk(n) { tags.push(n.tag); n.kids.forEach(walk); })(slot);
