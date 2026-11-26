@@ -228,6 +228,14 @@ def by_id(workspace_id) -> dict | None:
     return dict(row) if row else None
 
 
+def thread_repository(tid: int) -> str:
+    """The repository (owner/name) of the workspace a thread is in, or "" when its channel has no workspace or the workspace
+    has no repository (#931)."""
+    row = db.conn().execute('SELECT w.repository FROM messages m JOIN boards b ON b.id=m.board_id'
+                            ' JOIN workspaces w ON w.id=b.workspace_id WHERE m.id=?', (tid,)).fetchone()
+    return (row['repository'] or '') if row else ''
+
+
 def home_slug(ws) -> str:
     return db.get_board_by_id(ws['board_id'])['slug']
 

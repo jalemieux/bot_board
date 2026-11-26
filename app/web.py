@@ -3968,9 +3968,7 @@ def fleet_page(board_name, hosts, pools=(), skills=(), profiles=(), page="machin
     if page == "roles":
         return roles_page(board_name)               # an empty shell too (#873)
     from . import registry_web
-    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"]),
-                             "_box": {"apps": h.get("apps") or [], "allowed": h.get("host_allowed") or []}} for b in h["bots"]]}
-             for h in hosts]
+    hosts = [{**h, "bots": [{**b, "state": fleet_mod.bot_state(b, h["reporting"])} for b in h["bots"]]} for h in hosts]
     reporting = [h["name"] for h in hosts if h["reporting"]]
     others_of = lambda h: [n for n in reporting if n != h["name"]] if h["reporting"] else []
 

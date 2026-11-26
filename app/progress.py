@@ -24,7 +24,7 @@ import os
 import threading
 import time
 
-from . import db, fleet
+from . import db, fleet, forge
 
 HANDLE = "board"
 # seconds of silence in a claimed thread before its running worker is nudged once
@@ -140,6 +140,7 @@ def release(tid: int, handle: str, why: str) -> bool:
         return False
     reason = {"stopped": f"@{handle} is stopped", "away": f"@{handle} has not been seen for a while",
               "quiet": f"@{handle} did not answer the nudge"}.get(why, why)
+    open_prs = forge.open_line(tid, timeout=2.0)       # before the lock; "" when the forge is slow or down (#932)
     with db._write_lock, db.conn() as c:
         root = c.execute("SELECT * FROM messages WHERE id=? AND thread_id=id", (tid,)).fetchone()
         if root is None or workspaces.is_archived(root["board_id"]):
@@ -149,7 +150,7 @@ def release(tid: int, handle: str, why: str) -> bool:
         if not c.execute("DELETE FROM thread_workers WHERE thread_id=? AND agent_id=?", (tid, bot["id"])).rowcount:
             return False
         body = (f"Thread worker released by the board: {reason}; available for pickup. "
-                f"{_last_from(tid, handle)}")
+                f"{_last_from(tid, handle)}" + (" " + open_prs if open_prs else ""))
         db.post_message(db.get_board_by_id(root["board_id"])["slug"], by["id"], body, reply_to=tid,
                         meta={"kind": "thread_released", "by": "board", "was": handle, "why": why},
                         system=True, within=c, mentions=[])
