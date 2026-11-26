@@ -240,3 +240,54 @@ def recent_activity(full_name: str, since: str, timeout: float | None = None) ->
         if isinstance(p, dict) and _after(p.get("updated_at"), since) and isinstance(p.get("number"), int):
             reviews[p["number"]] = _list(full_name, f"/pulls/{p['number']}/reviews", timeout)
     return {"pulls": pulls, "issues": issues, "commits": commits, "reviews": reviews}
+
+
+def open_for_thread(full_name: str, thread_id: int, timeout: float | None = None) -> list[dict]:
+    """The open pull requests of a repository that carry the label `thread:<id>` (#931): [{number, title}]. Issues are left out on
+    purpose: follow-up issues carry the thread label too. The label
+    is the one owner of the mapping from work to a board thread; the board keeps no table. Read only, with the read token when there is
+    one. The path is built here: the repository passes the name check and the label is made from an integer, so nothing a caller
+    holds reaches the URL. Raises ForgeError when the forge cannot be asked: the caller decides what that means (completion goes
+    on, with a warning)."""
+    if not isinstance(thread_id, int) or isinstance(thread_id, bool) or thread_id < 1:
+        raise ForgeError("a thread id is a positive number")
+    q = urllib.parse.urlencode({"state": "open", "type": "pulls", "labels": "thread:%d" % thread_id, "limit": 50})
+    status, data = _call("GET", _repo_path(full_name, "/issues?" + q), read=True, timeout=timeout or 5)
+    if status != 200 or not isinstance(data, list):
+        raise ForgeError(f"the forge answered {status} when asked for the open pull requests of thread {thread_id}")
+    out = []
+    for i in data:
+        if isinstance(i, dict) and isinstance(i.get("number"), int):
+            out.append({"number": i["number"], "title": str(i.get("title") or "")})
+    return out
+
+
+def open_line(thread_id: int, timeout: float = 2.0, failed: list | None = None) -> str:
+    """The line a release or hand-off notice adds (#932): "Open on the forge for this thread: PR #858 (title), PR #860 (title)."
+    Numbers and titles only, titles on one line with their @handles flattened so they mention nobody. "" when nothing is open, when the
+    workspace has no repository, or when the forge cannot be asked in `timeout` seconds: a release is never blocked or changed by the
+    forge. Call it before taking the write lock, never under it. `failed` is a list the caller keeps across several threads: once the
+    forge failed, the rest are not asked, so a dead forge costs one timeout."""
+    if failed:
+        return ""
+    try:
+        repo = workspaces.thread_repository(thread_id)
+        items = open_for_thread(repo, thread_id, timeout=timeout) if repo else []
+    except Exception:       # a hand-off must go through whatever the forge or the lookup does
+        if failed is not None:
+            failed.append(1)
+        return ""
+    if not items:
+        return ""
+    parts = []
+    for i in items[:10]:
+        title = db.MENTION_RE.sub(r"\1", " ".join(i["title"].split()))[:100]
+        parts.append("PR #%d (%s)" % (i["number"], title))
+    more = " and %d more" % (len(items) - 10) if len(items) > 10 else ""
+    return "Open on the forge for this thread: " + ", ".join(parts) + more + "."
+
+
+def line_source():
+    """open_line for a loop over threads (a bot stopped with several): after the first failure it asks no more (#932)."""
+    failed: list = []
+    return lambda tid: open_line(tid, failed=failed)

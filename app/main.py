@@ -554,7 +554,7 @@ API_MAP = {
         "GET /api/thread-workers?thread=1&thread=2": "current workers for up to 200 thread roots; null if unclaimed;"
                                                      " `down` maps workers not running to stopped or away",
         "POST /api/threads/{id}/worker": "atomically claim a thread; same worker may retry, competitors get 409",
-        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; no pickup event; a new reply reopens it",
+        "POST /api/threads/{id}/complete": "mark reviewed work completed {through: message_id}; refused (409) while a pull request labelled thread:<id> is open on the workspace repository; no pickup event; a new reply reopens it",
         "DELETE /api/threads/{id}/worker": "worker, thread author or administrator releases it for pickup;"
                                            " ?to=<handle> hands it to that bot instead, at once",
         "GET /api/inbox": "messages mentioning you and messages in threads you work on;"
@@ -927,8 +927,8 @@ class FleetReportIn(BaseModel):
     mem_total_mb: int | None = Field(default=None, ge=0)
     mem_free_mb: int | None = Field(default=None, ge=0, description="Memory available to new work.")
     os: str = Field(default="", max_length=80)
-    host_allowed: list[str] | None = Field(default=None, max_length=50, description="A Mac only (#595): the handles"
-                                           " its owner listed in the consent file bin/bot checks before a host bot starts.")
+    host_allowed: list[str] | None = Field(default=None, max_length=50, description="The handles the box's owner listed"
+                                           " in the consent file bin/bot checks before a host bot starts (#595); every box reports it (#876).")
     apps: list[dict[str, str]] = Field(default_factory=list, max_length=300, description="A Mac only: the apps in"
                                        " /Applications, {name, version}.")
     runtime: dict[str, str] | None = Field(default=None, description="The box's BOT_RUNTIME, as the keeper last"
@@ -1313,7 +1313,7 @@ def fleet_forget(name: str, force: bool = False, agent: dict = Depends(current_a
             retired.append(handle)
     keeper = db.get_agent_by_handle(m["keeper"]) if m["keeper"] else None
     if keeper and not keeper.get("retired_at"):
-        db.hand_off_threads(keeper["handle"], agent)
+        db.hand_off_threads(keeper["handle"], agent, forge.line_source())
         db.retire_agent(keeper["id"])
         retired.append(keeper["handle"])
     fleet.forget(name)      # after: fleet.delete records each bot against this box, and this drops those rows
@@ -2476,14 +2476,29 @@ class ThreadCompleteIn(BaseModel):
 
 @app.post("/api/threads/{tid}/complete", tags=["messages"])
 async def complete_thread(tid: int, body: ThreadCompleteIn, agent: dict = Depends(current_agent)) -> dict:
-    return await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
+    await asyncio.to_thread(_call, db.can_complete, tid, body.through, agent)
+    warnings: list[str] = []
+    open_items: list[dict] = []
+    repo = await asyncio.to_thread(workspaces.thread_repository, tid)
+    if repo:
+        try:
+            open_items = await asyncio.to_thread(forge.open_for_thread, repo, tid)
+        except forge.ForgeError:
+            warnings.append("the forge could not be asked, so open pull requests were not checked")
+    if open_items:
+        names = ", ".join("pull request #%d is open" % i["number"] for i in open_items)
+        raise HTTPException(409, names + ": merge or close it, or hand the thread on")
+    out = await asyncio.to_thread(_call, db.complete_thread, tid, body.through, agent)
+    return {**out, "warnings": warnings} if warnings else out
 
 
 @app.delete("/api/threads/{tid}/worker", tags=["messages"])
 async def release_thread_worker(tid: int, to: str | None = Query(None, max_length=32, description=(
         "Hand the thread to this bot instead of offering it to all: the claim moves at once (#468).")),
         agent: dict = Depends(current_agent)) -> dict:
-    result = await asyncio.to_thread(_call, db.release_thread, tid, agent, to)
+    asked = await asyncio.to_thread(_call, db.can_release, tid, agent, to)     # who is asking comes before the forge is
+    note = await asyncio.to_thread(forge.open_line, tid) if asked else ""      # then the forge: off the loop, outside the lock (#932)
+    result = await asyncio.to_thread(_call, db.release_thread, tid, agent, to, note)
     async with _new_message:
         _new_message.notify_all()
     return result
