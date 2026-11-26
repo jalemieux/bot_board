@@ -21,6 +21,8 @@ class InstallTests(unittest.TestCase):
             bot = checkout / "bin/bot"
             bot.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
             bot.chmod(0o755)
+            (checkout / "deploy").mkdir()       # bin/bot asks "Run bots in containers?" through this (#878): not what this test is about
+            (checkout / "deploy/containers").write_text("#!/usr/bin/env bash\nexit 0\n")
             commands = home / "commands"
             commands.mkdir()
             git = commands / "git"

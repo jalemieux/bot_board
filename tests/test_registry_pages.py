@@ -112,7 +112,7 @@ class RegistryPages(unittest.TestCase):
         page = regpages.roles_html(self.client)
         self.balanced(page)
         # profiles: the six seeded, their skills with ★ for mandatory, the bots, the actions
-        self.assertIn("Roles · 13", page)
+        self.assertIn("Roles · 14", page)
         self.assertIn('href="/fleet/profiles/new"', page)
         self.assertIn('href="/fleet/profiles/new?from=developer"', page)
         self.assertIn('<span class="star" title="mandatory">★</span>', page)
